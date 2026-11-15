@@ -2,6 +2,8 @@ import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { translateDynamic } from "../../i18nCore";
+
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
 import { cn } from "~/lib/utils";
@@ -32,7 +34,7 @@ export function resolveSpeechPresentation(
       };
     case "error":
       return {
-        status: state.error ?? "Voice input failed",
+        status: state.error ?? translateDynamic("composer:voiceError.failed"),
         showsCancel: false,
         showsConfirm: false,
         confirmEnabled: false,
@@ -41,8 +43,10 @@ export function resolveSpeechPresentation(
     case "preparing":
       return {
         status: progress
-          ? `Downloading speech model ${Math.round((progress.downloaded / Math.max(1, progress.total)) * 100)}%`
-          : "Preparing",
+          ? translateDynamic("composer:speech.downloadModel", {
+              pct: Math.round((progress.downloaded / Math.max(1, progress.total)) * 100),
+            })
+          : translateDynamic("composer:speech.preparing"),
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
@@ -50,7 +54,7 @@ export function resolveSpeechPresentation(
       };
     case "recording":
       return {
-        status: "Recording",
+        status: translateDynamic("composer:speech.recording"),
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: true,
@@ -58,7 +62,7 @@ export function resolveSpeechPresentation(
       };
     case "transcribing":
       return {
-        status: "Transcribing",
+        status: translateDynamic("composer:speech.transcribing"),
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
@@ -66,7 +70,7 @@ export function resolveSpeechPresentation(
       };
     case "post-processing":
       return {
-        status: "Post-processing",
+        status: translateDynamic("composer:speech.postProcessing"),
         showsCancel: true,
         showsConfirm: true,
         confirmEnabled: false,
@@ -147,7 +151,10 @@ function ComposerSpeechCancelButton(props: {
   onCancel(): void;
 }) {
   if (props.state.phase === "idle") return null;
-  const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
+  const label =
+    props.state.phase === "error"
+      ? translateDynamic("composer:voiceError.dismiss")
+      : translateDynamic("composer:speech.cancel");
 
   return (
     <Tooltip>
@@ -183,7 +190,7 @@ export function ComposerSpeechButton(props: {
   onCancel(): void;
 }) {
   const presentation = resolveSpeechPresentation(props.state, props.progress);
-  const label = "Start voice input";
+  const label = translateDynamic("composer:speech.start");
 
   if (presentation.showsConfirm || props.state.phase === "error") return null;
 
@@ -245,8 +252,8 @@ export function ComposerSpeechRecordingPill(props: {
   if (!presentation.showsConfirm) return null;
 
   const label = presentation.confirmEnabled
-    ? "Finish voice input"
-    : (presentation.status ?? "Voice input is busy");
+    ? translateDynamic("composer:speech.finish")
+    : (presentation.status ?? translateDynamic("composer:speech.busy"));
 
   return (
     <VoiceInputPill>
@@ -270,7 +277,7 @@ export function ComposerSpeechRecordingPill(props: {
           onClick={props.onSkipPostProcessing}
           className="shrink-0"
         >
-          Skip
+          {translateDynamic("composer:speech.skip")}
         </Button>
       ) : (
         <Tooltip>

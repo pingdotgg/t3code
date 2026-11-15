@@ -1,10 +1,12 @@
 import enChat from "../locales/en/chat.json";
+import enComposer from "../locales/en/composer.json";
 import enDiffs from "../locales/en/diffs.json";
 import enOnboarding from "../locales/en/onboarding.json";
 import enPalette from "../locales/en/palette.json";
 import enSettings from "../locales/en/settings.json";
 import enTerminal from "../locales/en/terminal.json";
 import zhHansChat from "../locales/zh-Hans/chat.json";
+import zhHansComposer from "../locales/zh-Hans/composer.json";
 import zhHansDiffs from "../locales/zh-Hans/diffs.json";
 import zhHansOnboarding from "../locales/zh-Hans/onboarding.json";
 import zhHansPalette from "../locales/zh-Hans/palette.json";
@@ -27,6 +29,7 @@ declare module "i18next" {
       sidebar: typeof enSidebar;
       palette: typeof enPalette;
       chat: typeof enChat;
+      composer: typeof enComposer;
       diffs: typeof enDiffs;
       onboarding: typeof enOnboarding;
       terminal: typeof enTerminal;
@@ -52,13 +55,14 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette", "chat", "diffs", "onboarding", "terminal"],
+    ns: ["settings", "sidebar", "palette", "chat", "composer", "diffs", "onboarding", "terminal"],
     resources: {
       en: {
         settings: enSettings,
         sidebar: enSidebar,
         palette: enPalette,
         chat: enChat,
+        composer: enComposer,
         diffs: enDiffs,
         onboarding: enOnboarding,
         terminal: enTerminal,
@@ -68,6 +72,7 @@ if (!i18next.isInitialized) {
         sidebar: zhHansSidebar,
         palette: zhHansPalette,
         chat: zhHansChat,
+        composer: zhHansComposer,
         diffs: zhHansDiffs,
         onboarding: zhHansOnboarding,
         terminal: zhHansTerminal,

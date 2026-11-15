@@ -37,7 +37,10 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
+import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+import { translateDynamic } from "../../i18nCore";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 import { useComposerMenuState } from "./useComposerMenuState";
 
@@ -54,18 +57,20 @@ export function readPromptUltrathink(prompt: string): PromptUltrathink {
   return isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, "")) ? "body" : "prefix";
 }
 
+// Values are composer label keys; savedOptionLabel translates the known ones.
 const SAVED_OPTION_LABELS: Readonly<Record<string, string>> = {
-  agent: "Agent",
-  effort: "Effort",
-  reasoningEffort: "Reasoning effort",
-  variant: "Reasoning",
+  agent: "composer:traits.agent",
+  effort: "composer:traits.effort",
+  reasoningEffort: "composer:traits.reasoningEffort",
+  variant: "composer:traits.reasoning",
 };
 
 function savedOptionLabel(id: string): string {
-  return (
-    SAVED_OPTION_LABELS[id] ??
-    id.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/^./, (character) => character.toUpperCase())
-  );
+  const known = SAVED_OPTION_LABELS[id];
+  if (known) return translateDynamic(known);
+  return id
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/^./, (character) => character.toUpperCase());
 }
 
 function buildUnavailableModelOptionDescriptors(
@@ -104,9 +109,10 @@ type TraitsPersistence =
     };
 
 function DefaultBadge() {
+  const { t } = useTranslation("composer");
   return (
     <Badge variant="outline" size="sm" className="min-w-0">
-      Default
+      {t("common.default")}
     </Badge>
   );
 }
@@ -373,10 +379,12 @@ export function useTraitsSelection({
   };
 }
 
-export const ULTRATHINK_IN_BODY_NOTE =
-  'Your prompt contains "ultrathink" in the text. Remove it to change this option.';
+export function ultrathinkInBodyNote(): string {
+  return translateDynamic("composer:traits.ultrathinkNote");
+}
 
 const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelectionInput) {
+  const { t } = useTranslation("composer");
   const traits = useTraitsSelection(props);
   const {
     descriptors,
@@ -425,7 +433,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
             </div>
             {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
               <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                {ULTRATHINK_IN_BODY_NOTE}
+                {ultrathinkInBodyNote()}
               </div>
             ) : null}
             <MenuRadioGroup
@@ -471,7 +479,7 @@ const TraitsMenuContent = memo(function TraitsMenuContentImpl(props: TraitsSelec
               {(["on", "off"] as const).map((value) => (
                 <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
                   <span className="flex w-full min-w-0 items-center justify-between gap-3">
-                    <span>{value === "on" ? "On" : "Off"}</span>
+                    <span>{value === "on" ? t("common.on") : t("common.off")}</span>
                   </span>
                 </MenuRadioItem>
               ))}

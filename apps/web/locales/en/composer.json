@@ -1,0 +1,347 @@
+{
+  "placeholder": {
+    "default": "Ask anything. @ files, $ skills, / commands",
+    "mobileAsk": "Ask anything...",
+    "enableProvider": "Enable a provider in Settings",
+    "enableProviderToSend": "Enable a provider in Settings to send a message",
+    "chooseProject": "Choose a project above to start a thread",
+    "declineFeedback": "Send feedback to decline this request",
+    "declineRedirect": "Send a message to decline and redirect the agent",
+    "chooseOption": "Choose an option above",
+    "typeAnswer": "Type your own answer, or leave this blank to use the selected option"
+  },
+  "runtimeMode": {
+    "approval-required": {
+      "label": "Supervised",
+      "description": "Ask before commands and file changes."
+    },
+    "auto-accept-edits": {
+      "label": "Auto-accept edits",
+      "description": "Auto-approve edits, ask before other actions."
+    },
+    "auto": {
+      "label": "Auto",
+      "description": "Supported providers approve routine actions; others still ask."
+    },
+    "full-access": {
+      "label": "Full access",
+      "description": "Allow commands and edits without prompts."
+    }
+  },
+  "common": {
+    "default": "Default",
+    "on": "On",
+    "off": "Off"
+  },
+  "submit": {
+    "resume": "Resume thread",
+    "openToCompact": "Open composer to compact and send",
+    "send": "Send message",
+    "submitMessage": "Submit message",
+    "updateQueued": "Update queued message",
+    "compactAndSend": "Compact and send",
+    "queue": "Queue message",
+    "steer": "Steer message",
+    "statusEnvironmentDisconnected": "Environment disconnected",
+    "statusPreparingWorktree": "Preparing worktree",
+    "statusUpdatingQueued": "Updating queued message",
+    "statusSubmitting": "Submitting message",
+    "tooltipCompact": "Summarize {{tokens}} tokens of history, then send",
+    "tooltipDispatch": "Click to {{action}}, {{modifier}}-click{{shortcut}} to {{alternateAction}}",
+    "tooltipDispatchOr": "or",
+    "verb": {
+      "queue": "queue",
+      "steer": "steer",
+      "restart": "restart"
+    }
+  },
+  "pending": {
+    "submitting": "Submitting...",
+    "submit": "Submit",
+    "next": "Next",
+    "nextQuestion": "Next question",
+    "submitAnswer": "Submit answer",
+    "submitAnswers": "Submit answers",
+    "previous": "Previous",
+    "previousAria": "Previous question"
+  },
+  "pendingApproval": {
+    "more": "More",
+    "moreOptions": "More approval options"
+  },
+  "pendingQuestion": {
+    "show": "Show the question and its options",
+    "hide": "Hide the question and its options",
+    "dismiss": "Dismiss question without answering"
+  },
+  "feedback": {
+    "copyId": "Copy ID",
+    "copyFailedTitle": "Could not copy thread ID",
+    "copyFailedDescription": "An error occurred.",
+    "dismiss": "Dismiss feedback notice"
+  },
+  "interrupt": {
+    "stop": "Stop generation",
+    "tooltip": "Interrupt"
+  },
+  "compact": {
+    "keep": "Keep",
+    "compact": "Compact",
+    "toggleAria": "Compact {{tokens}} tokens of history before sending",
+    "tooltipKeep": "Next send keeps all {{tokens}} tokens.",
+    "tooltipCompact": "Next send compacts {{tokens}} tokens first.",
+    "clickToKeep": "Click to keep full history",
+    "clickToCompact": "Click to compact first"
+  },
+  "permissions": {
+    "title": "Permissions",
+    "aria": "Permissions: {{label}}",
+    "ariaWithDescription": "Permissions: {{label}}. {{description}}"
+  },
+  "chat": {
+    "attachmentNeedsServerUpdate": "Update this server to send files with question answers",
+    "reattachOne": "Attach the interrupted file again or remove it",
+    "reattachMany": "Attach the interrupted files again or remove them",
+    "selectAtLeastOneModel": "Select at least one model.",
+    "preparingVoiceInput": "Preparing voice input",
+    "toastCompressingTitle": "Still compressing a pasted image.",
+    "toastCompressingDescription": "Send again once its thumbnail appears.",
+    "toastResolvingContextTitle": "Still bringing attached context into this message.",
+    "toastResolvingContextDescription": "Send again once its chip resolves.",
+    "switchToMode": "Switch to {{mode}}",
+    "foldersLocalOnly": "Folders can only be referenced on a server running on this computer",
+    "folderPathFailed": "Couldn't get the path of \"{{name}}\"",
+    "folderPathFailedHint": "Type the folder path with @ instead.",
+    "unableToAddFolder": "Unable to add folder",
+    "unableToAddToChat": "Unable to add to chat",
+    "unableToAddThread": "Unable to add thread",
+    "composerBusy": "The composer is busy; try again once it is ready.",
+    "loadingThreadContext": "Loading thread context…",
+    "unableToReadThread": "Unable to read the dropped thread",
+    "threadTooLarge": "This thread exceeds the attachment size limit. Try a shorter thread.",
+    "threadCheckEnvironment": "Check that its environment is connected and up to date, then try again.",
+    "maxAttachments": "You can attach up to {{count}} files per message.",
+    "expandComposer": "Expand composer",
+    "messageAria": "Message",
+    "messageThreadAria": "Message {{title}}",
+    "liveTranscription": "Live transcription"
+  },
+  "chatgpt": {
+    "usingPlan": "Using ChatGPT plan",
+    "speedNotice": "Fast and Ultrafast are unavailable with this ChatGPT connection. Use an existing Codex CLI login for speed options your account supports."
+  },
+  "codeLanguage": {
+    "aria": "Code language: {{language}}",
+    "search": "Search languages",
+    "noMatch": "No matching languages."
+  },
+  "commandMenu": {
+    "searchingSkills": "Searching workspace skills...",
+    "findingPullRequest": "Finding pull request...",
+    "searchingFiles": "Searching workspace files...",
+    "noSkills": "No skills found. Try / to browse provider commands.",
+    "noFiles": "No matching files or folders.",
+    "noCommand": "No matching command.",
+    "pullRequestsUnavailable": "Pull requests are not available for this project.",
+    "pullRequestsReadFailed": "Pull requests could not be read for this project.",
+    "noPullRequestMatches": "No pull request matches {{query}}.",
+    "noPullRequests": "No pull requests found in this repository.",
+    "skillSuffix": "Skill",
+    "list": {
+      "path": "Files and folders",
+      "pullRequests": "Pull requests",
+      "commands": "Commands",
+      "skills": "Skills"
+    },
+    "source": {
+      "app": "App",
+      "repo": "Repo",
+      "project": "Project",
+      "personal": "Personal",
+      "system": "System",
+      "provider": "Provider"
+    }
+  },
+  "slashCommand": {
+    "switchModel": "Switch response model for this thread",
+    "side": "Ask a side question in a new side chat",
+    "btw": "Same as /side",
+    "clear": "Start a fresh session; earlier messages stay visible",
+    "runCommand": "Run provider command",
+    "runSkill": "Run provider skill",
+    "scopeSkill": "{{scope}} skill"
+  },
+  "banner": {
+    "details": "Notice details",
+    "dismiss": "Dismiss warning",
+    "showFullTitle": "Show full title: {{title}}",
+    "showTitleDetails": "Show title details",
+    "showDetails": "Show details: {{title}}",
+    "showNoticeDetails": "Show notice details"
+  },
+  "attachment": {
+    "imageAria": "Image attachment",
+    "previewAria": "Preview {{name}}",
+    "draftMayNotPersist": "Draft attachment may not persist",
+    "draftMayNotPersistTooltip": "Draft attachment could not be saved locally and may be lost on navigation.",
+    "preparing": "Preparing",
+    "retryUploadAria": "Retry upload for {{name}}",
+    "removeAria": "Remove {{name}}",
+    "playAria": "Play {{name}}",
+    "attachAgain": "Attach again",
+    "removeToSend": "Remove to send",
+    "attachFiles": "Attach files",
+    "showMoreAria_one": "Show {{count}} more image attachment",
+    "showMoreAria_other": "Show {{count}} more image attachments",
+    "uploadingOne": "Attachment still uploading",
+    "uploadingMany": "Attachments still uploading"
+  },
+  "stash": {
+    "title": "Stash",
+    "openWithCount": "Stashed prompts: {{count}}. Open stash.",
+    "close": "Close stash",
+    "listAria": "Stashed prompts",
+    "empty": "Nothing stashed yet.",
+    "emptyHint": "Nothing stashed yet. Press {{shortcut}} with a prompt in the composer to stash it.",
+    "restoreAria": "Restore stashed prompt: {{snippet}}",
+    "deleteAria": "Delete stashed prompt",
+    "savingImages_one": "Saving {{count}} image…",
+    "savingImages_other": "Saving {{count}} images…",
+    "droppedImages_one": "{{count}} image dropped",
+    "droppedImages_other": "{{count}} images dropped",
+    "countAttachment_one": "{{count}} attachment",
+    "countAttachment_other": "{{count}} attachments",
+    "countFile_one": "{{count}} file",
+    "countFile_other": "{{count}} files",
+    "countImage_one": "{{count}} image",
+    "countImage_other": "{{count}} images"
+  },
+  "usageLimits": {
+    "title": "Usage limits",
+    "dismiss": "Dismiss usage limits",
+    "accounts_one": "{{count}} account",
+    "accounts_other": "{{count}} accounts",
+    "manageUsage": "Manage usage",
+    "toggleAccountVisibility": "Toggle account label visibility",
+    "revealAccount": "Click to reveal account",
+    "hideAccount": "Click to hide account"
+  },
+  "fallbackModel": {
+    "using": "Using {{model}}",
+    "outOfUsage": "{{provider}} is out of usage",
+    "outOfUsageResets": "{{provider}} is out of usage · resets {{resets}}",
+    "use": "Use {{model}}",
+    "dismiss": "Dismiss fallback model notice"
+  },
+  "freshSession": {
+    "title": "Your next message starts a fresh session",
+    "description": "The agent won't see earlier messages in this thread.",
+    "dismiss": "Keep the current session"
+  },
+  "modelPicker": {
+    "chooseModel": "Choose model",
+    "chooseModels": "Choose models",
+    "unavailableSuffix": " (Unavailable)",
+    "unavailable": "Unavailable",
+    "disabled": "Model picker is disabled",
+    "moreCount": ", {{count}} more",
+    "setupProvider": "Set up {{provider}}",
+    "openProviderSetup": "Open provider setup",
+    "favorites": "Favorites",
+    "modelAnnounce": "Model: {{name}}",
+    "unavailableInThread": "{{provider}} is unavailable in this thread. Start a new thread to switch providers.",
+    "searchPlaceholder": "Search models...",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "noFavorites": "No favorites yet",
+    "noModels": "No models found",
+    "newModel": "New model",
+    "newModelAria": "New model",
+    "addFavorite": "Add to favorites",
+    "removeFavorite": "Remove from favorites"
+  },
+  "pickerSidebar": {
+    "providers": "Providers",
+    "disabledInSettings": "{{label}}: Disabled in settings.",
+    "unavailable": "Unavailable",
+    "limited": "Limited",
+    "notReady": "Not ready",
+    "status": "{{label}}: {{kind}}.",
+    "statusWithMessage": "{{label}}: {{kind}}. {{message}}"
+  },
+  "providerStatus": {
+    "title": "{{provider}} provider status",
+    "unauthenticatedTitle": "{{provider}} is unauthenticated",
+    "incompatibleTitle": "{{provider}} {{version}} is {{condition}}",
+    "knownBroken": "known to be broken",
+    "unsupported": "unsupported",
+    "installHint": "Open provider setup to install {{driver}} on this environment.",
+    "signInGoogle": "Open provider setup to sign in with Google.",
+    "signIn": "Open provider setup to sign in.",
+    "signInCli": "Sign in via the CLI to authenticate again.",
+    "noModels": "No models are available for this provider.",
+    "unavailable": "{{provider}} provider is unavailable.",
+    "limited": "{{provider}} provider has limited availability.",
+    "openSetup": "Open provider setup",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing...",
+    "refreshAria": "Refresh {{provider}} provider status",
+    "dismissAria": "Dismiss {{provider}} provider {{status}}"
+  },
+  "providerUnavailable": {
+    "openSettings": "Open provider settings",
+    "none": "No provider available"
+  },
+  "overflow": {
+    "more": "More composer controls"
+  },
+  "effort": {
+    "effort": "Effort",
+    "options": "Options",
+    "noLevels": "No effort levels",
+    "optionAria": "{{label}}: {{value}}",
+    "fast": "Fast",
+    "standard": "Standard"
+  },
+  "traits": {
+    "agent": "Agent",
+    "effort": "Effort",
+    "reasoningEffort": "Reasoning effort",
+    "reasoning": "Reasoning",
+    "ultrathinkNote": "Your prompt contains \"ultrathink\" in the text. Remove it to change this option."
+  },
+  "speech": {
+    "start": "Start voice input",
+    "cancel": "Cancel voice input",
+    "finish": "Finish voice input",
+    "busy": "Voice input is busy",
+    "skip": "Skip",
+    "preparing": "Preparing",
+    "recording": "Recording",
+    "transcribing": "Transcribing",
+    "postProcessing": "Post-processing",
+    "downloadModel": "Downloading speech model {{percent}}%"
+  },
+  "voiceError": {
+    "failed": "Voice input failed",
+    "dismiss": "Dismiss voice input error",
+    "openSettings": "Open voice settings",
+    "retryTranscription": "Retry transcription",
+    "recordAgain": "Record again",
+    "microphoneAccess": "Microphone access needed",
+    "draftUnavailable": "Draft unavailable",
+    "anotherRecording": "Another recording active",
+    "unavailable": "Voice input unavailable",
+    "transcriptionBusy": "Transcription still busy",
+    "languageUnsupported": "Language unsupported",
+    "couldNotPrepare": "Couldn't prepare dictation",
+    "couldNotStart": "Couldn't start recording",
+    "recordingInterrupted": "Recording interrupted",
+    "couldNotFinish": "Couldn't finish recording",
+    "transcriptionFailed": "Transcription failed",
+    "draftChanged": "Draft changed",
+    "noSpeech": "No speech detected",
+    "microphoneProcessingFailed": "Microphone processing failed",
+    "microphoneDisconnected": "Microphone disconnected"
+  }
+}

@@ -5,6 +5,7 @@ import {
 import { MessageSquareIcon } from "lucide-react";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import { translateDynamic } from "../../i18nCore";
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -31,18 +32,21 @@ export function feedbackBannerItem(
               (error: unknown) => {
                 toastManager.add({
                   type: "error",
-                  title: "Could not copy thread ID",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: translateDynamic("composer:feedback.copyFailedTitle"),
+                  description:
+                    error instanceof Error
+                      ? error.message
+                      : translateDynamic("composer:feedback.copyFailedDescription"),
                 });
               },
             );
           }}
         >
-          Copy ID
+          {translateDynamic("composer:feedback.copyId")}
         </Button>
       ) : undefined,
     ...(submission.status !== "uploading"
-      ? { dismissLabel: "Dismiss feedback notice", onDismiss }
+      ? { dismissLabel: translateDynamic("composer:feedback.dismiss"), onDismiss }
       : {}),
   };
 }

@@ -1,0 +1,340 @@
+{
+  "placeholder": {
+    "default": "随便问点什么。@ 文件、$ 技能、/ 命令",
+    "mobileAsk": "随便问点什么...",
+    "enableProvider": "在设置中启用提供商",
+    "enableProviderToSend": "在设置中启用提供商后才能发送消息",
+    "chooseProject": "在上方选择一个项目以开始线程",
+    "declineFeedback": "发送反馈以拒绝此请求",
+    "declineRedirect": "发送消息以拒绝并改变 agent 的方向",
+    "chooseOption": "在上方选择一个选项",
+    "typeAnswer": "输入你自己的回答，或留空使用已选选项"
+  },
+  "runtimeMode": {
+    "approval-required": {
+      "label": "人工确认",
+      "description": "执行命令和修改文件前先询问。"
+    },
+    "auto-accept-edits": {
+      "label": "自动接受修改",
+      "description": "自动批准文件修改，其他操作仍会询问。"
+    },
+    "auto": {
+      "label": "自动",
+      "description": "支持的提供商会自动批准常规操作；其他仍会询问。"
+    },
+    "full-access": {
+      "label": "完全访问",
+      "description": "允许不经提示执行命令和修改文件。"
+    }
+  },
+  "common": {
+    "default": "默认",
+    "on": "开",
+    "off": "关"
+  },
+  "submit": {
+    "resume": "恢复线程",
+    "openToCompact": "打开输入框以压缩后发送",
+    "send": "发送消息",
+    "submitMessage": "提交消息",
+    "updateQueued": "更新已排队的消息",
+    "compactAndSend": "压缩并发送",
+    "queue": "排队消息",
+    "steer": "插话",
+    "statusEnvironmentDisconnected": "环境已断开连接",
+    "statusPreparingWorktree": "正在准备工作树",
+    "statusUpdatingQueued": "正在更新已排队的消息",
+    "statusSubmitting": "正在提交消息",
+    "tooltipCompact": "先总结 {{tokens}} token 的历史记录，然后发送",
+    "tooltipDispatch": "点击以{{action}}，{{modifier}}-点击{{shortcut}}则{{alternateAction}}",
+    "tooltipDispatchOr": "或",
+    "verb": {
+      "queue": "排队",
+      "steer": "插话",
+      "restart": "重新开始"
+    }
+  },
+  "pending": {
+    "submitting": "正在提交...",
+    "submit": "提交",
+    "next": "下一步",
+    "nextQuestion": "下一题",
+    "submitAnswer": "提交回答",
+    "submitAnswers": "提交全部回答",
+    "previous": "上一个",
+    "previousAria": "上一题"
+  },
+  "pendingApproval": {
+    "more": "更多",
+    "moreOptions": "更多批准选项"
+  },
+  "pendingQuestion": {
+    "show": "显示问题及其选项",
+    "hide": "收起问题及其选项",
+    "dismiss": "不回答并关闭问题"
+  },
+  "feedback": {
+    "copyId": "复制 ID",
+    "copyFailedTitle": "无法复制线程 ID",
+    "copyFailedDescription": "发生错误。",
+    "dismiss": "关闭反馈通知"
+  },
+  "interrupt": {
+    "stop": "停止生成",
+    "tooltip": "中断"
+  },
+  "compact": {
+    "keep": "保留",
+    "compact": "压缩",
+    "toggleAria": "发送前压缩 {{tokens}} token 的历史记录",
+    "tooltipKeep": "下次发送将保留全部 {{tokens}} token。",
+    "tooltipCompact": "下次发送会先压缩 {{tokens}} token。",
+    "clickToKeep": "点击保留完整历史",
+    "clickToCompact": "点击先压缩"
+  },
+  "permissions": {
+    "title": "权限",
+    "aria": "权限：{{label}}",
+    "ariaWithDescription": "权限：{{label}}。{{description}}"
+  },
+  "chat": {
+    "attachmentNeedsServerUpdate": "更新此服务器后才能随问题答案发送文件",
+    "reattachOne": "重新附加被中断的文件，或将其移除",
+    "reattachMany": "重新附加被中断的文件，或将其移除",
+    "selectAtLeastOneModel": "请至少选择一个模型。",
+    "preparingVoiceInput": "正在准备语音输入",
+    "toastCompressingTitle": "仍在压缩粘贴的图片。",
+    "toastCompressingDescription": "等缩略图出现后再发送。",
+    "toastResolvingContextTitle": "仍在将附加的上下文合入这条消息。",
+    "toastResolvingContextDescription": "等上下文标记解析完成后再发送。",
+    "switchToMode": "切换到{{mode}}",
+    "foldersLocalOnly": "文件夹只能在运行于本机的服务器上引用",
+    "folderPathFailed": "无法获取「{{name}}」的路径",
+    "folderPathFailedHint": "请改用 @ 加文件夹路径的方式引用。",
+    "unableToAddFolder": "无法添加文件夹",
+    "unableToAddToChat": "无法添加到聊天",
+    "unableToAddThread": "无法添加线程",
+    "composerBusy": "输入框正忙；请等它就绪后再试。",
+    "loadingThreadContext": "正在加载线程上下文…",
+    "unableToReadThread": "无法读取拖入的线程",
+    "threadTooLarge": "此线程超出附件大小上限。请尝试较短的线程。",
+    "threadCheckEnvironment": "请检查其环境已连接且为最新，然后重试。",
+    "maxAttachments": "每条消息最多附加 {{count}} 个文件。",
+    "expandComposer": "展开输入框",
+    "messageAria": "消息",
+    "messageThreadAria": "消息：{{title}}",
+    "liveTranscription": "实时转写"
+  },
+  "chatgpt": {
+    "usingPlan": "正在使用 ChatGPT 套餐",
+    "speedNotice": "此 ChatGPT 连接不支持 Fast 和 Ultrafast。请使用已有的 Codex CLI 登录，以获得你的账号支持的速度选项。"
+  },
+  "codeLanguage": {
+    "aria": "代码语言：{{language}}",
+    "search": "搜索语言",
+    "noMatch": "没有匹配的语言。"
+  },
+  "commandMenu": {
+    "searchingSkills": "正在搜索工作区技能...",
+    "findingPullRequest": "正在查找拉取请求...",
+    "searchingFiles": "正在搜索工作区文件...",
+    "noSkills": "未找到技能。按 / 浏览提供商命令。",
+    "noFiles": "没有匹配的文件或文件夹。",
+    "noCommand": "没有匹配的命令。",
+    "pullRequestsUnavailable": "此项目不支持拉取请求。",
+    "pullRequestsReadFailed": "无法读取此项目的拉取请求。",
+    "noPullRequestMatches": "没有匹配 {{query}} 的拉取请求。",
+    "noPullRequests": "此仓库中没有找到拉取请求。",
+    "skillSuffix": "技能",
+    "list": {
+      "path": "文件和文件夹",
+      "pullRequests": "拉取请求",
+      "commands": "命令",
+      "skills": "技能"
+    },
+    "source": {
+      "app": "应用",
+      "repo": "仓库",
+      "project": "项目",
+      "personal": "个人",
+      "system": "系统",
+      "provider": "提供商"
+    }
+  },
+  "slashCommand": {
+    "switchModel": "切换此线程的响应模型",
+    "side": "在新的侧边聊天中提问",
+    "btw": "与 /side 相同",
+    "clear": "开始全新会话；早前消息仍然可见",
+    "runCommand": "运行提供商命令",
+    "runSkill": "运行提供商技能",
+    "scopeSkill": "{{scope}} 技能"
+  },
+  "banner": {
+    "details": "通知详情",
+    "dismiss": "关闭警告",
+    "showFullTitle": "显示完整标题：{{title}}",
+    "showTitleDetails": "显示标题详情",
+    "showDetails": "显示通知详情：{{title}}",
+    "showNoticeDetails": "显示通知详情"
+  },
+  "attachment": {
+    "imageAria": "图片附件",
+    "previewAria": "预览 {{name}}",
+    "draftMayNotPersist": "草稿附件可能不会保留",
+    "draftMayNotPersistTooltip": "草稿附件未能保存到本地，切换页面后可能丢失。",
+    "preparing": "准备中",
+    "retryUploadAria": "重试上传 {{name}}",
+    "removeAria": "移除 {{name}}",
+    "playAria": "播放 {{name}}",
+    "attachAgain": "重新附加",
+    "removeToSend": "移除后发送",
+    "attachFiles": "附加文件",
+    "showMoreAria_other": "显示另外 {{count}} 张图片附件",
+    "uploadingOne": "附件仍在上传",
+    "uploadingMany": "附件仍在上传"
+  },
+  "stash": {
+    "title": "暂存",
+    "openWithCount": "已暂存的提示词：{{count}}。打开暂存。",
+    "close": "关闭暂存",
+    "listAria": "已暂存的提示词",
+    "empty": "还没有暂存内容。",
+    "emptyHint": "还没有暂存内容。在输入框中按 {{shortcut}} 即可暂存提示词。",
+    "restoreAria": "恢复暂存的提示词：{{snippet}}",
+    "deleteAria": "删除暂存的提示词",
+    "savingImages_other": "正在保存 {{count}} 张图片…",
+    "droppedImages_other": "{{count}} 张图片被丢弃",
+    "countAttachment_other": "{{count}} 个附件",
+    "countFile_other": "{{count}} 个文件",
+    "countImage_other": "{{count}} 张图片"
+  },
+  "usageLimits": {
+    "title": "用量限制",
+    "dismiss": "关闭用量限制",
+    "accounts_other": "{{count}} 个账号",
+    "manageUsage": "管理用量",
+    "toggleAccountVisibility": "切换账号标签可见性",
+    "revealAccount": "点击显示账号",
+    "hideAccount": "点击隐藏账号"
+  },
+  "fallbackModel": {
+    "using": "正在使用 {{model}}",
+    "outOfUsage": "{{provider}} 的用量已用尽",
+    "outOfUsageResets": "{{provider}} 的用量已用尽 · {{resets}} 重置",
+    "use": "使用 {{model}}",
+    "dismiss": "关闭回退模型通知"
+  },
+  "freshSession": {
+    "title": "你的下一条消息将开启全新会话",
+    "description": "agent 将看不到此线程中更早的消息。",
+    "dismiss": "保留当前会话"
+  },
+  "modelPicker": {
+    "chooseModel": "选择模型",
+    "chooseModels": "选择模型",
+    "unavailableSuffix": "（不可用）",
+    "unavailable": "不可用",
+    "disabled": "模型选择器已禁用",
+    "moreCount": "，另外 {{count}} 个",
+    "setupProvider": "设置 {{provider}}",
+    "openProviderSetup": "打开提供商设置",
+    "favorites": "收藏",
+    "modelAnnounce": "模型：{{name}}",
+    "unavailableInThread": "{{provider}} 在此线程中不可用。请新开线程以切换提供商。",
+    "searchPlaceholder": "搜索模型...",
+    "showMore": "显示更多",
+    "showLess": "收起",
+    "noFavorites": "还没有收藏",
+    "noModels": "没有找到模型",
+    "newModel": "新模型",
+    "newModelAria": "新模型",
+    "addFavorite": "添加到收藏",
+    "removeFavorite": "从收藏中移除"
+  },
+  "pickerSidebar": {
+    "providers": "提供商",
+    "disabledInSettings": "{{label}}：已在设置中禁用。",
+    "unavailable": "不可用",
+    "limited": "受限",
+    "notReady": "未就绪",
+    "status": "{{label}}：{{kind}}。",
+    "statusWithMessage": "{{label}}：{{kind}}。{{message}}"
+  },
+  "providerStatus": {
+    "title": "{{provider}} 提供商状态",
+    "unauthenticatedTitle": "{{provider}} 未登录",
+    "incompatibleTitle": "{{provider}} {{version}} {{condition}}",
+    "knownBroken": "已知存在问题",
+    "unsupported": "不受支持",
+    "installHint": "打开提供商设置以在此环境安装 {{driver}}。",
+    "signInGoogle": "打开提供商设置以使用 Google 登录。",
+    "signIn": "打开提供商设置以登录。",
+    "signInCli": "请通过 CLI 登录以重新完成认证。",
+    "noModels": "此提供商没有可用模型。",
+    "unavailable": "{{provider}} 提供商不可用。",
+    "limited": "{{provider}} 提供商可用性受限。",
+    "openSetup": "打开提供商设置",
+    "refresh": "刷新",
+    "refreshing": "刷新中...",
+    "refreshAria": "刷新 {{provider}} 提供商状态",
+    "dismissAria": "关闭 {{provider}} 提供商 {{status}} 通知"
+  },
+  "providerUnavailable": {
+    "openSettings": "打开提供商设置",
+    "none": "没有可用的提供商"
+  },
+  "overflow": {
+    "more": "更多输入框控件"
+  },
+  "effort": {
+    "effort": "推理力度",
+    "options": "选项",
+    "noLevels": "没有可选的推理力度",
+    "optionAria": "{{label}}：{{value}}",
+    "fast": "快速",
+    "standard": "标准"
+  },
+  "traits": {
+    "agent": "Agent",
+    "effort": "推理力度",
+    "reasoningEffort": "推理力度",
+    "reasoning": "推理",
+    "ultrathinkNote": "你的提示词文本中包含 \"ultrathink\"。请移除它才能更改此选项。"
+  },
+  "speech": {
+    "start": "开始语音输入",
+    "cancel": "取消语音输入",
+    "finish": "结束语音输入",
+    "busy": "语音输入正忙",
+    "skip": "跳过",
+    "preparing": "准备中",
+    "recording": "录音中",
+    "transcribing": "转写中",
+    "postProcessing": "整理转写文本中",
+    "downloadModel": "正在下载语音模型 {{percent}}%"
+  },
+  "voiceError": {
+    "failed": "语音输入失败",
+    "dismiss": "关闭语音输入错误",
+    "openSettings": "打开语音设置",
+    "retryTranscription": "重试转写",
+    "recordAgain": "重新录音",
+    "microphoneAccess": "需要麦克风权限",
+    "draftUnavailable": "草稿不可用",
+    "anotherRecording": "已有录音在进行",
+    "unavailable": "语音输入不可用",
+    "transcriptionBusy": "转写仍在进行",
+    "languageUnsupported": "不支持该语言",
+    "couldNotPrepare": "无法准备听写",
+    "couldNotStart": "无法开始录音",
+    "recordingInterrupted": "录音被中断",
+    "couldNotFinish": "无法结束录音",
+    "transcriptionFailed": "转写失败",
+    "draftChanged": "草稿已变化",
+    "noSpeech": "未检测到语音",
+    "microphoneProcessingFailed": "麦克风处理失败",
+    "microphoneDisconnected": "麦克风已断开"
+  }
+}
