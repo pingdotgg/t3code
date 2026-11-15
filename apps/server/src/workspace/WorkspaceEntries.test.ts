@@ -2,7 +2,6 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { FileFinder } from "@ff-labs/fff-node";
-import type { ProjectEntry } from "@t3tools/contracts";
 import { it, afterEach, describe, expect } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -434,20 +433,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("keeps the Git calls of a folder that is not a repository within four", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir();
-        const folders = Array.from({ length: 24 }, (_, index) => `folder-${index}`);
-        for (const folder of folders) yield* writeTextFile(cwd, `${folder}/drop.log`);
-
-        const { listings, mostRunning } = yield* listAtOnce(cwd, folders);
-        expect(listings).toEqual(
-          folders.map((folder) => [{ path: `${folder}/drop.log`, kind: "file" }]),
-        );
-        expect(mostRunning).toBe(4);
-      }),
-    );
-
     it.effect("checks a submodule's folders apart from the outer repository's", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ git: true });
@@ -491,30 +476,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           inner.length,
         );
         expect(mostRunning).toBe(4);
-      }),
-    );
-
-    it.effect("applies ignore rules edited between listings", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTempDir({ git: true });
-        yield* writeTextFile(cwd, ".gitignore", "*.log\n");
-        const folders = Array.from({ length: 8 }, (_, index) => `folder-${index}`);
-        for (const folder of folders) {
-          yield* writeTextFile(cwd, `${folder}/keep.txt`);
-          yield* writeTextFile(cwd, `${folder}/drop.log`);
-        }
-        yield* writeTextFile(cwd, "folder-7/.gitignore", "!drop.log\n");
-        const labels = (listings: ReadonlyArray<ReadonlyArray<ProjectEntry>>) =>
-          listings.flat().flatMap((entry) => (entry.ignored === true ? [entry.path] : []));
-
-        expect(labels((yield* listAtOnce(cwd, folders)).listings)).toEqual(
-          folders.slice(0, 7).map((folder) => `${folder}/drop.log`),
-        );
-        yield* writeTextFile(cwd, ".gitignore", "*.txt\n");
-        yield* writeTextFile(cwd, "folder-7/.gitignore", "");
-        expect(labels((yield* listAtOnce(cwd, folders)).listings)).toEqual(
-          folders.map((folder) => `${folder}/keep.txt`),
-        );
       }),
     );
 

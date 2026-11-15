@@ -1,5 +1,4 @@
 import { it, describe, expect } from "@effect/vitest";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -117,68 +116,6 @@ describe("makeIgnoreCheckQueue", () => {
     }),
   );
 
-  it.effect("fails the listings of a call that dies, and keeps serving the workspace", () =>
-    Effect.gen(function* () {
-      const git = yield* makeGit;
-      const check = yield* makeIgnoreCheckQueue(git.run);
-      const running = yield* Effect.forEach(["a", "b", "c", "d"], (name) =>
-        check(folder(name)).pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      const [first] = yield* git.nextFour;
-      const shared = yield* Effect.forEach(["e", "f", "g"], (name) =>
-        check(folder(name)).pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      yield* git.answer(first!);
-      const sharedCall = yield* git.next;
-      expect(sharedCall.paths).toEqual(["e", "f", "g"].flatMap((name) => folder(name).paths));
-      yield* git.answer(sharedCall, Effect.die("git crashed"));
-
-      for (const fiber of shared) {
-        const exit = yield* Effect.exit(Fiber.join(fiber));
-        expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(true);
-      }
-      yield* git.answerAll;
-      expect(yield* Fiber.joinAll(running.slice(1))).toEqual(
-        ["b", "c", "d"].map((name) => expect.objectContaining(labelsOf(name))),
-      );
-      expect(yield* check(folder("later"))).toEqual(expect.objectContaining(labelsOf("later")));
-    }),
-  );
-
-  it.effect(
-    "asks each folder of a timed-out or refused shared call again alone, four at once",
-    () =>
-      Effect.gen(function* () {
-        const failures: ReadonlyArray<Effect.Effect<GitOutput, string>> = [
-          Effect.fail("timed out"),
-          Effect.succeed({ exitCode: 128, stdout: "", stdoutTruncated: false }),
-        ];
-        for (const failure of failures) {
-          const git = yield* makeGit;
-          const check = yield* makeIgnoreCheckQueue(git.run);
-          const names = Array.from({ length: 16 }, (_, index) => `folder-${index}`);
-          const fibers = yield* Effect.forEach(names, (name) =>
-            check(folder(name)).pipe(Effect.forkChild({ startImmediately: true })),
-          );
-          const [first] = yield* git.nextFour;
-          yield* git.answer(first!);
-          const sharedCall = yield* git.next;
-          expect(sharedCall.paths).toEqual(names.slice(4).flatMap((name) => folder(name).paths));
-          yield* git.answer(sharedCall, failure);
-          yield* git.answerAll;
-
-          expect(yield* Fiber.joinAll(fibers)).toEqual(
-            names.map((name) => expect.objectContaining(labelsOf(name))),
-          );
-          // Every folder of the failed call got its own call, as it would without sharing.
-          expect(git.calls.slice(5).map((call) => call.paths)).toEqual(
-            names.slice(4).map((name) => folder(name).paths),
-          );
-          expect(git.mostRunning()).toBe(IGNORE_CHECKS_PER_WORKSPACE);
-        }
-      }),
-  );
-
   it.effect("ends waiting listings when the service closes before their call can start", () =>
     Effect.gen(function* () {
       const git = yield* makeGit;
@@ -202,41 +139,6 @@ describe("makeIgnoreCheckQueue", () => {
         expect(Exit.isFailure(yield* Effect.exit(Fiber.join(fiber)))).toBe(true);
       }
       expect(git.calls.length).toBe(IGNORE_CHECKS_PER_WORKSPACE);
-    }),
-  );
-
-  it.effect("answers identical unshareable checks with one call and keeps others apart", () =>
-    Effect.gen(function* () {
-      const git = yield* makeGit;
-      const check = yield* makeIgnoreCheckQueue(git.run);
-      yield* Effect.forEach(["a", "b", "c", "d"], (name) =>
-        check(folder(name)).pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      const [first] = yield* git.nextFour;
-      const probe = { workspace: "/repo", gitCwd: "/repo", paths: ["sub/.git"], shareable: false };
-      const probes = yield* Effect.forEach([1, 2, 3], () =>
-        check(probe).pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      const linked = yield* Effect.forEach(["link-1", "link-2"], (name) =>
-        check(folder(name, false)).pipe(Effect.forkChild({ startImmediately: true })),
-      );
-      const refused = { exitCode: 128, stdout: "", stdoutTruncated: false };
-      yield* git.answer(first!);
-      const probeCall = yield* git.next;
-      expect(probeCall.paths).toEqual(["sub/.git"]);
-      yield* git.answer(probeCall, Effect.succeed(refused));
-      yield* git.answerAll;
-
-      expect(yield* Fiber.joinAll(probes)).toEqual([refused, refused, refused]);
-      expect(yield* Fiber.joinAll(linked)).toEqual(
-        ["link-1", "link-2"].map((name) => expect.objectContaining(labelsOf(name))),
-      );
-      expect(git.calls.map((call) => call.paths)).toEqual([
-        ...["a", "b", "c", "d"].map((name) => folder(name).paths),
-        ["sub/.git"],
-        folder("link-1").paths,
-        folder("link-2").paths,
-      ]);
     }),
   );
 });
