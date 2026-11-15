@@ -551,6 +551,13 @@ export function shouldPublishShellApplicationEvent(
   if (event.type === "turn-item.updated" && turnItemCanChangeUserWait(event.payload)) {
     return true;
   }
+  if (
+    event.type === "node.updated" &&
+    event.payload.kind === "root_turn" &&
+    event.payload.runId === null
+  ) {
+    return true;
+  }
   return !(
     subagentThreadIds.has(event.threadId) &&
     (event.type === "node.updated" ||
