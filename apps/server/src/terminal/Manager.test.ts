@@ -1076,11 +1076,16 @@ it.layer(
         const ready = yield* Deferred.make<void>();
         const idlePrompt = yield* Deferred.make<void>();
         let output = "";
+        let idleOutput = "";
         const unsubscribe = yield* manager.subscribe((event) =>
           Effect.gen(function* () {
             if (event.type !== "output") return;
-            if (event.terminalId === "idle" && event.data.includes("SETTLEPROMPT> ")) {
-              yield* Deferred.succeed(idlePrompt, undefined);
+            if (event.terminalId === "idle") {
+              idleOutput += event.data;
+              if (idleOutput.includes("SETTLEPROMPT> ")) {
+                yield* Deferred.succeed(idlePrompt, undefined);
+              }
+              return;
             }
             output += event.data;
             if (output.includes("SETTLEPROMPT> ")) yield* Deferred.succeed(prompt, undefined);
