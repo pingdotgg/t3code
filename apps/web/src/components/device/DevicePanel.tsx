@@ -41,6 +41,11 @@ import {
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`device:${key}`, options);
+
 const platformLabel = (platform: DevicePlatform) =>
   platform === "ios" ? "iOS Simulators" : "Android Emulators";
 
@@ -238,8 +243,9 @@ export function DevicePanel(props: {
           <DeviceHostUpdates state={state} environmentId={environmentId} />
           {bootingDevices.length > 0 ? (
             <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-              Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
-              minute.
+              {td("startingDevices", {
+                names: bootingDevices.map((device) => device.name).join(", "),
+              })}
             </div>
           ) : null}
           {operationError ? (
@@ -285,7 +291,7 @@ export function DevicePanel(props: {
             >
               {loadError !== null ? (
                 <Button size="sm" variant="outline" onClick={refreshState}>
-                  Retry
+                  {td("retry")}
                 </Button>
               ) : null}
             </DeviceLoadingView>
@@ -362,10 +368,7 @@ export function DevicePanel(props: {
                 !isAndroidDiscoveryUncertain(state) &&
                 !state.devices.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
-                  <p className="max-w-sm text-xs">
-                    No Android virtual devices found. Create one in Android Studio's Device Manager,
-                    then refresh.
-                  </p>
+                  <p className="max-w-sm text-xs">{td("noAndroidDevices")}</p>
                 ) : null}
                 {loaded && !hostBusy ? (
                   <Button
@@ -374,7 +377,7 @@ export function DevicePanel(props: {
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
-                    Refresh devices
+                    {td("refreshDevices")}
                   </Button>
                 ) : null}
               </div>
@@ -402,7 +405,7 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Dismiss device error"
+        aria-label={td("dismissDeviceError")}
         onClick={props.onDismiss}
       >
         <X />

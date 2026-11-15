@@ -195,7 +195,7 @@ export function BrowserDeviceToolbar({
     >
       {width >= 560 ? (
         <span className="mr-0.5 shrink-0 text-2xs font-medium text-muted-foreground">
-          Dimensions
+          {td("dimensionsLabel")}
         </span>
       ) : null}
       <Select
