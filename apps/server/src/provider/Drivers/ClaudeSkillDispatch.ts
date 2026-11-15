@@ -1,5 +1,5 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { composerContextEnvelopeStart } from "@t3tools/shared/composerContextReferences";
+import { composerContextProviderDataRanges } from "@t3tools/shared/composerContextReferences";
 
 /**
  * Claude expands one skill per message only when `/name` starts the text block.
@@ -26,13 +26,19 @@ export function planClaudeSkillDispatch(
   /** Mentions before this offset, such as inline handoff history, stay plain text. */
   mentionsFrom = 0,
 ): ClaudeSkillDispatch | undefined {
-  // Attached context, such as terminal output, is data: its mentions stay plain text too.
-  const mentionsUntil = mentionsFrom + composerContextEnvelopeStart(prompt.slice(mentionsFrom));
+  const contextRanges = composerContextProviderDataRanges(prompt.slice(mentionsFrom));
   const mentions = [...prompt.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
     const name = match[2] ?? "";
     const skill = skills.get(name);
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
-    if (!skill || start < mentionsFrom || start >= mentionsUntil) return [];
+    if (
+      !skill ||
+      start < mentionsFrom ||
+      contextRanges.some(
+        (range) => start >= mentionsFrom + range.start && start < mentionsFrom + range.end,
+      )
+    )
+      return [];
     return [{ name, skill, start, end: (match.index ?? 0) + match[0].length }];
   });
   const last = mentions.at(-1);

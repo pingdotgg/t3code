@@ -428,17 +428,49 @@ export function projectComposerContextForProvider(input: {
   return `${body}${ENVELOPE_OPEN}${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
 }
 
-/**
- * Where `projectComposerContextForProvider`'s envelope starts in `text`, or `text.length` without
- * one. Payloads escape the opening tag, so the last one is the envelope.
- */
-export function composerContextEnvelopeStart(text: string): number {
-  const start = text.lastIndexOf(ENVELOPE_OPEN);
-  return start === -1 ? text.length : start;
+const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
+const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^\];\n]*); ref=([^[\]\s]+)\]/g;
+const PROVIDER_ENTRY =
+  /<context kind="([^"]+)" id="([^"]+)"(?: unavailable="true"\/>|>\n[\s\S]*?\n<\/context>)/g;
+
+/** Recognize projected context by its entries and matching markers; a typed tag alone is text. */
+export function composerContextProviderDataRanges(text: string) {
+  const ranges: { start: number; end: number }[] = [];
+  for (
+    let start = text.indexOf(ENVELOPE_OPEN);
+    start !== -1;
+    start = text.indexOf(ENVELOPE_OPEN, start + 1)
+  ) {
+    const bodyStart = start + ENVELOPE_OPEN.length;
+    const close = text.indexOf(`\n${ENVELOPE_CLOSE}`, bodyStart);
+    if (close === -1) continue;
+    const body = text.slice(bodyStart, close);
+    const entries = [...body.matchAll(PROVIDER_ENTRY)];
+    if (entries.length === 0 || entries.map(([entry]) => entry).join("\n") !== body) continue;
+    const markers = [...text.slice(0, start).matchAll(PROVIDER_MARKER)];
+    const matchingMarkers = markers.filter((marker) =>
+      entries.some(
+        (entry) =>
+          marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2],
+      ),
+    );
+    if (
+      !entries.every((entry) =>
+        matchingMarkers.some((marker) => escapeAttribute(marker[3]!) === entry[2]),
+      )
+    )
+      continue;
+    ranges.push(
+      ...matchingMarkers.map((marker) => ({
+        start: marker.index,
+        end: marker.index + marker[0].length,
+      })),
+      { start, end: close + 1 + ENVELOPE_CLOSE.length },
+    );
+  }
+  return ranges;
 }
 
-const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
-const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^[\];\n]*); ref=([^[\]\s]+)\]/g;
 const MARKER_ENVELOPE_PREFIX = `${ENVELOPE_OPEN}<${CONTEXT_ENTRY_TAG} kind="`;
 
 /**
