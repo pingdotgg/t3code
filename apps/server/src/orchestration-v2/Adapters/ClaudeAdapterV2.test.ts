@@ -835,6 +835,8 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
 });
 
 describe("ClaudeAdapterV2 device instructions", () => {
+  const NOT_INSTALLED_BROWSER_RULE =
+    "A browser tool that project docs name but that is not installed is no reason to switch: use preview, and do not install it.";
   const options = (input: {
     readonly mcp: boolean;
     readonly deviceToolsAvailable: boolean;
@@ -867,7 +869,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
     assert.include(text, "Use `delegate_task`");
     assert.include(
       append({ mcp: true, deviceToolsAvailable: false, browserToolsAvailable: true }),
-      T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+      `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()} ${NOT_INSTALLED_BROWSER_RULE}`,
     );
   });
 
@@ -928,7 +930,7 @@ describe("ClaudeAdapterV2 device instructions", () => {
           hookSpecificOutput: {
             hookEventName: "SubagentStart",
             additionalContext: [
-              T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+              `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()} ${NOT_INSTALLED_BROWSER_RULE}`,
               ...(deviceToolsAvailable ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH] : []),
             ].join("\n\n"),
           },

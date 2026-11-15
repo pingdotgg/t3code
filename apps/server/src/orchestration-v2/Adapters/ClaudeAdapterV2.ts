@@ -2101,6 +2101,9 @@ const CLAUDE_SEND_TO_USER_INSTRUCTIONS = `
 Text you write before a tool call may reach the user only as a one-line summary. When the user must read something in full before your turn ends, such as a draft, a code block, or what a question you're about to ask refers to, send it with \`send_to_user\`. Put everything else in your final reply.
 `;
 
+// Claude reads a CLAUDE.md that names a missing browser CLI as the user asking for it, and installs it.
+const CLAUDE_BROWSER_INSTRUCTIONS = `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()} A browser tool that project docs name but that is not installed is no reason to switch: use preview, and do not install it.`;
+
 // Native subagents start from their task, not this session's system prompt.
 const subagentInstructions =
   (additionalContext: string): HookCallback =>
@@ -2286,7 +2289,7 @@ export function makeClaudeQueryOptions(input: {
             : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
-              (browserInstructions ? `\n${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()}\n` : "") +
+              (browserInstructions ? `\n${CLAUDE_BROWSER_INSTRUCTIONS}\n` : "") +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
@@ -2303,9 +2306,7 @@ export function makeClaudeQueryOptions(input: {
                       hooks: [
                         subagentInstructions(
                           [
-                            ...(browserInstructions
-                              ? [T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()]
-                              : []),
+                            ...(browserInstructions ? [CLAUDE_BROWSER_INSTRUCTIONS] : []),
                             ...(deviceInstructions
                               ? [T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH]
                               : []),
