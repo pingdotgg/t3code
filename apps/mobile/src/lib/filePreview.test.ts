@@ -12,7 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
-import { ThreadMediaVisibleContext } from "../features/threads/ThreadMarkdownVideo";
+import {
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "../features/threads/ThreadMarkdownVideo";
 import { AudioFilePreview } from "../features/files/AudioFilePreview";
 import { MediaVideoPlayer } from "../components/MediaVideoPlayer";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
@@ -1308,15 +1311,20 @@ describe("ThreadInlineFilePreview playback", () => {
     audio.status = { ...audio.status, isLoaded: true };
     const container = document.createElement("div");
     root = createRoot(container);
+    const retainRow = vi.fn();
     const render = (visible: boolean) =>
       root!.render(
         createElement(
-          ThreadMediaVisibleContext,
-          { value: visible },
-          createElement(ThreadInlineFilePreview, {
-            source: { kind: "document", name: "sound.mp3", uri: "https://example.com/sound.mp3" },
-            onOpen() {},
-          }),
+          ThreadMediaRetainContext,
+          { value: retainRow },
+          createElement(
+            ThreadMediaVisibleContext,
+            { value: visible },
+            createElement(ThreadInlineFilePreview, {
+              source: { kind: "document", name: "sound.mp3", uri: "https://example.com/sound.mp3" },
+              onOpen() {},
+            }),
+          ),
         ),
       );
     await act(async () => render(true));
@@ -1332,6 +1340,8 @@ describe("ThreadInlineFilePreview playback", () => {
     await act(async () => playButton()!.click());
     expect(audio.player.play).toHaveBeenCalledOnce();
     expect(pauseButton()).not.toBeNull();
+    // The feed list recycles rows beyond its draw distance, so the row itself is pinned too.
+    expect(retainRow).toHaveBeenLastCalledWith(true);
     audio.player.release.mockClear();
     audio.player.pause.mockClear();
     // Scrolling the playing chip out of view (or a new reply pushing it out)
@@ -1346,6 +1356,7 @@ describe("ThreadInlineFilePreview playback", () => {
     expect(pauseButton()).toBeNull();
     expect(playButton()).toBeNull();
     expect(audio.player.release).toHaveBeenCalledOnce();
+    expect(retainRow).toHaveBeenLastCalledWith(false);
   });
 });
 

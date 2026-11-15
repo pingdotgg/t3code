@@ -10,7 +10,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useFullscreenVideoOpen, useMediaAudioSessionHold } from "../../lib/videoAudioSession";
 import { useRefreshAssetUrl } from "../../state/assets";
-import { ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import { ThreadMediaRetainContext, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import {
   acquireAudioSession,
   activateAudioSession,
@@ -254,10 +254,16 @@ function VisibleFilePreview(
 export function ThreadInlineFilePreview(props: PreviewProps) {
   const visible = useContext(ThreadMediaVisibleContext);
   const focused = useIsFocused();
+  const retainRow = useContext(ThreadMediaRetainContext);
   // Unmounting disposes the native player, so a started player stays mounted off-screen
-  // until it finishes or fails. Leaving the screen disposes it, so the latch resets too.
+  // (and its feed row out of recycling) until it finishes or fails. Leaving the screen
+  // disposes it, so the latch resets too; the feed drops its row pin on blur itself.
   const [playbackActive, setPlaybackActive] = useState(false);
   if (!focused && playbackActive) setPlaybackActive(false);
+  const onPlaybackActivityChange = (active: boolean) => {
+    setPlaybackActive(active);
+    retainRow(active);
+  };
   return (
     <View
       className="my-1 overflow-hidden rounded-xl border border-border bg-card"
@@ -267,7 +273,7 @@ export function ThreadInlineFilePreview(props: PreviewProps) {
         <VisibleFilePreview
           key={filePreviewKey(props.source)}
           {...props}
-          onPlaybackActivityChange={setPlaybackActive}
+          onPlaybackActivityChange={onPlaybackActivityChange}
         />
       ) : (
         <>
