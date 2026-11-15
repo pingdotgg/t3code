@@ -15,6 +15,8 @@ const PREVIEW_PANEL_MIN_WIDTH = 360;
 const PREVIEW_PANEL_MAX_WIDTH_FRACTION = 0.7;
 /** Below this, the sibling chat column's composer overflows. */
 const SIBLING_COLUMN_MIN_WIDTH = 360;
+/** The narrowest row that holds the panel and its sibling at their minimums. */
+export const PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH = PREVIEW_PANEL_MIN_WIDTH + SIBLING_COLUMN_MIN_WIDTH;
 const PREVIEW_PANEL_DEFAULT_WIDTH = 540;
 
 export function usePreviewPanelInlineSize(

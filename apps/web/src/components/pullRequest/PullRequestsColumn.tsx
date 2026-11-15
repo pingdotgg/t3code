@@ -99,7 +99,7 @@ export function PullRequestsColumn({
             <div className="flex flex-wrap items-center gap-2">
               <div
                 ref={searchRef}
-                className="min-w-56 basis-full @lg/pr-list:basis-56 @lg/pr-list:flex-1"
+                className="min-w-0 basis-full @lg/pr-list:min-w-56 @lg/pr-list:basis-56 @lg/pr-list:flex-1"
               >
                 {searchInput}
               </div>
