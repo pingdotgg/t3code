@@ -283,16 +283,18 @@ function openCodeCapabilitiesForModel(input: {
 
 interface OpenCodeRelease {
   readonly providerID: string;
-  readonly id: string;
   readonly family?: string | undefined;
   readonly released?: number | undefined;
   readonly deprecated?: boolean | undefined;
 }
 
+// One family can ship several classes days apart (every Gemini 4 size is `gemini`).
+const OPENCODE_LAUNCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
- * Only the newest active release of a line (Claude Opus 4.5 through 5.5) stays current.
- * A `family` can span lines (every Gemini 4 size is `gemini`), so a line is the family
- * plus the model id without version numbers. Deprecated models are always legacy.
+ * OpenCode catalogs keep every release of a family, such as Claude Opus 4.5
+ * through 5.5. Only the newest active launch of each family within a
+ * sub-provider stays current; older releases and deprecated models are legacy.
  */
 function markOpenCodeLegacy(
   entries: ReadonlyArray<{
@@ -300,24 +302,21 @@ function markOpenCodeLegacy(
     readonly release: OpenCodeRelease;
   }>,
 ): Array<ServerProviderModel> {
-  const lineKey = ({ providerID, id, family }: OpenCodeRelease) =>
-    family
-      ? `${providerID}/${family}/${id
-          .toLowerCase()
-          .replace(/[\d.]+/g, "")
-          .replace(/[-_]+/g, "-")}`
-      : undefined;
+  const familyKey = ({ providerID, family }: OpenCodeRelease) =>
+    family ? `${providerID}/${family}` : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
-    const key = lineKey(release);
+    const key = familyKey(release);
     if (key === undefined || release.released === undefined || release.deprecated) continue;
     newest.set(key, Math.max(newest.get(key) ?? release.released, release.released));
   }
   return entries.map(({ model, release }) => {
-    const key = lineKey(release);
+    const key = familyKey(release);
     const latest = key === undefined ? undefined : newest.get(key);
     const superseded =
-      latest !== undefined && release.released !== undefined && release.released < latest;
+      latest !== undefined &&
+      release.released !== undefined &&
+      release.released < latest - OPENCODE_LAUNCH_WINDOW_MS;
     return release.deprecated || superseded ? { ...model, isLegacy: true } : model;
   });
 }
@@ -355,7 +354,6 @@ function flattenOpenCodeModels(
         },
         release: {
           providerID: provider.id,
-          id: model.id,
           family: model.family,
           released: Number.isNaN(released) ? undefined : released,
           deprecated: model.status === "deprecated",

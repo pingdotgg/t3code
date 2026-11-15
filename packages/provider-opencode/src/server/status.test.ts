@@ -906,7 +906,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash", "flash", "2026-09-10", "active"],
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
-        // One family can span model classes; a newer class does not supersede another.
+        // Classes of one family launched days apart stay current; older releases do not.
+        ["opencode", "gemini-4-argon", "gemini", "2026-10-13", "active"],
         ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active"],
         ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
@@ -918,7 +919,7 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/opus-4-5", "opencode/opus-preview"];
+      const expected = ["opencode/gemini-4-argon", "opencode/opus-4-5", "opencode/opus-preview"];
 
       runtimeMock.state.inventory = {
         providerList: {
