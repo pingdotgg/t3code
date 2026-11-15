@@ -13,7 +13,12 @@ import {
   RelayConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
-import { environmentMcpUrl, presentConnectionState } from "./presentation.ts";
+import {
+  connectionStatusText,
+  connectionStatusTitle,
+  environmentMcpUrl,
+  presentConnectionState,
+} from "./presentation.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -50,7 +55,7 @@ function supervisorState(overrides: Partial<SupervisorConnectionState>): Supervi
 }
 
 describe("connection presentation", () => {
-  it("copies the MCP address of the route this device is connected over", () => {
+  it("copies the T3 Connect MCP address first, then the route this device is connected over", () => {
     const route = (connectionId: string, httpBaseUrl: string): ConnectionRoute => {
       const target = new BearerConnectionTarget({ ...TARGET, connectionId });
       return {
@@ -80,6 +85,13 @@ describe("connection presentation", () => {
       "http://100.115.1.44:3773/mcp",
     );
     expect(environmentMcpUrl({ entry })).toBe("http://192.168.4.53:3773/mcp");
+    expect(
+      environmentMcpUrl({
+        entry,
+        connectedTarget: lan.target,
+        relayHttpBaseUrl: "https://tunnel.example.test",
+      }),
+    ).toBe("https://tunnel.example.test/mcp");
   });
 
   // regression: #16909 Copy MCP URL falls back to an alternate route when the relay route has no address
@@ -148,6 +160,28 @@ describe("connection presentation", () => {
       error: "Disconnected.",
       traceId: "trace-1",
     });
+    const awaitingApproval = presentConnectionState(
+      supervisorState({
+        phase: "backoff",
+        attempt: 1,
+        retryAt: 1,
+        lastFailure: new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          traceId: "trace-2",
+        }),
+      }),
+    );
+    expect(awaitingApproval).toEqual({
+      phase: "reconnecting",
+      error: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      traceId: "trace-2",
+      awaitingApproval: true,
+    });
+    expect(connectionStatusText(awaitingApproval)).toBe(
+      "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+    );
+    expect(connectionStatusTitle(awaitingApproval)).toBe("Waiting for approval");
   });
 
   it("preserves an explicitly available environment while offline", () => {

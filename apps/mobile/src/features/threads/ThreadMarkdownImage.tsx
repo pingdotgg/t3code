@@ -11,15 +11,16 @@ import { parse, SvgAst, type JsxAST } from "react-native-svg";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { AppText as Text } from "../../components/ui/AppText";
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
 import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
@@ -167,7 +168,8 @@ export function ThreadMarkdownImageView(props: {
       ) : (
         <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
           <MediaActionsMenu media={mediaActions}>
-            <Pressable
+            <ZoomableImagePressable
+              key={props.sourceKey}
               accessibilityRole="imagebutton"
               accessibilityLabel={props.alt ?? "Markdown image"}
               accessibilityHint={
@@ -184,34 +186,29 @@ export function ThreadMarkdownImageView(props: {
                   }),
                 )
               }
-              style={{ alignSelf: "flex-start" }}
+              className="overflow-hidden rounded-[10px] bg-md-code-bg"
+              style={{ alignSelf: "flex-start", ...frameStyle }}
             >
-              <View
-                className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                style={frameStyle}
-              >
-                {props.format === "svg" ? (
-                  <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
-                ) : (
-                  <ThreadMarkdownImageRequest
-                    key={props.sourceKey}
-                    uri={props.uri}
-                    cacheKey={props.cacheKey}
-                    onLoad={(size) =>
-                      // Only the first decode counts: later loads report the bitmap
-                      // downsampled for the current frame (969 vs 970 wide), so keeping
-                      // them resizes the frame, which reloads the image, and so on.
-                      setDecoded((current) =>
-                        current?.sourceKey === props.sourceKey
-                          ? current
-                          : { sourceKey: props.sourceKey, size },
-                      )
-                    }
-                    onError={() => setFailure({ uri: props.uri, failed: true })}
-                  />
-                )}
-              </View>
-            </Pressable>
+              {props.format === "svg" ? (
+                <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
+              ) : (
+                <ThreadMarkdownImageRequest
+                  uri={props.uri}
+                  cacheKey={props.cacheKey}
+                  onLoad={(size) =>
+                    // Only the first decode counts: later loads report the bitmap
+                    // downsampled for the current frame (969 vs 970 wide), so keeping
+                    // them resizes the frame, which reloads the image, and so on.
+                    setDecoded((current) =>
+                      current?.sourceKey === props.sourceKey
+                        ? current
+                        : { sourceKey: props.sourceKey, size },
+                    )
+                  }
+                  onError={() => setFailure({ uri: props.uri, failed: true })}
+                />
+              )}
+            </ZoomableImagePressable>
           </MediaActionsMenu>
         </PresentationSource>
       )}
