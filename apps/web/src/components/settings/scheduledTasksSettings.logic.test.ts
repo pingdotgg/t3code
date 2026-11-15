@@ -427,3 +427,12 @@ it("appends the server zone only to fixed-time schedule labels", () => {
   expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
   expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
 });
+
+it("formats schedule label times with the Time format setting", () => {
+  const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
+  const once = { type: "once", runAt: new Date(2026, 10, 20, 17, 30).toISOString() } as const;
+  expect(scheduleLabel(daily, undefined, null, "12-hour")).toMatch(/^Daily at 5:30\sPM$/);
+  expect(scheduleLabel(daily, undefined, null, "24-hour")).toBe("Daily at 17:30");
+  expect(scheduleLabel(once, undefined, null, "12-hour")).toMatch(/5:30\sPM$/);
+  expect(scheduleLabel(once, undefined, null, "24-hour")).toMatch(/17:30$/);
+});
