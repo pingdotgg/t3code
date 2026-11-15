@@ -1,3 +1,4 @@
+import { FitSheet } from "../../../components/ui/FitSheet";
 import { ScreenContent } from "../../../components/ui/ScreenContent";
 import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
@@ -68,12 +69,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
-  const footer = (
-    <View
-      className="shrink-0 gap-2 border-t border-border-subtle bg-sheet-solid px-5 pt-3"
-      onLayout={android ? (event) => setFooterHeight(event.nativeEvent.layout.height) : undefined}
-      style={{ paddingBottom: Math.max(insets.bottom, 18) }}
-    >
+  const actions = (
+    <View className="gap-2">
       <Button
         label="Commit changes"
         icon="checkmark"
@@ -92,6 +89,15 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       />
     </View>
   );
+  const footer = (
+    <View
+      className="shrink-0 gap-2 border-t border-border-subtle bg-sheet-solid px-5 pt-3"
+      onLayout={android ? (event) => setFooterHeight(event.nativeEvent.layout.height) : undefined}
+      style={{ paddingBottom: Math.max(insets.bottom, 18) }}
+    >
+      {actions}
+    </View>
+  );
   const header = (
     <SheetHeader
       title="Commit changes"
@@ -100,6 +106,136 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       accessibilityLabel="Cancel commit"
     />
   );
+
+  const content = (
+    <>
+      {isDefaultRef ? (
+        <Text className="text-sm text-warning-foreground">
+          You’re on the default branch. You can create a new branch when committing.
+        </Text>
+      ) : null}
+      <View className="gap-2">
+        <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
+        <TextInput
+          multiline
+          accessibilityLabel="Commit message"
+          value={dialogCommitMessage}
+          onChangeText={setDialogCommitMessage}
+          placeholder="Describe your changes…"
+          textAlignVertical="top"
+          className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
+        />
+        <Text className="text-xs text-foreground-muted">
+          Leave empty to generate a message automatically.
+        </Text>
+      </View>
+      <View>
+        <View className="flex-row items-center justify-between gap-2 pb-2">
+          <View className="flex-1 gap-1">
+            <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
+            <Text className="text-xs text-foreground-muted">
+              {selectedFiles.length} of {allFiles.length} selected · +
+              {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
+            </Text>
+          </View>
+          {allFiles.length > 0 ? (
+            <Button
+              label={allSelected ? "Deselect all" : "Select all"}
+              tone="text"
+              onPress={() =>
+                setExcludedFiles(
+                  allSelected ? new Set(allFiles.map((file) => file.path)) : new Set(),
+                )
+              }
+            />
+          ) : null}
+        </View>
+        {allFiles.length === 0 ? (
+          <Text className="py-4 text-sm text-foreground-muted">No changed files to commit.</Text>
+        ) : (
+          allFiles.map((file) => {
+            const included = !excludedFiles.has(file.path);
+            const slash = file.path.lastIndexOf("/");
+            const name = file.path.slice(slash + 1);
+            const directory = slash >= 0 ? file.path.slice(0, slash) : null;
+            return (
+              <Pressable
+                key={file.path}
+                className="min-h-16 flex-row items-center gap-3 border-t border-border-subtle py-3"
+                accessibilityRole="checkbox"
+                accessibilityLabel={file.path}
+                accessibilityState={{ checked: included }}
+                onPress={() =>
+                  setExcludedFiles((current) => {
+                    const next = new Set(current);
+                    if (next.has(file.path)) next.delete(file.path);
+                    else next.add(file.path);
+                    return next;
+                  })
+                }
+              >
+                <View
+                  className={cn(
+                    "size-5 items-center justify-center rounded-full",
+                    included ? "bg-primary" : "border border-input-border",
+                  )}
+                >
+                  {included ? (
+                    <SymbolView
+                      name="checkmark"
+                      size={13}
+                      tintColorClassName="accent-primary-foreground"
+                    />
+                  ) : null}
+                </View>
+                <View className="flex-1 gap-1">
+                  <Text
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                    className="text-sm font-t3-medium text-foreground"
+                  >
+                    {name}
+                  </Text>
+                  {directory ? (
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="middle"
+                      className="text-xs text-foreground-muted"
+                    >
+                      {directory}
+                    </Text>
+                  ) : null}
+                </View>
+                <View className="flex-row gap-2">
+                  <Text className="text-xs text-adaptive-emerald-700-300">
+                    +{formatDiffCount(file.insertions)}
+                  </Text>
+                  <Text className="text-xs text-adaptive-rose-700-300">
+                    −{formatDiffCount(file.deletions)}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })
+        )}
+      </View>
+    </>
+  );
+
+  if (!android) {
+    return (
+      <FitSheet
+        header={header}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
+        contentContainerClassName="px-5 pt-4 gap-5"
+      >
+        {content}
+        {actions}
+      </FitSheet>
+    );
+  }
 
   return (
     // Material sheet drags follow the first nested-scrolling native view, and the inline
@@ -136,118 +272,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           contentContainerClassName="px-5 pt-4 pb-6 gap-5"
           contentContainerStyle={android ? { paddingBottom: footerHeight + 24 } : undefined}
         >
-          {isDefaultRef ? (
-            <Text className="text-sm text-warning-foreground">
-              You’re on the default branch. You can create a new branch when committing.
-            </Text>
-          ) : null}
-          <View className="gap-2">
-            <Text className="text-sm font-t3-medium text-foreground">Commit message</Text>
-            <TextInput
-              multiline
-              accessibilityLabel="Commit message"
-              value={dialogCommitMessage}
-              onChangeText={setDialogCommitMessage}
-              placeholder="Describe your changes…"
-              textAlignVertical="top"
-              className="min-h-24 rounded-xl bg-subtle px-4 py-3 text-base"
-            />
-            <Text className="text-xs text-foreground-muted">
-              Leave empty to generate a message automatically.
-            </Text>
-          </View>
-          <View>
-            <View className="flex-row items-center justify-between gap-2 pb-2">
-              <View className="flex-1 gap-1">
-                <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
-                <Text className="text-xs text-foreground-muted">
-                  {selectedFiles.length} of {allFiles.length} selected · +
-                  {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
-                </Text>
-              </View>
-              {allFiles.length > 0 ? (
-                <Button
-                  label={allSelected ? "Deselect all" : "Select all"}
-                  tone="text"
-                  onPress={() =>
-                    setExcludedFiles(
-                      allSelected ? new Set(allFiles.map((file) => file.path)) : new Set(),
-                    )
-                  }
-                />
-              ) : null}
-            </View>
-            {allFiles.length === 0 ? (
-              <Text className="py-4 text-sm text-foreground-muted">
-                No changed files to commit.
-              </Text>
-            ) : (
-              allFiles.map((file) => {
-                const included = !excludedFiles.has(file.path);
-                const slash = file.path.lastIndexOf("/");
-                const name = file.path.slice(slash + 1);
-                const directory = slash >= 0 ? file.path.slice(0, slash) : null;
-                return (
-                  <Pressable
-                    key={file.path}
-                    className="min-h-16 flex-row items-center gap-3 border-t border-border-subtle py-3"
-                    accessibilityRole="checkbox"
-                    accessibilityLabel={file.path}
-                    accessibilityState={{ checked: included }}
-                    onPress={() =>
-                      setExcludedFiles((current) => {
-                        const next = new Set(current);
-                        if (next.has(file.path)) next.delete(file.path);
-                        else next.add(file.path);
-                        return next;
-                      })
-                    }
-                  >
-                    <View
-                      className={cn(
-                        "size-5 items-center justify-center rounded-full",
-                        included ? "bg-primary" : "border border-input-border",
-                      )}
-                    >
-                      {included ? (
-                        <SymbolView
-                          name="checkmark"
-                          size={13}
-                          tintColorClassName="accent-primary-foreground"
-                        />
-                      ) : null}
-                    </View>
-                    <View className="flex-1 gap-1">
-                      <Text
-                        numberOfLines={1}
-                        ellipsizeMode="middle"
-                        className="text-sm font-t3-medium text-foreground"
-                      >
-                        {name}
-                      </Text>
-                      {directory ? (
-                        <Text
-                          numberOfLines={1}
-                          ellipsizeMode="middle"
-                          className="text-xs text-foreground-muted"
-                        >
-                          {directory}
-                        </Text>
-                      ) : null}
-                    </View>
-                    <View className="flex-row gap-2">
-                      <Text className="text-xs text-adaptive-emerald-700-300">
-                        +{formatDiffCount(file.insertions)}
-                      </Text>
-                      <Text className="text-xs text-adaptive-rose-700-300">
-                        −{formatDiffCount(file.deletions)}
-                      </Text>
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </View>
+          {content}
         </ScrollView>
         {android ? null : footer}
       </ScreenContent>
