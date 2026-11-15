@@ -367,11 +367,11 @@ describe("bounded binary previews", () => {
           .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await expect
-          .element(page.getByRole("option", { name: "sqliteData (1 rows)" }))
+          .element(page.getByRole("option", { name: "sqliteData (1 row)" }))
           .toHaveFocus();
         await userEvent.keyboard("{ArrowDown}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toHaveFocus();
         await userEvent.keyboard("{Enter}");
         await expect.element(page.getByRole("cell", { name: "42", exact: true })).toBeVisible();
@@ -1836,7 +1836,7 @@ it("clamps workspace PDF scroll when pages shrink or disappear", async () => {
     );
   });
   await fixture.reload(screen, preview(urls.single, "four"));
-  await expect.element(screen.getByText("1 / 1 pages", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1 / 1 page", { exact: true })).toBeVisible();
   await fixture.reload(screen, preview(urls.original, "five"));
   await expect.element(screen.getByText("1 / 3 pages", { exact: true })).toBeVisible();
 });
