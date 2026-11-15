@@ -13626,7 +13626,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["running", "completed-awaited"] as const)(
+  it.effect.each(["running", "completed-awaited", "completed-awaited-stale-snapshot"] as const)(
     "preserves settled background work until an explicit stop: %s",
     (taskState) =>
       Effect.scoped(
@@ -13657,7 +13657,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(settledThread?.pendingBackgroundTasks?.[0]?.taskId, WAKE_TASK_ID);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
 
-          if (taskState === "completed-awaited") {
+          if (taskState !== "running") {
             if (harness.runtime.awaitBackgroundTasks === undefined) {
               return yield* Effect.die("Claude must expose background task awaiting.");
             }
@@ -13683,7 +13683,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   ...harness.providerThread,
                   nativeThreadRef: {
                     ...harness.providerThread.nativeThreadRef!,
-                    nativeId: "replacement-session",
+                    nativeId:
+                      taskState === "completed-awaited-stale-snapshot"
+                        ? WAKE_NATIVE_SESSION
+                        : "replacement-session",
                   },
                 },
                 now,
@@ -13691,6 +13694,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 text: "Continue in a fresh session.",
                 attachments: [],
                 providerTurnOrdinal: 2,
+                modelSelection: {
+                  ...CLAUDE_TEST_MODEL_SELECTION,
+                  model: "claude-haiku-4-5-20251001",
+                },
               }),
             )
             .pipe(Effect.result);

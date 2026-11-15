@@ -6802,6 +6802,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ).size > 0;
           const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
           const hadPersistedRoster = (remembered?.pendingBackgroundTasks?.length ?? 0) > 0;
+          const hadHeldCompletions =
+            (awaitedCompletionsByNativeThread.get(nativeThreadId)?.size ?? 0) > 0;
           const priorOpaqueTombstones = taskIdSetForNativeThread(
             yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
             nativeThreadId,
@@ -6836,7 +6838,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               preservedOpaqueTombstones,
             );
           }
-          if (!hadRoster && !hadPersistedRoster) {
+          if (!hadRoster && !hadPersistedRoster && !hadHeldCompletions) {
             return;
           }
           if (remembered === undefined) {
