@@ -6,26 +6,27 @@ import { ColorHueSlider, ColorSaturationValuePlane } from "../ui/color-picker";
 import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { translateDynamic } from "../../i18nCore";
 export function getThemeRoleLabel(role: ThemeColorRole): string {
   const labels: Partial<Record<ThemeColorRole, string>> = {
-    canvas: "Background",
-    toolbar: "Toolbar background",
-    toolbarForeground: "Toolbar text",
-    toolbarBorder: "Toolbar border",
-    toolbarControl: "Toolbar control",
-    toolbarControlForeground: "Toolbar control text",
-    toolbarControlHover: "Toolbar control hover",
-    accent: "Accent color",
-    errorForeground: "Error text",
-    errorSurface: "Error background",
-    warningForeground: "Warning text",
-    warningSurface: "Warning background",
-    updateForeground: "Update text",
-    updateSurface: "Update background",
+    canvas: "themeEditor.Background",
+    toolbar: "themeEditor.ToolbarBackground",
+    toolbarForeground: "themeEditor.ToolbarText",
+    toolbarBorder: "themeEditor.ToolbarBorder",
+    toolbarControl: "themeEditor.ToolbarControl",
+    toolbarControlForeground: "themeEditor.ToolbarControlText",
+    toolbarControlHover: "themeEditor.ToolbarControlHover",
+    accent: "themeEditor.AccentColor",
+    errorForeground: "themeEditor.ErrorText",
+    errorSurface: "themeEditor.ErrorBackground",
+    warningForeground: "themeEditor.WarningText",
+    warningSurface: "themeEditor.WarningBackground",
+    updateForeground: "themeEditor.UpdateText",
+    updateSurface: "themeEditor.UpdateBackground",
   };
   const label = labels[role];
-  if (label) return label;
-  return role.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
+  if (label) return translateDynamic(label);
+  return translateDynamic(`themeEditor.role.${role}`);
 }
 
 function themePickerAlphaSuffix(value: string): string {
@@ -176,7 +177,7 @@ function ThemeColorPickerPanel({
           onInteractionEnd={committer.flush}
         />
         <ColorHueSlider
-          label={`${label} hue`}
+          label={translateDynamic("themeEditor.hue", { label })}
           value={hsv.h}
           onChange={(h) => commitHsv({ ...hsv, h })}
           onInteractionEnd={committer.flush}
@@ -192,7 +193,7 @@ function ThemeColorPickerPanel({
                 style={{ backgroundColor: currentColor }}
               />
               <input
-                aria-label={`${label} picker hex value`}
+                aria-label={translateDynamic("themeEditor.pickerHexValue", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   setIsEditingText(false);
@@ -214,7 +215,7 @@ function ThemeColorPickerPanel({
             </span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
-                aria-label={`${label} picker RGB value`}
+                aria-label={translateDynamic("themeEditor.pickerRgbValue", { label })}
                 className="h-8 min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
                 onBlur={() => {
                   setIsEditingText(false);
@@ -276,7 +277,7 @@ function ThemeColorPicker({
             <PopoverTrigger
               render={
                 <button
-                  aria-label={`Choose ${label} color`}
+                  aria-label={translateDynamic("themeEditor.chooseColor", { label })}
                   className="relative flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-foreground/30 transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   onFocus={onInteract}
                   onPointerDown={onInteract}
@@ -353,7 +354,10 @@ export const ThemeColorField = memo(function ThemeColorField({
         <TooltipTrigger
           render={
             <button
-              aria-label={`${selected ? "Hide" : "Show"} ${label} usage`}
+              aria-label={translateDynamic(
+                selected ? "themeEditor.hideUsage" : "themeEditor.showUsage",
+                { label },
+              )}
               aria-pressed={selected}
               className="flex min-w-0 flex-1 cursor-pointer items-center rounded-md text-left text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => onToggleSelected?.(role)}
@@ -376,7 +380,7 @@ export const ThemeColorField = memo(function ThemeColorField({
         />
         <Input
           aria-invalid={!isColorValue}
-          aria-label={`${label} hex value`}
+          aria-label={translateDynamic("themeEditor.hexValue", { label })}
           className="w-28 shrink-0"
           font="mono"
           id={`${role}-hex`}
