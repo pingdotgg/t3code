@@ -405,10 +405,15 @@ describe("an IME composition over a selection with a chip", () => {
     },
   ])("replaces $range as typing would", async ({ anchor, head, composed }) => {
     const value = `LEFT${chip} ${chip} RIGHT`;
-    await using screen = await mountEditor(value);
+    await using screen = await mountEditor(`LEFT${chip} ${chip} `);
     const { editor } = screen;
     await act(async () => {
-      editor.commands.focus();
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    await userEvent.keyboard("RIGHT");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    await act(async () => {
       editor.commands.setTextSelection({ from: anchor, to: head });
     });
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
@@ -426,6 +431,7 @@ describe("an IME composition over a selection with a chip", () => {
       editor.commands.undo();
     });
     expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    expect(editor.state.selection.toJSON()).toEqual({ type: "text", anchor, head });
   });
 });
 

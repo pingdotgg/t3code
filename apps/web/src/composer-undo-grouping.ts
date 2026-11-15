@@ -18,9 +18,9 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
-/** Tag a deletion of the selection an IME composition is about to replace, so both undo as one edit. */
+/** Start a replacement undo group, keeping the IME edits together and prior typing separate. */
 export function markAsCompositionReplace(tr: Transaction): Transaction {
-  return tr.setMeta(COMPOSITION_REPLACE_META, true);
+  return closeHistory(tr).setMeta(COMPOSITION_REPLACE_META, true);
 }
 
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
