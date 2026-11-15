@@ -5,6 +5,7 @@ import * as DateTime from "effect/DateTime";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
+  isSettledForkRelationship,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
   threadRelationshipRowStatus,
@@ -57,6 +58,34 @@ describe("thread relationships", () => {
     expect(
       threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, child)[0]!),
     ).toBeNull();
+  });
+
+  it("marks a settled child fork as settled without changing its parent", () => {
+    const parent = ThreadId.make("parent");
+    const child = ThreadId.make("settled-child");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: parent,
+          status: "completed",
+          lineage: { parentThreadId: null },
+        },
+        {
+          id: child,
+          status: "completed",
+          settledOverride: "settled",
+          lineage: { parentThreadId: parent, relationshipToParent: "fork" },
+        },
+      ] as never,
+      projection: null,
+    });
+    const childRow = immediateThreadRelationships(graph, parent)[0]!;
+    const parentRow = immediateThreadRelationships(graph, child)[0]!;
+
+    expect(isSettledForkRelationship(graph, childRow)).toBe(true);
+    expect(threadRelationshipRowStatus(graph, childRow)).toBe("settled");
+    expect(isSettledForkRelationship(graph, parentRow)).toBe(false);
+    expect(threadRelationshipRowStatus(graph, parentRow)).toBe("completed");
   });
 
   it.each(["fork", "subagent"] as const)(
