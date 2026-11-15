@@ -3935,7 +3935,7 @@ function isClaudeSubagentAsyncLaunchAck(output: ClaudeNativeToolOutput): boolean
       return true;
     }
   }
-  return claudeSubagentRawResultText(output).startsWith("Async agent launched successfully.");
+  return claudeSubagentResultText(output).startsWith("Async agent launched successfully.");
 }
 
 // Background Agent launches ACK immediately and workflow launches return run handles; only task_notification settles those.
