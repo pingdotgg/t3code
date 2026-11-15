@@ -61,21 +61,72 @@ export function normalizeComposerImageFileMimeType(file: File): File {
   });
 }
 
-export function composerImageDedupKey(
+function composerImageSignature(
   image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name">,
 ): string {
   // Hydrated images get fresh lastModified values, so exclude it from dedupe.
   return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
 }
 
+// A file whose bytes were never read only matches itself.
+const composerImageFingerprints = new WeakMap<File, string>();
+const unreadComposerImageKeys = new WeakMap<File, string>();
+let unreadComposerImageCount = 0;
+
+function composerImageFingerprint(file: File): string {
+  const fingerprint = composerImageFingerprints.get(file) ?? unreadComposerImageKeys.get(file);
+  if (fingerprint !== undefined) return fingerprint;
+  const unreadKey = `unread:${unreadComposerImageCount++}`;
+  unreadComposerImageKeys.set(file, unreadKey);
+  return unreadKey;
+}
+
+/** Records the bytes behind an image file, so a draft drops it only as a byte-for-byte repeat. */
+export function rememberComposerImageBytes(file: File, bytes: Uint8Array): void {
+  // cyrb53: two 32-bit FNV-style lanes, fast enough to run over every byte of an image.
+  let first = 0xdeadbeef;
+  let second = 0x41c6ce57;
+  for (let index = 0; index < bytes.length; index++) {
+    const byte = bytes[index]!;
+    first = Math.imul(first ^ byte, 2654435761);
+    second = Math.imul(second ^ byte, 1597334677);
+  }
+  first = Math.imul(first ^ (first >>> 16), 2246822507);
+  first ^= Math.imul(second ^ (second >>> 13), 3266489909);
+  second = Math.imul(second ^ (second >>> 16), 2246822507);
+  second ^= Math.imul(first ^ (first >>> 13), 3266489909);
+  composerImageFingerprints.set(file, `${second >>> 0}:${first >>> 0}`);
+}
+
+export async function readComposerImageBytes(file: File): Promise<void> {
+  if (composerImageFingerprints.has(file)) return;
+  // An unreadable file keeps matching only itself.
+  const bytes = await file.arrayBuffer().catch(() => null);
+  if (bytes) rememberComposerImageBytes(file, new Uint8Array(bytes));
+}
+
+/** Images with this key are the same image: same name, type, size and bytes. */
+export function composerImageDedupKey(
+  image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name" | "file">,
+): string {
+  return `${composerImageSignature(image)}\u0000${composerImageFingerprint(image.file)}`;
+}
+
 // Compression changes an image's bytes, so a compressed image answers for the file it came from.
 const composerImageSourceKeys = new WeakMap<File, string>();
 
-/** The draft store's image dedupe key, taken from the file as pasted rather than as compressed. */
+/**
+ * A pasted image's name, type and size, known before its bytes are read, to guess that the draft
+ * already has it. Only the draft store's dedupe key decides.
+ */
 export function composerImageSourceKey(file: File): string {
   return (
     composerImageSourceKeys.get(file) ??
-    composerImageDedupKey({ mimeType: file.type, sizeBytes: file.size, name: file.name || "image" })
+    composerImageSignature({
+      mimeType: file.type,
+      sizeBytes: file.size,
+      name: file.name || "image",
+    })
   );
 }
 
