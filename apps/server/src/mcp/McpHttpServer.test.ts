@@ -273,6 +273,22 @@ it.effect.each([
     ),
 );
 
+it.effect("rejects a metadata-only response when the screenshot is saved", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      yield* serveSnapshots("mcp-missing-pixels", {
+        ...snapshotResult,
+        screenshot: { width: 10, height: 5 },
+      });
+      const result = yield* callSnapshot({ save: true });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: expect.stringContaining("did not contain requested PNG pixels") },
+      ]);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 const layerRecordingTools = (calls: Array<unknown>) => {
   const RecordingToolkit = Toolkit.make(
     OrchestratorToolkit.tools.delegate_task,
@@ -418,7 +434,9 @@ it.effect.each([
           tabId: alternateTabId,
           threadId,
         });
-        expect(event.request.input).toEqual({});
+        expect(event.request.input).toEqual(
+          images && requests !== 7 ? {} : { pixelsRequired: false },
+        );
         return broker.respond({
           clientId: "mcp-image-option-client",
           connectionId: event.connectionId,
@@ -427,7 +445,8 @@ it.effect.each([
           result: {
             ...page,
             title: `Snapshot ${requests}`,
-            screenshot: { ...screenshot, data: png },
+            screenshot:
+              images || requests === 7 ? { ...screenshot, data: png } : { width: 1, height: 1 },
           },
         });
       }).pipe(Effect.forkScoped);
@@ -545,11 +564,12 @@ it.effect("names the screenshot destination when saving it fails", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       yield* (yield* FileSystem.FileSystem).writeFileString(config.browserArtifactsDir, "occupied");
-      yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
+      const inputs = yield* serveSnapshots("mcp-save-failure-client", snapshotResult);
 
       const snapshot = yield* callSnapshot({ tabId: alternateTabId, save: true });
       const text = snapshot.content[0]?.type === "text" ? snapshot.content[0].text : "";
 
+      expect(inputs).toEqual([{ fullScreenshot: true }]);
       expect(snapshot.isError).toBe(true);
       expect(text).toMatch(/^Preview snapshot failed: Could not save preview screenshot to /);
       expect(text).toContain(config.browserArtifactsDir);
