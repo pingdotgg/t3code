@@ -906,6 +906,9 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         ["opencode", "flash", "flash", "2026-09-10", "active"],
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
         ["opencode", "big-pickle", undefined, "2025-10-17", "active"],
+        // One family can span model classes; a newer class does not supersede another.
+        ["opencode", "gemini-4-carbon", "gemini", "2026-11-10", "active"],
+        ["opencode", "gemini-4-hydrogen", "gemini", "2026-11-12", "active"],
         ["openrouter", "opus-4-5", "claude-opus", "2025-11-24", "active"],
       ] as const;
       const legacySlugs = (
