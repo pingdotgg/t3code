@@ -725,7 +725,7 @@ describe("pools", () => {
         ...(workspaceId ? { resetCredits: { availableCount: 1, nextCreditId: "grant-hub" } } : {}),
       },
     });
-    const rows =(account: ReturnType<typeof hubAccount>) =>
+    const rows = (account: ReturnType<typeof hubAccount>) =>
       collectLimitAccounts(
         new Map([
           [
