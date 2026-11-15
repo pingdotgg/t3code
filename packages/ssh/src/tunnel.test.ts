@@ -340,19 +340,13 @@ describe("ssh tunnel scripts", () => {
     },
   );
 
-  it.each([
-    { homeName: "home", checksum: "sha256sum" },
-    { homeName: "home\\cache", checksum: "sha256sum" },
-    { homeName: "home\ncache", checksum: "sha256sum" },
-    { homeName: "home", checksum: "shasum" },
-    { homeName: "home\\cache", checksum: "shasum" },
-    { homeName: "home\ncache", checksum: "shasum" },
-  ])("names missing gzip ($homeName, $checksum)", ({ homeName, checksum }) => {
+  // The home path holds characters that sha256sum and shasum escape when they print a file name.
+  it.each(["sha256sum", "shasum"])("names missing gzip after verifying with %s", (checksum) => {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-runner-"));
     try {
       const bin = NodePath.join(root, "bin");
       const release = NodePath.join(root, "release");
-      const home = NodePath.join(root, homeName);
+      const home = NodePath.join(root, "home\\\ncache");
       const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
       NodeFS.mkdirSync(bin);
       NodeFS.mkdirSync(home);
