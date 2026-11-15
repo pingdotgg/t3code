@@ -268,6 +268,7 @@ it("copies the pull request's link from the copy link shortcut", async () => {
 
 it("opens a URL-selected pull request without repeatedly reopening its detail", async () => {
   setup();
+  await page.viewport(1400, 900);
   await using screen = await render(
     <SidebarProvider>
       <PullRequestsPage />
@@ -291,6 +292,13 @@ it("opens a URL-selected pull request without repeatedly reopening its detail", 
   await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Timeline", exact: true }));
   await expect.element(screen.getByText("Later commit", { exact: true })).toBeVisible();
+  // Too narrow for the list beside the review: the review fills the page and goes back to the list.
+  await page.viewport(600, 900);
+  const back = screen.getByRole("button", { name: /^Back to/ });
+  await userEvent.click(back);
+  await expect.element(back).not.toBeInTheDocument();
+  await expect.element(screen.getByText("Later commit", { exact: true })).not.toBeInTheDocument();
+  await page.viewport(414, 896);
 });
 
 it("switches the timeline between newest and oldest activity first", async () => {

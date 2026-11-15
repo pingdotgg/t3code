@@ -182,7 +182,10 @@ function PreviewPanelShellFrame(
       className={cn(
         "relative flex h-full min-h-0 min-w-0 max-w-full flex-col self-stretch",
         pane
-          ? cn("[--preview-panel-gap:0px]", open && "md:ps-2 md:[--preview-panel-gap:0.5rem]")
+          ? cn(
+              "[--preview-panel-gap:0px]",
+              open && !maximized && "md:ps-2 md:[--preview-panel-gap:0.5rem]",
+            )
           : // A sheet shows its popover surface, the lift the narrow sidebar sheet has.
             cn("[--preview-panel-gap:1px]", props.mode !== "sheet" && "bg-background"),
         isInline ? (maximized ? "flex-1" : "shrink-0") : "w-full",
