@@ -2288,6 +2288,64 @@ it.effect("a follow-up sent after the parent's own run ended is still a task", (
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("a later run a provider wake starts there wakes the parent with its reply", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* a.remote.start();
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const delegated = yield* delegateToBox(a);
+
+      // Its first run there ends while a background command it started still runs.
+      yield* Ref.set(thread.reply, "Waiting on the background suite.");
+      yield* Ref.set(thread.status, "completed");
+      yield* Deferred.succeed(thread.finished, undefined);
+      expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
+        result: "Waiting on the background suite.",
+      });
+      const wakes = (
+        seen: ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>,
+      ) => seen.filter((offer) => offer.threadId === parentThreadId).length;
+      yield* SubscriptionRef.changes(offers).pipe(
+        Stream.filter((seen) => wakes(seen) > 0),
+        Stream.runHead,
+      );
+      const wokenBefore = wakes(yield* SubscriptionRef.get(offers));
+
+      // The command finishing wakes the thread there, and nothing here sent it a message.
+      yield* Ref.set(thread.laterReply, "The background suite passed: 412 tests.");
+      yield* Deferred.succeed(thread.laterFinished, undefined);
+      const later = yield* a.orchestrator
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: 0,
+          eventType: "subagent.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.result === "The background suite passed: 412 tests.",
+          ),
+          Stream.runHead,
+        );
+      expect(Option.isSome(later)).toBe(true);
+      const offered = yield* SubscriptionRef.changes(offers).pipe(
+        Stream.filter((seen) => wakes(seen) > wokenBefore),
+        Stream.runHead,
+      );
+      expect(Option.isSome(offered)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a delayed Stop acknowledgement leaves a newer Stop owed", () =>
   Effect.scoped(
     Effect.gen(function* () {
