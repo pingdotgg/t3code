@@ -329,6 +329,34 @@ export const cascadeTerminalizeRunOwnedSubagents = Effect.fn(
   return events;
 });
 
+function endAbandonedTurnItems(input: {
+  readonly run: OrchestrationV2Run;
+  readonly items: Iterable<OrchestrationV2TurnItem>;
+  readonly status: RunOwnedSubagentTerminalStatus;
+  readonly completedAt: DateTime.Utc;
+  readonly allocateEventId: () => Effect.Effect<EventId, IdAllocator.IdAllocatorV2AllocationError>;
+}) {
+  return Effect.forEach(input.items, (item) =>
+    input.allocateEventId().pipe(
+      Effect.map((id): OrchestrationV2DomainEvent => ({
+        id,
+        type: "turn-item.updated",
+        threadId: item.threadId,
+        runId: input.run.id,
+        ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+        providerInstanceId: input.run.providerInstanceId,
+        occurredAt: input.completedAt,
+        payload: {
+          ...item,
+          status: input.status,
+          completedAt: input.completedAt,
+          updatedAt: input.completedAt,
+        },
+      })),
+    ),
+  );
+}
+
 function finalProviderThreadStatus(
   disposition: ProviderTerminalEvent["threadDisposition"],
 ): OrchestrationV2ProviderThread["status"] {
@@ -678,6 +706,8 @@ export const layer: Layer.Layer<
         readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
         readonly openRunOwnedSubagentsTerminal?: ProviderTerminalEvent;
+        // Root-run items the dead provider can no longer settle.
+        readonly abandonedTurnItems?: Iterable<OrchestrationV2TurnItem>;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         readonly terminal: ProviderTerminalEvent;
@@ -762,6 +792,17 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
+        const abandonedTurnItemEvents =
+          input.abandonedTurnItems !== undefined &&
+          isRunOwnedSubagentTerminalStatus(input.terminal.status)
+            ? yield* endAbandonedTurnItems({
+                run: input.run,
+                items: input.abandonedTurnItems,
+                status: input.terminal.status,
+                completedAt,
+                allocateEventId,
+              })
+            : [];
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
         // Omit delegatedCompletion; the startup snapshot must not overwrite newer acknowledgements, successors, or Stop barriers.
@@ -810,6 +851,7 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
+            ...abandonedTurnItemEvents,
             ...(input.abandonedProviderTurn === undefined
               ? []
               : [
@@ -1150,6 +1192,8 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
+        // Open root-thread commands and tools of this run; only an ingestion failure ends them.
+        const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
         // Owned child threads whose last snapshot reported pending work, such as a queued native
@@ -1222,6 +1266,7 @@ export const layer: Layer.Layer<
           }
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
+            openRootTurnItems.clear();
             idleFlushClosed = true;
           }
           yield* Ref.set(rootRunFinalized, true);
@@ -1333,6 +1378,19 @@ export const layer: Layer.Layer<
                 }
                 return next;
               });
+            }
+            if (
+              belongsToRootRun &&
+              event.turnItem.threadId === input.run.threadId &&
+              event.turnItem.type !== "subagent" &&
+              backgroundCapableTurnItemTypes.has(event.turnItem.type) &&
+              deliverable
+            ) {
+              if (isSettledTurnItemStatus(event.turnItem.status)) {
+                openRootTurnItems.delete(event.turnItem.id);
+              } else {
+                openRootTurnItems.set(event.turnItem.id, event.turnItem);
+              }
             }
             if (
               belongsToOwnedChildThread &&
@@ -1826,7 +1884,46 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     cause,
                   });
-                  if (yield* Ref.get(rootRunFinalized)) return;
+                  if (yield* Ref.get(rootRunFinalized)) {
+                    // The root settled earlier, but work that outlived it has no stream to end it.
+                    const allocateEventId = () =>
+                      idAllocator.allocate.event({ threadId: input.run.threadId });
+                    const open = yield* Ref.getAndSet(
+                      openRunOwnedSubagents,
+                      emptyOpenRunOwnedSubagentProjection(),
+                    );
+                    const abandoned = [...openRootTurnItems.values()];
+                    openRootTurnItems.clear();
+                    const events = [
+                      ...(yield* cascadeTerminalizeRunOwnedSubagents({
+                        run: input.run,
+                        open,
+                        status: "failed",
+                        completedAt,
+                        allocateEventId,
+                      })),
+                      ...(yield* endAbandonedTurnItems({
+                        run: input.run,
+                        items: abandoned,
+                        status: "failed",
+                        completedAt,
+                        allocateEventId,
+                      })),
+                    ];
+                    if (events.length === 0) return;
+                    yield* eventSink.writeWithEffects({ effects: [], events }).pipe(
+                      Effect.andThen(refreshAfterTurn),
+                      Effect.catchCauseIf(
+                        (writeCause) => !Cause.hasInterruptsOnly(writeCause),
+                        (writeCause) =>
+                          Effect.logWarning(
+                            "orchestration V2 failed to end work that outlived its run",
+                            { runId: input.run.id, cause: writeCause },
+                          ),
+                      ),
+                    );
+                    return;
+                  }
                   const providerThread = yield* Ref.get(latestProviderThread);
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
@@ -1877,6 +1974,7 @@ export const layer: Layer.Layer<
                       expectedStatus: "running",
                     },
                     openRunOwnedSubagents: openSubagents,
+                    abandonedTurnItems: [...openRootTurnItems.values()],
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
                     completedAt,
                     terminal: makeFailedTerminalEvent(
