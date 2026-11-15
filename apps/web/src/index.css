@@ -5177,6 +5177,10 @@ body {
   -webkit-app-region: drag;
 }
 
+[data-tab-row-overflow] {
+  -webkit-app-region: no-drag;
+}
+
 /* Electron 44 inherits app-region. Reset children to the initial value so they
    do not add drag rectangles over fixed controls. Explicit `none` is treated
    as `no-drag` and breaks titlebar dragging; `initial` emits no rectangle.

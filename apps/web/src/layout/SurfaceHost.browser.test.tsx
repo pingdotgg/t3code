@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 import { render } from "../../test/render";
@@ -101,6 +101,44 @@ const tabOffset = (strip: HTMLElement, tabId: string) => {
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
   return `${Math.round(left + strip.scrollLeft)}px`;
 };
+
+it("scrolls overflowing pane tabs from the add button without moving the workspace", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 12; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await renderHost({ insetSidebar: true });
+  const strip = screen.container.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  const header = strip.closest<HTMLElement>("[data-pane-header]")!;
+  const workspace = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth + 200));
+  strip.scrollLeft = 100;
+  const before = workspace.scrollLeft;
+
+  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
+    delta: { x: 40 },
+  });
+
+  await vi.waitFor(() => expect(strip.scrollLeft).toBe(140));
+  expect(workspace.scrollLeft).toBe(before);
+  const active = strip.querySelector<HTMLElement>("[data-joined]")!;
+  expect(joinOffset(strip)).toBe(tabOffset(strip, active.dataset.layoutPaneTab!));
+
+  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
+    delta: { x: -140 },
+  });
+  await vi.waitFor(() => expect(strip.scrollLeft).toBe(0));
+  const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+  for (const tab of tabs) {
+    if (tab !== active) useLayoutStore.getState().closeTab(tab.dataset.layoutPaneTab!);
+  }
+  await vi.waitFor(() => expect(strip.scrollWidth).toBe(strip.clientWidth));
+  await vi.waitFor(() =>
+    expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
+  );
+});
 
 it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
   using tabs = setup();
