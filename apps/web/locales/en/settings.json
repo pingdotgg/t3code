@@ -585,6 +585,17 @@
     "configureAria": "Configure advanced background activity",
     "configureTooltip": "Configure background activity"
   },
+  "notifications": {
+    "description": "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
+    "needBrowserOrDesktop": "Notifications need a supported browser over HTTPS, or the desktop app. Sound only is still available.",
+    "unavailableBrowser": "Notifications are unavailable in this browser. Sound only is still available.",
+    "notGranted": "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+    "ariaLabel": "Thread notifications",
+    "modeOff": "Off",
+    "modeNotifications": "Notifications only",
+    "modeSound": "Sound only",
+    "modeNotificationsAndSound": "Notifications with sound"
+  },
   "browserImport": {
     "targetMissingError": "That profile is no longer available. Choose where to import these cookies.",
     "quitTitle": "Quit {{browser}} to import",
@@ -1456,6 +1467,9 @@
     "thisMachine": "This machine",
     "viaRoute": "via {{route}}",
     "remoteLink": "Remote link"
+  },
+  "panelAnimations": {
+    "replayPreviewAria": "Replay panel animation preview"
   },
   "routes": {
     "reorder": "Reorder routes",

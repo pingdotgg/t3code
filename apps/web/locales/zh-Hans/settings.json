@@ -584,6 +584,17 @@
     "configureAria": "配置高级后台活动",
     "configureTooltip": "配置后台活动"
   },
+  "notifications": {
+    "description": "线程完成、失败或需要输入或批准时发出系统提醒。仅在 T3 Code 打开期间对本设备生效。",
+    "needBrowserOrDesktop": "通知需要受支持的浏览器通过 HTTPS 访问，或使用桌面应用。仍可只用声音。",
+    "unavailableBrowser": "此浏览器不支持通知。仍可只用声音。",
+    "notGranted": "请在浏览器或系统设置里允许通知，然后重新选择此选项。仍可只用声音。",
+    "ariaLabel": "线程通知",
+    "modeOff": "关闭",
+    "modeNotifications": "仅通知",
+    "modeSound": "仅声音",
+    "modeNotificationsAndSound": "通知加声音"
+  },
   "browserImport": {
     "targetMissingError": "该配置文件已不可用。请选择这些 Cookie 的导入位置。",
     "quitTitle": "退出 {{browser}} 以便导入",
@@ -1447,6 +1458,9 @@
     "thisMachine": "此机器",
     "viaRoute": "经 {{route}}",
     "remoteLink": "远程链接"
+  },
+  "panelAnimations": {
+    "replayPreviewAria": "重播面板动画预览"
   },
   "routes": {
     "reorder": "重排路由",

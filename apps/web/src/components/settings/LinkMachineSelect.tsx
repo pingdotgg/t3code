@@ -10,6 +10,11 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 /**
  * Shown wherever a link goes to an address this app does not already have for a
  * machine, with where that address leads.
@@ -17,10 +22,9 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 export function LinkAddressWarning({ address }: { readonly address: string }) {
   return (
     <Alert variant="warning">
-      <AlertTitle>Check this address</AlertTitle>
+      <AlertTitle>{td("linkAddressWarningTitle")}</AlertTitle>
       <AlertDescription>
-        This app cannot confirm it is one of your machines. The pairing code you paste is sent
-        there.
+        {td("linkAddressWarningDetail")}
         <span className="block break-all">{linkDestination(address)}</span>
       </AlertDescription>
     </Alert>
@@ -32,14 +36,14 @@ export function LinkMachineBadge({ machine }: { readonly machine: LinkableMachin
   if (machine.linked) {
     return (
       <Badge variant="success" size="sm">
-        Linked
+        {td("machineBadgeLinked")}
       </Badge>
     );
   }
   if (machine.connected) return null;
   return (
     <Badge variant="outline" size="sm">
-      {machine.connectOnly ? "T3 Connect" : "Not connected"}
+      {machine.connectOnly ? "T3 Connect" : td("machineBadgeNotConnected")}
     </Badge>
   );
 }
@@ -69,7 +73,7 @@ export function LinkMachineSelect({
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-xs font-medium text-foreground">
-        Machine
+        {td("machineSelectLabel")}
       </span>
       <Select
         value={value}
@@ -81,9 +85,13 @@ export function LinkMachineSelect({
         <SelectTrigger aria-labelledby={labelId}>
           <SelectValue>
             {(selected: string | null) => {
-              if (selected === ANOTHER_ADDRESS) return "Another address…";
+              if (selected === ANOTHER_ADDRESS) return td("machineSelectAnotherAddress");
               const machine = machines.find((candidate) => candidate.environmentId === selected);
-              return machine === undefined ? "Choose a machine" : <MachineName machine={machine} />;
+              return machine === undefined ? (
+                td("machineSelectPlaceholder")
+              ) : (
+                <MachineName machine={machine} />
+              );
             }}
           </SelectValue>
         </SelectTrigger>
@@ -97,7 +105,7 @@ export function LinkMachineSelect({
             </SelectItem>
           ))}
           <SelectItem value={ANOTHER_ADDRESS} hideIndicator>
-            Another address…
+            {td("machineSelectAnotherAddress")}
           </SelectItem>
         </SelectPopup>
       </Select>
