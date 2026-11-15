@@ -239,8 +239,21 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
               })
               .pipe(Effect.orElseSucceed(() => false));
             if (promoted) {
-              copiedSequences.set(thread.threadId, prior.snapshotSequence);
-              return true;
+              const back = yield* deps.sink.read({
+                environmentId: input.environmentId,
+                drainId: input.drainId,
+                threadId: thread.threadId,
+              });
+              if (
+                back !== null &&
+                back.body === prior.body &&
+                back.snapshotSequence === prior.snapshotSequence &&
+                JSON.stringify(back.attachments) === JSON.stringify(prior.attachments) &&
+                back.attachmentsSkipped === prior.attachmentsSkipped
+              ) {
+                copiedSequences.set(thread.threadId, prior.snapshotSequence);
+                return true;
+              }
             }
           }
         }
@@ -356,9 +369,8 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
         const current = yield* deps.source
           .threadSequence({ environmentId: input.environmentId, threadId })
           .pipe(Effect.orElseSucceed(() => null));
-        // A thread deleted meanwhile has nothing new to lose; a sequence change
-        // means a turn or a message landed after this copy.
-        if (current !== null && current.snapshotSequence !== sequence) moved = true;
+        // A failed currency probe cannot establish that the copy is still current.
+        if (current === null || current.snapshotSequence !== sequence) moved = true;
       }
     }
     if (moved)

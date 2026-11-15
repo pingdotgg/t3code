@@ -21,6 +21,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
 
 import { forkParked } from "../serverActivation.ts";
@@ -56,7 +57,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 /** ServerSecretStore slot holding the gateway credential (spec section 4.2). */
 const GATEWAY_CREDENTIAL_SLOT = "openshell-gateway-credential";
-/** ServerSecretStore slot holding the driver's durable spawn fallback key. */
 
 const isDriverError = Schema.is(OpenShellGatewayDriverError);
 
@@ -152,13 +152,9 @@ const make = Effect.gen(function* () {
   const maybeEventSink = yield* Effect.serviceOption(EventSink.EventSinkV2);
   const maybeSql = yield* Effect.serviceOption(SqlClient.SqlClient);
 
-  // One client per process: a gateway-url change applies after a restart.
-  // `cached` also serializes concurrent first calls, so two callers cannot build
-  // drivers against two different gateways and cache the wrong one. A failed
-  // build is not cached, so the next call retries it.
-  const cachedDriver = yield* Ref.make<
-    Option.Option<Effect.Effect<OpenShellGatewayDriver, OpenShellFleetError>>
-  >(Option.none());
+  // Gateway URL changes take effect after restart; failed initialization stays retryable.
+  const initialization = yield* Semaphore.make(1);
+  const cachedDriver = yield* Ref.make<Option.Option<OpenShellGatewayDriver>>(Option.none());
 
   const failDisabled = (message: string) => new OpenShellFleetDisabled({ message });
 
@@ -395,15 +391,11 @@ const make = Effect.gen(function* () {
     operation: OpenShellFleetOperationFailed["operation"],
   ) {
     const cached = yield* Ref.get(cachedDriver);
-    if (Option.isSome(cached)) return yield* cached.value;
-    const built = yield* Effect.cached(buildDriver(operation));
-    // Build first: the cached wrapper itself never fails, so without this run a
-    // failed init would be stored here and replayed forever. Only a success is
-    // cached, so a transient failure is retried with the next call's operation.
-    const driver = yield* built;
-    yield* Ref.set(cachedDriver, Option.some(built));
+    if (Option.isSome(cached)) return cached.value;
+    const driver = yield* buildDriver(operation);
+    yield* Ref.set(cachedDriver, Option.some(driver));
     return driver;
-  });
+  }, initialization.withPermit);
 
   const spawnWorker: OpenShellFleetService["Service"]["spawnWorker"] = Effect.fn(
     "OpenShellFleetService.spawnWorker",

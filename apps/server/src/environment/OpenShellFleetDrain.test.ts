@@ -320,6 +320,51 @@ describe("fleet drain", () => {
     }),
   );
 
+  it.effect("re-copies when a previous generation changes during promotion", () =>
+    Effect.gen(function* () {
+      const retry = deps({
+        threads: ["thread:a"],
+        seeded: [
+          {
+            drainId: "drain:environment:worker:1",
+            threadId: "thread:a",
+            snapshotSequence: 1,
+            attachments: true,
+          },
+        ],
+      });
+      const outcome = yield* drain(
+        {
+          ...retry,
+          sink: {
+            ...retry.sink,
+            copy: (input) =>
+              Effect.gen(function* () {
+                yield* retry.sink.write({
+                  environmentId: input.environmentId,
+                  drainId: input.toDrainId,
+                  threadId: input.threadId,
+                  body: '{"older":true}',
+                  snapshotSequence: 0,
+                });
+                return true;
+              }),
+          },
+        },
+        { drainId: "drain:environment:worker:2" },
+      );
+      expect(outcome.state).toBe("acked");
+      expect(retry.fetched).toEqual(["thread:a"]);
+      expect(
+        (yield* retry.sink.read({
+          environmentId,
+          drainId: "drain:environment:worker:2",
+          threadId: "thread:a",
+        }))?.snapshotSequence,
+      ).toBe(1);
+    }),
+  );
+
   it.effect("re-copies a thread whose worker state changed since the failed drain", () =>
     Effect.gen(function* () {
       const first = deps({ threads: ["thread:a", "thread:b"], failThread: "thread:b" });

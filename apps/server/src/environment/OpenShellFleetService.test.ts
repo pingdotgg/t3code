@@ -223,4 +223,21 @@ describe("OpenShellFleetService", () => {
       }),
     ),
   );
+  it.effect("shares driver initialization across concurrent first calls", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const settingsContext = yield* Layer.build(ServerSettings.layerTest(fleetOnSettings));
+        const { secrets, calls } = flakySecrets(0);
+        const fleet = yield* OpenShellFleetService.OpenShellFleetService.pipe(
+          Effect.provide(layerFleet(settingsContext, secrets)),
+        );
+        expect(
+          yield* Effect.all([fleet.listWorkers({}), fleet.listWorkers({})], {
+            concurrency: "unbounded",
+          }),
+        ).toEqual([[], []]);
+        expect(calls()).toBe(1);
+      }),
+    ),
+  );
 });
