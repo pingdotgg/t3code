@@ -15782,15 +15782,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
       }
-      const syncParentTask = Effect.gen(function* () {
+      const syncParentTask = Effect.fn("Orchestrator.syncDelegatedParentTask")(function* (
+        retry: boolean,
+      ) {
         const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
         if (parentThreadId === undefined) return;
+        const finalize = finalizeAppOwnedSubagent(threadId, { syncRunId: run.id });
         yield* threadDispatch.withLock(
           parentThreadId,
-          finalizeAppOwnedSubagent(threadId, { syncRunId: run.id }),
+          // A failed attempt may have committed the result before offering its wake.
+          retry
+            ? offerDelegatedCompletionDeliveries(parentThreadId).pipe(Effect.andThen(finalize))
+            : finalize,
         );
       });
-      yield* syncParentTask.pipe(
+      yield* syncParentTask(false).pipe(
         // Only this reaction tells the parent before a restart; a dropped one leaves its task running.
         Effect.catchCause((cause) =>
           Effect.logWarning("Retrying a delegated task update for its parent", {
@@ -15799,7 +15805,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause,
           }).pipe(
             Effect.andThen(
-              syncParentTask.pipe(
+              syncParentTask(true).pipe(
                 Effect.retry({ schedule: parentTaskSyncRetry }),
                 Effect.delay("1 second"),
                 Effect.catchCause((cause) =>

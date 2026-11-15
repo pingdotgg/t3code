@@ -30,13 +30,26 @@ import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
+const parentThreadId = ThreadId.make("thread:delegated-terminal-retry-parent");
+const childError = "Failed to initialize session: No space left on device";
+
+type ParentRead = {
+  readonly store: ProjectionStore.ProjectionStoreV2["Service"];
+  readonly threadId: ThreadId;
+  readonly fields: ReadonlyArray<string>;
+  readonly filter: Parameters<ProjectionStore.ProjectionStoreV2["Service"]["getThreadRecords"]>[2];
+};
 
 // The parent hears of a child only from the reaction to the child's terminal run.
-it.effect("a delegated child that fails to start reaches its parent after a failed read", () =>
+// `failRead` stands in for a storage error, such as a full disk, and fails the first read it accepts.
+const runDelegation = (input: {
+  readonly name: string;
+  readonly parentEndsFirst: boolean;
+  readonly failRead: (read: ParentRead) => Effect.Effect<boolean>;
+}) =>
   Effect.gen(function* () {
-    const cwd = yield* checkpointWorkspace("delegated-child-terminal-retry");
-    const parentThreadId = ThreadId.make("thread:delegated-terminal-retry-parent");
-    let failParentTaskRead = false;
+    const cwd = yield* checkpointWorkspace(input.name);
+    let armed = false;
     const turns: Array<{
       readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
       readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
@@ -46,16 +59,16 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
       driver,
       getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
       planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-      openSession: (input) =>
+      openSession: (session) =>
         Effect.gen(function* () {
           const now = yield* DateTime.now;
           const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
           return {
             instanceId,
             driver,
-            providerSessionId: input.providerSessionId,
+            providerSessionId: session.providerSessionId,
             providerSession: {
-              id: input.providerSessionId,
+              id: session.providerSessionId,
               driver,
               providerInstanceId: instanceId,
               status: "ready",
@@ -73,14 +86,14 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
                     new ProviderAdapter.ProviderAdapterEnsureThreadError({
                       driver,
                       threadId,
-                      cause: new Error("Failed to initialize session: No space left on device"),
+                      cause: new Error(childError),
                     }),
                   )
                 : Effect.succeed({
                     id: ProviderThreadId.make(`provider-thread:${threadId}`),
                     driver,
                     providerInstanceId: instanceId,
-                    providerSessionId: input.providerSessionId,
+                    providerSessionId: session.providerSessionId,
                     appThreadId: threadId,
                     ownerNodeId: null,
                     nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
@@ -123,26 +136,26 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
         }),
     };
     const layerTest = ProviderReplayHarness.layerWithRegistry(
-      { name: "delegated-child-terminal-retry" },
+      { name: input.name },
       ProviderAdapterRegistry.layerSingle(adapter),
       {
         runEffectWorker: false,
         runContinuationWorker: true,
-        // Stands in for a storage error, such as a full disk, while the parent reads the task.
         wrapProjectionStore: (store) => ({
           ...store,
-          getThreadRecords: (threadId, fields, filter) => {
-            if (!failParentTaskRead || filter?.subagentChildThreadIds === undefined) {
-              return store.getThreadRecords(threadId, fields, filter);
-            }
-            failParentTaskRead = false;
-            return Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }));
-          },
+          getThreadRecords: (threadId, fields, filter) =>
+            Effect.gen(function* () {
+              if (armed && (yield* input.failRead({ store, threadId, fields, filter }))) {
+                armed = false;
+                return yield* new ProjectionStore.ProjectionStoreReadError({ threadId });
+              }
+              return yield* store.getThreadRecords(threadId, fields, filter);
+            }),
         }),
       },
     );
 
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
@@ -201,8 +214,40 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
       const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
       const childThreadId = task.childThreadId!;
 
-      // The child fails while the parent's turn still runs, as a session that cannot start does.
-      failParentTaskRead = true;
+      const endParentTurn = Effect.gen(function* () {
+        const parentTurn = (yield* orchestrator.getThreadProjection(parentThreadId))
+          .providerTurns[0]!;
+        const parentEvents = turns.find((entry) => entry.turn.threadId === parentThreadId)!.events;
+        const now = yield* DateTime.now;
+        yield* Queue.offer(parentEvents, {
+          type: "provider_turn.updated",
+          driver,
+          providerTurn: { ...parentTurn, status: "completed", completedAt: now },
+        });
+        yield* Queue.offer(parentEvents, {
+          type: "turn.terminal",
+          driver,
+          providerThreadId: parentTurn.providerThreadId,
+          providerTurnId: parentTurn.id,
+          runOrdinal: parentRun.ordinal,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+      });
+
+      if (input.parentEndsFirst) {
+        const parentEnded = yield* watch(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === parentRun.id &&
+            event.payload.status !== "running",
+        );
+        yield* endParentTurn;
+        yield* Fiber.join(parentEnded);
+      }
+
+      armed = true;
       const childFailed = yield* watch(
         (event) =>
           event.type === "run.updated" &&
@@ -214,27 +259,9 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
         yield* TestClock.adjust("1 second");
       }
       yield* Fiber.join(childFailed);
-      assert.isFalse(failParentTaskRead, "the parent's read of the task failed once");
+      assert.isFalse(armed, "the injected read failed once");
 
-      const parentTurn = (yield* orchestrator.getThreadProjection(parentThreadId))
-        .providerTurns[0]!;
-      const parentEvents = turns.find((entry) => entry.turn.threadId === parentThreadId)!.events;
-      const now = yield* DateTime.now;
-      yield* Queue.offer(parentEvents, {
-        type: "provider_turn.updated",
-        driver,
-        providerTurn: { ...parentTurn, status: "completed", completedAt: now },
-      });
-      yield* Queue.offer(parentEvents, {
-        type: "turn.terminal",
-        driver,
-        providerThreadId: parentTurn.providerThreadId,
-        providerTurnId: parentTurn.id,
-        runOrdinal: parentRun.ordinal,
-        status: "completed",
-        failure: null,
-        threadDisposition: "reusable",
-      });
+      if (!input.parentEndsFirst) yield* endParentTurn;
       for (let attempt = 0; attempt < 5; attempt++) {
         yield* worker.drain();
         yield* TestClock.adjust("30 seconds");
@@ -243,7 +270,7 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
       const parent = yield* orchestrator.getThreadProjection(parentThreadId);
       const settled = parent.subagents.find((row) => row.id === task.id);
       assert.equal(settled?.status, "failed");
-      assert.equal(settled?.result, "Failed to initialize session: No space left on device");
+      assert.equal(settled?.result, childError);
       assert.isTrue(
         parent.messages.some(
           (message) => message.delegatedCompletion?.taskIds.includes(task.id) === true,
@@ -251,5 +278,27 @@ it.effect("a delegated child that fails to start reaches its parent after a fail
         "the parent is woken with the child's failure",
       );
     }).pipe(Effect.provide(layerTest));
+  });
+
+it.effect("a delegated child that fails to start reaches its parent after a failed read", () =>
+  runDelegation({
+    name: "delegated-child-terminal-retry",
+    parentEndsFirst: false,
+    // Only finalizing the parent's task reads its rows by child thread.
+    failRead: ({ filter }) => Effect.succeed(filter?.subagentChildThreadIds !== undefined),
+  }),
+);
+
+it.effect("an idle parent is woken when its wake fails after the task settles", () =>
+  runDelegation({
+    name: "delegated-child-terminal-wake-retry",
+    parentEndsFirst: true,
+    failRead: ({ store, threadId, fields, filter }) =>
+      threadId !== parentThreadId || fields.join() !== "runs" || filter?.runIds === undefined
+        ? Effect.succeed(false)
+        : store.getThreadRecords(parentThreadId, ["subagents"]).pipe(
+            Effect.map((records) => records.subagents.some((task) => task.result !== null)),
+            Effect.orDie,
+          ),
   }),
 );
