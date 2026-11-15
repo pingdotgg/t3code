@@ -435,6 +435,7 @@ export const layer: Layer.Layer<
           const captureStatus = yield* captureWorkspaceCheckpoint({
             cwd: input.scope.cwd,
             checkpointRef,
+            ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
           }).pipe(
             Effect.as("ready" as const),
             Effect.catchTags({

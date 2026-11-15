@@ -450,6 +450,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         instanceId,
         action: "update",
         state,
+        targetVersion,
       });
     const setQueuedState = setUpdateState(
       makeUpdateState({
