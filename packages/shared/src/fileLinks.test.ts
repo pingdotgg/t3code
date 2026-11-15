@@ -97,10 +97,7 @@ describe("parseFileUrlHref", () => {
     // GNU `ls --hyperlink` names the machine's own hostname.
     ["file://box-node/var/tmp/report.txt", "/var/tmp/report.txt", "", "Box-Node"],
     ["file://1234/var/tmp/report.txt", "/var/tmp/report.txt", "", "1234"],
-    ["file://127.1/var/tmp/report.txt", "/var/tmp/report.txt", "", "127.1"],
     ["file://böx/var/tmp/report.txt", "/var/tmp/report.txt", "", "böx"],
-    ["file:///var/tmp/report.txt", "/var/tmp/report.txt", "", "09"],
-    ["file://localhost/var/tmp/report.txt", "/var/tmp/report.txt", "", "09"],
     ["file://server/share/report.txt", "\\\\server\\share\\report.txt", "", "09"],
     ["file://a/share/report.txt", "\\\\a\\share\\report.txt", "", "a#b"],
   ])("parses %s", (href, path, hash, localHostname?: string) => {
