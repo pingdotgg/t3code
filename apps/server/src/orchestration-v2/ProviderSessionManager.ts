@@ -572,7 +572,9 @@ export const layerWithOptions = (
                   Effect.orElseSucceed(() => false),
                 );
                 const backgroundWait = yield* registry.get(providerInstanceId).pipe(
-                  Effect.map((adapter) => adapter.awaitsBackgroundTasks === true),
+                  Effect.flatMap(
+                    (adapter) => adapter.awaitsBackgroundTasks ?? Effect.succeed(false),
+                  ),
                   Effect.orElseSucceed(() => false),
                 );
                 const existing = yield* mcpSessions.read(threadId);

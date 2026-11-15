@@ -174,6 +174,11 @@ function selectOpenCodeRuntimeAdapter(input: {
   return {
     instanceId: input.v1.instanceId,
     driver: DRIVER_KIND,
+    // Resolved like openSession, so it answers for the runtime the next session opens on.
+    awaitsBackgroundTasks: Effect.flatMap(
+      pick(input.resolve),
+      (adapter) => adapter.awaitsBackgroundTasks ?? Effect.succeed(false),
+    ),
     getCapabilities: Effect.fn("OpenCodeDriver.getCapabilities")(function* () {
       const probed = Option.getOrUndefined(yield* input.probe.lastSuccess);
       const adapter = yield* pick(Effect.succeed(probed));

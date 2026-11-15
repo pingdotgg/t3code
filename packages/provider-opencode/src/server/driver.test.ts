@@ -404,6 +404,11 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         capabilities.turns.supportsNativeGoals === true,
         version.endsWith("2.2.5") || version.endsWith("2.2.6"),
       );
+      // Only the OpenCode 2 runtime implements t3_background_wait.
+      assert.equal(
+        yield* instance.orchestrationAdapter.awaitsBackgroundTasks!,
+        version.startsWith("opencode v2"),
+      );
     }),
   );
 

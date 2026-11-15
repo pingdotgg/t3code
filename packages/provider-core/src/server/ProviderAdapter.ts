@@ -806,8 +806,11 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
-    /** Its session runtimes implement `awaitBackgroundTasks`; MCP lists `t3_background_wait` only then. */
-    readonly awaitsBackgroundTasks?: true;
+    /**
+     * Whether the sessions it opens now implement `awaitBackgroundTasks`; MCP lists
+     * `t3_background_wait` only then. An adapter choosing a runtime per probe answers per runtime.
+     */
+    readonly awaitsBackgroundTasks?: Effect.Effect<boolean>;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error

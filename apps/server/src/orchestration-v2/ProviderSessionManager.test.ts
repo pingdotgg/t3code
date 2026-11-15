@@ -490,7 +490,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
-    ...(options.awaitsBackgroundTasks === true ? { awaitsBackgroundTasks: true } : {}),
+    ...(options.awaitsBackgroundTasks === true
+      ? { awaitsBackgroundTasks: Effect.succeed(true) }
+      : {}),
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>

@@ -5359,7 +5359,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId,
     driver,
-    awaitsBackgroundTasks: true,
+    awaitsBackgroundTasks: Effect.succeed(true),
     getCapabilities: Effect.fn("OpencodeAdapter.getCapabilities")(function () {
       return Effect.succeed({
         ...OpenCode2ProviderCapabilities,
