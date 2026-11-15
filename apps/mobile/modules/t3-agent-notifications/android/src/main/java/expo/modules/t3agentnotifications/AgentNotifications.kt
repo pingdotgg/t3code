@@ -299,7 +299,7 @@ object AgentNotifications {
     val openThread = contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID)
     // Retained results still need Android's ongoing flag to remain promoted.
     val ongoing = active || Build.VERSION.SDK_INT >= 36
-    val builder = base(context, ACTIVITY_CHANNEL)
+    val builder = base(context, activityChannel(context))
       .setOngoing(ongoing).setOnlyAlertOnce(true).setSilent(true)
       .setTimeoutAfter(remainingMs)
       // Live Updates must remain uncolorized to qualify for promotion.
@@ -343,20 +343,36 @@ object AgentNotifications {
 
   private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)
 
+  private fun activityChannel(context: Context): String {
+    if (Build.VERSION.SDK_INT >= 26) {
+      val previous = manager(context).getNotificationChannel("agent-activity")
+      val visibility = previous?.lockscreenVisibility
+      if (visibility == Notification.VISIBILITY_PRIVATE ||
+        visibility == Notification.VISIBILITY_SECRET
+      ) {
+        return "agent-activity"
+      }
+    }
+    return ACTIVITY_CHANNEL
+  }
+
   private fun channels(context: Context) {
     if (Build.VERSION.SDK_INT >= 26) {
       val manager = manager(context)
       // Android cannot raise an existing channel's importance; retain explicit user choices.
       val previous = manager.getNotificationChannel("agent-activity")
-      val importance = if (previous != null &&
-        (previous.importance == NotificationManager.IMPORTANCE_NONE ||
-          Build.VERSION.SDK_INT >= 29 && previous.hasUserSetImportance())
-      ) previous.importance else NotificationManager.IMPORTANCE_DEFAULT
+      val channel = activityChannel(context)
+      val importance = when {
+        previous == null -> NotificationManager.IMPORTANCE_DEFAULT
+        previous.importance != NotificationManager.IMPORTANCE_LOW -> previous.importance
+        Build.VERSION.SDK_INT >= 29 && previous.hasUserSetImportance() -> previous.importance
+        else -> NotificationManager.IMPORTANCE_DEFAULT
+      }
       manager.createNotificationChannels(
         listOf(
           NotificationChannel(ALERT_CHANNEL, "Agent alerts", NotificationManager.IMPORTANCE_HIGH),
-          NotificationChannel(
-            ACTIVITY_CHANNEL,
+          manager.getNotificationChannel(channel) ?: NotificationChannel(
+            channel,
             "Ongoing agent activity",
             importance
           ).apply {
@@ -364,13 +380,12 @@ object AgentNotifications {
               setSound(previous.sound, previous.audioAttributes)
               vibrationPattern = previous.vibrationPattern
               enableVibration(previous.shouldVibrate())
-              lockscreenVisibility = previous.lockscreenVisibility
               setShowBadge(previous.canShowBadge())
             }
           },
         )
       )
-      if (previous != null) manager.deleteNotificationChannel(previous.id)
+      if (previous != null && previous.id != channel) manager.deleteNotificationChannel(previous.id)
     }
   }
 

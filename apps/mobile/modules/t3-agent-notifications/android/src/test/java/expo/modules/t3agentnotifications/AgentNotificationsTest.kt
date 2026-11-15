@@ -25,6 +25,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowNotificationManager
 
 abstract class AgentNotificationsFixture {
   protected lateinit var context: Application
@@ -658,19 +659,75 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 @Config(sdk = [26, 33, 36], manifest = Config.NONE)
 class AgentNotificationChannelsTest {
   @Test
-  fun activityChannelMigrationPreservesDisabledNotifications() {
+  fun activityChannelMigrationPreservesExistingImportanceChoices() {
     val context = RuntimeEnvironment.getApplication()
     val manager = context.getSystemService(NotificationManager::class.java)
-    manager.createNotificationChannel(
-      NotificationChannel("agent-activity", "Ongoing agent activity", NotificationManager.IMPORTANCE_NONE)
-    )
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
-    assertEquals(
+    for (importance in listOf(
       NotificationManager.IMPORTANCE_NONE,
-      manager.getNotificationChannel("agent-activity-v2").importance
-    )
-    assertEquals(null, manager.getNotificationChannel("agent-activity"))
+      NotificationManager.IMPORTANCE_MIN,
+      NotificationManager.IMPORTANCE_LOW,
+      NotificationManager.IMPORTANCE_HIGH
+    )) {
+      ShadowNotificationManager.reset()
+      manager.createNotificationChannel(
+        NotificationChannel("agent-activity", "Ongoing agent activity", importance).apply {
+          setSound(android.net.Uri.parse("content://example/notification-sound"), null)
+          vibrationPattern = longArrayOf(0, 150, 50, 150)
+          enableVibration(true)
+        }
+      )
+      AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+      AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+      val channel = manager.getNotificationChannel("agent-activity-v2")
+      val expectedImportance = if (importance == NotificationManager.IMPORTANCE_LOW) {
+        NotificationManager.IMPORTANCE_DEFAULT
+      } else {
+        importance
+      }
+      assertEquals(expectedImportance, channel.importance)
+      assertEquals(android.net.Uri.parse("content://example/notification-sound"), channel.sound)
+      assertTrue(channel.shouldVibrate())
+      assertArrayEquals(longArrayOf(0, 150, 50, 150), channel.vibrationPattern)
+      assertEquals(null, manager.getNotificationChannel("agent-activity"))
+    }
+  }
+
+  @Test
+  fun privacyRestrictedActivityKeepsItsOriginalChannelAcrossUpdates() {
+    val context = RuntimeEnvironment.getApplication()
+    val manager = context.getSystemService(NotificationManager::class.java)
+    for (visibility in listOf(Notification.VISIBILITY_PRIVATE, Notification.VISIBILITY_SECRET)) {
+      ShadowNotificationManager.reset()
+      AgentNotifications.clear(context)
+      manager.createNotificationChannel(
+        NotificationChannel(
+          "agent-activity",
+          "Ongoing agent activity",
+          NotificationManager.IMPORTANCE_LOW
+        ).apply {
+          // Seed the system-owned preference; apps cannot copy it to a new channel.
+          lockscreenVisibility = visibility
+        }
+      )
+      val running = mapOf(
+        "device_id" to "device",
+        "user_id" to "user",
+        "updated_at" to System.currentTimeMillis().toString(),
+        "active" to "true",
+        "activity_title" to "Agent activity"
+      )
+      repeat(2) {
+        AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+        AgentNotifications.receive(context, running)
+        val card = manager.activeNotifications.single().notification
+        assertEquals("agent-activity", card.channelId)
+        assertEquals(
+          visibility,
+          manager.getNotificationChannel(card.channelId).lockscreenVisibility
+        )
+        assertEquals(null, manager.getNotificationChannel("agent-activity-v2"))
+      }
+    }
   }
 
   @Test
@@ -679,13 +736,6 @@ class AgentNotificationChannelsTest {
     val manager = context.getSystemService(NotificationManager::class.java)
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.clear(context)
-    manager.createNotificationChannel(
-      NotificationChannel("agent-activity", "Ongoing agent activity", NotificationManager.IMPORTANCE_LOW).apply {
-        setSound(android.net.Uri.parse("content://settings/system/notification_sound"), null)
-        vibrationPattern = longArrayOf(0, 150, 50, 150)
-        enableVibration(true)
-      }
-    )
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
     val running = mapOf(
       "device_id" to "device",
@@ -724,11 +774,6 @@ class AgentNotificationChannelsTest {
     assertEquals(initialCard.id, completedCard.id)
     assertEquals(initialCard.tag, completedCard.tag)
     assertEquals("agent-activity-v2", completedCard.notification.channelId)
-    val activityChannel = manager.getNotificationChannel(completedCard.notification.channelId)
-    assertEquals(NotificationManager.IMPORTANCE_DEFAULT, activityChannel.importance)
-    assertEquals(android.net.Uri.parse("content://settings/system/notification_sound"), activityChannel.sound)
-    assertTrue(activityChannel.shouldVibrate())
-    assertArrayEquals(longArrayOf(0, 150, 50, 150), activityChannel.vibrationPattern)
     assertEquals(
       "Test thread",
       completedCard.notification.extras.getString(Notification.EXTRA_TITLE)
