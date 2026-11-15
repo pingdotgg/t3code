@@ -52,8 +52,6 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.apply-thread-title"),
-    providerSessionId: ProviderSessionId,
-    providerThreadId: ProviderThreadId,
     title: Schema.String,
   }),
   Schema.Struct({

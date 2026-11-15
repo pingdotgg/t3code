@@ -224,12 +224,7 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-session.apply-thread-title":
             return providerTurnControl
-              .applyThreadTitle({
-                threadId: effect.threadId,
-                providerSessionId: effect.request.providerSessionId,
-                providerThreadId: effect.request.providerThreadId,
-                title: effect.request.title,
-              })
+              .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
               .pipe(
                 Effect.mapError(
                   (cause) =>

@@ -5312,47 +5312,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    // Queued even while no session is live: it runs after any in-flight turn start publishes one.
     if (
       (command.type === "thread.metadata.update" ||
         command.type === "thread.title.regeneration.complete") &&
-      updatedThread.title !== thread.title &&
-      thread.activeProviderThreadId !== null
+      updatedThread.title !== thread.title
     ) {
-      const { providerThreads } = yield* projectionStore
-        .getThreadRecords(command.threadId, ["providerThreads"])
-        .pipe(mapDispatchError(command));
-      const providerThread = providerThreads.find(
-        (candidate) => candidate.id === thread.activeProviderThreadId,
-      );
-      const providerSessionId = providerThread?.providerSessionId;
-      if (providerThread !== undefined && providerSessionId) {
-        const session = yield* providerSessions.get(providerSessionId).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorDispatchError({
-                commandId: command.commandId,
-                commandType: command.type,
-                cause,
-              }),
-          ),
-        );
-        if (Option.isSome(session) && session.value.applyThreadTitle !== undefined) {
-          yield* Ref.update(effects, (existing) => [
-            ...existing,
-            {
-              id: `effect:${command.commandId}:provider-session.apply-thread-title`,
-              commandId: command.commandId,
-              threadId: command.threadId,
-              request: {
-                type: "provider-session.apply-thread-title",
-                providerSessionId,
-                providerThreadId: providerThread.id,
-                title: updatedThread.title,
-              },
-            } satisfies PendingOrchestrationEffectV2,
-          ]);
-        }
-      }
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:provider-session.apply-thread-title`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "provider-session.apply-thread-title", title: updatedThread.title },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
     }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {

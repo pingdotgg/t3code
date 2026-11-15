@@ -87,8 +87,6 @@ export interface ProviderTurnControlServiceV2Shape {
   /** Best effort: a provider thread that is no longer live picks the title up when its next turn starts. */
   readonly applyThreadTitle: (input: {
     readonly threadId: ThreadId;
-    readonly providerSessionId: ProviderSessionId;
-    readonly providerThreadId: ProviderThreadId;
     readonly title: string;
   }) => Effect.Effect<
     void,
@@ -266,15 +264,10 @@ export const layer: Layer.Layer<
           "providerThreads",
         ]);
         const providerThread = providerThreads.find(
-          (candidate) => candidate.id === input.providerThreadId,
+          (candidate) => candidate.id === thread.activeProviderThreadId,
         );
-        if (
-          thread.activeProviderThreadId !== input.providerThreadId ||
-          providerThread?.providerSessionId !== input.providerSessionId
-        ) {
-          return;
-        }
-        const session = yield* sessions.get(input.providerSessionId);
+        if (!providerThread?.providerSessionId) return;
+        const session = yield* sessions.get(providerThread.providerSessionId);
         if (Option.isNone(session) || session.value.applyThreadTitle === undefined) return;
         yield* session.value.applyThreadTitle({ providerThread, title: input.title });
       }),

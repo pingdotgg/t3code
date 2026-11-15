@@ -607,11 +607,13 @@ it.effect("applies an effort change to the running Claude query without waiting 
   ),
 );
 
-it.effect("renames the running Claude session when the thread is renamed mid-turn", () =>
+const renamedClaudeSessionTitles = (options: { readonly renameDuringStartup: boolean }) =>
   Effect.gen(function* () {
     const cwd = yield* checkpointWorkspace("claude-live-rename");
     const sdkMessages = yield* Queue.unbounded<SDKMessage>();
     const renames: string[] = [];
+    const startupEntered = yield* Deferred.make<void>();
+    const startupReleased = yield* Deferred.make<void>();
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: modelSelection.instanceId,
       settings,
@@ -649,7 +651,7 @@ it.effect("renames the running Claude session when the thread is renamed mid-tur
         assertComplete: Effect.void,
       },
     });
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const threadId = ThreadId.make("thread:live-rename");
@@ -686,24 +688,41 @@ it.effect("renames the running Claude session when the thread is renamed mid-tur
         createdBy: "user",
         creationSource: "web",
       });
-      yield* worker.drain();
-      yield* Fiber.join(running);
-      assert.deepEqual(renames, []);
-
-      yield* orchestrator.dispatch({
+      const rename = orchestrator.dispatch({
         type: "thread.metadata.update",
         commandId: CommandId.make("rename"),
         threadId,
         title: "Renamed title",
       });
+      if (options.renameDuringStartup) {
+        const starting = yield* worker.drain().pipe(Effect.forkScoped);
+        yield* Deferred.await(startupEntered);
+        yield* rename;
+        yield* Deferred.succeed(startupReleased, undefined);
+        yield* Fiber.join(starting);
+        yield* Fiber.join(running);
+      } else {
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        assert.deepEqual(renames, []);
+        yield* rename;
+      }
       yield* worker.drain();
-
-      assert.deepEqual(renames, ["Renamed title"]);
+      return renames;
     }).pipe(
       Effect.provide(
         ProviderReplayHarness.layerWithRegistry(
           { name: "claude-live-rename" },
-          ProviderAdapterRegistry.layerSingle(adapter),
+          ProviderAdapterRegistry.layerSingle({
+            ...adapter,
+            openSession: (input) =>
+              options.renameDuringStartup
+                ? Deferred.succeed(startupEntered, undefined).pipe(
+                    Effect.andThen(Deferred.await(startupReleased)),
+                    Effect.andThen(adapter.openSession(input)),
+                  )
+                : adapter.openSession(input),
+          }),
           { runEffectWorker: false },
         ),
       ),
@@ -717,7 +736,22 @@ it.effect("renames the running Claude session when the thread is renamed mid-tur
         NodeCrypto.layer,
       ),
     ),
-  ),
+  );
+
+it.effect("renames the running Claude session when the thread is renamed mid-turn", () =>
+  Effect.gen(function* () {
+    assert.deepEqual(yield* renamedClaudeSessionTitles({ renameDuringStartup: false }), [
+      "Renamed title",
+    ]);
+  }),
+);
+
+it.effect("renames the Claude session when the thread is renamed while it starts", () =>
+  Effect.gen(function* () {
+    assert.deepEqual(yield* renamedClaudeSessionTitles({ renameDuringStartup: true }), [
+      "Renamed title",
+    ]);
+  }),
 );
 
 const backgroundTaskStarted = (taskId: string) =>
