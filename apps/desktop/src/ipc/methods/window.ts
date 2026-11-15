@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
+import { withPathDirectoryListings } from "@t3tools/shared/shell";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
@@ -36,6 +37,7 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronAudio from "../../electron/ElectronAudio.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -427,20 +429,26 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const REMOTE_EDITOR_PROBE_CONCURRENCY = 8;
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
   result: Schema.Array(EditorId),
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
-    const available: Array<EditorId> = [];
     const env = yield* HostProcess.Environment;
-    for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const editor = EDITORS.find((editor) => editor.id === editorId);
-      if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
-        available.push(editorId);
-      }
-    }
-    return available;
+    // Shared listings stop each editor re-stating every PATH entry x PATHEXT candidate on Windows.
+    const resolved = yield* Effect.forEach(
+      REMOTE_CAPABLE_EDITOR_IDS,
+      (editorId) => {
+        const editor = EDITORS.find((editor) => editor.id === editorId);
+        return editor
+          ? resolveEditorCommand(editor, env).pipe(Effect.map(Option.isSome))
+          : Effect.succeed(false);
+      },
+      { concurrency: REMOTE_EDITOR_PROBE_CONCURRENCY },
+    ).pipe(withPathDirectoryListings);
+    return REMOTE_CAPABLE_EDITOR_IDS.filter((_, index) => resolved[index]);
   }),
 });
 
@@ -587,4 +595,11 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),
+});
+
+export const restartAudioService = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: ElectronAudio.restart,
 });
