@@ -55,7 +55,7 @@ T3 Code prefers a matching `fj` login and falls back to `tea` when `fj` is unava
 or has no login for that server. Once an account is selected, failed actions stay on that
 account. Settings shows the detected CLI. Forgejo and Gitea share one integration entry.
 Servers hosted under a URL subpath, such as `https://example.com/forgejo`, use `tea` because
-fj 0.6 does not preserve the subpath when checking its account.
+fj does not preserve the subpath when checking its account.
 
 When cloning or publishing, use a full repository URL to select a specific server.
 You can use `owner/repo` when only one fj server is configured, or with your default `tea`
