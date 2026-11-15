@@ -144,16 +144,16 @@ const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
   hold: "Hold: record while held",
   toggle: "Toggle: press to start, press again to stop",
 };
-const UNLOAD_LABELS: Record<SpeechModelUnloadTimeout, string> = {
-  never: "Never",
-  immediately: "Immediately",
-  min_2: "After 2 minutes",
-  min_5: "After 5 minutes",
-  min_10: "After 10 minutes",
-  min_15: "After 15 minutes",
-  hour_1: "After 1 hour",
-};
 const normalizeTerm = (value: string) => value.replace(/\s+/g, " ").trim().normalize("NFC");
+const UNLOAD_KEYS: readonly SpeechModelUnloadTimeout[] = [
+  "never",
+  "immediately",
+  "min_2",
+  "min_5",
+  "min_10",
+  "min_15",
+  "hour_1",
+];
 const spellingsOf = (words: SpeechCustomWords) =>
   new Set(
     words.flatMap(({ term, aliases }) =>
@@ -707,6 +707,7 @@ function AdvancedSpeechSettings({
   prepared: PreparedConnection;
   catalog: VoiceModels;
 }) {
+  const { t } = useTranslation("settings");
   const { run, controlsDisabled, status } = catalog;
   if (!status?.supported) return null;
   const supported = status;
@@ -714,34 +715,34 @@ function AdvancedSpeechSettings({
     <AdvancedSettings targetIds={[searchableSetting("speech-hardware").id]}>
       <SettingsRow
         {...searchableSetting("speech-hardware")}
-        title="Hardware"
-        description="Auto uses the environment’s GPU when it has one."
+        title={t("voiceHardware.title")}
+        description={t("voiceHardware.description")}
         control={
           <Select
             value={supported.acceleration}
             disabled={controlsDisabled}
             onValueChange={(value) => {
               if (value)
-                void run("Could not change transcription hardware", () =>
+                void run(t("voiceHardware.changeFailed"), () =>
                   runEnvironmentSpeech(
                     updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
                   ),
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Transcription hardware" className="max-w-72">
+            <SelectTrigger size="sm" aria-label={t("voiceHardware.ariaLabel")} className="max-w-72">
               <SelectValue>
                 {supported.acceleration === "auto"
-                  ? "Auto"
+                  ? t("voiceHardware.auto")
                   : supported.acceleration === "cpu"
                     ? "CPU"
                     : (supported.gpuDevices.find(
                         (device) => `gpu:${device.id}` === supported.acceleration,
-                      )?.name ?? "Selected GPU")}
+                      )?.name ?? t("voiceHardware.selectedGpu"))}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value="auto">Auto</SelectItem>
+              <SelectItem value="auto">{t("voiceHardware.auto")}</SelectItem>
               <SelectItem value="cpu">CPU</SelectItem>
               {supported.gpuDevices.map((device) => (
                 <SelectItem key={device.id} value={`gpu:${device.id}`}>
@@ -753,15 +754,15 @@ function AdvancedSpeechSettings({
         }
       />
       <SettingsRow
-        title="Unload model"
-        description="Release the model’s memory on the environment after it sits idle."
+        title={t("voiceHardware.unloadTitle")}
+        description={t("voiceHardware.unloadDescription")}
         control={
           <Select
             value={supported.modelUnloadTimeout}
             disabled={controlsDisabled}
             onValueChange={(value) => {
               if (value)
-                void run("Could not change when the model unloads", () =>
+                void run(t("voiceHardware.unloadChangeFailed"), () =>
                   runEnvironmentSpeech(
                     updateEnvironmentSpeechModelUnloadTimeout(
                       prepared,
@@ -771,13 +772,17 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label="Unload model" className="max-w-72">
-              <SelectValue>{UNLOAD_LABELS[supported.modelUnloadTimeout]}</SelectValue>
+            <SelectTrigger
+              size="sm"
+              aria-label={t("voiceHardware.unloadTitle")}
+              className="max-w-72"
+            >
+              <SelectValue>{t(`voiceHardware.unload.${supported.modelUnloadTimeout}`)}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              {(Object.keys(UNLOAD_LABELS) as SpeechModelUnloadTimeout[]).map((timeout) => (
+              {(Object.keys(UNLOAD_KEYS) as SpeechModelUnloadTimeout[]).map((timeout) => (
                 <SelectItem key={timeout} value={timeout}>
-                  {UNLOAD_LABELS[timeout]}
+                  {t(`voiceHardware.unload.${timeout}`)}
                 </SelectItem>
               ))}
             </SelectPopup>

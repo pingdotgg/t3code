@@ -2995,5 +2995,25 @@
     "count_other": "{{count}} entries",
     "projectLower": "project dictionary",
     "sharedLower": "shared dictionary"
+  },
+  "voiceHardware": {
+    "title": "Hardware",
+    "description": "Auto uses the environment’s GPU when it has one.",
+    "changeFailed": "Could not change transcription hardware",
+    "ariaLabel": "Transcription hardware",
+    "auto": "Auto",
+    "selectedGpu": "Selected GPU",
+    "unloadTitle": "Unload model",
+    "unloadDescription": "Release the model’s memory on the environment after it sits idle.",
+    "unloadChangeFailed": "Could not change when the model unloads",
+    "unload": {
+      "never": "Never",
+      "immediately": "Immediately",
+      "min_2": "After 2 minutes",
+      "min_5": "After 5 minutes",
+      "min_10": "After 10 minutes",
+      "min_15": "After 15 minutes",
+      "hour_1": "After 1 hour"
+    }
   }
 }

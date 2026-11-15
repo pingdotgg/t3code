@@ -2975,5 +2975,25 @@
     "count_other": "{{count}} 个词条",
     "projectLower": "项目词典",
     "sharedLower": "共享词典"
+  },
+  "voiceHardware": {
+    "title": "硬件",
+    "description": "选择「自动」时，环境有 GPU 就会使用 GPU。",
+    "changeFailed": "无法更改转写硬件",
+    "ariaLabel": "转写硬件",
+    "auto": "自动",
+    "selectedGpu": "已选 GPU",
+    "unloadTitle": "卸载模型",
+    "unloadDescription": "模型在环境中闲置一段时间后，释放它占用的内存。",
+    "unloadChangeFailed": "无法更改模型卸载时间",
+    "unload": {
+      "never": "从不",
+      "immediately": "立即",
+      "min_2": "2 分钟后",
+      "min_5": "5 分钟后",
+      "min_10": "10 分钟后",
+      "min_15": "15 分钟后",
+      "hour_1": "1 小时后"
+    }
   }
 }
