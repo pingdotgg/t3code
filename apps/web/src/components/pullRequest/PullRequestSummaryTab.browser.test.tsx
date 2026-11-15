@@ -58,6 +58,7 @@ function setup() {
   state.timestampFormat = "locale";
 }
 
+import "~/index.css";
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
@@ -169,29 +170,38 @@ it("updates comment ages without another panel render", async () => {
   expect(time.textContent).toBe("6m ago");
 });
 
-it("opens a sparse description and preserves its collapse choice as conversation grows", async () => {
+it("grows a collapsed description into the room a sparse summary leaves", async () => {
   const sparse = {
     ...detail,
-    body: Array.from({ length: 12 }, (_, index) => `Description paragraph ${index + 1}.`).join(
+    body: Array.from({ length: 40 }, (_, index) => `Description paragraph ${index + 1}.`).join(
       "\n\n",
     ),
   };
-  await using screen = await render(sparse);
+  const sized = (value: PullRequestDetailView) => <div style={{ height: 600 }}>{tab(value)}</div>;
+  await using screen = await renderUi(sized(sparse));
+  const clip = () =>
+    screen.container.querySelector<HTMLElement>("[data-pr-description] [data-comment-clip]")!;
+  const scroller = screen.container.querySelector<HTMLElement>(
+    "[data-pull-request-summary-scroll]",
+  )!;
   await expect
-    .element(screen.getByRole("button", { name: "Show less", exact: true }))
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
     .toBeVisible();
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBeGreaterThan(300));
+  expect(scroller.scrollHeight).toBeLessThanOrEqual(scroller.clientHeight);
+  await userEvent.click(screen.getByRole("button", { name: "Read more", exact: true }));
   await expect
-    .element(screen.getByText("Description paragraph 12.", { exact: true }))
+    .element(screen.getByText("Description paragraph 40.", { exact: true }))
     .toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Show less", exact: true }));
   await expect
     .element(screen.getByRole("button", { name: "Read more", exact: true }))
     .toBeVisible();
   await screen.rerender(
-    tab({
+    sized({
       ...sparse,
-      commentCount: 3,
-      comments: Array.from({ length: 3 }, (_, index) => ({
+      commentCount: 12,
+      comments: Array.from({ length: 12 }, (_, index) => ({
         id: `comment-${index}`,
         kind: "issue-comment",
         author: detail.author,
@@ -203,12 +213,9 @@ it("opens a sparse description and preserves its collapse choice as conversation
       })),
     }),
   );
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBe(64));
   await expect
     .element(screen.getByRole("button", { name: "Read more", exact: true }))
-    .toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Read more", exact: true }));
-  await expect
-    .element(screen.getByRole("button", { name: "Show less", exact: true }))
     .toBeVisible();
 });
 
@@ -239,7 +246,9 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   state.update.mockReturnValueOnce(new Promise((resolve) => (finishSave = resolve)));
   const body = "Intro\n\nhttps://example.com/shot.png\n\n## Test plan\n- [ ] First\n- [ ] Second";
   const ticked = body.replace("- [ ] Second", "- [x] Second");
-  await using screen = await render({ ...detail, body, observedAt: 1 });
+  await using screen = await renderUi(
+    <div style={{ height: 1000 }}>{tab({ ...detail, body, observedAt: 1 })}</div>,
+  );
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
 
