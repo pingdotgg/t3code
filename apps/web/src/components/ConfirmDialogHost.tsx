@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   completeConfirmDialogClose,
@@ -58,6 +59,7 @@ export function ConfirmDialogHost() {
     readConfirmDialogState,
   );
 
+  const { t } = useTranslation("ui");
   const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
@@ -84,12 +86,12 @@ export function ConfirmDialogHost() {
           ) : null}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>{t("cancel")}</AlertDialogClose>
           {focusConfirm && confirmVariant === "default" ? (
-            <AlertDialogAction onClick={onConfirm}>Confirm</AlertDialogAction>
+            <AlertDialogAction onClick={onConfirm}>{t("confirm")}</AlertDialogAction>
           ) : (
             <Button variant={confirmVariant} onClick={onConfirm}>
-              Confirm
+              {t("confirm")}
             </Button>
           )}
         </AlertDialogFooter>

@@ -601,7 +601,9 @@
   },
   "thread": {
     "open": "打开",
-    "resolved": "已解决"
+    "resolved": "已解决",
+    "resolve": "解决",
+    "unresolve": "取消解决"
   },
   "titleEditor": {
     "editTitle": "编辑标题",

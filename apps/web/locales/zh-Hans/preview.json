@@ -99,5 +99,12 @@
   },
   "device": {
     "hostFallback": "设备主机"
+  },
+  "find": {
+    "findInPage": "在页面中查找",
+    "previousMatch": "上一个匹配",
+    "nextMatch": "下一个匹配",
+    "close": "关闭页内查找",
+    "unavailable": "此页面不支持页内查找"
   }
 }

@@ -106,7 +106,8 @@
     "yourAccountOn": "你的 {{host}} 账号",
     "filePicker": "文件选择器",
     "searchProjectContentsLabel": "搜索项目内容",
-    "commandPalette": "命令面板"
+    "commandPalette": "命令面板",
+    "findInBrowserPage": "在浏览器中查找页面内容"
   },
   "emptyStates": {
     "enterCloneUrl": "输入 Git 克隆 URL 后按回车继续。",

@@ -4,6 +4,7 @@ import type { BrowserImportSource } from "@t3tools/contracts";
 import { BROWSER_IMPORT_FAILURE_COPY } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowRightIcon, CheckIcon, HardDriveIcon } from "lucide-react";
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { cn, randomUUID } from "~/lib/utils";
 
@@ -566,6 +567,7 @@ function BlockedStep({
   readonly onClose: () => void;
   readonly onRetry: (() => void) | undefined;
 }) {
+  const { t } = useTranslation("ui");
   return (
     <>
       <DialogHeader>
@@ -574,9 +576,9 @@ function BlockedStep({
       </DialogHeader>
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
-          Close
+          {t("close")}
         </Button>
-        {onRetry ? <DialogAction onClick={onRetry}>Try again</DialogAction> : null}
+        {onRetry ? <DialogAction onClick={onRetry}>{t("tryAgain")}</DialogAction> : null}
       </DialogFooter>
     </>
   );

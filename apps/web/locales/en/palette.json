@@ -106,7 +106,8 @@
     "yourAccountOn": "Your {{host}} account",
     "filePicker": "File picker",
     "searchProjectContentsLabel": "Search project contents",
-    "commandPalette": "Command palette"
+    "commandPalette": "Command palette",
+    "findInBrowserPage": "Find on page in browser"
   },
   "emptyStates": {
     "enterCloneUrl": "Enter a Git clone URL and press Enter to continue.",

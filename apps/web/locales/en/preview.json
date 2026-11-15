@@ -99,5 +99,12 @@
   },
   "device": {
     "hostFallback": "Device host"
+  },
+  "find": {
+    "findInPage": "Find in page",
+    "previousMatch": "Previous match",
+    "nextMatch": "Next match",
+    "close": "Close find",
+    "unavailable": "Find on page isn't available for this page"
   }
 }

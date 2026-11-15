@@ -25,6 +25,7 @@ import {
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   BROWSER_HISTORY_MAX_ENTRIES_PER_PROJECT,
@@ -166,6 +167,7 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
+  const { t } = useTranslation("preview");
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
@@ -368,7 +370,7 @@ export function PreviewView({
     !isUnreachable;
   const handleFind = () => {
     if (!canFindInPage) {
-      toastManager.add({ type: "info", title: "Find on page isn't available for this page" });
+      toastManager.add({ type: "info", title: t("find.unavailable") });
       return;
     }
     setFind((previous) => ({ tabId: runtimeTabId, requestId: (previous?.requestId ?? 0) + 1 }));

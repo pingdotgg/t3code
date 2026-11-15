@@ -641,7 +641,9 @@
   },
   "thread": {
     "open": "Open",
-    "resolved": "Resolved"
+    "resolved": "Resolved",
+    "resolve": "Resolve",
+    "unresolve": "Unresolve"
   },
   "titleEditor": {
     "editTitle": "Edit title",

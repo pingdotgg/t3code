@@ -6,6 +6,7 @@ import type {
 } from "@t3tools/contracts";
 import { canResolvePullRequestThread } from "@t3tools/client-runtime/pull-request-editing";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -31,6 +32,7 @@ export function PullRequestResolveThreadButton({
   onRefresh: () => void;
 }) {
   const [pending, setPending] = useState(false);
+  const { t } = useTranslation("pullRequest");
   const setThreadResolution = useAtomCommand(pullRequestEnvironment.setThreadResolution, {
     reportFailure: false,
   });
@@ -46,7 +48,7 @@ export function PullRequestResolveThreadButton({
     });
     setPending(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "The conversation could not be updated" });
+      toastManager.add({ type: "error", title: t("errors.conversationNotUpdated") });
       return;
     }
     onRefresh();
@@ -60,7 +62,7 @@ export function PullRequestResolveThreadButton({
       disabled={pending}
       onClick={() => void toggle()}
     >
-      {thread.isResolved ? "Unresolve" : "Resolve"}
+      {thread.isResolved ? t("thread.unresolve") : t("thread.resolve")}
     </Button>
   );
 }

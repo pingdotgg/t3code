@@ -5,5 +5,8 @@
   "setupProgress": "设置进度",
   "stepAria": "{{step}}，第 {{index}} 步{{summary}}",
   "saturationPlane": "{{label}} 饱和度和亮度",
-  "axisSlider": "{{label}} {{axis}}"
+  "axisSlider": "{{label}} {{axis}}",
+  "cancel": "取消",
+  "confirm": "确认",
+  "tryAgain": "重试"
 }
