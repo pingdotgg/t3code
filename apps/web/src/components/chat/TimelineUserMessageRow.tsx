@@ -602,8 +602,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const steerLabelAbove = userMessageMeta !== null && !row.groupedWithPrevious;
   // Corners that touch the bubble, a neighbouring message or the steer label tighten.
   const mediaCornerClassName = cn(
-    (row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-md",
-    (mediaAboveText || row.groupedWithNext) && "rounded-br-md",
+    (row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-joined",
+    (mediaAboveText || row.groupedWithNext) && "rounded-br-joined",
   );
   // Files sent without words show as cards, not as a bubble around a name chip.
   const fileCardsOnly =
@@ -977,8 +977,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       <div
         className={cn(
           "relative min-w-0 max-w-[min(80%,32.5rem)] rounded-pane text-foreground",
-          (mediaAboveText || row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-md",
-          row.groupedWithNext && "rounded-br-md",
+          (mediaAboveText || row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-joined",
+          row.groupedWithNext && "rounded-br-joined",
           BUBBLE_CHIP_CLASS_NAME,
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
