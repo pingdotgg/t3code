@@ -1,16 +1,5 @@
-diff --git a/package.json b/package.json
---- a/package.json
-+++ b/package.json
-@@ -11,7 +11,7 @@
-     ".": {
-       "types": "./dist/index.d.ts",
-       "import": "./dist/index.js",
--      "require": "./dist/index.cjs",
-+      "require": "./dist/index.js",
-       "default": "./dist/index.js"
-     },
-     "./package.json": "./package.json"
 diff --git a/dist/fff-api.d.ts b/dist/fff-api.d.ts
+index 0f90eedca20655ccd30b8f28e433b2094341fbdf..c2ef86927d6e3ab0e8584330fa0ac3fdacc06cf5 100644
 --- a/dist/fff-api.d.ts
 +++ b/dist/fff-api.d.ts
 @@ -199,7 +199,7 @@ export type Location = {
@@ -40,7 +29,42 @@ diff --git a/dist/fff-api.d.ts b/dist/fff-api.d.ts
      scores: Score[];
      /** Total number of items (files + dirs) that matched */
      totalMatched: number;
+diff --git a/dist/finder.d.ts b/dist/finder.d.ts
+index 452102d720cc19b0560cfc9e2f1a320687047c92..490dba5277c8d751b53ed239c0ce77f3e11f9c43 100644
+--- a/dist/finder.d.ts
++++ b/dist/finder.d.ts
+@@ -242,6 +242,18 @@ export declare class FileFinder implements FileFinderApi {
+      * background watcher might have missed.
+      */
+     scanFiles(): Result<void>;
++    /**
++     * Trigger a rescan without blocking the JS thread. Patched in T3 Code.
++     */
++    scanFilesAsync(): Promise<Result<void>>;
++    /** `fileSearch` without blocking the JS thread. Patched in T3 Code. */
++    fileSearchAsync(query: string, options?: SearchOptions): Promise<Result<SearchResult>>;
++    /** `directorySearch` without blocking the JS thread. Patched in T3 Code. */
++    directorySearchAsync(query: string, options?: DirSearchOptions): Promise<Result<DirSearchResult>>;
++    /** `mixedSearch` without blocking the JS thread. Patched in T3 Code. */
++    mixedSearchAsync(query: string, options?: SearchOptions): Promise<Result<MixedSearchResult>>;
++    /** `grep` without blocking the JS thread. Patched in T3 Code. */
++    grepAsync(query: string, options?: GrepOptions): Promise<Result<GrepResult>>;
+     /**
+      * Check if a scan is currently in progress.
+      */
+@@ -254,6 +266,10 @@ export declare class FileFinder implements FileFinderApi {
+      * Get the current scan progress.
+      */
+     getScanProgress(): Result<ScanProgress>;
++    /**
++     * Read scan progress without blocking the JS thread. Patched in T3 Code.
++     */
++    getScanProgressAsync(): Promise<Result<ScanProgress>>;
+     /**
+      * Wait for the initial file scan to complete.
+      * Non-blocking: polls `isScanning` and yields to the event loop between checks.
 diff --git a/dist/index.js b/dist/index.js
+index 7c1d722eabc8d8eb98998eb48c5fe9d70b749d10..5d9fbf45095bd2b2ff1c321c03b85414498bde57 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1,7 +1,7 @@
@@ -86,7 +110,58 @@ diff --git a/dist/index.js b/dist/index.js
    if (isNullPointer(ptr)) return null;
    try {
      const [str] = restorePointer({
-@@ -426,9 +437,9 @@ function ffiDestroy(handle) {
+@@ -303,6 +314,26 @@ function freeResult(resultPtr) {
+ function readResultEnvelope(funcName, paramsType, paramsValue) {
+   loadLibrary();
+   const { rawPtr, struct: structData } = callRaw(funcName, paramsType, paramsValue);
++  return envelopeFromRaw(rawPtr, structData);
++}
++async function readResultEnvelopeOnNativeThread(funcName, handle) {
++  loadLibrary();
++  const rawPtr = await load({
++    library: LIBRARY_KEY,
++    funcName,
++    retType: DataType.External,
++    paramsType: [DataType.External],
++    paramsValue: [handle],
++    freeResultMemory: false,
++    runInNewThread: true
++  });
++  const [structData] = restorePointer({
++    retType: [FFF_RESULT_STRUCT],
++    paramsValue: wrapPointer([rawPtr])
++  });
++  return envelopeFromRaw(rawPtr, structData);
++}
++function envelopeFromRaw(rawPtr, structData) {
+   if (structData.success === 0) {
+     const errorStr = readCString(structData.error);
+     freeResult(rawPtr);
+@@ -311,7 +342,9 @@ function readResultEnvelope(funcName, paramsType, paramsValue) {
+   return { rawPtr, struct: structData };
+ }
+ function callVoidResult(funcName, paramsType, paramsValue) {
+-  const res = readResultEnvelope(funcName, paramsType, paramsValue);
++  return voidResultFromEnvelope(readResultEnvelope(funcName, paramsType, paramsValue));
++}
++function voidResultFromEnvelope(res) {
+   if ("ok" in res) return res;
+   freeResult(res.rawPtr);
+   return { ok: true, value: void 0 };
+@@ -417,18 +450,20 @@ function ffiCreate(basePath, frecencyDbPath, historyDbPath, _useUnsafeNoLock, en
+ }
+ function ffiDestroy(handle) {
+   loadLibrary();
+-  load({
++  return load({
+     library: LIBRARY_KEY,
+     funcName: "fff_destroy",
+     retType: DataType.Void,
+     paramsType: [DataType.External],
+-    paramsValue: [handle]
++    paramsValue: [handle],
++    runInNewThread: true
++  }).catch(() => {
    });
  }
  var FFF_FILE_ITEM_STRUCT = {
@@ -99,7 +174,7 @@ diff --git a/dist/index.js b/dist/index.js
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -445,8 +456,9 @@ var FFF_SCORE_STRUCT = {
+@@ -445,8 +480,9 @@ var FFF_SCORE_STRUCT = {
    distance_penalty: DataType.I32,
    current_file_penalty: DataType.I32,
    combo_match_boost: DataType.I32,
@@ -110,7 +185,7 @@ diff --git a/dist/index.js b/dist/index.js
  };
  var FFF_SEARCH_RESULT_STRUCT = {
    items: DataType.External,
-@@ -462,8 +474,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
+@@ -462,8 +498,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_DIR_ITEM_STRUCT = {
@@ -121,7 +196,7 @@ diff --git a/dist/index.js b/dist/index.js
    max_access_frecency: DataType.I32
  };
  var FFF_DIR_SEARCH_RESULT_STRUCT = {
-@@ -475,9 +487,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
+@@ -475,9 +511,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
  };
  var FFF_MIXED_ITEM_STRUCT = {
    item_type: DataType.U8,
@@ -134,7 +209,7 @@ diff --git a/dist/index.js b/dist/index.js
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -500,10 +512,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
+@@ -500,10 +536,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_GREP_MATCH_STRUCT = {
@@ -149,7 +224,7 @@ diff --git a/dist/index.js b/dist/index.js
    match_ranges: DataType.External,
    context_before: DataType.External,
    context_after: DataType.External,
-@@ -598,18 +610,13 @@ function readMixedItemFromRaw(raw) {
+@@ -598,18 +634,13 @@ function readMixedItemFromRaw(raw) {
  }
  function callAccessor(funcName, resultPtr, index, structDef) {
    loadLibrary();
@@ -170,7 +245,7 @@ diff --git a/dist/index.js b/dist/index.js
  }
  function ptrOffset(base, bytes) {
    return load({
-@@ -766,6 +773,7 @@ function parseSearchResult(rawPtr) {
+@@ -766,6 +797,7 @@ function parseSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -178,7 +253,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_search_result_get_item",
-@@ -774,13 +782,15 @@ function parseSearchResult(rawPtr) {
+@@ -774,13 +806,15 @@ function parseSearchResult(rawPtr) {
        FFF_FILE_ITEM_STRUCT
      );
      items.push(readFileItemFromRaw(rawItem));
@@ -201,7 +276,7 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
-@@ -824,6 +834,7 @@ function parseDirSearchResult(rawPtr) {
+@@ -824,6 +858,7 @@ function parseDirSearchResult(rawPtr) {
    const count = sr.count;
    const items = [];
    const scores = [];
@@ -209,7 +284,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_dir_search_result_get_item",
-@@ -832,13 +843,15 @@ function parseDirSearchResult(rawPtr) {
+@@ -832,13 +867,15 @@ function parseDirSearchResult(rawPtr) {
        FFF_DIR_ITEM_STRUCT
      );
      items.push(readDirItemFromRaw(rawItem));
@@ -232,7 +307,7 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
-@@ -897,6 +910,7 @@ function parseMixedSearchResult(rawPtr) {
+@@ -897,6 +934,7 @@ function parseMixedSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -240,7 +315,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_mixed_search_result_get_item",
-@@ -905,13 +919,15 @@ function parseMixedSearchResult(rawPtr) {
+@@ -905,13 +943,15 @@ function parseMixedSearchResult(rawPtr) {
        FFF_MIXED_ITEM_STRUCT
      );
      items.push(readMixedItemFromRaw(rawItem));
@@ -263,3 +338,264 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
+@@ -932,7 +972,7 @@ function parseMixedSearchResult(rawPtr) {
+   }
+   return { ok: true, value: result };
+ }
+-function ffiSearch(handle, query, currentFile, maxThreads, pageIndex, pageSize, comboBoostMultiplier, minComboCount) {
++function ffiSearch(handle, query, currentFile, maxThreads, pageIndex, pageSize, comboBoostMultiplier, minComboCount, onNativeThread = false) {
+   loadLibrary();
+   const rawPtr = load({
+     library: LIBRARY_KEY,
+@@ -966,9 +1006,10 @@ function ffiSearch(handle, query, currentFile, maxThreads, pageIndex, pageSize,
+       comboBoostMultiplier,
+       minComboCount
+     ],
+-    freeResultMemory: false
++    freeResultMemory: false,
++    runInNewThread: onNativeThread
+   });
+-  return parseSearchResult(rawPtr);
++  return onNativeThread ? rawPtr.then(parseSearchResult) : parseSearchResult(rawPtr);
+ }
+ function ffiGlob(handle, pattern, currentFile, maxThreads, pageIndex, pageSize) {
+   loadLibrary();
+@@ -995,7 +1036,7 @@ function ffiGlob(handle, pattern, currentFile, maxThreads, pageIndex, pageSize)
+   });
+   return parseSearchResult(rawPtr);
+ }
+-function ffiSearchDirectories(handle, query, currentFile, maxThreads, pageIndex, pageSize) {
++function ffiSearchDirectories(handle, query, currentFile, maxThreads, pageIndex, pageSize, onNativeThread = false) {
+   loadLibrary();
+   const rawPtr = load({
+     library: LIBRARY_KEY,
+@@ -1016,11 +1057,12 @@ function ffiSearchDirectories(handle, query, currentFile, maxThreads, pageIndex,
+       // page_size
+     ],
+     paramsValue: [handle, query, currentFile ?? "", maxThreads, pageIndex, pageSize],
+-    freeResultMemory: false
++    freeResultMemory: false,
++    runInNewThread: onNativeThread
+   });
+-  return parseDirSearchResult(rawPtr);
++  return onNativeThread ? rawPtr.then(parseDirSearchResult) : parseDirSearchResult(rawPtr);
+ }
+-function ffiSearchMixed(handle, query, currentFile, maxThreads, pageIndex, pageSize, comboBoostMultiplier, minComboCount) {
++function ffiSearchMixed(handle, query, currentFile, maxThreads, pageIndex, pageSize, comboBoostMultiplier, minComboCount, onNativeThread = false) {
+   loadLibrary();
+   const rawPtr = load({
+     library: LIBRARY_KEY,
+@@ -1054,11 +1096,12 @@ function ffiSearchMixed(handle, query, currentFile, maxThreads, pageIndex, pageS
+       comboBoostMultiplier,
+       minComboCount
+     ],
+-    freeResultMemory: false
++    freeResultMemory: false,
++    runInNewThread: onNativeThread
+   });
+-  return parseMixedSearchResult(rawPtr);
++  return onNativeThread ? rawPtr.then(parseMixedSearchResult) : parseMixedSearchResult(rawPtr);
+ }
+-function ffiLiveGrep(handle, query, mode, maxFileSize, maxMatchesPerFile, smartCase, fileOffset, pageLimit, timeBudgetMs, enforceTimeBudget, beforeContext, afterContext, classifyDefinitions) {
++function ffiLiveGrep(handle, query, mode, maxFileSize, maxMatchesPerFile, smartCase, fileOffset, pageLimit, timeBudgetMs, enforceTimeBudget, beforeContext, afterContext, classifyDefinitions, onNativeThread = false) {
+   loadLibrary();
+   const rawPtr = load({
+     library: LIBRARY_KEY,
+@@ -1107,9 +1150,10 @@ function ffiLiveGrep(handle, query, mode, maxFileSize, maxMatchesPerFile, smartC
+       afterContext,
+       classifyDefinitions
+     ],
+-    freeResultMemory: false
++    freeResultMemory: false,
++    runInNewThread: onNativeThread
+   });
+-  return parseGrepResult(rawPtr);
++  return onNativeThread ? rawPtr.then(parseGrepResult) : parseGrepResult(rawPtr);
+ }
+ function ffiMultiGrep(handle, patternsJoined, constraints, maxFileSize, maxMatchesPerFile, smartCase, fileOffset, pageLimit, timeBudgetMs, enforceTimeBudget, beforeContext, afterContext, classifyDefinitions) {
+   loadLibrary();
+@@ -1188,7 +1232,11 @@ var FFF_SCAN_PROGRESS_STRUCT = {
+ };
+ function ffiGetScanProgress(handle) {
+   loadLibrary();
+-  const res = readResultEnvelope("fff_get_scan_progress", [DataType.External], [handle]);
++  return scanProgressFromEnvelope(
++    readResultEnvelope("fff_get_scan_progress", [DataType.External], [handle])
++  );
++}
++function scanProgressFromEnvelope(res) {
+   if ("ok" in res) return res;
+   const handlePtr = res.struct.handle;
+   freeResult(res.rawPtr);
+@@ -1429,6 +1477,10 @@ var FileFinder = class _FileFinder {
+   handle;
+   /** Native ids of this instance's active watch subscriptions. */
+   watchers = /* @__PURE__ */ new Set();
++  /** Patched in T3 Code: in-flight native-thread calls by function name. */
++  nativeThreadCalls = /* @__PURE__ */ new Map();
++  /** Patched in T3 Code: the last search queued on a native thread. */
++  nativeSearchTail = null;
+   constructor(handle) {
+     this.handle = handle;
+   }
+@@ -1485,12 +1537,115 @@ var FileFinder = class _FileFinder {
+   destroy() {
+     if (this.handle !== null) {
+       const handle = this.handle;
+-      ffiDestroy(handle);
++      const watchers = this.watchers;
+       this.handle = null;
+-      ffiWatchCleanupAfterDestroy(handle, this.watchers);
+-      this.watchers.clear();
++      this.watchers = /* @__PURE__ */ new Set();
++      // Patched in T3 Code: freeing the handle waits on the picker lock, so it runs on a
++      // native thread, after any native-thread call still using the handle.
++      const release = () => ffiDestroy(handle).finally(() => {
++        ffiWatchCleanupAfterDestroy(handle, watchers);
++      });
++      const pending = [...this.nativeThreadCalls.values()];
++      if (this.nativeSearchTail) pending.push(this.nativeSearchTail);
++      if (pending.length > 0) {
++        Promise.allSettled(pending).then(release);
++      } else {
++        release();
++      }
+     }
+   }
++  /**
++   * Patched in T3 Code: runs a handle-only call on a libuv pool thread so waiting on fff's
++   * picker lock never blocks the JS thread. Concurrent callers share one call, so one finder
++   * holds at most one pool thread per function.
++   */
++  callOnNativeThread(funcName, fromEnvelope) {
++    const guard = this.ensureAlive();
++    if (!guard.ok) return Promise.resolve(guard);
++    const pending = this.nativeThreadCalls.get(funcName);
++    if (pending) return pending;
++    const call = readResultEnvelopeOnNativeThread(funcName, guard.value).then(fromEnvelope, (cause) => err(String(cause))).finally(() => {
++      this.nativeThreadCalls.delete(funcName);
++    });
++    this.nativeThreadCalls.set(funcName, call);
++    return call;
++  }
++  /**
++   * Patched in T3 Code: runs a search on a libuv pool thread. Searches on one finder run one at
++   * a time, so while fff's watcher holds the picker lock a finder holds at most one pool thread.
++   */
++  searchOnNativeThread(search) {
++    const guard = this.ensureAlive();
++    if (!guard.ok) return Promise.resolve(guard);
++    const call = (this.nativeSearchTail ?? Promise.resolve()).then(() => {
++      const alive = this.ensureAlive();
++      return alive.ok ? search(alive.value) : alive;
++    }).catch((cause) => err(String(cause)));
++    this.nativeSearchTail = call;
++    call.finally(() => {
++      if (this.nativeSearchTail === call) this.nativeSearchTail = null;
++    });
++    return call;
++  }
++  /** Patched in T3 Code: `fileSearch` without blocking the JS thread. */
++  fileSearchAsync(query, options) {
++    return this.searchOnNativeThread((handle) => ffiSearch(
++      handle,
++      query,
++      options?.currentFile ?? "",
++      options?.maxThreads ?? 0,
++      options?.pageIndex ?? 0,
++      options?.pageSize ?? 0,
++      options?.comboBoostMultiplier ?? 0,
++      options?.minComboCount ?? 0,
++      true
++    ));
++  }
++  /** Patched in T3 Code: `directorySearch` without blocking the JS thread. */
++  directorySearchAsync(query, options) {
++    return this.searchOnNativeThread((handle) => ffiSearchDirectories(
++      handle,
++      query,
++      options?.currentFile ?? null,
++      options?.maxThreads ?? 0,
++      options?.pageIndex ?? 0,
++      options?.pageSize ?? 0,
++      true
++    ));
++  }
++  /** Patched in T3 Code: `mixedSearch` without blocking the JS thread. */
++  mixedSearchAsync(query, options) {
++    return this.searchOnNativeThread((handle) => ffiSearchMixed(
++      handle,
++      query,
++      options?.currentFile ?? "",
++      options?.maxThreads ?? 0,
++      options?.pageIndex ?? 0,
++      options?.pageSize ?? 0,
++      options?.comboBoostMultiplier ?? 0,
++      options?.minComboCount ?? 0,
++      true
++    ));
++  }
++  /** Patched in T3 Code: `grep` without blocking the JS thread. */
++  grepAsync(query, options) {
++    return this.searchOnNativeThread((handle) => ffiLiveGrep(
++      handle,
++      query,
++      options?.mode ?? "plain",
++      options?.maxFileSize ?? 0,
++      options?.maxMatchesPerFile ?? 0,
++      options?.smartCase ?? true,
++      options?.cursor?._offset ?? 0,
++      options?.pageSize ?? 0,
++      options?.timeBudgetMs ?? 0,
++      options?.enforceTimeBudget ?? false,
++      options?.beforeContext ?? 0,
++      options?.afterContext ?? 0,
++      options?.classifyDefinitions ?? false,
++      true
++    ));
++  }
+   /**
+    * Check if this instance has been destroyed.
+    */
+@@ -1757,6 +1912,18 @@ var FileFinder = class _FileFinder {
+     if (!guard.ok) return guard;
+     return ffiScanFiles(guard.value);
+   }
++  /**
++   * Trigger a rescan without blocking the JS thread. Patched in T3 Code.
++   */
++  scanFilesAsync() {
++    return this.callOnNativeThread("fff_scan_files", voidResultFromEnvelope);
++  }
++  /**
++   * Read scan progress without blocking the JS thread. Patched in T3 Code.
++   */
++  getScanProgressAsync() {
++    return this.callOnNativeThread("fff_get_scan_progress", scanProgressFromEnvelope);
++  }
+   /**
+    * Check if a scan is currently in progress.
+    */
+@@ -1838,7 +2005,8 @@ var FileFinder = class _FileFinder {
+     if (!guard.ok) return guard;
+     const deadline = Date.now() + timeoutMs;
+     while (true) {
+-      const progress = this.getScanProgress();
++      // Patched in T3 Code: the progress read takes the picker lock.
++      const progress = await this.getScanProgressAsync();
+       if (!progress.ok) return progress;
+       if (!progress.value.isScanning && progress.value.isWarmupComplete) {
+         return { ok: true, value: true };
+diff --git a/package.json b/package.json
+index e000a78b3f79826200979ebb3fe297b599bcea67..84325461c2d963cb42cf72267079d36a419c1398 100644
+--- a/package.json
++++ b/package.json
+@@ -11,7 +11,7 @@
+     ".": {
+       "types": "./dist/index.d.ts",
+       "import": "./dist/index.js",
+-      "require": "./dist/index.cjs",
++      "require": "./dist/index.js",
+       "default": "./dist/index.js"
+     },
+     "./package.json": "./package.json"

@@ -4,6 +4,7 @@ import {
   type DeviceHostSummary,
   type DeviceId,
   type DevicePlatform,
+  type DeviceServiceState,
   type DeviceSummary,
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
@@ -48,7 +49,7 @@ export function agentDeviceQuickStart(
           .filter(Boolean)
           .join(" ")
       : host?.kind === "eas"
-        ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+        ? "This is an Expo Simulators session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
         : device.platform === "ios"
           ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
           : "The Android snapshot helper installs itself on first use.";
@@ -143,9 +144,19 @@ const mapLocateErrors = <A, R>(
     }),
   );
 
+const failedHosts = <H extends { readonly id: DeviceHostId }>(
+  state: { readonly hostStatuses: DeviceServiceState["hostStatuses"] },
+  hosts: ReadonlyArray<H>,
+) =>
+  hosts.flatMap((host) => {
+    const status = state.hostStatuses[host.id];
+    return status?.status === "failed" && status.detail ? [{ host, detail: status.detail }] : [];
+  });
+
 const pickDevice = Effect.fn("handlers.pickDevice")(function* (
   state: {
     readonly hosts: ReadonlyArray<DeviceHostSummary>;
+    readonly hostStatuses: DeviceServiceState["hostStatuses"];
     readonly devices: ReadonlyArray<DeviceSummary>;
   },
   input: {
@@ -159,8 +170,19 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
     const devices = yield* DeviceService.DeviceService;
     const located = yield* devices.locateDevice({ deviceId, hostId }).pipe(mapLocateErrors);
     if (Option.isSome(located)) return located.value;
+    const target =
+      hostId === undefined
+        ? undefined
+        : (state.hosts.find((host) => host.id === hostId) ?? { id: hostId });
+    const failures = failedHosts(state, target === undefined ? state.hosts : [target]).map(
+      ({ host, detail }) => `${hostName(host)} failed to start: ${detail}`,
+    );
     return yield* new DeviceToolUnavailableError({
-      reason: `No device ${deviceId} on ${hostId === undefined ? "any host" : hostName(state.hosts.find((host) => host.id === hostId) ?? { id: hostId })}. Call device_list for current ids.`,
+      reason: [
+        `No device ${deviceId} on ${target === undefined ? "any host" : hostName(target)}.`,
+        ...failures,
+        "Call device_list for current ids.",
+      ].join(" "),
     });
   }
   const hostId = input.hostId ?? LOCAL_DEVICE_HOST_ID;
@@ -170,11 +192,14 @@ const pickDevice = Effect.fn("handlers.pickDevice")(function* (
       (input.platform === undefined || device.platform === input.platform),
   );
   if (candidates.length === 0) {
+    const [failure] = failedHosts(state, [{ id: hostId }]);
     return yield* new DeviceToolUnavailableError({
       reason:
-        input.platform === undefined
-          ? "No simulators or emulators were found. Call device_list to see why."
-          : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
+        failure !== undefined
+          ? failure.detail
+          : input.platform === undefined
+            ? "No simulators or emulators were found. Call device_list to see why."
+            : `No ${input.platform} devices were found on host ${hostId}. Call device_list to see why.`,
     });
   }
   const platforms = new Set(candidates.map((device) => device.platform));
@@ -250,7 +275,7 @@ const handlers = {
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      // Target the opened device: an EAS device and its agent-device daemon
+      // Target the opened device: an Expo device and its agent-device daemon
       // exist only once its session runs, and Android ids change on boot.
       const opened = {
         threadId: scope.thread.threadId,

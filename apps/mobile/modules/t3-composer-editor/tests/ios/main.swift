@@ -11,13 +11,16 @@ func check(_ passed: Bool, _ message: String) {
 extension T3ComposerEditorView {
   var editor: UITextView { textView }
   var text: String { textView.serializedText() }
+  func chip(at location: Int) -> NSTextAttachment? {
+    textView.textStorage.attribute(.attachment, at: location, effectiveRange: nil) as? NSTextAttachment
+  }
 }
 
-func document(_ value: String, revision: Int, resetGeneration: Int = 0, isNativeEcho: Bool = false) -> String {
+func document(_ value: String, revision: Int, resetGeneration: Int = 0, isNativeEcho: Bool = false, tokensJson: String = "[]") -> String {
   let payload: [String: Any] = [
     "value": value,
     "selection": NSNull(),
-    "tokensJson": "[]",
+    "tokensJson": tokensJson,
     "mostRecentEventCount": revision,
     "isNativeEcho": isNativeEcho,
     "resetGeneration": resetGeneration,
@@ -33,10 +36,14 @@ func replace(_ view: T3ComposerEditorView, _ target: String, with replacement: S
   editor.replace(editor.textRange(from: start, to: end)!, withText: replacement)
 }
 
-func makeEditor(_ value: String) -> T3ComposerEditorView {
+func mention(_ label: String, at start: Int, source: String = "@README.md") -> String {
+  #"[{"type":"mention","source":"\#(source)","label":"\#(label)","start":\#(start),"end":\#(start + source.utf16.count)}]"#
+}
+
+func makeEditor(_ value: String, tokensJson: String = "[]") -> T3ComposerEditorView {
   let view = T3ComposerEditorView()
   view.frame = CGRect(x: 0, y: 0, width: 320, height: 200)
-  view.setControlledDocumentJson(document(value, revision: 0))
+  view.setControlledDocumentJson(document(value, revision: 0, tokensJson: tokensJson))
   check(view.text == value, "Initial controlled value was not applied")
   return view
 }
@@ -106,6 +113,37 @@ do {
     !view.onComposerChange.payloads.contains { ($0["value"] as? String)?.contains("hello") == true && ($0["resetGeneration"] as? Int) == 1 },
     "Committed composition republished the sent draft"
   )
+}
+
+// An echo that only shifts a chip keeps the rendered text; moving or relabeling the chip redraws it.
+do {
+  let draft = "hi! @README.md @README.md"
+  let view = makeEditor("hi @README.md @README.md", tokensJson: mention("README.md", at: 3))
+  let rendered = view.chip(at: 3)
+  check(rendered != nil, "Harness could not render the chip")
+  view.editor.selectedRange = NSRange(location: 2, length: 0)
+  view.editor.insertText("!")
+  let revision = view.onComposerChange.payloads.last?["eventCount"] as? Int ?? 0
+  view.setControlledDocumentJson(document(draft, revision: revision, isNativeEcho: true, tokensJson: mention("README.md", at: 4)))
+  check(view.chip(at: 4) === rendered, "An echo that only moved a chip replaced the text")
+  view.setControlledDocumentJson(document(draft, revision: revision, tokensJson: mention("Readme", at: 4)))
+  check((view.chip(at: 4) as? ComposerTextAttachment)?.label == "Readme", "A relabeled chip was not redrawn")
+  view.setControlledDocumentJson(document(draft, revision: revision, tokensJson: mention("Readme", at: 15)))
+  check(view.chip(at: 4) == nil && view.chip(at: 15) != nil, "A chip moved to another copy of its source stayed on the old one")
+}
+
+// A chip source that changes only in Unicode normalization is rebuilt from the new text.
+do {
+  let view = makeEditor("@\u{00E9}", tokensJson: mention("e", at: 0, source: "@\u{00E9}"))
+  view.setControlledDocumentJson(document("@e\u{0301}", revision: 0, tokensJson: mention("e", at: 0, source: "@e\u{0301}")))
+  check(view.text.utf16.elementsEqual("@e\u{0301}".utf16), "A renormalized chip source kept the old text")
+}
+
+// The placeholder label is hidden from VoiceOver, so the text view must carry it.
+do {
+  let view = makeEditor("")
+  view.setPlaceholder("Ask anything")
+  check(view.editor.accessibilityLabel == "Ask anything", "VoiceOver label: \(String(describing: view.editor.accessibilityLabel))")
 }
 
 print("composer editor tests passed")

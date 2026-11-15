@@ -102,19 +102,15 @@ describe("readProjectFilesToCopy", () => {
     expect(result).toHaveLength(5);
   });
 
-  it("does not enumerate unselected folders", async () => {
-    const { readPaths, listedPaths } = setup();
-
-    await readProjectFilesToCopy(source, [".env", ".env"]);
-
-    expect(listedPaths).toEqual([]);
-    expect(readPaths).toEqual([".env"]);
-  });
-
   it("reads overlapping file and folder selections once", async () => {
     const { readPaths, listedPaths } = setup();
 
-    await readProjectFilesToCopy(source, [".local/", ".local/nested/", ".local/config.json"]);
+    await readProjectFilesToCopy(source, [
+      ".local/",
+      ".local/nested/",
+      ".local/config.json",
+      ".local/config.json",
+    ]);
 
     expect(listedPaths).toEqual([".local", ".local/nested"]);
     expect(readPaths.toSorted()).toEqual([".local/config.json", ".local/nested/token"]);

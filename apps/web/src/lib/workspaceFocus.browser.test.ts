@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+import appCss from "~/index.css?inline";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -31,6 +33,15 @@ function setup() {
   };
 }
 
+/** Mirrors MessagesTimeline's scroller, which takes focus so the keyboard scrolls it. */
+function conversationScroller(height: number) {
+  const timeline = document.createElement("div");
+  timeline.style.cssText = `height: ${height}px; overflow-y: auto`;
+  timeline.tabIndex = -1;
+  timeline.dataset.workspaceFocusDefault = "";
+  return timeline;
+}
+
 describe("workspace area focus", () => {
   it("cycles in workspace order in both directions, independent of DOM order", () => {
     using fixture = setup();
@@ -40,7 +51,7 @@ describe("workspace area focus", () => {
     const composer = fixture.area("composer", 2);
     sidebar.button.focus();
     fixture.controller.move(1);
-    // The conversation is a region; it takes focus itself rather than its first button.
+    // Without a timeline (an empty thread), the region takes focus rather than its first button.
     expect(document.activeElement).toBe(conversation.element);
     fixture.controller.move(1);
     expect(document.activeElement).toBe(composer.button);
@@ -130,6 +141,19 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(nav.button);
   });
 
+  it("enters the Settings sections on the open section", () => {
+    using fixture = setup();
+    const nav = fixture.area("settings-nav", 0);
+    const content = fixture.area("settings", 1);
+    nav.element.insertAdjacentHTML(
+      "beforeend",
+      '<button data-settings-section="/settings/general">General</button><button data-settings-section="/settings/chat" aria-current="page">Chat</button>',
+    );
+    content.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(nav.element.querySelector('[aria-current="page"]'));
+  });
+
   it("keeps moving while a shortcut recorder is on the page but not focused", () => {
     using fixture = setup();
     const nav = fixture.area("settings-nav", 0);
@@ -189,8 +213,7 @@ describe("workspace area focus", () => {
   it("does not scroll the conversation to an old control", () => {
     using fixture = setup();
     const conversation = fixture.area("conversation", 1);
-    const timeline = document.createElement("div");
-    timeline.style.cssText = "height: 50px; overflow-y: auto";
+    const timeline = conversationScroller(50);
     const copy = document.createElement("button");
     copy.textContent = "Copy";
     timeline.append(copy, Object.assign(document.createElement("div"), { style: "height: 400px" }));
@@ -202,8 +225,26 @@ describe("workspace area focus", () => {
     // Live follow moved the timeline to the newest output.
     timeline.scrollTop = 300;
     fixture.controller.move(-1);
-    expect(document.activeElement).toBe(conversation.element);
+    expect(document.activeElement).toBe(timeline);
     expect(timeline.scrollTop).toBe(300);
+  });
+
+  it("scrolls the conversation with the keyboard once an empty thread gets a timeline", async () => {
+    using fixture = setup();
+    const conversation = fixture.area("conversation", 1);
+    conversation.button.remove();
+    conversation.element.style.height = "200px";
+    const composer = fixture.area("composer", 2);
+    composer.button.focus();
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(conversation.element);
+    fixture.controller.move(1);
+    const timeline = conversationScroller(200);
+    timeline.append(Object.assign(document.createElement("div"), { style: "height: 2000px" }));
+    conversation.element.append(timeline);
+    fixture.controller.move(-1);
+    await userEvent.keyboard("{ArrowDown}{PageDown}");
+    await vi.waitFor(() => expect(timeline.scrollTop).toBeGreaterThan(0));
   });
 
   it.each([
@@ -257,6 +298,29 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
+  it("focuses a side chat's message input when the panel opens on it", () => {
+    using fixture = setup();
+    const panel = fixture.area("panel", 3);
+    const content = document.createElement("div");
+    content.setAttribute("data-right-panel-surface-content", "");
+    const bringBack = document.createElement("button");
+    bringBack.textContent = "Bring back";
+    content.append(bringBack);
+    panel.element.append(content);
+    const timeline = conversationScroller(50);
+    timeline.append(Object.assign(document.createElement("div"), { style: "height: 400px" }));
+    fixture.area("conversation", 1, content).element.append(timeline);
+    const composer = fixture.area("composer", 2, content);
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    composer.element.append(editor);
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+    // F6 from the message input moves on to the panel's own controls.
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(bringBack);
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);
@@ -287,5 +351,54 @@ describe("workspace area focus", () => {
     composer.button.focus();
     expect(fixture.controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(terminal.button);
+  });
+
+  it("rings an area reached with F6, but not a clicked one after a bare key press", async () => {
+    using fixture = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const sidebar = fixture.area("sidebar", 0);
+    const home = fixture.append(
+      '<main data-workspace-area="home" data-workspace-order="1" tabindex="-1" style="height: 200px"></main>',
+    );
+    const outline = () => getComputedStyle(home).outlineStyle;
+
+    await userEvent.click(home);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("none");
+    // A window switch can deliver a lone modifier key without moving focus.
+    await userEvent.keyboard("{Shift}");
+    expect(outline(), "a clicked area shows the focus ring after a bare key press").toBe("none");
+    // Window activation refocuses the element that had focus, with nothing focused in between.
+    home.blur();
+    home.focus();
+    expect(outline(), "a clicked area rings when the window regains focus").toBe("none");
+
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(-1);
+    expect(document.activeElement).toBe(sidebar.button);
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline()).toBe("solid");
+
+    // A dialog opened from the keyboard returns focus to the area when it closes.
+    await userEvent.keyboard("{Enter}");
+    sidebar.button.focus();
+    await userEvent.keyboard("{Escape}");
+    home.focus();
+    expect(outline(), "an area loses its ring when keyboard focus returns to it").toBe("solid");
+
+    await userEvent.click(home);
+    expect(outline(), "clicking the ringed area removes its ring").toBe("none");
+
+    // With no other area visible, F6 lands on the area that already has focus.
+    sidebar.element.hidden = true;
+    await userEvent.keyboard("{F6}");
+    fixture.controller.move(1);
+    expect(document.activeElement).toBe(home);
+    expect(outline(), "F6 onto the only, already focused area shows no ring").toBe("solid");
   });
 });
