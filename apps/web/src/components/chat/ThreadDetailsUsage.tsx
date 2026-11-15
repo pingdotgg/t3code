@@ -16,7 +16,7 @@ import {
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
+import { BoxIcon, CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -250,11 +250,15 @@ function LimitRow({
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
   const weekly = isWeeklyWindow(window);
+  const modelLabel =
+    weekly && window.id.startsWith("seven_day_")
+      ? /^Weekly\s*·\s*(.+)$/i.exec(window.label)?.[1]
+      : undefined;
   const reset = resetLabel(window, now);
   return (
     <UsageRow
-      label={window.label}
-      icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
+      label={modelLabel ?? window.label}
+      icon={modelLabel ? <BoxIcon /> : weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
       tick={elapsed === null ? null : (1 - elapsed) * 100}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
