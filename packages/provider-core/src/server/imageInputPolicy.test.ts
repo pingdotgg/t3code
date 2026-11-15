@@ -19,6 +19,8 @@ describe("modelImageInputSupport", () => {
     [{ input: ["text"] }, false],
     [{ input: ["text", "image"] }, true],
     [{ input: ["text", "image/png"] }, true],
+    [{ input: [] }, false],
+    [{ capabilities: { input: { image: false } }, input: ["text", "image"] }, false],
     [{ capabilities: { modalities: { input: ["text", "image/jpeg"] } } }, true],
     [{ modalities: { input: ["text"] } }, false],
     [{ modalities: { input: ["text", "image"] } }, true],
@@ -44,5 +46,20 @@ describe("shouldSendNativeImage", () => {
 
   it("never promotes an ordinary file into a native image", () => {
     assert.isFalse(shouldSendNativeImage({ attachment: pdf, supportsImageInput: true }));
+    assert.isFalse(
+      shouldSendNativeImage({
+        attachment: { type: "file", mimeType: "image/png" } as ChatAttachment,
+        supportsImageInput: true,
+      }),
+    );
+  });
+
+  it("rejects unsupported image MIME types regardless of model support", () => {
+    assert.isFalse(
+      shouldSendNativeImage({
+        attachment: { type: "image", mimeType: "image/svg+xml" } as ChatAttachment,
+        supportsImageInput: true,
+      }),
+    );
   });
 });
