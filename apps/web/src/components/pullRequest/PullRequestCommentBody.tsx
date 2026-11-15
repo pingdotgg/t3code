@@ -25,13 +25,16 @@ export function PullRequestCommentBody({
   className,
   variant = "comment",
   revealCount = 0,
+  defaultExpanded = false,
   ...props
 }: ComponentProps<typeof PullRequestMarkdown> & {
   variant?: "comment" | "description";
   revealCount?: number;
+  defaultExpanded?: boolean;
 }) {
   const maxHeight = variant === "description" ? 64 : 240;
-  const [expanded, setExpanded] = useState(revealCount > 0);
+  const [expandedChoice, setExpanded] = useState<boolean | null>(revealCount > 0 ? true : null);
+  const expanded = expandedChoice ?? defaultExpanded;
   const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
   if (revealCount !== seenRevealCount) {
     setSeenRevealCount(revealCount);
