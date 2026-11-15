@@ -703,7 +703,8 @@ it.effect.each([
     name: "Node older than 22.12",
     exitCode: 1,
     stderr: "private SSH diagnostics\nNode 22.12 or newer is required on the device host.",
-    reason: "Connected over SSH, but this host's Node is older than 22. Install Node 22 or newer.",
+    reason:
+      "Connected over SSH, but this host's Node is older than 22.12. Install Node 22.12 or newer.",
   },
   {
     name: "missing npm",

@@ -97,7 +97,7 @@ const sshProbePrerequisites = new Map([
   ],
   [
     "Node 22.12 or newer is required on the device host.",
-    "Connected over SSH, but this host's Node is older than 22. Install Node 22 or newer.",
+    "Connected over SSH, but this host's Node is older than 22.12. Install Node 22.12 or newer.",
   ],
   [
     "npm is missing from the non-interactive SSH PATH.",
