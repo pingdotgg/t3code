@@ -374,6 +374,11 @@ export interface ThreadManagementServiceShape {
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
+  /** Adds the default profile to a selection without one; `keepModel` ignores the profile's model and effort. */
+  readonly withDefaultProfile: (
+    selection: ModelSelection,
+    options: { readonly keepModel: boolean },
+  ) => Effect.Effect<ModelSelection>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<
@@ -763,38 +768,52 @@ const make = Effect.gen(function* () {
     }
   };
 
+  const withDefaultProfile: ThreadManagementServiceShape["withDefaultProfile"] = Effect.fn(
+    "ThreadManagement.withDefaultProfile",
+  )(function* (current, { keepModel }) {
+    if (
+      Option.isNone(profiles) ||
+      Option.isNone(config) ||
+      Option.isNone(path) ||
+      Option.isNone(providerRegistry)
+    )
+      return current;
+    const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+    const loaded = yield* profiles.value.load(
+      settings.profilesFolder || path.value.join(config.value.baseDir, "profiles"),
+    );
+    const id = settings.defaultProfile ?? loaded.catalog.default;
+    // With no default the selection stays unset: a null would pass on to launches as "No profile".
+    if (!id) return current;
+    const available = yield* providerRegistry.value.getProviders;
+    const picked = selectProfile(current, id, loaded.catalog.profiles[id], available);
+    const selection =
+      keepModel && picked.selection.profileId
+        ? { ...current, profileId: picked.selection.profileId }
+        : picked.selection;
+    const driver = available.find(
+      (provider) => provider.instanceId === selection.instanceId,
+    )?.driver;
+    return driver && supportsProfiles(driver) ? selection : current;
+  });
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = Effect.fn("ThreadManagement.dispatch")(
     function* (input) {
       yield* ensureCommandTranscripts(input);
       let command = input;
       if (
         command.type === "thread.create" &&
-        command.createdBy === "user" &&
+        (command.createdBy === "user" || command.createdBy === "agent") &&
         command.delegatedFrom === undefined &&
-        command.modelSelection.profileId === undefined &&
-        Option.isSome(profiles) &&
-        Option.isSome(config) &&
-        Option.isSome(path) &&
-        Option.isSome(providerRegistry)
-      ) {
-        const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
-        const loaded = yield* profiles.value.load(
-          settings.profilesFolder || path.value.join(config.value.baseDir, "profiles"),
-        );
-        const id = settings.defaultProfile ?? loaded.catalog.default;
-        const available = yield* providerRegistry.value.getProviders;
-        const picked = selectProfile(
-          command.modelSelection,
-          id || null,
-          id ? loaded.catalog.profiles[id] : undefined,
-          available,
-        );
-        const driver = available.find(
-          (provider) => provider.instanceId === picked.selection.instanceId,
-        )?.driver;
-        if (!id || (driver && supportsProfiles(driver)))
-          command = { ...command, modelSelection: picked.selection };
-      }
+        command.modelSelection.profileId === undefined
+      )
+        command = {
+          ...command,
+          // Agents chose or inherited their model, so they take only the profile id.
+          modelSelection: yield* withDefaultProfile(command.modelSelection, {
+            keepModel: command.createdBy === "agent",
+          }),
+        };
       if (
         (command.type === "message.dispatch" ||
           command.type === "thread.model-selection.set" ||
@@ -1602,6 +1621,7 @@ const make = Effect.gen(function* () {
 
   return ThreadManagementService.of({
     ensureLegacyTranscript,
+    withDefaultProfile,
     searchThreadStream: (input) =>
       Stream.unwrap(
         ensureProjectionTranscript(input.threadId).pipe(

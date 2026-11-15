@@ -53,7 +53,12 @@ const clientLaunchHarness = (input: {
   readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
+  /** A thread the agent calls from; omitted, the caller is an MCP client outside T3. */
+  readonly caller?: Partial<OrchestrationV2ThreadShell>;
+  /** What the default profile makes of a selection that may take its model. */
+  readonly defaultProfile?: ModelSelection;
 }) => {
+  const callerThreadId = ThreadId.make("thread:caller");
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -84,19 +89,44 @@ const clientLaunchHarness = (input: {
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
-      thread: undefined,
-      client: {
-        sessionId: "session-1",
-        label: "Claude Code",
-        access: input.runtimeModeCeiling,
-        hostedAppUrl: input.hostedAppUrl,
-      },
+      ...(input.caller === undefined
+        ? {
+            thread: undefined,
+            client: {
+              sessionId: "session-1",
+              label: "Claude Code",
+              access: input.runtimeModeCeiling,
+              hostedAppUrl: input.hostedAppUrl,
+            },
+          }
+        : {
+            thread: {
+              threadId: callerThreadId,
+              providerSessionId: "provider-session:caller",
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            },
+            client: undefined,
+          }),
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
+      withDefaultProfile: (selection, { keepModel }) =>
+        Effect.succeed(keepModel ? selection : (input.defaultProfile ?? selection)),
       // A thread exists once a launch started it.
       getThreadShell: (threadId) => {
+        if (input.caller !== undefined && threadId === callerThreadId)
+          return Effect.succeed({
+            id: callerThreadId,
+            projectId,
+            deletedAt: null,
+            archivedAt: null,
+            activeRunId: "run:caller",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runtimeMode: input.runtimeModeCeiling,
+            interactionMode: "default",
+            ...input.caller,
+          } as unknown as OrchestrationV2ThreadShell);
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         return Effect.succeed(
           launch === undefined
@@ -189,9 +219,17 @@ it.effect(
           readonly overrideModel?: ModelSelection;
           readonly hostedAppUrl?: string;
           readonly refusedByCeiling?: true;
+          readonly defaultProfile?: ModelSelection;
         },
       ) {
-        const { targeted, overrideModel, hostedAppUrl, refusedByCeiling, ...input } = params;
+        const {
+          targeted,
+          overrideModel,
+          hostedAppUrl,
+          refusedByCeiling,
+          defaultProfile,
+          ...input
+        } = params;
         const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
         const { projectId, modelSelection, dependencies } = clientLaunchHarness({
           runtimeModeCeiling,
@@ -200,6 +238,7 @@ it.effect(
           ...(overrideModel === undefined ? {} : { overrideModel }),
           ...(hostedAppUrl === undefined ? {} : { hostedAppUrl }),
           ...(refusedByCeiling === undefined ? {} : { refusedByCeiling }),
+          ...(defaultProfile === undefined ? {} : { defaultProfile }),
         });
         const toolkit = yield* ProjectToolkit.pipe(
           Effect.provide(
@@ -263,6 +302,19 @@ it.effect(
         overrideModel,
       });
       expect(fromSettings.launched[0]?.modelSelection).toEqual(overrideModel);
+
+      // With no model chosen, the default profile picks it, as in the composer.
+      const defaultProfile = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-profile",
+        options: [{ id: "effort", value: "low" }],
+        profileId: "dulli",
+      };
+      const fromProfile = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        defaultProfile,
+      });
+      expect(fromProfile.launched[0]?.modelSelection).toEqual(defaultProfile);
 
       // An administrator's ceiling the orchestrator enforces is named, not reported as unavailable.
       const managed = yield* launchWith("full-access", "full-access", {
@@ -329,6 +381,57 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");
+  }),
+);
+
+it.effect("a launch from a thread keeps that thread's profile unless it names one", () =>
+  Effect.gen(function* () {
+    const launchFrom = Effect.fn("test.launchFrom")(function* (
+      callerProfileId: string | null | undefined,
+      modelSelection: ModelSelection,
+    ) {
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        launched,
+        caller: {
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("claudeAgent"),
+            model: "claude-sonnet",
+            ...(callerProfileId === undefined ? {} : { profileId: callerProfileId }),
+          },
+        },
+      });
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      yield* toolkit
+        .handle("t3_thread_launch", { projectId, title: "Fix", modelSelection })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      return launched[0]?.modelSelection;
+    });
+    const opus = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus",
+      options: [{ id: "effort", value: "high" }],
+    };
+
+    expect(yield* launchFrom("dulli", opus)).toEqual({ ...opus, profileId: "dulli" });
+    expect(yield* launchFrom(null, opus)).toEqual({ ...opus, profileId: null });
+    expect(yield* launchFrom("dulli", { ...opus, profileId: null })).toEqual({
+      ...opus,
+      profileId: null,
+    });
+    expect(yield* launchFrom("dulli", { ...opus, profileId: "lean" })).toEqual({
+      ...opus,
+      profileId: "lean",
+    });
+    // Nothing to keep: the server gives the thread the default profile when it is created.
+    expect(yield* launchFrom(undefined, opus)).toEqual(opus);
   }),
 );
 

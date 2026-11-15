@@ -2070,11 +2070,12 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.live.each([
-    { name: "parent instance", parentEnabled: true, model: "gpt-5.4" },
-    { name: "alternate instance", parentEnabled: false, model: "gpt-5.5" },
+    { name: "parent instance", parentEnabled: true, model: "gpt-5.4", profileId: "dulli" },
+    { name: "alternate instance", parentEnabled: false, model: "gpt-5.5", profileId: "dulli" },
+    { name: "parent without a profile", parentEnabled: true, model: "gpt-5.4", profileId: null },
   ])(
     "replays accepted creation on the $name without authorizing new disabled work",
-    ({ parentEnabled, model }) =>
+    ({ parentEnabled, model, profileId }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -2148,7 +2149,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               threadId: parentThreadId,
               projectId,
               title: "MCP parent",
-              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4", profileId },
               runtimeMode: "full-access",
               interactionMode: "default",
               branch: null,
@@ -2171,9 +2172,10 @@ describe("OrchestratorMcpService provider resolution", () => {
             };
             const first = yield* service.createThreads(scope, request);
             const child = first.threads[0]!;
+            // A new thread keeps its parent's profile, also on another instance.
             const selection = parentEnabled
-              ? { instanceId: codexInstanceId, model: "gpt-5.4" }
-              : { instanceId: altInstanceId, model: "gpt-5.5" };
+              ? { instanceId: codexInstanceId, model: "gpt-5.4", profileId }
+              : { instanceId: altInstanceId, model: "gpt-5.5", profileId };
             assert.equal(first.threads.length, 1);
             assert.equal(child.providerInstanceId, selection.instanceId);
             assert.equal(child.model, selection.model);
@@ -2789,6 +2791,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>,
       task: ScheduledTask = existing,
       modes?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["threadMode"]>>,
+      selections?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput["modelSelection"]>>,
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -2799,6 +2802,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             NodeCrypto.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: () => Effect.succeed(null),
+              withDefaultProfile: (selection, { keepModel }) =>
+                Effect.succeed(
+                  keepModel
+                    ? selection
+                    : { ...selection, model: "gpt-profile", profileId: "dulli" },
+                ),
             }),
             ServerSettings.layerTest(),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -2824,6 +2833,11 @@ describe("OrchestratorMcpService provider resolution", () => {
                       ? Effect.void
                       : Ref.update(modes, (all) => [...all, input.threadMode]),
                   ),
+                  Effect.andThen(
+                    selections === undefined
+                      ? Effect.void
+                      : Ref.update(selections, (all) => [...all, input.modelSelection]),
+                  ),
                   Effect.as({ task }),
                 ),
             }),
@@ -2841,12 +2855,19 @@ describe("OrchestratorMcpService provider resolution", () => {
     it.effect("starts from the project's default branch", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const selections = yield* Ref.make<
+          ReadonlyArray<ScheduledTaskUpsertInput["modelSelection"]>
+        >([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(masterRepository, saved, existing, undefined, selections)),
         );
         yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
         assert.deepEqual(yield* Ref.get(saved), [
           { type: "worktree", baseRef: "origin/master", startFromOrigin: true },
+        ]);
+        // With no model chosen, the default profile picks it, as in the composer.
+        assert.deepEqual(yield* Ref.get(selections), [
+          { ...existing.modelSelection, model: "gpt-profile", profileId: "dulli" },
         ]);
       }),
     );

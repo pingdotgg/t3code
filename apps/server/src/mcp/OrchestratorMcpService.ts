@@ -1054,6 +1054,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // No model was chosen, so the default profile may pick it, as in the composer.
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
   ) =>
@@ -1064,7 +1065,9 @@ const make = Effect.gen(function* () {
             `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
           ),
         )
-      : Effect.succeed(project.defaultModelSelection);
+      : project.defaultModelSelection.profileId === undefined
+        ? threadManagement.withDefaultProfile(project.defaultModelSelection, { keepModel: false })
+        : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
@@ -2853,7 +2856,13 @@ const make = Effect.gen(function* () {
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
-                  modelSelection: target.modelSelection,
+                  modelSelection:
+                    parent.thread.modelSelection.profileId === undefined
+                      ? target.modelSelection
+                      : {
+                          ...target.modelSelection,
+                          profileId: parent.thread.modelSelection.profileId,
+                        },
                   runtimeMode,
                   interactionMode,
                   branch: parent.thread.branch,

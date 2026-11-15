@@ -187,23 +187,34 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )
             : undefined;
-        const modelSelection =
-          input.modelSelection ??
+        const inheritedProfileId = caller?.modelSelection.profileId;
+        let modelSelection =
+          (input.modelSelection === undefined ||
+          input.modelSelection.profileId !== undefined ||
+          inheritedProfileId === undefined
+            ? input.modelSelection
+            : { ...input.modelSelection, profileId: inheritedProfileId }) ??
           launchedModel ??
-          caller?.modelSelection ??
-          (projectDefaults
-            ? resolveNewThreadModelSelection({
-                defaultSelection: projectDefaults.defaultModelSelection,
-                fallbackSelection: projectDefaults.fallbackModelSelection,
-                providers: yield* ProviderRegistry.ProviderRegistry.pipe(
-                  Effect.flatMap((registry) => registry.getProviders),
-                ),
-                settings: projectDefaults,
-                projectId,
-                now: DateTime.toEpochMillis(yield* DateTime.now),
-              }).selection
-            : null) ??
-          undefined;
+          caller?.modelSelection;
+        if (modelSelection === undefined && projectDefaults !== undefined) {
+          const projectDefault = resolveNewThreadModelSelection({
+            defaultSelection: projectDefaults.defaultModelSelection,
+            fallbackSelection: projectDefaults.fallbackModelSelection,
+            providers: yield* ProviderRegistry.ProviderRegistry.pipe(
+              Effect.flatMap((registry) => registry.getProviders),
+            ),
+            settings: projectDefaults,
+            projectId,
+            now: DateTime.toEpochMillis(yield* DateTime.now),
+          }).selection;
+          // No model was chosen, so the default profile may pick it, as in the composer.
+          modelSelection =
+            projectDefault === null
+              ? undefined
+              : projectDefault.profileId === undefined
+                ? yield* context.threads.withDefaultProfile(projectDefault, { keepModel: false })
+                : projectDefault;
+        }
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",

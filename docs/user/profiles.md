@@ -2,7 +2,9 @@
 
 A profile bundles prompt parts, skills, MCP servers and, for each provider, a named set of
 **provider settings** that shape how that provider's harness runs. Pick a profile beside the composer on web, desktop or
-mobile. New threads use the default profile. Delegated tasks do not inherit a parent's profile.
+mobile. New threads use the default profile. A thread an agent starts keeps the profile of the agent's
+thread, also when the agent picks another model; it gets the default only when that thread has none.
+Delegated tasks start without a profile: they take neither the parent's profile nor the default.
 
 Manage everything in **Settings → Profiles**. Mobile shows the same page with fewer controls; edit
 provider settings and prompt text on web or desktop.

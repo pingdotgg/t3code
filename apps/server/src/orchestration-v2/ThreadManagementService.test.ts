@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -29,6 +30,11 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+
+import * as ServerConfig from "../config.ts";
+import * as Profiles from "../profiles/Profiles.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -873,3 +879,163 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
     expect(killed).toBe(false);
   }),
 );
+
+it.effect.each([
+  {
+    name: "an agent's thread takes the default profile and keeps its own model",
+    createdBy: "agent" as const,
+    expected: {
+      model: "claude-opus-5-5",
+      profileId: "dulli",
+      options: [{ id: "effort", value: "high" }],
+    },
+  },
+  {
+    name: "a user's thread takes the default profile with its model",
+    createdBy: "user" as const,
+    expected: {
+      model: "claude-sonnet-5-5",
+      profileId: "dulli",
+      options: [{ id: "effort", value: "low" }],
+    },
+  },
+  {
+    name: "an agent's thread asked for no profile keeps none",
+    createdBy: "agent" as const,
+    profileId: null,
+    expected: { model: "claude-opus-5-5", profileId: null },
+  },
+  {
+    name: "an agent's thread with no default profile stays unset",
+    createdBy: "agent" as const,
+    noDefault: true,
+    expected: { model: "claude-opus-5-5" },
+  },
+  {
+    name: "a user's thread with no default profile stays unset",
+    createdBy: "user" as const,
+    noDefault: true,
+    expected: { model: "claude-opus-5-5" },
+  },
+  {
+    name: "an agent's thread on a provider without profiles takes none",
+    createdBy: "agent" as const,
+    driver: "cursor",
+    expected: { model: "claude-opus-5-5" },
+  },
+  {
+    name: "an agent's thread keeps its provider when the default profile names another",
+    createdBy: "agent" as const,
+    profile: { provider: ProviderInstanceId.make("claudeAgent-alt") },
+    expected: {
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      profileId: "dulli",
+      options: [{ id: "effort", value: "high" }],
+    },
+  },
+  {
+    name: "an agent's thread takes no default profile that failed to load",
+    createdBy: "agent" as const,
+    profile: { warning: "Could not read the profile." },
+    expected: { model: "claude-opus-5-5" },
+  },
+  {
+    name: "a thread delegated from a linked environment takes no default",
+    createdBy: "agent" as const,
+    delegated: true,
+    expected: { model: "claude-opus-5-5" },
+  },
+])("thread.create: $name", ({ createdBy, expected, ...row }) => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const dispatched: Array<object> = [];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Profiles.Profiles)({
+        load: () =>
+          Effect.succeed({
+            catalog: {
+              folder: "/profiles",
+              ...("noDefault" in row ? {} : { default: "dulli" }),
+              profiles: {
+                dulli: {
+                  prompts: [],
+                  skills: [],
+                  model: "claude-sonnet-5-5",
+                  effort: "low",
+                  ...("profile" in row ? row.profile : {}),
+                },
+              },
+            },
+            instructions: {},
+            providerSettings: {},
+            mcpServers: {},
+          }),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(ProviderRegistry.ProviderRegistry)({
+        getProviders: Effect.succeed([
+          {
+            instanceId,
+            driver: ProviderDriverKind.make("driver" in row ? row.driver : "claudeAgent"),
+            models: [],
+          },
+          {
+            instanceId: ProviderInstanceId.make("claudeAgent-alt"),
+            driver: ProviderDriverKind.make("claudeAgent"),
+            models: [],
+          },
+        ] as unknown as ReadonlyArray<ServerProvider>),
+      }),
+    ),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-thread-profile-" })),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+    Layer.provide(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      createdBy,
+      creationSource: createdBy === "agent" ? "mcp" : "web",
+      commandId: CommandId.make("command:thread-management:profile"),
+      threadId: ThreadId.make("thread:thread-management:profile"),
+      projectId: ProjectId.make("project:thread-management:profile"),
+      title: "Profile",
+      modelSelection: {
+        instanceId,
+        model: "claude-opus-5-5",
+        options: [{ id: "effort", value: "high" }],
+        ...("profileId" in row ? { profileId: row.profileId } : {}),
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      ...("delegated" in row
+        ? {
+            delegatedFrom: {
+              environmentId: EnvironmentId.make("environment:elsewhere"),
+              threadId: ThreadId.make("thread:elsewhere"),
+              title: "Elsewhere",
+            },
+          }
+        : {}),
+    });
+    expect(dispatched[0]).toMatchObject({ modelSelection: expected });
+    if (!("profileId" in expected))
+      expect(dispatched[0]).not.toHaveProperty("modelSelection.profileId");
+  }).pipe(Effect.provide(layerTest));
+});
