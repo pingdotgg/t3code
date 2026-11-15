@@ -314,7 +314,6 @@ export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {

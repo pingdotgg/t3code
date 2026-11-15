@@ -3075,6 +3075,131 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("replaces and removes identified ACP plans across turns", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-cross-turn-plans");
+      const threadId = ThreadId.make("acp-cross-turn-plans");
+      let notify:
+        | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+        | undefined;
+      let ordinal = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  ordinal++;
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    notify!({ sessionId: "mock-session-1", update });
+                  const plan = (id: string, text: string) =>
+                    send({
+                      sessionUpdate: "plan_update",
+                      plan: {
+                        type: "items",
+                        planId: id,
+                        entries: [{ content: text, priority: "medium", status: "pending" }],
+                      },
+                    });
+                  yield* send({ sessionUpdate: "state_update", state: "running" });
+                  if (ordinal === 1) {
+                    yield* plan("control", "First");
+                    yield* plan("control", "Replacement");
+                    yield* send({ sessionUpdate: "plan_removed", planId: "control" });
+                    yield* plan("later-remove", "Remove on next turn");
+                    yield* plan("later-replace", "Old contents");
+                  } else {
+                    yield* send({ sessionUpdate: "plan_removed", planId: "later-remove" });
+                    yield* plan("later-replace", "New contents");
+                  }
+                  yield* send({
+                    sessionUpdate: "plan",
+                    entries: [{ content: "Anonymous plan", priority: "medium", status: "pending" }],
+                  });
+                  yield* send({
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-cross-turn-plans"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const run = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          ).flatMap((event) => (event.type === "plan.updated" ? [event.plan] : []));
+        });
+      const first = yield* run(1);
+      assert.equal(first.length, 6);
+      assert.equal(first[0]!.id, first[1]!.id);
+      assert.equal(first[1]!.id, first[2]!.id);
+      assert.equal(first[1]!.kind, "todo_list");
+      assert.deepEqual(first[1]!.kind === "todo_list" ? first[1]!.steps.map((s) => s.text) : [], [
+        "Replacement",
+      ]);
+      assert.equal(first[2]!.status, "superseded");
+      const second = yield* run(2);
+      assert.equal(second.length, 3);
+      assert.notEqual(first[5]!.id, second[2]!.id);
+      const removed = second.find((p) => p.id === first[3]!.id && p.status === "superseded");
+      const replacement = second.find(
+        (p) => p.kind === "todo_list" && p.steps.some((s) => s.text === "New contents"),
+      );
+      assert.isDefined(
+        removed,
+        "plan_removed on a later turn must supersede the existing session plan",
+      );
+      assert.equal(removed?.runId, first[3]!.runId);
+      assert.equal(replacement?.runId, first[4]!.runId);
+      assert.equal(removed?.nodeId, first[3]!.nodeId);
+      assert.equal(replacement?.nodeId, first[4]!.nodeId);
+      assert.equal(
+        replacement?.id,
+        first[4]!.id,
+        "the same session plan must be replaced, not duplicated",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
