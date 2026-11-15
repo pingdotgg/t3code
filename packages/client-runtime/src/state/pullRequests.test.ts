@@ -2449,6 +2449,54 @@ it.effect.each([false, true])(
     ),
 );
 
+it.effect("reads the list again when the page opens after the warm-up's read failed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      let reads = 0;
+      const saved = new Map<string, string>();
+      const readAgain = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.suspend(() =>
+            ++reads === 1
+              ? new PullRequestOperationError({ operation: "list", detail: "paused" })
+              : Deferred.succeed(readAgain, undefined).pipe(
+                  Effect.as(listResult([{ ...actionReference, state: "open", isDraft: false }])),
+                ),
+          ),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(
+        client,
+        undefined,
+        false,
+        {},
+        {
+          load: (_environmentId, key) => Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+          save: (_environmentId, key, payload) => Effect.sync(() => void saved.set(key, payload)),
+        },
+      );
+      const target = { environmentId: TARGET.environmentId, input: { state: "open" } } as const;
+      const warm = atoms.warmList(target);
+      const unmount = registry.mount(warm);
+      yield* Effect.addFinalizer(() => Effect.sync(unmount));
+      yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
+      expect(reads).toBe(1);
+      // The page opens a moment later, well inside the list's five-minute idle wait.
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+
+      const list = atoms.list(target);
+      registry.mount(list);
+      // The page's first visit reads again rather than showing the warm-up's failure.
+      yield* Deferred.await(readAgain);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+      const answer = yield* AtomRegistry.getResult(registry, list, { suspendOnWaiting: true });
+      expect(answer.entries.length).toBe(1);
+    }),
+  ),
+);
+
 it.effect("puts readers back when the host refuses an action, and saves nothing it guessed", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -2903,6 +2951,51 @@ it.effect.each([
         ]).toEqual(Array(3).fill(title));
         // Text that changed during the write is re-read, so shared summaries do not take the edit.
         expect(accepted).toBeUndefined();
+      }),
+    ),
+);
+
+it.effect(
+  "keeps an accepted title when a reader opened during the save reads the text from before it",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let title = "Cached";
+        const sent = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const read = () => Effect.sync(() => ({ ...actionReference, state: "open", title }));
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsDetail]: read,
+          [WS_METHODS.pullRequestsPreview]: read,
+          [WS_METHODS.pullRequestsUpdate]: (input: { readonly title: string }) =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(sent, undefined);
+              yield* Deferred.await(release);
+              title = input.title;
+            }),
+        });
+        let accepted: string | undefined;
+        const { atoms, registry } = yield* makeTestRuntime(client, undefined, false, {
+          acceptedEdit: (_target: unknown, edit: { readonly title?: string }) =>
+            Effect.sync(() => {
+              accepted = edit.title;
+            }),
+        });
+        const target = { environmentId: TARGET.environmentId, input: actionReference };
+        const detail = atoms.detail(target);
+        const preview = atoms.preview(target);
+        registry.mount(detail);
+        yield* Effect.promise(() => executeAtomQuery(registry, detail));
+        const editing = yield* Effect.promise(() =>
+          atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(sent);
+        registry.mount(preview);
+        yield* Effect.promise(() => executeAtomQuery(registry, preview));
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(editing);
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(preview))).title).toBe("Edited");
+        expect(accepted).toBe("Edited");
       }),
     ),
 );

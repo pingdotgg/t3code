@@ -362,6 +362,21 @@ function editedText(
   return entries.find((entry) => samePullRequest(entry, reference));
 }
 
+function editedTextAtSend(
+  atSend: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>> | undefined,
+  edit: PullRequestPendingEdit,
+) {
+  for (const result of atSend?.values() ?? []) {
+    const text = editedText(Option.getOrUndefined(AsyncResult.value(result)), edit.reference);
+    if (
+      text !== undefined &&
+      (["title", "body"] as const).every((field) => edit[field] === undefined || field in text)
+    )
+      return text;
+  }
+  return undefined;
+}
+
 /** Whether the edited text changed while the write was out. */
 function hostRewroteEdit(sent: unknown, shown: unknown, edit: PullRequestPendingEdit) {
   const before = editedText(sent, edit.reference);
@@ -383,6 +398,7 @@ function settleEdit(
   if (edit === null) return false;
   let rewritten = false;
   const pending = registry.get(pullRequestPendingEditsAtom(environmentId));
+  const textAtSend = editedTextAtSend(atSend, edit);
   for (const atom of registry.getNodes().keys()) {
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
@@ -395,12 +411,15 @@ function settleEdit(
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     if (Option.isNone(shown)) continue;
     // Text that changed during the write may be the host's own version of it, or an older read.
-    // A reader with no text from before the write checks against the edit itself.
+    // A reader with no text from before the write checks against another reader's text from then,
+    // so a read answered before the commit is not taken for a rewrite; with none, the edit itself.
     const sent = atSend?.get(atom);
     const changed =
       atSend !== undefined &&
       hostRewroteEdit(
-        (sent === undefined ? undefined : Option.getOrUndefined(AsyncResult.value(sent))) ?? edit,
+        (sent === undefined ? undefined : Option.getOrUndefined(AsyncResult.value(sent))) ??
+          textAtSend ??
+          edit,
         shown.value,
         edit,
       );
@@ -1269,36 +1288,34 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
 
-  const list = actionPatchedQuery(
-    createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: listLabel,
-      persistence: listPersistence,
-      tag: WS_METHODS.pullRequestsList,
-      staleTimeMs: 30_000,
-      refreshTrigger: ({ environmentId, input }) =>
-        input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
-      ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
-    }),
-    {
-      label: listLabel,
-      persistence: listPersistence,
-      onAnswer: onAnswer.list,
-      // Rows carry no account scope, so a reply read through another account leaves them alone.
-      concerns: (input, reference) =>
-        reference.expectedAccountId === undefined &&
-        (input.projectId === undefined || input.projectId === reference.projectId) &&
-        (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
-        (input.host === undefined ||
-          reference.host === undefined ||
-          input.host.toLowerCase() === reference.host.toLowerCase()),
-      refreshedByServer: (input) => input.cursors === undefined,
-      patch: patchListWithReply,
-      edit: (input, value, edits, pending) => {
-        const entries = editPullRequestListEntries(input, value.entries, edits, pending);
-        return entries === value.entries ? value : { ...value, entries };
-      },
+  const listQuery = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: listLabel,
+    persistence: listPersistence,
+    tag: WS_METHODS.pullRequestsList,
+    staleTimeMs: 30_000,
+    refreshTrigger: ({ environmentId, input }) =>
+      input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+    ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
+  });
+  const list = actionPatchedQuery(listQuery, {
+    label: listLabel,
+    persistence: listPersistence,
+    onAnswer: onAnswer.list,
+    // Rows carry no account scope, so a reply read through another account leaves them alone.
+    concerns: (input, reference) =>
+      reference.expectedAccountId === undefined &&
+      (input.projectId === undefined || input.projectId === reference.projectId) &&
+      (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
+      (input.host === undefined ||
+        reference.host === undefined ||
+        input.host.toLowerCase() === reference.host.toLowerCase()),
+    refreshedByServer: (input) => input.cursors === undefined,
+    patch: patchListWithReply,
+    edit: (input, value, edits, pending) => {
+      const entries = editPullRequestListEntries(input, value.entries, edits, pending);
+      return entries === value.entries ? value : { ...value, entries };
     },
-  );
+  });
   // A first visit paints from a saved answer; with none saved, one read now fills it.
   const listWarmups = Atom.family((key: string) => {
     const [environmentId, input] = JSON.parse(key) as [EnvironmentId, PullRequestListInput];
@@ -1312,8 +1329,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
           queryPersistenceKey(listLabel, input),
         );
         if (Option.isSome(saved)) return;
-        yield* AtomRegistry.mount(get.registry, list(target));
-        yield* AtomRegistry.getResult(get.registry, list(target), { suspendOnWaiting: true });
+        // The bare query, not the page's wrapped reader: the wrappers stay cached after this lets
+        // go and would keep a failed read on screen, while the bare one re-reads it on mount.
+        yield* AtomRegistry.mount(get.registry, listQuery(target));
+        yield* AtomRegistry.getResult(get.registry, listQuery(target), { suspendOnWaiting: true });
       }).pipe(Effect.scoped, Effect.ignore);
     });
   });
