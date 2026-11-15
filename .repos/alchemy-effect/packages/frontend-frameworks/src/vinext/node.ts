@@ -1,3 +1,8 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import type * as Scope from "effect/Scope";
+import { runBuildChild } from "../core/BuildChild.ts";
 /**
  * `@alchemy.run/frontend-frameworks/vinext/node` — vinext on a Node
  * container (vinext's Vite build + vinext's production server).
@@ -17,21 +22,12 @@
  * the deploy target (same shape as `nextjs/node`).
  */
 import * as FrameworkCore from "../core/index.ts";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import type * as Scope from "effect/Scope";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { DeployTargetError, makeDeployTarget, type DeployTarget } from "../core/index.ts";
 import {
   NODE_BUNDLE_CONDITIONS,
   NODE_DEFAULT_PORT,
   NODE_SERVE_ENTRY_FILE_NAME,
 } from "../core/NodeServe.ts";
-import {
-  DeployTargetError,
-  makeDeployTarget,
-  type DeployTarget,
-} from "../core/index.ts";
 import {
   awaitVinextDevReady,
   collectVinextDist,
@@ -124,16 +120,10 @@ export const buildInChild = (config: VinextNodeBuildChildConfig) =>
     const root = config.rootDir;
     yield* runVinextBuild({ root, cache: "redis" });
     const dist = yield* collectVinextDist(root);
-    return yield* pinServeModule(
-      dist,
-      SERVER_ENTRY_NAME,
-      makeVinextServeEntrySource(),
-    );
+    return yield* pinServeModule(dist, SERVER_ENTRY_NAME, makeVinextServeEntrySource());
   });
 
-const makeNodeChildTarget = (
-  config: VinextNodeTargetConfig = {},
-): VinextNodeTarget =>
+const makeNodeChildTarget = (config: VinextNodeTargetConfig = {}): VinextNodeTarget =>
   makeDeployTarget({
     platform: "node",
     config,
@@ -146,9 +136,7 @@ const makeNodeChildTarget = (
  * Create the Node {@link VinextNodeTarget}: run Vinext's Vite build in a
  * child process, then vinext's production serve entry.
  */
-export const makeNodeTarget = (
-  config: VinextNodeTargetConfig = {},
-): VinextNodeTarget => ({
+export const makeNodeTarget = (config: VinextNodeTargetConfig = {}): VinextNodeTarget => ({
   ...makeNodeChildTarget(config),
   build: (context) =>
     runBuildChild({
@@ -169,9 +157,7 @@ export const target = makeNodeTarget;
 export default makeNodeTarget;
 
 export interface VinextNodeService {
-  readonly build: (
-    options?: FrameworkCore.FrameworkBuildOptions,
-  ) => Effect.Effect<
+  readonly build: (options?: FrameworkCore.FrameworkBuildOptions) => Effect.Effect<
     {
       readonly distDirectory: string;
       readonly clientDirectory: string | undefined;
@@ -181,11 +167,7 @@ export interface VinextNodeService {
   >;
   readonly dev: (
     options?: FrameworkCore.FrameworkDevOptions,
-  ) => Effect.Effect<
-    FrameworkCore.FrameworkDevServer,
-    FrameworkCore.FrameworkError,
-    Scope.Scope
-  >;
+  ) => Effect.Effect<FrameworkCore.FrameworkDevServer, FrameworkCore.FrameworkError, Scope.Scope>;
 }
 
 /**
@@ -194,51 +176,49 @@ export interface VinextNodeService {
  */
 export const make: (
   options?: VinextNodeOptions,
-) => Effect.Effect<
-  VinextNodeService,
-  never,
-  FileSystem.FileSystem | Path.Path
-> = Effect.fnUntraced(function* (options?: VinextNodeOptions) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const resolveRoot = (override: string | undefined) =>
-    Effect.sync(() => path.resolve(override ?? options?.root ?? process.cwd()));
+) => Effect.Effect<VinextNodeService, never, FileSystem.FileSystem | Path.Path> = Effect.fnUntraced(
+  function* (options?: VinextNodeOptions) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const resolveRoot = (override: string | undefined) =>
+      Effect.sync(() => path.resolve(override ?? options?.root ?? process.cwd()));
 
-  const build: VinextNodeService["build"] = Effect.fn(function* (
-    buildOptions?: FrameworkCore.FrameworkBuildOptions,
-  ) {
-    const root = yield* resolveRoot(buildOptions?.root);
-    const nodeTarget = makeNodeTarget({ root });
-    const output = yield* nodeTarget.build!({
-      root,
-      framework: "vinext",
-      env: buildOptions?.env,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
-      Effect.mapError((error) => failFramework(error.message)(error.cause)),
-    );
-    return {
-      distDirectory: output.distDirectory ?? path.join(root, "dist"),
-      clientDirectory: output.clientDirectory,
-      serverModules: (output.serverModules ?? []).map((module_) => ({
-        name: module_.name,
-      })),
-    };
-  });
+    const build: VinextNodeService["build"] = Effect.fn(function* (
+      buildOptions?: FrameworkCore.FrameworkBuildOptions,
+    ) {
+      const root = yield* resolveRoot(buildOptions?.root);
+      const nodeTarget = makeNodeTarget({ root });
+      const output = yield* nodeTarget.build!({
+        root,
+        framework: "vinext",
+        env: buildOptions?.env,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError((error) => failFramework(error.message)(error.cause)),
+      );
+      return {
+        distDirectory: output.distDirectory ?? path.join(root, "dist"),
+        clientDirectory: output.clientDirectory,
+        serverModules: (output.serverModules ?? []).map((module_) => ({
+          name: module_.name,
+        })),
+      };
+    });
 
-  const dev: VinextNodeService["dev"] = Effect.fn(function* (
-    devOptions?: FrameworkCore.FrameworkDevOptions,
-  ) {
-    const root = yield* resolveRoot(devOptions?.root);
-    const port = devOptions?.port ?? (yield* pickEphemeralPort);
-    const cli = yield* resolveVinextCli(root);
-    const host = devOptions?.host ?? "127.0.0.1";
-    const child = yield* spawnVinextDev({ root, cli, port, host });
-    const url = `http://${host}:${port}`;
-    yield* awaitVinextDevReady({ url, child });
-    return { url };
-  });
+    const dev: VinextNodeService["dev"] = Effect.fn(function* (
+      devOptions?: FrameworkCore.FrameworkDevOptions,
+    ) {
+      const root = yield* resolveRoot(devOptions?.root);
+      const port = devOptions?.port ?? (yield* pickEphemeralPort);
+      const cli = yield* resolveVinextCli(root);
+      const host = devOptions?.host ?? "127.0.0.1";
+      const child = yield* spawnVinextDev({ root, cli, port, host });
+      const url = `http://${host}:${port}`;
+      yield* awaitVinextDevReady({ url, child });
+      return { url };
+    });
 
-  return { build, dev };
-});
+    return { build, dev };
+  },
+);

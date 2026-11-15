@@ -66,3 +66,161 @@ it.effect("reads file revisions from the pull request diff and refuses a truncat
     assert.strictEqual(refused._tag, "PullRequestProviderError");
   }),
 );
+
+it.effect("filters listed pull requests by the requested state", () =>
+  Effect.gen(function* () {
+    // Forgejo answers a `state=closed` query with merged and closed-unmerged rows alike.
+    const rows = [true, false].map((merged) => ({
+      number: merged ? 1 : 2,
+      title: `Pull request ${merged ? 1 : 2}`,
+      body: "",
+      html_url: `https://forge.example:3000/maria/project/pulls/${merged ? 1 : 2}`,
+      user: { login: "maria" },
+      state: "closed",
+      merged,
+      head: { ref: "feature", sha: "head-sha", repo: null },
+      base: { ref: "main", sha: "base-sha", repo: null },
+      created_at: "2026-10-12T00:00:00Z",
+      updated_at: "2026-10-12T00:00:00Z",
+      closed_at: "2026-10-13T00:00:00Z",
+      merged_at: merged ? "2026-10-13T00:00:00Z" : null,
+      labels: [],
+    }));
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) => {
+            const [path, query] = input.path.split("?");
+            assert.strictEqual(path, "repos/maria/project/pulls");
+            const params = new URLSearchParams(query);
+            // A merged list asks Forgejo for closed rows and separates them itself.
+            const state = params.get("state");
+            assert.ok(state === "closed" || state === "open" || state === "all");
+            const page = params.get("page") === "1" && state !== "open" ? rows : [];
+            return Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(page)));
+          },
+        }),
+      ),
+    );
+    const input = {
+      cwd: "/forgejo",
+      repository: "maria/project",
+      host: "forge.example:3000",
+      involvement: "all" as const,
+      viewer: "maria",
+      limit: 10,
+    };
+    const numbers = (state: "open" | "closed" | "merged" | "all") =>
+      provider
+        .listChangeRequests({ ...input, state })
+        .pipe(Effect.map((page) => page.items.map((item) => item.number)));
+
+    assert.deepStrictEqual(yield* numbers("merged"), [1]);
+    assert.deepStrictEqual(yield* numbers("closed"), [2]);
+    assert.deepStrictEqual(yield* numbers("all"), [1, 2]);
+    assert.deepStrictEqual(yield* numbers("open"), []);
+  }),
+);
+
+const fastForwardOnly = {
+  cwd: "/forgejo",
+  repository: "maria/project",
+  host: "forge.example:3000",
+  number: 3,
+};
+const fastForwardOnlySettings = {
+  allow_merge_commits: false,
+  allow_squash_merge: false,
+  allow_rebase: false,
+  allow_rebase_explicit: false,
+  allow_fast_forward_only_merge: true,
+  default_merge_style: "fast-forward-only",
+};
+const fastForwardOnlyProvider = (
+  writes: Array<{ path: string; body: unknown }>,
+  mergeSettings: object = fastForwardOnlySettings,
+) =>
+  ForgejoPullRequestProvider.make.pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          const [path] = input.path.split("?");
+          const reply = (value: unknown) =>
+            Effect.succeed(TestSourceControlHost.processOutput(JSON.stringify(value)));
+          if (input.method === "POST") {
+            writes.push({ path: input.path, body: input.body });
+            return reply("");
+          }
+          switch (path) {
+            case "user":
+              return reply({ login: "maria" });
+            case "repos/maria/project":
+              return reply({
+                full_name: "maria/project",
+                permissions: { push: true, admin: true },
+                ...mergeSettings,
+              });
+            case "repos/maria/project/pulls/3":
+              return reply({
+                number: 3,
+                title: "Fast-forward me",
+                body: "",
+                html_url: "https://forge.example:3000/maria/project/pulls/3",
+                user: { login: "maria" },
+                state: "open",
+                merged: false,
+                mergeable: true,
+                head: { ref: "feature", sha: "head-sha", repo: null },
+                base: { ref: "main", sha: "base-sha", repo: null },
+                merge_base: "base-sha",
+                created_at: "2026-10-12T00:00:00Z",
+                updated_at: "2026-10-12T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              });
+            case "repos/maria/project/branches/main":
+              return reply({});
+            default:
+              return reply([]);
+          }
+        },
+      }),
+    ),
+  );
+
+it.effect("offers a fast-forward merge on a repository that only allows fast-forward", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([]);
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["fast-forward"]);
+  }),
+);
+
+it.effect("does not offer fast-forward when Forgejo omits the setting", () =>
+  Effect.gen(function* () {
+    const provider = yield* fastForwardOnlyProvider([], {});
+    const detail = yield* provider.getChangeRequest(fastForwardOnly);
+    const allowed = provider.capabilities.mergeMethods.filter(
+      (method) => detail.mergeCapabilities[method],
+    );
+    assert.deepStrictEqual(allowed, ["merge", "squash", "rebase"]);
+  }),
+);
+
+it.effect("merges with Forgejo's fast-forward-only style", () =>
+  Effect.gen(function* () {
+    const writes: Array<{ path: string; body: unknown }> = [];
+    const provider = yield* fastForwardOnlyProvider(writes);
+    yield* provider.runAction({ ...fastForwardOnly, action: "merge", mergeMethod: "fast-forward" });
+    assert.deepStrictEqual(writes, [
+      {
+        path: "repos/maria/project/pulls/3/merge",
+        body: { Do: "fast-forward-only", delete_branch_after_merge: false },
+      },
+    ]);
+  }),
+);

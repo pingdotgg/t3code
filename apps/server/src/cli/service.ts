@@ -16,7 +16,7 @@ import { compareExactServiceVersions, SERVICE_ENV_FILE } from "../cloud/serviceP
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
-import { resolveEntryPath } from "./invocation.ts";
+import { resolveEntryPath, resolveHostCliHint } from "./invocation.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -47,14 +47,37 @@ export const upsertServiceEnv = (
   entries: Readonly<Record<string, string | undefined>>,
 ): string => {
   const written = new Set<string>();
-  const lines = contents.split("\n").flatMap((line) => {
-    const key = SERVICE_ENV_KEY.exec(line)?.[1];
-    if (key === undefined || !Object.hasOwn(entries, key)) return [line];
+  const source = contents.split("\n");
+  const lines: string[] = [];
+  for (let index = 0, offset = 0; index < source.length;) {
+    const line = source[index]!;
+    const match = SERVICE_ENV_KEY.exec(line);
+    let end = index + 1;
+    if (match !== null) {
+      // util.parseEnv lets a quoted value run to its closing quote across lines,
+      // skipping only spaces, tabs and CRs before the opening quote.
+      const rest = line.slice(match[0].length).replace(/^[ \t\r]+/u, "");
+      const quote = rest[0];
+      if ((quote === '"' || quote === "'" || quote === "`") && !rest.includes(quote, 1)) {
+        const closing = contents.indexOf(quote, offset + line.length);
+        if (closing !== -1) {
+          end += contents.slice(offset + line.length, closing).split("\n").length - 1;
+        }
+      }
+    }
+    const span = source.slice(index, end);
+    offset += span.reduce((length, part) => length + part.length + 1, 0);
+    index = end;
+    const key = match?.[1];
+    if (key === undefined || !Object.hasOwn(entries, key)) {
+      lines.push(span.join("\n"));
+      continue;
+    }
     const value = entries[key];
-    if (value === undefined || written.has(key)) return [];
+    if (value === undefined || written.has(key)) continue;
     written.add(key);
-    return [`${key}=${value}`];
-  });
+    lines.push(`${key}=${value}`);
+  }
   while (lines.at(-1) === "") lines.pop();
   for (const [key, value] of Object.entries(entries)) {
     if (value !== undefined && !written.has(key)) lines.push(`${key}=${value}`);
@@ -92,6 +115,13 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   const { baseDir } = yield* ServerConfig.ServerConfig;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
+  // Before the downgrade check, which reads this home's state, not the service's.
+  if (status.otherBaseDir !== undefined) {
+    return yield* new BootService.BootServiceOtherBaseDirError({
+      installedBaseDir: status.otherBaseDir,
+      baseDir,
+    });
+  }
   if (status.installed && status.current) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
@@ -144,17 +174,26 @@ function formatProtection(
 function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
+  commands: { readonly install: string; readonly restart: string; readonly update: string },
   protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
-    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
+    return "T3 Code service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
   }
   if (!status.installed) {
-    return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
+    return `T3 Code service\n  Status: not installed\n  Next: Run \`${commands.install}\`.`;
+  }
+  if (status.otherBaseDir !== undefined) {
+    return [
+      "T3 Code service",
+      "  Status: installed for another T3 home",
+      `  Base dir: ${status.otherBaseDir}`,
+      `  Next: Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to manage it.`,
+    ].join("\n");
   }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
   if (
     !status.current &&
@@ -168,7 +207,7 @@ function formatServiceStatus(
       `  Logs: ${status.logPath}`,
       ...formatProtection(protection),
       ...problems,
-      `  Next: Run \`t3 update ${installedVersion}\` to match it, or pass \`--allow-downgrade\` to \`t3 service install\` explicitly.`,
+      `  Next: Run \`${commands.update}\` to match it, or pass \`--allow-downgrade\` to \`${commands.install}\` explicitly.`,
     ].join("\n");
   }
   return [
@@ -178,7 +217,7 @@ function formatServiceStatus(
     `  Logs: ${status.logPath}`,
     ...formatProtection(protection),
     ...problems,
-    ...(status.current ? [] : ["  Next: Run `t3 service install` to repair it."]),
+    ...(status.current ? [] : [`  Next: Run \`${commands.install}\` to repair it.`]),
   ].join("\n");
 }
 
@@ -216,7 +255,8 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
         }
         yield* Console.log(formatServiceChange(result));
         if (!result.previouslyInstalled) {
-          yield* Console.log("Run `t3 up` to choose how your other devices reach it.");
+          const upCommand = yield* resolveHostCliHint("up", flags.baseDir);
+          yield* Console.log(`Run \`${upCommand}\` to choose how your other devices reach it.`);
         }
       }),
     ),
@@ -264,7 +304,9 @@ const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe
             ? `Restarted the T3 Code service${onVersion}.`
             : outcome === "queued"
               ? `Queued a restart of the T3 Code service${onVersion}. This session runs inside the service and disconnects when it goes down.\nLogs: ${status.logPath}`
-              : "T3 Code service is not installed.",
+              : status.otherBaseDir !== undefined
+                ? `The T3 Code service serves ${status.otherBaseDir}, so it was not restarted. Pass \`${BootService.formatBootServiceBaseDirOption(status.otherBaseDir)}\` to restart it.`
+                : "T3 Code service is not installed.",
         );
       }),
     ),
@@ -278,6 +320,22 @@ const serviceUninstallCommand = Command.make("uninstall", projectLocationFlags).
       flags,
       Effect.gen(function* () {
         const service = yield* BootService.BootService;
+        const path = yield* Path.Path;
+        const { baseDir } = yield* ServerConfig.ServerConfig;
+        // An unreadable unit stays removable; only a unit known to serve another home is kept.
+        const installedBaseDir = yield* service.status.pipe(
+          Effect.map((status) => status.installedBaseDir),
+          Effect.orElseSucceed(() => undefined),
+        );
+        if (
+          installedBaseDir !== undefined &&
+          path.resolve(installedBaseDir) !== path.resolve(baseDir)
+        ) {
+          yield* Console.log(
+            `The T3 Code service serves ${installedBaseDir}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(installedBaseDir)}\` to remove it.`,
+          );
+          return;
+        }
         const removed = yield* service.uninstall;
         yield* Console.log(
           removed ? "Removed the T3 Code service." : "T3 Code service is not installed.",
@@ -302,7 +360,14 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
                 Effect.provide(ProcessRunner.layer),
               )
             : undefined;
-        yield* Console.log(formatServiceStatus(status, packageJson.version, protection));
+        const commands = {
+          install: yield* resolveHostCliHint("service install", flags.baseDir),
+          restart: yield* resolveHostCliHint("service restart", flags.baseDir),
+          update: yield* resolveHostCliHint("update", flags.baseDir, [
+            status.installedVersion ?? packageJson.version,
+          ]),
+        };
+        yield* Console.log(formatServiceStatus(status, packageJson.version, commands, protection));
       }),
     ),
   ),
