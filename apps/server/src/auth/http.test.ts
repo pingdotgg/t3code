@@ -125,6 +125,18 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(devCookies).toContainEqual(
             expect.stringMatching(/^t3_session_[^=]*=;.*Max-Age=0/),
           );
+          expect(devCookies.filter((cookie) => /;\s*Secure/i.test(cookie))).toEqual([]);
+          const httpsResponse = await environmentA.handler(
+            postJson(
+              "/api/auth/browser-session",
+              { credential: DEV_TOKEN },
+              { "x-forwarded-proto": "https" },
+            ),
+            requestContext,
+          );
+          const httpsCookies = httpsResponse.headers.getSetCookie();
+          expect(httpsCookies).toHaveLength(2);
+          for (const cookie of httpsCookies) expect(cookie).toMatch(/;\s*Secure/i);
           const devCookieHeader = devCookie?.split(";", 1)[0] ?? "";
           const environmentBSession = await environmentB.handler(
             new Request("http://127.0.0.1/api/auth/session", {

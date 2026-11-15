@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import * as TestConsole from "effect/testing/TestConsole";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -19,7 +20,9 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
   pinnedRuntimePaths,
+  posixLauncherScript,
   prunePinnedRuntimes,
+  readPosixLauncherTarget,
   resolveLauncherPath,
 } from "../cloud/pinnedRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -196,7 +199,7 @@ it.layer(NodeServices.layer)("t3 update under a managed policy", (it) => {
 });
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
-  it.effect("repoints a symlink that lives in a runtime versions tree", () =>
+  it.effect("replaces a legacy symlink with a script that execs the new version", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -218,8 +221,81 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       });
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
-      assert.equal(yield* fs.readLink(launcher), newExe);
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+      assert.equal(yield* fs.readFileString(launcher), posixLauncherScript(newExe));
+      // Replaced, not written through.
+      assert.equal(yield* fs.readFileString(oldExe), "");
+    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "finds the script that ran this executable and rewrites it, keeping aliases and arguments",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" }),
+        );
+        // A quote and a space in the home path exercise the script's quoting.
+        const home = path.join(root, "it's home");
+        const entry = (version: string) => path.join(home, "runtime/versions", version, "t3");
+        for (const version of ["1.0.0", "2.0.0"]) {
+          yield* fs.makeDirectory(path.dirname(entry(version)), { recursive: true });
+          yield* fs.writeFileString(entry(version), '#!/bin/sh\nprintf \'[%s]\\n\' "$0" "$@"\n', {
+            mode: 0o755,
+          });
+        }
+        const launcher = path.join(root, "bin/t3");
+        const alias = path.join(root, "alias/t3");
+        yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(alias), { recursive: true });
+        yield* fs.writeFileString(launcher, posixLauncherScript(entry("1.0.0")), { mode: 0o755 });
+        yield* fs.symlink(launcher, alias);
+        const repoint = (environment: Record<string, string>) =>
+          repointLauncher({
+            // The script execs by absolute path, so argv0 names the executable.
+            launchedAs: entry("1.0.0"),
+            baseDir: home,
+            targetEntryPath: entry("2.0.0"),
+          }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+        assert.equal(
+          Option.getOrUndefined(yield* repoint({ PATH: path.dirname(alias) })),
+          launcher,
+        );
+        assert.equal(yield* fs.readLink(alias), launcher);
+        const args = ["two words", "it's quoted", "", "*", "$HOME"];
+        assert.equal(
+          yield* spawner.string(ChildProcess.make(alias, args, { cwd: root })),
+          [entry("2.0.0"), ...args].map((arg) => `[${arg}]\n`).join(""),
+        );
+
+        // Like the shell, a relative PATH entry resolves from the working directory, and a
+        // script nobody can execute is passed over.
+        const unrunnable = path.join(root, "unrunnable/t3");
+        yield* fs.makeDirectory(path.dirname(unrunnable), { recursive: true });
+        yield* fs.writeFileString(unrunnable, posixLauncherScript(entry("2.0.0")), { mode: 0o644 });
+        yield* fs.writeFileString(launcher, posixLauncherScript(entry("2.0.0")), { mode: 0o755 });
+        const relative = yield* repointLauncher({
+          launchedAs: entry("2.0.0"),
+          baseDir: home,
+          targetEntryPath: entry("1.0.0"),
+        }).pipe(
+          Effect.provideService(HostProcess.Environment, {
+            PATH: `${path.dirname(unrunnable)}:bin`,
+          }),
+          Effect.provideService(HostProcess.WorkingDirectory, root),
+        );
+        assert.equal(Option.getOrUndefined(relative), launcher);
+        assert.equal(yield* fs.readFileString(unrunnable), posixLauncherScript(entry("2.0.0")));
+
+        // An edited script is the user's own wrapper now.
+        const edited = `${posixLauncherScript(entry("1.0.0"))}# mine\n`;
+        yield* fs.writeFileString(launcher, edited);
+        assert.isTrue(Option.isNone(yield* repoint({ PATH: path.dirname(launcher) })));
+        assert.equal(yield* fs.readFileString(launcher), edited);
+      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
 
   it.effect.each([
@@ -280,10 +356,9 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       );
 
       assert.deepStrictEqual(removed, ["1.0.0"]);
-      // macOS temp dirs sit behind the /var -> /private/var symlink, so compare canonical paths.
       assert.equal(
-        yield* fs.realPath(launcher),
-        yield* fs.realPath(path.join(root, "runtime/versions/2.0.0/t3")),
+        yield* readPosixLauncherTarget(launcher),
+        path.join(root, "runtime/versions/2.0.0/t3"),
       );
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
@@ -363,7 +438,7 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
           Effect.exit,
         );
 
-        const repointed = (yield* fs.readLink(launcher)) === newExe;
+        const repointed = (yield* readPosixLauncherTarget(launcher)) === newExe;
         const recorded = (yield* fs
           .readFileString(launchersFile)
           .pipe(Effect.orElseSucceed(() => "")))

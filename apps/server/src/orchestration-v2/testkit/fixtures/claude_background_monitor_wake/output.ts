@@ -27,6 +27,10 @@ export function assertClaudeBackgroundMonitorWakeOutput(
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
   assertUserMessagesInclude(projection, [CLAUDE_BACKGROUND_MONITOR_WAKE_PROMPT]);
+  const monitorItem = projection.turnItems.find(
+    (item) => item.nativeItemRef?.nativeId === "toolu_019b4EUbhEcYP4TS7vZn27N1",
+  );
+  assert.isDefined(monitorItem);
 
   const rosterTasks = result.domainEvents
     .flatMap((event) =>
@@ -40,7 +44,11 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
       kind: "monitor",
+      awaited: true,
       nativeItemId: "toolu_019b4EUbhEcYP4TS7vZn27N1",
+      command: "sleep 8 && echo MONITOR_DONE",
+      itemId: monitorItem?.id,
+      sourceThreadId: monitorItem?.threadId,
     });
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);

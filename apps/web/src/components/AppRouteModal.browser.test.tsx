@@ -24,4 +24,24 @@ describe("AppRouteModal", () => {
 
     expect(onCommit).toHaveBeenCalledWith("Keep titles short");
   });
+
+  it("stays open when Esc belongs to a modal outside Base UI", async () => {
+    await using _screen = await render(
+      <AppRouteModal label="Settings">
+        <CommitOnBlurField onCommit={() => undefined} />
+      </AppRouteModal>,
+      { router: "/settings/general" },
+    );
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    // Base UI takes initial focus a frame after opening; let it land before Clerk's modal takes focus.
+    await expect.element(settings).toHaveFocus();
+    // Clerk renders its account modal in its own root and dismisses on a document Esc listener.
+    const foreignModal = document.body.appendChild(document.createElement("input"));
+    using _foreignModal = { [Symbol.dispose]: () => foreignModal.remove() };
+
+    foreignModal.focus();
+    await userEvent.keyboard("{Escape}");
+
+    await expect.element(settings).toHaveAttribute("data-open");
+  });
 });

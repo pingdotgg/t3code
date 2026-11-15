@@ -161,10 +161,14 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+const resolveDirectPairingBaseUrl = (
+  state: PersistedServerRuntimeState,
+  platform: NodeJS.Platform,
+): string =>
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
+    platform,
   });
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
@@ -562,7 +566,7 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
       } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state, yield* HostProcess.Platform);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
             "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",

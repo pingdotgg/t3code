@@ -1763,7 +1763,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
-    const contextDrag = pointerOutsideThreadList(point);
+    // Search results cannot reorder, so their context preview starts inside the list.
+    const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>
       current === null || current.contextDrag === contextDrag
         ? current

@@ -18,8 +18,9 @@ interface PullRequestIntentTarget {
 }
 
 /**
- * Reads the detail a row's panel will ask for once the pointer or focus rests on it, so the
- * click paints from it. Passing over rows asks the host nothing, and leaving a row stops reading it.
+ * Reads the detail and activity a row's panel will ask for once the pointer or focus rests on it,
+ * so the click paints from them. Passing over rows asks the host nothing, and leaving a row stops
+ * reading it.
  */
 export function usePullRequestIntentPrefetch(
   isListed: (target: PullRequestIntentTarget) => boolean,
@@ -29,16 +30,22 @@ export function usePullRequestIntentPrefetch(
   // A removed row fires no leave event.
   const listed = target !== null && isListed(target);
   if (target !== null && !listed) setTarget(null);
-  useEnvironmentQuery(
+  const reference =
     target === null || !listed
+      ? null
+      : pullRequestPanelReference({ ...target, host: target.host.toLowerCase() });
+  useEnvironmentQuery(
+    target === null || reference === null
       ? null
       : pullRequestEnvironment.detail({
           environmentId: target.environmentId,
-          input: {
-            ...pullRequestPanelReference({ ...target, host: target.host.toLowerCase() }),
-            allowStale: false,
-          },
+          input: { ...reference, allowStale: false },
         }),
+  );
+  useEnvironmentQuery(
+    target === null || reference === null
+      ? null
+      : pullRequestEnvironment.activity({ environmentId: target.environmentId, input: reference }),
   );
   return useStableCallback((next: PullRequestIntentTarget | null) => {
     clearTimeout(timer.current);

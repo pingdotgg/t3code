@@ -412,7 +412,9 @@ const LEGACY_THEME_ID_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function normalizeThemeId(themeId: string): string {
-  return LEGACY_THEME_ID_ALIASES[themeId] ?? themeId;
+  return Object.hasOwn(LEGACY_THEME_ID_ALIASES, themeId)
+    ? (LEGACY_THEME_ID_ALIASES[themeId] ?? themeId)
+    : themeId;
 }
 
 export function canonicalThemePreference(theme: string): string {

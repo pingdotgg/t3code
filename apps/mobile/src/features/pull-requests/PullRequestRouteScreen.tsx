@@ -3,6 +3,7 @@ import {
   pullRequestAnchorMatchesUrl,
   pullRequestDiffPathMatches,
   pullRequestLinkCommit,
+  resolvePullRequestAnchorRange,
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -11,12 +12,9 @@ import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
-import {
-  filterPullRequestActivity,
-  DEFAULT_ACTIVITY_FILTER,
-  type ActivityFilter,
-} from "./pullRequestActivityFilter";
+import { filterPullRequestActivity, type ActivityFilter } from "./pullRequestActivityFilter";
 import { PullRequestActivityFilters } from "./PullRequestActivityFilters";
+import { usePullRequestActivityFilter } from "./usePullRequestActivityFilter";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
@@ -382,14 +380,8 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const shown = (tab: typeof chosenSection) =>
     !guidesEnabled && tab === "guide" ? "overview" : tab;
   const section = shown(chosenSection);
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(() => {
-    const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
-    return kind === "timeline"
-      ? { ...DEFAULT_ACTIVITY_FILTER, bots: true, resolved: true }
-      : kind === "commits"
-        ? { ...DEFAULT_ACTIVITY_FILTER, kind: "commits" }
-        : DEFAULT_ACTIVITY_FILTER;
-  });
+  const activity = usePullRequestActivityFilter(parsePullRequestAnchor(params.navigationUrl)?.kind);
+  const activityFilter = activity.filter;
   const activityContent = usePullRequestActivityRows(params, activityFilter);
   const scrollOffsets = useRef<Record<string, number>>({});
   // The offset of the tab last shown, and which tab that was: a tab standing in for a hidden guide
@@ -441,10 +433,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       });
     } else if (target?.kind === "timeline") {
       selectSection("activity");
-      setActivityFilter((filter) => ({ ...filter, kind: "all", bots: true, resolved: true }));
+      activity.showTimeline();
     } else if (target?.kind === "commits") {
       selectSection("activity");
-      setActivityFilter((filter) => ({ ...filter, kind: "commits" }));
+      activity.showCommits();
     } else if (target?.kind === "checks") {
       selectSection("overview");
       // Checks head Overview, which a reused screen may have scrolled past.
@@ -830,7 +822,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
-                              onChange={setActivityFilter}
+                              onChange={activity.setFilter}
                               hiddenCount={tabContent.hiddenCount}
                             />
                           ) : null}
@@ -1010,6 +1002,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     !staleDiff &&
     !detail.isPending &&
     !result.isPending &&
+    !result.withheldRefetching &&
     !result.error;
   const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(route.params)));
   const baseData = useMemo(() => getCachedNativeReviewDiffData({ parsedDiff: parsed }), [parsed]);
@@ -1072,7 +1065,15 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       : !jumpPath || requestedFile
         ? data.files[0]
         : undefined);
-  const range = pickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const linkRange = pickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const range =
+    linkRange &&
+    resolvePullRequestAnchorRange(linkRange, (line) =>
+      data.rows.some(
+        (row) =>
+          row.fileId === targetFile?.id && row.change === "delete" && row.oldLineNumber === line,
+      ),
+    );
   const focus =
     route.params.focus ??
     (range
@@ -1328,6 +1329,10 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
                       return next;
                     });
                   else void viewed.toggle(file.path);
+                }}
+                onPressNotice={(event) => {
+                  const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
+                  if (file) result.loadWithheldFile(file.path);
                 }}
                 onToggleComment={(event) => {
                   const id = event.nativeEvent.commentId;

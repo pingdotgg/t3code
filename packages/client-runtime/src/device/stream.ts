@@ -66,7 +66,7 @@ const webRtcSettingsSchema = Schema.Struct({
   iceServers: Schema.optionalKey(Schema.Array(iceServerSchema)),
   iceTransportPolicy: Schema.optionalKey(Schema.Literals(["all", "relay"])),
 });
-// serve-sim reports its stream settings as `streamSettings` (EAS) or `stream`.
+// serve-sim reports its stream settings as `streamSettings` (Expo) or `stream`.
 const serveSimApiSchema = Schema.Struct({
   streamSettings: Schema.optionalKey(Schema.Unknown),
   stream: Schema.optionalKey(Schema.Unknown),
@@ -864,7 +864,7 @@ export function createDeviceStreamClient(
   };
 
   /**
-   * serve-sim can be locked to WebRTC (EAS Simulator always is), and then
+   * serve-sim can be locked to WebRTC (an Expo Simulator always is), and then
    * refuses AVCC and MJPEG; serve-emu advertises WebRTC the same way. An
    * unreadable answer keeps the default path.
    */

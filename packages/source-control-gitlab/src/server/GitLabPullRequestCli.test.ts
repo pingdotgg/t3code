@@ -1721,39 +1721,49 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("removes an award by listing them and deleting the reader's own id", () =>
+  it.effect("removes the reader's own award from a later page, and stops at an empty page", () =>
     Effect.gen(function* () {
+      const others = Array.from({ length: 100 }, (_, index) =>
+        index === 0 ? null : { id: index, name: "thumbsup", user: { username: "julius" } },
+      );
+      const page = (awards: ReadonlyArray<unknown>) =>
+        Effect.succeed(output(JSON.stringify(awards)));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
       );
+      mockedExecute.mockReturnValueOnce(page(others));
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify([
-              { id: 5, name: "thumbsup", user: { username: "bilal" } },
-              { id: 6, name: "thumbsup", user: { username: "julius" } },
-            ]),
-          ),
-        ),
+        page([{ id: 500, name: "thumbsup", user: { username: "bilal" } }]),
       );
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(page(others));
+      mockedExecute.mockReturnValueOnce(page([]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setReaction({
+      const remove = {
         cwd: "/w",
         repository: "acme/web",
         number: 7,
         content: "thumbs-up",
         reacted: false,
-      });
+      } as const;
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(argsOfCall(2)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7/award_emoji/5",
-        "--method",
-        "DELETE",
+      yield* cli.setReaction(remove);
+      yield* cli.setReaction(remove);
+
+      const awards = "projects/acme%2Fweb/merge_requests/7/award_emoji";
+      expect(mockedExecute.mock.calls.map((_, index) => argsOfCall(index)[1])).toEqual([
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
+        `${awards}/500`,
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
       ]);
+      expect(argsOfCall(3)).toContain("DELETE");
     }),
   );
 

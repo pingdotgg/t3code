@@ -107,6 +107,14 @@ describe("parseCliArgs", () => {
     });
   });
 
+  it("value flag consumes a next token that starts with --", () => {
+    expect(
+      parseCliArgs(["--append-system-prompt", "-- text", "--chrome"], {
+        valueFlags: ["append-system-prompt"],
+      }),
+    ).toEqual({ flags: { "append-system-prompt": "-- text", chrome: null }, positionals: [] });
+  });
+
   it("boolean flag does not consume next token as value", () => {
     expect(parseCliArgs(["--github-output", "1.2.3"], { booleanFlags: ["github-output"] })).toEqual(
       {

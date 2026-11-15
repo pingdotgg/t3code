@@ -308,11 +308,9 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   }
 
   const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
-  // WSL-only fallback can change the primary endpoint before readiness.
   const config = yield* primaryBackend.currentConfig;
   if (
     !environment.isDevelopment &&
-    !settings.wslOnly &&
     Option.isSome(config) &&
     Option.isNone(config.value.preflightFailure)
   ) {

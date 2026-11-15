@@ -85,10 +85,11 @@ and npm are proven by the real path (symlinks followed): a versioned keg or cask
 `brew --prefix`, or `<prefix>/lib/node_modules/<pkg>/` (Windows: the shim beside `node_modules`).
 Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
 either the resolved path or its real target, since those installers place real files or their own
-symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
-nothing is proven, Pi's and Grok's own updaters (`pi update --self`, `grok update`) run instead,
-because each detects its installer itself; the runner's version check catches an updater that exits
-0 without updating. Claude, Codex, and OpenCode updaters only act on their own native layout, so
+symlinks there. Volta is proven by the package's image directory plus either its `volta-shim` link
+or, on Windows, the exact cmd or bash forwarding script Volta generates; a custom script that merely
+calls `volta run` does not qualify. When nothing is proven, Pi's and Grok's own updaters
+(`pi update --self`, `grok update`) run instead, because each detects its installer itself; the
+runner's version check catches an updater that exits 0 without updating. Claude, Codex, and OpenCode updaters only act on their own native layout, so
 those providers stay manual-only unless that layout is proven. Mise is checked
 first, since a `mise x` wrapper can sit at a native installer's path, and `MISE_DATA_DIR` can put
 installs anywhere, so `mise which` is asked whenever mise is on `PATH`. Each driver names its fixed

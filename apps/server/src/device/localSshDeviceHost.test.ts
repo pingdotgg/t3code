@@ -83,7 +83,7 @@ it.effect("removes only self targets from a fanned-out host list", () =>
       const eas = {
         kind: "eas" as const,
         id: "eas",
-        label: "EAS Simulator",
+        label: "Expo Simulators",
         accessToken: "",
         maxSessionMinutes: 30,
         idleMinutes: 10,

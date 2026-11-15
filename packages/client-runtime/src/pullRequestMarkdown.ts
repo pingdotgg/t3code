@@ -261,7 +261,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
     const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
+    // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
+    // A span that runs past this line is left an opener, so its lines stay out of media.
+    const isInlineCode =
+      openFence === null &&
+      fenceMatch?.[1]![0] === "`" &&
+      (fenceMatch[2]!.match(/`+/gu) ?? []).some((run) => run.length === fenceMatch[1]!.length);
+    if (fenceMatch !== null && !isInlineCode) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
