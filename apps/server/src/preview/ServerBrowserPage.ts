@@ -14,6 +14,7 @@ import {
   type PreviewAutomationSelectInput,
   type PreviewAutomationSelectResult,
   type PreviewAutomationSnapshot,
+  type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationSnapshotStage,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
@@ -483,6 +484,37 @@ const pngSize = (base64: string) => {
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
 
+export const jpegSize = (base64: string) => {
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length < 4 || bytes.readUInt16BE(0) !== 0xffd8)
+    throw new Error("Invalid JPEG screenshot.");
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset++] !== 0xff) throw new Error("Invalid JPEG screenshot.");
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === undefined || marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 2 > bytes.length) break;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) break;
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      if (length < 7) break;
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width && height) return { width, height };
+      break;
+    }
+    offset += length;
+  }
+  throw new Error("Invalid JPEG screenshot.");
+};
+
+const scaledSize = (size: { readonly width: number; readonly height: number }, scale: number) =>
+  scale < 1
+    ? { width: Math.round(size.width * scale), height: Math.round(size.height * scale) }
+    : size;
+
 /**
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
@@ -634,7 +666,8 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
   stages: SnapshotStages,
-): Promise<PreviewAutomationSnapshot> => {
+  metadataOnly: boolean,
+) => {
   const { running } = stages;
   const track = async <A>(stage: SnapshotStage, operation: () => Promise<A>) => {
     running.set(stage, (running.get(stage) ?? 0) + 1);
@@ -672,15 +705,21 @@ const capture = async (
           >
         >,
     ),
+    // A cheap real frame still sizes the screenshot; computing it from metrics drifted from the PNG.
     track("screenshot", () =>
-      captureViewport(input.cdp, { format: "png" }).then(async (full) =>
-        scale < 1
-          ? {
-              data: await shrinkPng(input.cdp, full, scale),
-              full: input.fullScreenshot ? full : undefined,
-            }
-          : { data: full, full: undefined },
-      ),
+      metadataOnly
+        ? captureViewport(input.cdp, { format: "jpeg", quality: 10 }).then((data) => ({
+            data,
+            full: undefined,
+          }))
+        : captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+            scale < 1
+              ? {
+                  data: await shrinkPng(input.cdp, full, scale),
+                  full: input.fullScreenshot ? full : undefined,
+                }
+              : { data: full, full: undefined },
+          ),
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
@@ -731,11 +770,10 @@ const capture = async (
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],
     actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      ...pngSize(data),
-    },
+    // Reports the size the PNG path would have shrunk to.
+    screenshot: metadataOnly
+      ? scaledSize(jpegSize(data), scale)
+      : { mimeType: "image/png" as const, data, ...pngSize(data) },
     ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
@@ -743,7 +781,7 @@ const capture = async (
 /** Snapshots begun per page; observers' snapshots aren't queued, so two can overlap. */
 const snapshotTurns = new WeakMap<Page, number>();
 
-export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
+const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
   const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
   const stages: SnapshotStages = { running: new Map(), timedOut: new Set() };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -753,11 +791,11 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
-  const captured = capture(input, deadline, stages).catch((cause: unknown) =>
+  const captured = capture(input, deadline, stages, metadataOnly).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline, stages)
+      ? capture(input, deadline, stages, metadataOnly)
       : Promise.reject(cause),
   );
   try {
@@ -768,6 +806,12 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
     clearTimeout(timer);
   }
 };
+
+export const snapshot = (input: SnapshotInput) =>
+  runSnapshot(input, false) as Promise<PreviewAutomationSnapshot>;
+
+export const snapshotMetadata = (input: SnapshotInput) =>
+  runSnapshot(input, true) as Promise<PreviewAutomationSnapshotMetadata>;
 
 /** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (
@@ -917,14 +961,15 @@ export const hover = async (
   input: PreviewAutomationHoverInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
-  await pointer(await targetPoint(page, locator, input, () => timeout), "move");
+  await pointer(await targetPoint(page, locator, input, remaining), "move");
   if (locator === null) {
     await page.mouse.move(input.x ?? 0, input.y ?? 0);
     return;
   }
-  await locator.hover({ timeout });
+  await locator.hover({ timeout: remaining() });
 };
 
 export const select = async (
@@ -967,17 +1012,18 @@ export const drag = async (
   input: PreviewAutomationDragInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
-  await pointer(await targetPoint(page, source, {}, () => timeout), "move");
+  await pointer(await targetPoint(page, source, {}, remaining), "move");
   // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
   // Chromium delivers a single move before dragstart; steps give the page mousemoves during the drag.
-  const dragFailure = source.dragTo(target, { timeout, steps: 5 }).then(
+  const dragFailure = source.dragTo(target, { timeout: remaining(), steps: 5 }).then(
     () => null,
     (error: unknown) => ({ error }),
   );
-  const end = await target.boundingBox({ timeout }).catch(() => null);
+  const end = await target.boundingBox({ timeout: remaining() }).catch(() => null);
   if (end) await pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
   const failure = await dragFailure;
   if (failure) throw failure.error;
