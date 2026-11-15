@@ -1690,6 +1690,7 @@ effectIt.effect("preserves a replacement committed before exhausted start settle
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            normalize: () => Effect.succeed([]),
             ingestNormalized: () =>
               Effect.sync(() => {
                 harness.setProjection({ ...harness.projection(), providerTurns: [providerTurn] });
