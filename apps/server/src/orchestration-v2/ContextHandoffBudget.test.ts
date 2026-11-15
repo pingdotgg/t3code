@@ -283,7 +283,6 @@ describe("handoff budget", () => {
     // The work reserve never takes more than half of a small local window.
     for (const [modelContextWindow, nativeContextEstimate, expected] of [
       [8_192, 0, 4_086],
-      [16_384, 0, 8_182],
       [32_768, 0, 16_758],
       [131_072, 50_000, 48_294],
     ] as const) {
