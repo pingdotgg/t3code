@@ -1,6 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+
 import { assert, describe, it } from "@effect/vitest";
 
+import { EXPLORO_QA_SKILL_SECTIONS } from "./exploroQaInstructions.ts";
 import {
+  T3_CODE_ORCHESTRATION_SECTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -81,5 +86,26 @@ describe("T3 device instructions", () => {
       "Again.",
     );
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "## T3 Code devices");
+  });
+});
+
+describe("Exploro QA instructions", () => {
+  it("carry the exploro-qa skill's body unchanged", () => {
+    const skill = NodeFS.readFileSync(
+      new URL("../../../../skills/exploro-qa/SKILL.md", import.meta.url),
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    const body = skill.replace(/^---\n[\s\S]*?\n---\n\n/, "").trimEnd();
+    assert.equal(EXPLORO_QA_SKILL_SECTIONS.join("\n\n"), body);
+  });
+
+  it("reach every session that has the T3 tools, in entries Codex won't truncate", () => {
+    assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, "## Exploro QA");
+    for (const section of EXPLORO_QA_SKILL_SECTIONS) {
+      assert.include(T3_CODE_ORCHESTRATION_INSTRUCTIONS, section);
+    }
+    for (const section of T3_CODE_ORCHESTRATION_SECTIONS) {
+      assert.isAtMost(new TextEncoder().encode(section).length, 4_000);
+    }
   });
 });
