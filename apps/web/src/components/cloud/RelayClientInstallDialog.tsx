@@ -12,6 +12,7 @@ import { Button } from "../ui/button";
 import {
   Dialog,
   DialogDescription,
+  DialogAction,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -115,9 +116,9 @@ export function RelayClientInstallDialog() {
             >
               Cancel
             </Button>
-            <Button onClick={() => respondToRelayClientInstallConfirmation(true)}>
+            <DialogAction onClick={() => respondToRelayClientInstallConfirmation(true)}>
               Download and install
-            </Button>
+            </DialogAction>
           </DialogFooter>
         ) : null}
       </DialogPopup>

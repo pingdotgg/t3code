@@ -1482,7 +1482,18 @@ jobs:
 
           git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json pnpm-lock.yaml
           git commit --no-verify -m "chore(release): prepare $RELEASE_TAG"
-          git push origin HEAD:main
+
+          # main moves while this job runs, so a rejected push rebases and retries.
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt). Rebasing onto latest main."
+            git pull --rebase origin main
+          done
+
+          echo "Could not push the version bump after 5 attempts." >&2
+          exit 1
 
   announce_discord:
     name: Announce release on Discord

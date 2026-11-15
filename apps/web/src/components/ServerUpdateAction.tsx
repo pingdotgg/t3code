@@ -205,6 +205,7 @@ export function ServerUpdatesAction({
             t("serverUpdate.confirmDesktopApps", {
               labels: desktopTargets.map((target) => target.serverLabel).join(", "),
             }),
+            { initialFocus: "confirm" },
           )) ?? true;
         if (!confirmed) return;
       }
@@ -312,8 +313,9 @@ export function ServerUpdateAction({
     }
     if (isDesktopAppUpdate) {
       const confirmed =
-        (await requestConfirmDialog(t("serverUpdate.confirmDesktopApp", { label: serverLabel }))) ??
-        true;
+        (await requestConfirmDialog(t("serverUpdate.confirmDesktopApp", { label: serverLabel }), {
+          initialFocus: "confirm",
+        })) ?? true;
       if (!confirmed) {
         return;
       }

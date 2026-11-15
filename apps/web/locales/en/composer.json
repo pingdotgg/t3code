@@ -82,6 +82,8 @@
   },
   "interrupt": {
     "stop": "Stop generation",
+    "stopping": "Stopping",
+    "stopped": "Stopped",
     "tooltip": "Interrupt"
   },
   "compact": {
