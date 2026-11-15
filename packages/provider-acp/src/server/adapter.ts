@@ -8973,6 +8973,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (!interrupted && flavor.restartRuntimeAfterPromptError?.(failure) === true) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
+                    if (!interrupted) yield* terminalizeOpenForegroundTools(context, "failed");
                     yield* finalizeTurn(
                       context,
                       interrupted ? "interrupted" : "failed",
