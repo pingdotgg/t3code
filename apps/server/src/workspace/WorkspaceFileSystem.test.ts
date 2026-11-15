@@ -669,6 +669,40 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "replaces a symlink swapped in after the target check instead of writing through it",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const outside = path.join(yield* makeTempDir, "outside.txt");
+          yield* fs.writeFileString(outside, "outside\n");
+          yield* writeTextFile(cwd, "report.md", "original\n");
+          const target = path.join(yield* fs.realPath(cwd), "report.md");
+          let swapped = false;
+          const swap = Effect.suspend(() => {
+            if (swapped) return Effect.void;
+            swapped = true;
+            return fs.remove(target).pipe(Effect.andThen(fs.symlink(outside, target)));
+          });
+          const service = yield* WorkspaceFileSystem.make.pipe(
+            Effect.provide(layerKnownWorkspacesTest),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readLink: (file) => swap.pipe(Effect.andThen(fs.readLink(file))),
+              makeTempDirectory: (options) =>
+                swap.pipe(Effect.andThen(fs.makeTempDirectory(options))),
+            }),
+          );
+
+          yield* service.writeFile({ cwd, relativePath: "report.md", contents: "edited\n" });
+
+          expect(yield* fs.readFileString(outside)).toBe("outside\n");
+          expect(yield* fs.readFileString(target)).toBe("edited\n");
+        }),
+    );
+
     it.effect("rejects writes outside a known workspace", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

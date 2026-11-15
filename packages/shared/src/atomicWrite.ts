@@ -24,13 +24,18 @@ export const writeFileStringAtomically = (input: {
   readonly contents: string | Iterable<string>;
   /** Permission bits for the replacement; ignored on Windows. */
   readonly mode?: number;
+  /** False renames onto `filePath` itself, replacing a link there instead of writing through it. */
+  readonly followSymlinks?: boolean;
 }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const platform = yield* HostProcess.Platform;
-      const targetPath = yield* resolveSymlinkTarget(input.filePath);
+      const targetPath =
+        input.followSymlinks === false
+          ? path.resolve(input.filePath)
+          : yield* resolveSymlinkTarget(input.filePath);
       const targetDirectory = path.dirname(targetPath);
 
       yield* fs.makeDirectory(targetDirectory, { recursive: true });

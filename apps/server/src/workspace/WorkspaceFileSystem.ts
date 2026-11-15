@@ -649,6 +649,8 @@ export const make = Effect.gen(function* () {
         filePath: realTargetPath,
         contents,
         ...staged,
+        // The target was checked as resolved; a link swapped in since is replaced, not followed.
+        followSymlinks: false,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
