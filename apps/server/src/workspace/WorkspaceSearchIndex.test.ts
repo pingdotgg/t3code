@@ -77,7 +77,10 @@ it.live("image searches match the image subset of a file search without fetching
     const fileSearch = vi.spyOn(FileFinder.prototype, "fileSearchAsync");
     const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
     yield* searchIndex.search("", 200, undefined, true);
-    const nativeResult = yield* Effect.promise(() => fileSearch.mock.results[0]?.value);
+    const nativeResult = yield* Effect.promise(
+      (): ReturnType<FileFinder["fileSearchAsync"]> => fileSearch.mock.results[0]?.value,
+    );
+    if (!nativeResult.ok) return yield* Effect.die(nativeResult.error);
     expect(nativeResult.value.items.length).toBeLessThanOrEqual(201);
 
     // The image glob must not change fff's parse of fuzzy paths, globs, negations or locations.
