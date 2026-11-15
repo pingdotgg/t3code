@@ -232,13 +232,14 @@ final class T3NativeImageViewer: NSObject {
         guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, animationOptions as CFDictionary) else { continue }
         frames.append((UIImage(cgImage: frame), frameDuration(source, index)))
       }
-      // UIKit plays frames evenly, so a longer delay repeats its frame; the repeats share one bitmap.
-      let tick = max(0.02, frames.map(\.delay).min() ?? 0.1)
+      // UIKit plays frames evenly, so each frame repeats once per tick of its delay; the repeats share
+      // one bitmap. The tick grows with the animation's length to keep the timeline near 1,000 entries.
+      let total = frames.reduce(0) { $0 + $1.delay }
+      let tick = max(0.02, total / 1_000)
       let timeline = frames.flatMap { frame in
-        Array(repeating: frame.image, count: min(50, max(1, Int((frame.delay / tick).rounded()))))
+        Array(repeating: frame.image, count: max(1, Int((frame.delay / tick).rounded())))
       }
-      let duration = frames.reduce(0) { $0 + $1.delay }
-      if frames.count > 1 { return UIImage.animatedImage(with: timeline, duration: duration) }
+      if frames.count > 1 { return UIImage.animatedImage(with: timeline, duration: Double(timeline.count) * tick) }
     }
     return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
   }
