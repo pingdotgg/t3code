@@ -636,5 +636,16 @@
     "transcriptionEnv": "你的转录环境",
     "tryAgain": "重试",
     "verifying": "正在校验下载…"
+  },
+  "worktreeSetup": {
+    "ariaLabel": "工作树设置",
+    "base": "基线",
+    "branch": "分支",
+    "cancel": "取消",
+    "details": "详情",
+    "openTerminal": "打开终端",
+    "path": "路径",
+    "setup": "设置脚本",
+    "workLocally": "本地工作"
   }
 }

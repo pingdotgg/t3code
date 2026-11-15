@@ -643,5 +643,16 @@
     "transcriptionEnv": "your transcription environment",
     "tryAgain": "Try again",
     "verifying": "Verifying download…"
+  },
+  "worktreeSetup": {
+    "ariaLabel": "Worktree setup",
+    "base": "Base",
+    "branch": "Branch",
+    "cancel": "Cancel",
+    "details": "Details",
+    "openTerminal": "Open terminal",
+    "path": "Path",
+    "setup": "Setup",
+    "workLocally": "Work locally"
   }
 }
