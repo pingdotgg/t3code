@@ -811,6 +811,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-card-list-row: calc(var(--radius-card) - 8px);
   --radius-card-thumbnail: calc(var(--radius-card) - 9px);
   --radius-row-card: 10px;
+  /* A user message corner that touches the bubble, media or message next to it. */
+  --radius-joined: 4px;
   --radius-pane: 14px;
   /* The composer, 1px inside the rounded-2xl tray, and the send pill 8px inside it. */
   --radius-composer: calc(var(--radius-2xl) - 1px);
