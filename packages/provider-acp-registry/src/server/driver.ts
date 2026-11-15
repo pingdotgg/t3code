@@ -4,6 +4,7 @@ import {
   resolveOfficialAcpRegistryIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
+  type AcpRegistryProbeModel,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -111,12 +112,19 @@ function modelsFromDiscovery(
     (descriptor) => !modelOptionIds.has(descriptor.id),
   );
   const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
-  const capabilitiesFor = (slug: string) => {
+  const capabilitiesFor = ({ id: slug, reasoningEffort }: AcpRegistryProbeModel) => {
     if (slug === discovery?.currentModelId) return capabilities;
+    // The levels a model advertises replace the ones an earlier session reported.
     const own = (
       previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
-    ).filter((descriptor) => !sharedIds.has(descriptor.id));
-    const optionDescriptors = [...shared, ...own];
+    ).filter(
+      (descriptor) =>
+        !sharedIds.has(descriptor.id) &&
+        (reasoningEffort === undefined ||
+          descriptor.type !== "select" ||
+          descriptor.role !== "reasoning"),
+    );
+    const optionDescriptors = [...shared, ...own, ...(reasoningEffort ? [reasoningEffort] : [])];
     return optionDescriptors.length === 0
       ? EMPTY_CAPABILITIES
       : createModelCapabilities({ optionDescriptors });
@@ -137,7 +145,7 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities: capabilitiesFor(model.id),
+          capabilities: capabilitiesFor(model),
         }));
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
