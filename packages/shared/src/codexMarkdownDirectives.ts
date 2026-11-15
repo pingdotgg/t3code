@@ -24,7 +24,9 @@ const CODEX_FOLLOW_UP_NAME = "codex-followup";
 const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
 const WEB_CITATION_OPEN = "\uE200";
 // OpenAI web-search citations: U+E200 "cite" (U+E202 id)+ U+E201. T3 has no sources for the ids.
-const WEB_CITATION_MARKER = /([ \t]?)\uE200cite\uE202[^\uE200\uE201]*\uE201/gu;
+// Streaming text can end partway through a marker, so an unfinished one at the end goes too.
+const WEB_CITATION_MARKER =
+  /([ \t]?)\uE200(?:cite\uE202[^\uE200\uE201]*\uE201|(?:c(?:i(?:t(?:e(?:\uE202[^\uE200\uE201\s]*)?)?)?)?)?$)/gu;
 // Past any closing emphasis or code delimiters, nothing the space separates follows.
 const DROPS_PRECEDING_SPACE = /[*_~`]*(?:\s|[.,;:!?)\]]|$)/uy;
 

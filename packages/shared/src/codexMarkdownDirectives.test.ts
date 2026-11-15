@@ -89,6 +89,7 @@ describe("remarkCodexDirectives", () => {
     expect(text).toContain("Rates held.");
     expect(text).not.toMatch(WEB_CITATION_MARKER);
     expect(textContent(parse("red \uE200cite\uE202turn0search0\uE201**blue**"))).toBe("red blue");
+    expect(textContent(parse("Rates held. \uE200cite\uE202turn0sea"))).toBe("Rates held.");
   });
 
   it("keeps web citation markers out of a bare URL they follow", () => {
@@ -124,15 +125,28 @@ describe.each([
 ])("$name file citation round trips", ({ render }) => {
   // regression: #12243 copied Codex citations keep their backslashes
   it.each([
-    "C:\\Users\\test\\[draft]\\report.md",
-    "\\\\server\\share\\report.md",
-    "/tmp/report%5C.md",
-  ])("preserves the literal path and line: %s", (path) => {
+    ["C:\\Users\\test\\[draft]\\report.md", "C:\\Users\\test\\[draft]\\report.md"],
+    ["\\\\server\\share\\report.md", "\\\\server\\share\\report.md"],
+    ["/tmp/report%5C.md", "/tmp/report%5C.md"],
+    ["~\\reports\\draft.md", "~/reports/draft.md"],
+    ["reports/100% #1? draft.md", "./reports/100% #1? draft.md"],
+    ["./reports/draft.md", "./reports/draft.md"],
+  ])("preserves the literal path and line: %s", (path, linkPath) => {
     const markdown = render(`:codex-file-citation{path="${path}" line_range_start="7"}`);
     const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
 
     expect(link?.type).toBe("link");
-    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path, line: 7 });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: linkPath, line: 7 });
+  });
+
+  it("keeps an entity-like ampersand in the path literal", () => {
+    const markdown = render(
+      ':codex-file-citation{path="/tmp/a&amp;copy;.txt" line_range_start="7"}',
+    );
+    const link = parseOrdinaryMarkdown(markdown).children?.[0]?.children?.[0];
+
+    expect(link?.type).toBe("link");
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
   });
 });
 
@@ -153,6 +167,8 @@ describe.each([
     ],
     ["[s](https://a.dev\uE200cite\uE202turn0search0\uE201)", "[s](https://a.dev)"],
     ["[s]\n\n[s]: https://a.dev\uE200cite\uE202turn0search0\uE201", "[s]\n\n[s]: https://a.dev"],
+    ["Rates held. \uE200cite\uE202turn0search0\uE202turn0sea", "Rates held."],
+    ["Rates held. \uE200ci", "Rates held."],
     [':codex-followup[Read more citeturn0search0]{prompt="Read more"}', "Read more"],
     ["`citeturn0search0`", "`citeturn0search0`"],
     [':codex-followup[Show `citeturn0search0`]{prompt="Show it"}', "Show `citeturn0search0`"],
