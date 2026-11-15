@@ -202,7 +202,6 @@ export function FileChip(props: {
   copyMarkdown?: string;
   disabled?: boolean;
   error?: boolean;
-  failedAttachmentId?: string | undefined;
   unresolved?: boolean;
   onOpen?: (() => void) | undefined;
   svgPreview?:
@@ -226,7 +225,6 @@ export function FileChip(props: {
     "aria-label": [props.accessibleLabel, props.suffix].filter(Boolean).join(", "),
     "data-markdown-copy": props.copyMarkdown,
     "data-context-unresolved": props.unresolved ? "true" : undefined,
-    "data-failed-attachment-id": props.failedAttachmentId,
   } as const;
   return (
     <Tooltip>
@@ -302,8 +300,7 @@ function SvgFileChip(props: ComponentProps<typeof FileChip>) {
             onClick={props.onOpen}
             onPreviewError={() => setFailedPreviewUrl(url)}
             data-markdown-copy={props.copyMarkdown}
-            data-failed-attachment-id={props.failedAttachmentId}
-            aria-label={[props.accessibleLabel, props.suffix].filter(Boolean).join(", ")}
+            aria-label={props.accessibleLabel}
             {...(props.error ? { state: "invalid" as const } : {})}
           />
         }
