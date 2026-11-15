@@ -9,7 +9,8 @@ import {
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ScrollArea } from "../ui/scroll-area";
 import { cn } from "../../lib/utils";
-import { Popover, PopoverPopup, PopoverCreateHandle } from "../ui/popover";
+import { Popover, PopoverPopup, PopoverPopupSurface, PopoverCreateHandle } from "../ui/popover";
+import { Collapsible, CollapsiblePanel } from "../ui/collapsible";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { useChatCanvas } from "./ChatCanvasContext";
 import {
@@ -18,9 +19,6 @@ import {
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
-import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { usePanelPresence } from "../../panelAnimations";
-import { POPOVER_TRANSITION_CLASS, POPOVER_TRANSITION_DURATION_MS } from "../ui/popover-styles";
 
 export function ThreadDetailsCard({
   threadRef,
@@ -49,15 +47,6 @@ export function ThreadDetailsCard({
   );
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
-  );
-  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  const inlineVisible = mode === "inline" && inlineOpen;
-  const inlinePresence = usePanelPresence(
-    inlineVisible,
-    placement,
-    !prefersReducedMotion,
-    `${threadRef.environmentId}:${threadRef.threadId}:${mode}`,
-    POPOVER_TRANSITION_DURATION_MS,
   );
   const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
   const [measurements, setMeasurements] = useState({
@@ -130,15 +119,10 @@ export function ThreadDetailsCard({
         "dropdown-glass isolate contain-paint grid max-h-full grid-rows-[minmax(0,1fr)] overflow-hidden rounded-2xl",
         mode === "popover" &&
           "max-h-[min(calc(100dvh-6.5rem),calc(var(--available-height,100dvh)-1rem))]",
-        mode === "inline" && [
-          "origin-top-right transition-[scale,opacity] starting:scale-98 starting:opacity-0",
-          POPOVER_TRANSITION_CLASS,
-        ],
       )}
       style={placement ? { maxHeight: height } : undefined}
       onContextMenu={onContextMenu}
       data-thread-details-card
-      data-ending-style={mode === "inline" && !inlineVisible ? "" : undefined}
     >
       <ScrollArea scrollFade className="min-h-0">
         <div ref={setContentElement}>{children(density)}</div>
@@ -163,8 +147,11 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {placement && inlinePresence.present ? (
-        <aside
+      {placement ? (
+        <Collapsible
+          key={`${threadRef.environmentId}:${threadRef.threadId}`}
+          open={inlineOpen}
+          render={<aside />}
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
           // Skip the return transition to avoid overlapping the rising preview.
@@ -180,10 +167,12 @@ export function ThreadDetailsCard({
           }}
           data-density={density}
           data-thread-details-panel="inline"
-          inert={!inlineVisible}
+          inert={!inlineOpen}
         >
-          {card}
-        </aside>
+          <CollapsiblePanel animate={false} render={<PopoverPopupSurface />}>
+            {card}
+          </CollapsiblePanel>
+        </Collapsible>
       ) : null}
       {/* Rendered in both modes: base-ui keeps a popup that unmounts mid-open
           mounted, because its exit animation never finishes. Staying in the tree
