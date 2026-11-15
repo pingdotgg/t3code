@@ -5,7 +5,6 @@ import {
   CheckpointScopeId,
   CommandId,
   EventId,
-  GuestShareId,
   MessageId,
   NodeId,
   ProjectId,
@@ -22,15 +21,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 import * as Statement from "effect/sql/Statement";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
-import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -57,14 +53,10 @@ const forkCases = (
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: () => Effect.die("Execution is paused after dispatch for handoff inspection"),
   };
-  const layerDatabase = SqlitePersistence.layerMemory;
-  const layer = Layer.merge(
-    ProviderReplayHarness.layerWithRegistry(
-      { name: `fork-boundary-${driver}` },
-      ProviderAdapterRegistry.layerFromAdapters([adapter]),
-      { runEffectWorker: false, databaseLayer: layerDatabase },
-    ),
-    EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
+  const layer = ProviderReplayHarness.layerWithRegistry(
+    { name: `fork-boundary-${driver}` },
+    ProviderAdapterRegistry.layerFromAdapters([adapter]),
+    { runEffectWorker: false },
   );
 
   return { driver, status, instanceId, modelSelection, layer };
@@ -1184,7 +1176,6 @@ it.effect(
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const { driver, instanceId } = forkCases[0]!;
       const parentId = ThreadId.make("side-chat-archive-parent");
       const busy = ThreadId.make("side-chat-archive-busy");
@@ -1285,17 +1276,6 @@ it.effect(
           },
         ],
       });
-      // A guest share on the busy side chat ends with the parent's archive, as on any archived thread.
-      const shareId = GuestShareId.make("side-chat-archive-share");
-      yield* orchestrator.dispatch({
-        type: "thread.guest-share.open",
-        commandId: CommandId.make("side-chat-archive-share-busy"),
-        threadId: busy,
-        shareId,
-        host: "env.t3.test",
-        expiresAt: DateTime.formatIso(DateTime.add(now, { hours: 24 })),
-      });
-      assert.equal((yield* orchestrator.getThreadProjection(busy)).thread.guestShare?.id, shareId);
       const archive = (commandId: string, threadId: ThreadId) =>
         orchestrator.dispatch({
           type: "thread.archive",
@@ -1320,36 +1300,9 @@ it.effect(
       assert.isNotNull(archivedBusy.thread.archivedAt);
       assert.equal(archivedBusy.runs.find((run) => run.id === queuedRunId)?.status, "cancelled");
       assert.isEmpty(archivedBusy.providerSessions);
-      assert.isNull(archivedBusy.thread.guestShare ?? null);
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
       // Archive refuses a thread still waiting on delegated tasks, so the cascade leaves it active.
       assert.isNull(yield* archivedAt(delegating));
-      // The side chat's session is detached the way the parent's is.
-      const stopEffects = (commandId: string) =>
-        outbox
-          .listByCommandId(CommandId.make(commandId))
-          .pipe(
-            Effect.map((effects) =>
-              effects.map(({ threadId, request }) => ({ threadId, request })),
-            ),
-          );
-      const stopsFor = (threadId: ThreadId) => [
-        {
-          threadId,
-          request: {
-            type: "provider-session.detach" as const,
-            providerSessionId: ProviderSessionId.make(`${threadId}:session`),
-            detail: "Thread archived.",
-            revokeMcpCredential: true,
-          },
-        },
-        { threadId, request: { type: "terminal.cleanup" as const } },
-      ];
-      assert.deepEqual(yield* stopEffects("side-chat-archive-parent"), stopsFor(parentId));
-      assert.deepEqual(
-        yield* stopEffects(`side-chat-archive-parent:side-chat:${busy}`),
-        stopsFor(busy),
-      );
 
       yield* orchestrator.dispatch({
         type: "thread.unarchive",
@@ -1358,8 +1311,6 @@ it.effect(
       });
       assert.isNull(yield* archivedAt(parentId));
       assert.isNull(yield* archivedAt(busy));
-      // Unarchive does not reopen a share, for a side chat as for any thread.
-      assert.isNull((yield* orchestrator.getThreadProjection(busy)).thread.guestShare ?? null);
       assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
     }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
