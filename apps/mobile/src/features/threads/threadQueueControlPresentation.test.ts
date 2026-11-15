@@ -49,7 +49,7 @@ describe("threadQueueControlPresentation", () => {
     );
   });
 
-  it("shows mention and file chips by their labels, and drops image chips beside thumbnails", () => {
+  it("shows context chips by their labels", () => {
     const environment = formatComposerContextReference({
       kind: "environment",
       contextId: ComposerContextId.make("environment_mac"),
@@ -65,27 +65,15 @@ describe("threadQueueControlPresentation", () => {
       contextId: ComposerContextId.make("screenshot"),
       label: "screenshot.png",
     });
-    const text = `Check ${environment} for ${file} ${image} `;
-    const row = (showsImageThumbnails: boolean) =>
-      resolveThreadQueueRowControls({
-        busy: false,
-        canPromoteToSteer: true,
-        canSendNow: false,
-        showsImageThumbnails,
-        text,
-      }).displayText;
 
-    expect(row(true)).toBe("Check MacBook for report.pdf");
-    expect(row(false)).toBe("Check MacBook for report.pdf screenshot.png");
     expect(
       resolveThreadQueueRowControls({
         busy: false,
         canPromoteToSteer: true,
         canSendNow: false,
-        showsImageThumbnails: true,
-        text: `${image} `,
+        text: `Check ${environment} for ${file} ${image} `,
       }).displayText,
-    ).toBe("");
+    ).toBe("Check MacBook for report.pdf screenshot.png");
   });
 
   it("keeps the row already open in the composer from being reopened or steered", () => {
