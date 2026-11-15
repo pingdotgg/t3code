@@ -292,6 +292,42 @@ it.layer(
       expect((yield* skill(next)).status).toBe("not_installed");
     }),
   );
+  it.effect("restores edits made while moving a skill for update or removal", () =>
+    Effect.gen(function* () {
+      const { fs, path, home } = yield* setup;
+      for (const action of ["update", "remove"] as const) {
+        const manager = yield* getManager(path.join(home, action));
+        const installed = yield* install(manager);
+        const racing = yield* getManager(path.join(home, action), [
+          { ...source, files: { ...source.files, "SKILL.md": "new version" } },
+        ]).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            rename: (from, to) =>
+              path.basename(to) === "previous"
+                ? fs
+                    .writeFileString(path.join(from, "SKILL.md"), "concurrent edit")
+                    .pipe(Effect.andThen(fs.rename(from, to)))
+                : fs.rename(from, to),
+          }),
+        );
+        const current = yield* skill(racing);
+        const error = yield* racing
+          .manage({
+            instanceId,
+            skillId: source.id,
+            action,
+            expectedFingerprint: current.fingerprint,
+          })
+          .pipe(Effect.flip);
+        expect(error.reason).toBe("conflict");
+        expect(yield* fs.readFileString(path.join(installed.path, "SKILL.md"))).toBe(
+          "concurrent edit",
+        );
+        expect((yield* skill(racing)).status).toBe("modified");
+      }
+    }),
+  );
   it.effect("restores the previous version if replacing it fails", () =>
     Effect.gen(function* () {
       const { fs, path, home, manager } = yield* setup;

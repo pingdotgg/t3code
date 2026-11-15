@@ -303,8 +303,34 @@ const make = Effect.gen(function* () {
         const current = yield* observe(observedPath, source);
         if (current.fingerprint !== before.fingerprint)
           return yield* new SkillManagementError({ reason: "stale_state", path: destination });
-        if (before.status !== "not_installed")
+        if (before.status !== "not_installed") {
           yield* io(fs.rename(destination, backup), destination);
+          const moved = yield* observe(backup, source).pipe(
+            Effect.mapError(
+              (cause) =>
+                new SkillManagementError({
+                  reason: "recovery_required",
+                  path: destination,
+                  backupPath: backup,
+                  cause,
+                }),
+            ),
+          );
+          if (moved.status === "modified" || moved.status === "unmanaged") {
+            yield* fs.rename(backup, destination).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new SkillManagementError({
+                    reason: "recovery_required",
+                    path: destination,
+                    backupPath: backup,
+                    cause,
+                  }),
+              ),
+            );
+            return yield* new SkillManagementError({ reason: "conflict", path: destination });
+          }
+        }
         if (input.action !== "remove") {
           const placed = yield* io(fs.rename(replacement, destination), destination).pipe(
             Effect.result,
