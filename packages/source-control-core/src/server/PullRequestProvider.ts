@@ -249,6 +249,7 @@ export interface ProviderDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface ProviderDiffFileContents {
@@ -455,6 +456,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      readonly path?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
 
