@@ -535,15 +535,18 @@ it.effect("waitForThread after a run waits on the next run that brings new work"
     // Restarted, it ends as its continuation, but is answered by the id a task here records.
     runs = [
       ...runs.slice(0, 2),
-      run(wakeRunId, 3, "cancelled"),
+      // The cut run's marker of work its restart cancelled is not the continuation's outcome.
+      { ...run(wakeRunId, 3, "cancelled"), restartCancelledBackgroundWork: [{}] } as never,
       { ...run(restartedRunId, 4, "completed"), restartContinuationOfRunId: wakeRunId },
     ];
     yield* Queue.offer(events, stored(2));
 
-    expect(yield* Fiber.join(fiber)).toMatchObject({
+    const answered = yield* Fiber.join(fiber);
+    expect(answered).toMatchObject({
       timedOut: false,
       run: { id: wakeRunId, status: "completed" },
     });
+    expect(answered.run).not.toHaveProperty("restartCancelledBackgroundWork");
   }),
 );
 

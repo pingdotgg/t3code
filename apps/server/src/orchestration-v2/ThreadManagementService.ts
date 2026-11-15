@@ -1144,10 +1144,7 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       // The run found after `afterRunId` keeps its own id, which is what a task records,
       // with how its restart chain ended.
-      run:
-        afterRunId === undefined
-          ? current.run
-          : { ...answered, status: current.run.status, completedAt: current.run.completedAt },
+      run: afterRunId === undefined ? current.run : { ...current.run, id: answered.id },
       timedOut: !current.settled,
       ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
     });
