@@ -290,6 +290,7 @@ function withoutHtmlComments(body: string): string {
 
 function snippet(body: string): string {
   const text = withoutHtmlComments(body)
+    .replaceAll(/\s+/g, " ")
     .slice(0, SNIPPET_SCAN_LENGTH)
     .toWellFormed()
     .replaceAll(MARKUP, (match, code: string | undefined) => (code === undefined ? " " : match))

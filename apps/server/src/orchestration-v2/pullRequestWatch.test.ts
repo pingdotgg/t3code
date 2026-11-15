@@ -760,6 +760,7 @@ describe("evaluatePullRequestWatch", () => {
         "2026-10-02T12:10:00Z",
         `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.\n   <!-- GitHub hides this unclosed block`,
       ),
+      remark("spacer", "2026-10-02T12:11:00Z", `${"\n".repeat(2_001)}Guard the empty list.`),
     ]);
     const { text } = pullRequestWatchMessage({
       number: 1,
@@ -773,6 +774,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, '"Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~"');
     assert.include(text, 'maintainer on src/index.ts: "Guard this , and `<!--` stays escaped."');
     assert.include(text, '"Check the retry."');
+    assert.include(text, 'spacer on src/index.ts: "Guard the empty list."');
     assert.notInclude(text, "<picture");
   });
 
