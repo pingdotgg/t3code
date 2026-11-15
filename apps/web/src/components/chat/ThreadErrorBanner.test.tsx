@@ -42,4 +42,14 @@ describe("ThreadErrorBanner", () => {
       ),
     ).toBe(true);
   });
+
+  it("reappears when a later run fails with the same message after a dismissal", () => {
+    const error = "This thread's workspace folder no longer exists.";
+    const firstRunKey = getThreadErrorBannerKey("env:thread-c", error, "run-1");
+    dismissThreadErrorBannerForSession(firstRunKey);
+    const secondRunKey = getThreadErrorBannerKey("env:thread-c", error, "run-2");
+
+    expect(isThreadErrorBannerDismissedForSession(firstRunKey)).toBe(true);
+    expect(isThreadErrorBannerDismissedForSession(secondRunKey)).toBe(false);
+  });
 });
