@@ -19,6 +19,7 @@ const thinClient = {
   environmentId,
   primaryEnvironmentId: null,
   isDesktopRenderer: true,
+  primaryRunsInWsl: false,
 };
 
 describe("folderDropTarget", () => {
@@ -32,6 +33,17 @@ describe("folderDropTarget", () => {
         connection: null,
       },
       "local",
+    ],
+    [
+      "the bundled primary running in WSL",
+      {
+        ...thinClient,
+        localEnvironmentDisabled: false,
+        primaryEnvironmentId: environmentId,
+        primaryRunsInWsl: true,
+        connection: null,
+      },
+      { wslBackendId: "primary" },
     ],
     [
       "a saved loopback server on desktop",
@@ -50,8 +62,8 @@ describe("folderDropTarget", () => {
     ],
     [
       "a desktop WSL backend",
-      { ...thinClient, connection: savedServer("http://127.0.0.1:3774", "local:wsl-ubuntu") },
-      "remote",
+      { ...thinClient, connection: savedServer("http://127.0.0.1:3774", "local:wsl:Ubuntu") },
+      { wslBackendId: "wsl:Ubuntu" },
     ],
     [
       "an SSH forward on loopback",
@@ -77,6 +89,6 @@ describe("folderDropTarget", () => {
     ],
     ["an unprepared connection", { ...thinClient, connection: null }, "remote"],
   ] as const)("targets %s", (_name, input, expected) => {
-    expect(folderDropTarget(input)).toBe(expected);
+    expect(folderDropTarget(input)).toEqual(expected);
   });
 });
