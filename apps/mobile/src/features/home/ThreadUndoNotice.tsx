@@ -51,7 +51,11 @@ export function ThreadUndoNotice(props: { readonly visible: boolean }) {
   const bottom =
     Platform.OS === "ios"
       ? foldedResting
-        ? Math.max(rootMetrics.safeArea.bottom, keyboardHeight) + 8
+        ? // Sit level with the rail's tab pill, which floats inside the bottom safe area.
+          Math.max(
+            rootMetrics.bottomBarInset ?? rootMetrics.safeArea.bottom + 8,
+            keyboardHeight + 8,
+          )
         : rootMetrics?.hasHinge && rootMetrics.verticalBarEdge !== "none"
           ? // The column's safe area already includes UIKit's search toolbar in this posture.
             workspaceSearchBottomClearance({
