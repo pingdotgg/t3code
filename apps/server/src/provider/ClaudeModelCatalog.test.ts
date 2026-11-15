@@ -137,6 +137,13 @@ describe("Claude model catalog", () => {
       formatClaudeVersionUpgradeMessage(catalog, "3.1.9"),
       "Claude Code v3.1.9 is too old for Claude Synthetic Next. Upgrade to v3.2.0 or newer to access it.",
     );
+    // Claude Code before 2.1.321 does not know claude-fable-5-2 and runs it with a 200K window.
+    assert.notInclude(
+      resolveClaudeModelsForVersion(BUNDLED_CLAUDE_MODEL_CATALOG, "2.1.320").map(
+        (model) => model.slug,
+      ),
+      "claude-fable-5-2",
+    );
   });
 
   it("resolves aliases and declarative adapter mappings", () => {
