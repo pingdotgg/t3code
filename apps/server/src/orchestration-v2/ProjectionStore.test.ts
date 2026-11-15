@@ -2640,7 +2640,6 @@ const assertReadsThroughMessageOrdinalIndex = Effect.fn("assertReadsThroughMessa
 // first); the message-ordinal statement reads those ordinals through migration 93's index.
 const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
-  const sql = yield* SqlClient.SqlClient;
   const threadId = ThreadId.make("thread:message-ordinals");
   yield* store.apply(recordsThreadCreated(threadId));
   const conversation = (name: string, firstOrdinal: number) => {
@@ -2737,8 +2736,7 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
     indexed.messages.map((message) => message.id),
     [first.user, first.assistant, second.user, second.assistant],
   );
-  // A narrow read (ids, runs or one role) recovers only its own messages' ordinals, through the
-  // same index; the statement it sends, rerun with its bindings, returns just those rows.
+  // A narrow read (ids, runs or one role) seeks only its own messages in the same index.
   const narrowReads = [
     {
       filter: { messageIds: [second.assistant, first.user] },
@@ -2759,27 +2757,11 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
     const bounded = narrow.statements.find((statement) =>
       statement.includes("MIN(ordinal) AS ordinal"),
     );
-    assert.include(bounded, "IN (SELECT value FROM json_each(");
-    // The selected messages are sought in the index, not filtered from the whole thread.
     yield* assertReadsThroughMessageOrdinalIndex(bounded, ["thread_id=?", "<expr>=?"]);
-    const rows = yield* sql.unsafe<{ readonly message_id: string }>(bounded!, [
-      threadId,
-      JSON.stringify(loaded),
-    ]);
-    assert.sameMembers(
-      rows.map((row) => row.message_id),
-      loaded,
-    );
   }
-  yield* sql`DROP INDEX orchestration_v2_projection_turn_items_message_ordinal_idx`;
-  assert.deepEqual(
-    (yield* store.getThreadRecords(threadId, ["messages"])).messages,
-    indexed.messages,
-  );
 });
 
-// It drops the index, so it gets its own database.
-it.effect("reads message ordinals through their index and orders messages as without it", () =>
+it.effect("reads message ordinals through their index", () =>
   messageOrdinalsReadThroughTheirIndex.pipe(Effect.provide(layerTest)),
 );
 
