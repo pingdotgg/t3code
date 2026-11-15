@@ -45,6 +45,7 @@ import { SOCKET_FRAME_PARTS_QUERY_PARAM } from "@t3tools/shared/socketFrameParts
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
+import * as CommandReceiptStore from "./orchestration-v2/CommandReceiptStore.ts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Cause from "effect/Cause";
@@ -1828,6 +1829,7 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
             Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
             Layer.mock(WorkspacePaths.WorkspacePaths)({}),
             Layer.mock(EventSink.EventSinkV2)({}),
+            Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
             IdAllocator.layer,
             Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({}),
             Layer.mock(ThreadCommandExecutor.ThreadCommandExecutor)({}),

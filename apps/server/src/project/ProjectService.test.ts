@@ -19,6 +19,7 @@ import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import {
   orchestrationCommandDuration,
   orchestrationCommandsTotal,
@@ -197,6 +198,7 @@ it.effect("resolves only the requested active project page in creation order", (
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
+  CommandReceiptStore.layer,
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
@@ -1090,13 +1092,15 @@ it.layer(
             projectId,
             archived: true,
           });
-          const restored = yield* service.register({
+          const restoration = {
             commandId: CommandId.make(`group-restore-${index}`),
             projectId: ProjectId.make(`unused-restore-${index}`),
             workspaceRoot: created.workspaceRoot,
             title: scenario.title,
             groupingIdentity: scenario.groupingIdentity,
-          });
+          };
+          const restored = yield* service.register(restoration);
+          assert.deepEqual(yield* service.register(restoration), restored);
           assert.equal(restored.id, created.id);
           assert.equal(restored.workspaceRoot, created.workspaceRoot);
           assert.equal(restored.createdAt, created.createdAt);

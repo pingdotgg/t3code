@@ -22,6 +22,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import { withCommandMetrics } from "../observability/Metrics.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
@@ -201,6 +202,7 @@ export const make = Effect.gen(function* () {
   const homeDirectory = yield* HostProcess.HomeDirectory;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
+  const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -494,6 +496,26 @@ export const make = Effect.gen(function* () {
       });
       const existing = yield* getByWorkspaceRoot(workspaceRoot);
       if (Option.isSome(existing)) {
+        const receipt = yield* commandReceipts.getProjectByCommandId(input.commandId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectOperationError({
+                operation: "read-project",
+                projectId: existing.value.id,
+                cause,
+              }),
+          ),
+        );
+        if (
+          Option.isSome(receipt) &&
+          receipt.value.status === "accepted" &&
+          receipt.value.projectId === existing.value.id &&
+          (receipt.value.commandType === "project.meta.update" ||
+            (receipt.value.commandType === "project.create" &&
+              receipt.value.projectId === input.projectId))
+        ) {
+          return yield* readCommitted(receipt.value.projectId);
+        }
         if (existing.value.archivedAt !== null) {
           const title = input.title?.trim();
           if (title !== undefined && title.length === 0) {
@@ -513,23 +535,11 @@ export const make = Effect.gen(function* () {
           });
         }
         if (input.groupingIdentity === undefined) {
-          yield* commit({
-            type: "project.create",
-            commandId: input.commandId,
+          return yield* new ProjectConflictError({
             projectId: input.projectId,
-            title: existing.value.title,
             workspaceRoot,
-          }).pipe(
-            Effect.catchTags({
-              ProjectInvalidError: () =>
-                new ProjectConflictError({
-                  projectId: input.projectId,
-                  workspaceRoot,
-                  conflictingProjectId: existing.value.id,
-                }),
-            }),
-          );
-          return yield* readCommitted(input.projectId);
+            conflictingProjectId: existing.value.id,
+          });
         }
         if (existing.value.groupingIdentity === input.groupingIdentity) return existing.value;
         return yield* update({
