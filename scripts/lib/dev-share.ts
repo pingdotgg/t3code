@@ -6,6 +6,7 @@ import {
   ensureTailscaleServe,
   readTailscaleStatus,
   type TailscaleCommandError,
+  type TailscaleServeHttpsDisabledError,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -16,14 +17,20 @@ import type { ChildProcessSpawner } from "effect/process";
 const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefined> = {
   "no-existing-handler": "no mapping existed for that port",
   "not-logged-in": "this machine is not logged into a tailnet — run `tailscale up`",
+  "not-running": "Tailscale is not running; start it and try again",
   "permission-denied": "permission denied — `tailscale serve` may need elevated privileges",
+  "unsupported-target": "this Tailscale install can only proxy to localhost",
   unknown: undefined,
 };
 
-const explainCommandFailure = (error: TailscaleCommandError): string | undefined =>
-  error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
-    ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
-    : undefined;
+const explainCommandFailure = (
+  error: TailscaleCommandError | TailscaleServeHttpsDisabledError,
+): string | undefined =>
+  error._tag === "TailscaleServeHttpsDisabledError"
+    ? "HTTPS is not enabled on this tailnet — enable HTTPS certificates at https://login.tailscale.com/admin/dns"
+    : error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
+      ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
+      : undefined;
 
 export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
   "TailscaleUnavailableError",
@@ -64,7 +71,7 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
     const port = String(this.webPort);
     const base =
       this.stage === "clear-existing"
-        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} off\` and retry`
+        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
         : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
     return this.explanation ? `${base}: ${this.explanation}` : base;
   }

@@ -1,4 +1,4 @@
-import * as GCP from "alchemy/GCP";
+import * as GCP from "@alchemy.run/gcp";
 
 /** Only objects under this prefix trigger the indexer. */
 export const UPLOADS_PREFIX = "uploads/";
@@ -24,8 +24,7 @@ export const Files = GCP.Firestore.Database("Files", {
  * File names double as Firestore document ids and object-name suffixes,
  * so keep them to a URL- and id-safe alphabet.
  */
-export const isValidName = (name: string) =>
-  /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name);
+export const isValidName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name);
 
 export const objectFor = (name: string) => `${UPLOADS_PREFIX}${name}`;
 
