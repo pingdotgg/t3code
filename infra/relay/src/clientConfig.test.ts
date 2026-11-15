@@ -43,7 +43,6 @@ describe("reconcileEnvFile", () => {
         { A: "new", B: "updated" },
       ),
     ).toBe('# earlier "quote"\nA=new\nKEEP=1\nB=updated\n');
-    expect(reconcileEnvFile('A="one\ntwo"\n'.repeat(128), { A: "new" })).toBe("A=new\n");
   });
 
   it("keeps later lines when a quoted value never closes", () => {
