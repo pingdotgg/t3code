@@ -14,6 +14,7 @@ import {
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
+import { posixLauncherScript } from "./pinnedRuntime.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
@@ -98,7 +99,7 @@ it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
       };
       host.emit({ type: "committed", updateId: committed.id });
       expect(yield* Fiber.join(prepared)).toEqual(committed);
-      assert.equal(yield* fs.readLink(installed), exe("1.1.0"));
+      assert.equal(yield* fs.readFileString(installed), posixLauncherScript(exe("1.1.0")));
 
       // A later start replays the stored outcome; user pins made since then stay put.
       yield* fs.remove(installed);
@@ -224,7 +225,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
           yield* fs.writeFileString(file, "");
         }
         yield* fs.makeDirectory(path.dirname(installed), { recursive: true });
-        yield* fs.symlink(exe("1.5.0"), installed);
+        yield* fs.writeFileString(installed, posixLauncherScript(exe("1.5.0")), { mode: 0o755 });
         yield* fs.makeDirectory(path.dirname(onPath), { recursive: true });
         yield* fs.symlink(exe("1.0.0"), onPath);
 
@@ -236,8 +237,9 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
           }),
         );
 
-        assert.equal(yield* fs.readLink(installed), exe("2.0.0"));
-        assert.equal(yield* fs.readLink(onPath), exe("2.0.0"));
+        // The script is rewritten and the legacy symlink becomes one.
+        assert.equal(yield* fs.readFileString(installed), posixLauncherScript(exe("2.0.0")));
+        assert.equal(yield* fs.readFileString(onPath), posixLauncherScript(exe("2.0.0")));
       }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
@@ -291,7 +293,7 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       assert.lengthOf(warnings, 1);
       assert.include(JSON.stringify(warnings), installed);
       assert.equal(yield* fs.readLink(installed), exe("1.0.0"));
-      assert.equal(yield* fs.readLink(onPath), exe("2.0.0"));
+      assert.equal(yield* fs.readFileString(onPath), posixLauncherScript(exe("2.0.0")));
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
 
