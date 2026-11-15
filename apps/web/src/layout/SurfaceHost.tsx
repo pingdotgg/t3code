@@ -7,6 +7,7 @@ import { ThreadRouteView } from "../components/ThreadRouteView";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { launcherFocusTarget } from "../components/SurfaceLauncher";
 import { observeResize } from "../lib/observeResize";
+import { holdSurfaceFocusOrigin } from "../lib/workspaceFocus";
 import { SidebarInset } from "../components/ui/sidebar";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -1782,6 +1783,12 @@ function LayoutSurfaceTabSurface({
   } satisfies LayoutPaneState;
   const tab = { id: tabId, content } satisfies LayoutTab;
   const slotRef = useRef<HTMLDivElement | null>(null);
+  const focusOrigin = useRef(document.activeElement);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the control that gave the surface keyboard focus when its pane unmounts.
+  useLayoutEffect(() => {
+    const host = slotRef.current;
+    if (host) return holdSurfaceFocusOrigin(host, focusOrigin.current);
+  }, []);
   // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
   // click on its tab) moves the keyboard in.
   usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);

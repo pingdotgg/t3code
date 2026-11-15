@@ -6,7 +6,11 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { DraftId } from "../composerDraftStore";
 import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
-import { createWorkspaceFocusController } from "./workspaceFocus";
+import {
+  createWorkspaceFocusController,
+  holdSurfaceFocusOrigin,
+  isReturnedSurfaceFocus,
+} from "./workspaceFocus";
 
 function setup() {
   const root = document.createElement("div");
@@ -48,6 +52,28 @@ function conversationScroller(height: number) {
 }
 
 describe("workspace area focus", () => {
+  it("returns a closing surface to its origin and leaves focus elsewhere alone", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    const composer = fixture.area("composer", 2);
+    const panel = fixture.area("panel", 4);
+    sidebar.button.focus();
+    const release = holdSurfaceFocusOrigin(panel.element, document.activeElement);
+    // Opening another pane can blur the original control before the new pane takes focus.
+    sidebar.button.blur();
+    panel.button.focus();
+    release();
+    expect(document.activeElement).toBe(sidebar.button);
+    expect(isReturnedSurfaceFocus()).toBe(true);
+
+    const releaseAgain = holdSurfaceFocusOrigin(panel.element, document.activeElement);
+    panel.button.focus();
+    composer.button.focus();
+    expect(isReturnedSurfaceFocus()).toBe(false);
+    releaseAgain();
+    expect(document.activeElement).toBe(composer.button);
+  });
+
   it("cycles through matching areas in separate panes and remembers each control", () => {
     using fixture = setup();
     const sidebar = fixture.area("sidebar", 0);
