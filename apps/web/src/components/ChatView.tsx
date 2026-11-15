@@ -1,7 +1,8 @@
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { limitSwitchCandidates, resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -2599,6 +2600,29 @@ export default function ChatView(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          switchTargets:
+            activeThread &&
+            (composerSelectedModelSelection === null ||
+              composerSelectedModelSelection.instanceId === activeThread.modelSelection.instanceId)
+              ? limitSwitchCandidates({
+                  current: activeThread.modelSelection,
+                  providers: providerStatuses,
+                  now: Date.parse(`${nowMinute}:00Z`),
+                  settings,
+                  projectId: activeThread.projectId,
+                }).map(({ provider, selection }) => ({
+                  key: selection.instanceId,
+                  label: resolveProviderInstanceDisplayName(provider),
+                  onSelect: () => {
+                    onProviderModelSelectStable(selection.instanceId, selection.model);
+                    toastManager.add({
+                      type: "info",
+                      title: `Switched to ${resolveProviderInstanceDisplayName(provider)}`,
+                      description: "Send a message to continue. The conversation carries over.",
+                    });
+                  },
+                }))
+              : [],
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,

@@ -31,6 +31,12 @@ type RecoveryProps = {
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
+  /** Other signed-in accounts or providers the user may continue on; never chosen for them. */
+  switchTargets?: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly onSelect: () => void;
+  }>;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
@@ -53,9 +59,17 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const switchActions = (props.switchTargets ?? []).slice(0, 2).map((target) => (
+    <Button key={target.key} size="xs" variant="outline" onClick={target.onSelect}>
+      Continue on {target.label}
+    </Button>
+  ));
+  const recoveryActions = (
+    <>
+      {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+      {switchActions}
+    </>
+  );
   const displayAt =
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil

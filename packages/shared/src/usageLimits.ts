@@ -98,23 +98,71 @@ export function resolveNewThreadModelSelection(input: {
   if (
     !provider ||
     !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    !fallback ||
+    !canTakeOver(
+      fallback,
+      input.fallbackSelection.model,
+      input.now,
+      input.settings,
+      input.projectId,
+    )
   )
     return unchanged;
   return {
     selection: input.fallbackSelection,
     fallback: { provider, resetsAt: window.resetsAt ?? null },
   };
+}
+
+function canTakeOver(
+  provider: ServerProvider,
+  model: string,
+  now: number,
+  settings: ServerSettings | undefined,
+  projectId: ProjectId | null | undefined,
+): boolean {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    isProviderAvailable(provider) &&
+    !exhaustedUsageWindow(provider, now, model) &&
+    (!settings ||
+      resolveProjectProviderInstanceEnabled(settings, projectId ?? null, provider.instanceId))
+  );
+}
+
+/**
+ * Where a thread stopped by a usage limit could continue: other signed-in instances that still
+ * have room. Another account of the same provider comes first and keeps the model when it can.
+ * Only offered to the user; nothing switches on its own.
+ */
+export function limitSwitchCandidates(input: {
+  readonly current: ModelSelection;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}): ReadonlyArray<{ readonly provider: ServerProvider; readonly selection: ModelSelection }> {
+  const currentDriver = input.providers.find(
+    (entry) => entry.instanceId === input.current.instanceId,
+  )?.driver;
+  const candidates = input.providers.flatMap((provider) => {
+    if (provider.instanceId === input.current.instanceId) return [];
+    const model =
+      provider.models.find((entry) => entry.slug === input.current.model)?.slug ??
+      provider.models[0]?.slug;
+    if (
+      model === undefined ||
+      !canTakeOver(provider, model, input.now, input.settings, input.projectId)
+    )
+      return [];
+    return [{ provider, selection: { instanceId: provider.instanceId, model } as ModelSelection }];
+  });
+  return [...candidates].sort(
+    (a, b) =>
+      Number(b.provider.driver === currentDriver) - Number(a.provider.driver === currentDriver),
+  );
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";

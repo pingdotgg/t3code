@@ -156,7 +156,7 @@ function LocalModelsSettingsContent({ environmentId }: { readonly environmentId:
       },
     });
     setPulls((current) => {
-      const { [model]: _finished, ...rest } = current;
+      const rest = Object.fromEntries(Object.entries(current).filter(([key]) => key !== model));
       return result._tag === "Success"
         ? rest
         : { ...rest, [model]: { event: null, error: failureText(result) } };

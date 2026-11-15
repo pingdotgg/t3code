@@ -24,6 +24,7 @@ import {
   paceOf,
   paceRemainingPercent,
   usesChatGptSharing,
+  limitSwitchCandidates,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
 
@@ -1835,5 +1836,46 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("limitSwitchCandidates", () => {
+  const exhausted = {
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [{ ...window, usedPercent: 100 }],
+    },
+  } as Partial<ServerProvider>;
+  const model = (slug: string) => ({ slug, name: slug, isCustom: false, capabilities: null });
+  const current = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6" };
+  const providers = [
+    provider({ models: [model("gpt-6")], ...exhausted }),
+    provider({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [model("claude-opus-5-5")],
+    }),
+    provider({ instanceId: ProviderInstanceId.make("codex-work"), models: [model("gpt-6")] }),
+    provider({
+      instanceId: ProviderInstanceId.make("codex-limited"),
+      models: [model("gpt-6")],
+      ...exhausted,
+    }),
+    provider({
+      instanceId: ProviderInstanceId.make("codex-signed-out"),
+      models: [model("gpt-6")],
+      auth: { status: "unauthenticated" },
+    }),
+  ];
+
+  it("offers other accounts of the same provider first, then other providers", () => {
+    expect(
+      limitSwitchCandidates({ current, providers: providers as never, now }).map(
+        (entry) => entry.selection,
+      ),
+    ).toEqual([
+      { instanceId: "codex-work", model: "gpt-6" },
+      { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+    ]);
   });
 });
