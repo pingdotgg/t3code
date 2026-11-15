@@ -1455,7 +1455,7 @@ function conversationProviderThread(
   );
 }
 
-/** Wakes and fresh starts act on the active session; a message continues the conversation. */
+/** Provider wakes and fresh starts act on the active session; other sends continue the conversation. */
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1464,9 +1464,7 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
-  return freshContext ||
-    message.notification !== undefined ||
-    message.delegatedCompletion !== undefined
+  return freshContext || message.notification?.source.kind === "background_task"
     ? projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       )
@@ -1757,6 +1755,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
     }
     return false;
+  });
+
+  const busyProviderThreadIds = Effect.fn("Orchestrator.busyProviderThreadIds")(function* (
+    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
+  ) {
+    const busy = new Set<ProviderThreadId>();
+    for (const owner of providerThreads) {
+      if (owner.providerSessionId === null) continue;
+      const runtime = yield* providerSessions
+        .get(owner.providerSessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (
+        Option.isSome(runtime) &&
+        (yield* sessionHasBackgroundWork(runtime.value.providerSession, [owner]))
+      ) {
+        busy.add(owner.id);
+      }
+    }
+    return busy;
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
@@ -2511,11 +2528,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
-      const endedRunId = options?.latestRunEnded === true ? failedRun?.id : options?.endedRunId;
+      const latestRunEnded = options?.latestRunEnded === true && queuedRun.queueHeld !== false;
+      const endedRunId = latestRunEnded ? failedRun?.id : options?.endedRunId;
       const failedRunId =
-        options?.latestRunEnded === true && failedRun?.status === "failed"
-          ? failedRun.id
-          : options?.failedRunId;
+        latestRunEnded && failedRun?.status === "failed" ? failedRun.id : options?.failedRunId;
       const failureClass =
         failedRun && failedRunId !== undefined && failedRun.id === failedRunId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
@@ -13178,16 +13194,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       run?.providerThreadId === null
         ? undefined
         : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
+    const busyOwners =
+      command.holdQueue === true
+        ? yield* busyProviderThreadIds(projection.providerThreads)
+        : new Set<ProviderThreadId>();
     const hasBackgroundWork =
-      run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
-      derivePendingBackgroundWork({
-        latestRun: run,
-        providerThreads: projection.providerThreads,
-        turnItems: projection.turnItems,
-        activeProviderThreadId:
-          command.holdQueue === true ? null : projection.thread.activeProviderThreadId,
-        runs: projection.runs,
-      }).length > 0;
+      busyOwners.size > 0 ||
+      (run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
+        derivePendingBackgroundWork({
+          latestRun: run,
+          providerThreads: projection.providerThreads,
+          turnItems: projection.turnItems,
+          activeProviderThreadId:
+            command.holdQueue === true ? null : projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }).length > 0);
     // A failed start has no provider turn. Background work still belongs
     // to the provider thread, so Stop reaches its latest accepted turn.
     const providerTurn =
@@ -13290,7 +13311,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       for (const owner of command.holdQueue === true ? projection.providerThreads : []) {
-        if (owner.id === providerThread.id || (owner.pendingBackgroundTasks?.length ?? 0) === 0) {
+        if (
+          owner.id === providerThread.id ||
+          ((owner.pendingBackgroundTasks?.length ?? 0) === 0 && !busyOwners.has(owner.id))
+        ) {
           continue;
         }
         const turn = projection.providerTurns.findLast(
@@ -13813,6 +13837,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+    const busyOwners = yield* busyProviderThreadIds(projection.providerThreads);
     const target =
       projection.runs.findLast(
         (run) =>
@@ -13823,7 +13848,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerThreads: projection.providerThreads,
         turnItems: projection.turnItems,
         runs: projection.runs,
-      }).length > 0
+      }).length > 0 || busyOwners.size > 0
         ? latestRun
         : undefined);
     if (target !== undefined) {
@@ -16044,6 +16069,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
           ),
         ),
+      ),
       ),
     ),
     Effect.forkScoped,
