@@ -62,6 +62,7 @@ it.effect(
             Layer.succeed(DesktopState.DesktopState, {
               backendReady,
               quitting,
+              canInstallUpdates: yield* Ref.make(false),
               primaryBackendStartup,
             }),
             Layer.succeed(DesktopEnvironment.DesktopEnvironment, {

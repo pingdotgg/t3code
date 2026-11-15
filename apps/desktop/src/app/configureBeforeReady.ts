@@ -4,7 +4,10 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as Electron from "electron";
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
-import { renderUrlHandlerDesktopEntry } from "./linuxDesktopEntry.ts";
+import {
+  renderUrlHandlerDesktopEntry,
+  replacedVersionedAppImagePath,
+} from "./linuxDesktopEntry.ts";
 import { resolveDesktopAppBranding } from "./desktopBranding.ts";
 
 export interface DesktopPreReadyCommandLineReader {
@@ -38,12 +41,15 @@ export interface LinuxDesktopEntryEnv {
   readonly xdgDataHome: string | undefined;
   readonly launcherPath: string | undefined;
   readonly appImagePath: string | undefined;
+  readonly relaunchedByUpdater: boolean;
 }
 
 const linuxDesktopEntryEnvFromProcess = (): LinuxDesktopEntryEnv => ({
   xdgDataHome: process.env.XDG_DATA_HOME?.trim() || undefined,
   launcherPath: process.env.T3CODE_DESKTOP_LAUNCHER_PATH?.trim() || undefined,
   appImagePath: process.env.APPIMAGE?.trim() || undefined,
+  // electron-updater sets this on the AppImage it relaunches after installing an update.
+  relaunchedByUpdater: process.env.APPIMAGE_SILENT_INSTALL?.trim() === "true",
 });
 
 export function configureBeforeReady(
@@ -116,14 +122,38 @@ export function configureBeforeReady(
       if (iconPath !== undefined) {
         try {
           NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-          NodeFS.copyFileSync(
-            NodePath.posix.join(Electron.app.getAppPath(), "apps/desktop/prod-resources/icon.png"),
+          // Electron's copyFileSync from app.asar extracts to a temp file it never deletes.
+          NodeFS.writeFileSync(
             iconPath,
+            NodeFS.readFileSync(
+              NodePath.posix.join(
+                Electron.app.getAppPath(),
+                "apps/desktop/prod-resources/icon.png",
+              ),
+            ),
           );
         } catch {}
       }
+      const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+      const { appImagePath } = desktopEntryEnv;
+      if (
+        appImagePath !== undefined &&
+        desktopEntryEnv.launcherPath === undefined &&
+        desktopEntryEnv.relaunchedByUpdater
+      ) {
+        try {
+          const replacedPath = replacedVersionedAppImagePath({
+            previousEntry: NodeFS.readFileSync(desktopEntryPath, "utf8"),
+            appImagePath,
+          });
+          // Relative, so the pair survives a moved folder; symlink never overwrites a file.
+          if (replacedPath !== null) {
+            NodeFS.symlinkSync(NodePath.posix.basename(appImagePath), replacedPath);
+          }
+        } catch {}
+      }
       NodeFS.writeFileSync(
-        NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
+        desktopEntryPath,
         renderUrlHandlerDesktopEntry({
           displayName: resolveDesktopAppBranding({
             isDevelopment: linux.isDevelopment,

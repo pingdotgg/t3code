@@ -108,7 +108,7 @@ const withStore = <A, E, R>(
       prefix: "t3-desktop-connection-catalog-test-",
     });
     return yield* effect.pipe(Effect.provide(layerFor(baseDir, encryptionAvailable)));
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer));
 
 describe("DesktopConnectionCatalogStore", () => {
   it.effect("leaves secure storage unopened when no connections need migrating", () =>
@@ -317,6 +317,6 @@ describe("DesktopConnectionCatalogStore", () => {
       assert.notEqual(error.message, decryptError.message);
       yield* Ref.set(failDecrypt, false);
       assert.deepStrictEqual(yield* store.get, Option.some('{"schemaVersion":1,"targets":[]}'));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

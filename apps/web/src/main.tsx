@@ -8,14 +8,13 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
+import { whenLocaleReady } from "./i18n/runtime";
+import { reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;
 
-let chunkLoadFailed = false;
 let reloadScheduled = false;
 window.addEventListener("vite:preloadError", (event) => {
-  chunkLoadFailed = true;
   if (reloadOnceForChunkLoadError()) {
     reloadScheduled = true;
     event.preventDefault();
@@ -36,12 +35,12 @@ export function startup() {
 
   return Promise.all([
     managedAuthShellModule?.then((module) => module.default) ?? null,
-    router.load(),
+    // Chained so settings have usually hydrated; English resolves without a chunk load.
+    router.load().then(whenLocaleReady),
   ])
     .then(([ManagedAuthShell]) => {
       // Route chunk failures resolve router.load() and surface later through the error boundary.
       if (reloadScheduled) return;
-      if (!chunkLoadFailed) clearChunkReloadGuard();
       ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
         <React.StrictMode>
           {ManagedAuthShell && clerkPublishableKey ? (

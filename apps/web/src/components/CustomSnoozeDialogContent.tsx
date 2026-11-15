@@ -66,7 +66,7 @@ export default function CustomSnoozeDialogContent({
         if (!open) onFinish(null);
       }}
     >
-      <DialogPopup className="sm:max-w-sm">
+      <DialogPopup className="sm:max-w-md">
         <form
           className="flex min-h-0 flex-col"
           onSubmit={(event) => {

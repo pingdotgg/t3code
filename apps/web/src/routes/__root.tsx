@@ -10,7 +10,7 @@ import {
   useNavigate,
   useRouter,
 } from "@tanstack/react-router";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
@@ -27,15 +27,14 @@ import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDi
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
+import { ConnectDeviceApprovalCoordinator } from "../components/ConnectDeviceApprovalCoordinator";
 import { ChatGptWelcomeCoordinator } from "../components/settings/ChatGptWelcomeCoordinator";
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { Button } from "../components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
 import { isElectron } from "../env";
-import { cn } from "../lib/utils";
 import { useClientSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -54,6 +53,7 @@ import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/serv
 import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
+import { isChunkLoadError } from "../lib/chunkReloadGuard";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 const DesktopCoordinators = lazy(() => import("../components/desktop/DesktopCoordinators"));
@@ -191,6 +191,7 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <ProjectCloneToastCoordinator />
+      <ConnectDeviceApprovalCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
@@ -243,7 +244,12 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
       <StandalonePageHeader title="Something went wrong." description={message} />
 
       <div className="mt-5 flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => void router.invalidate()}>
+        <Button
+          size="sm"
+          onClick={() =>
+            isChunkLoadError(error) ? window.location.reload() : void router.invalidate()
+          }
+        >
           Try again
         </Button>
         <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
@@ -267,7 +273,7 @@ function CopyErrorButton({ report }: { report: string }) {
 
   return (
     <Button size="sm" variant="outline" onClick={() => copyToClipboard(report)}>
-      <MorphIcon className={cn(isCopied && "text-success")} icon={isCopied ? Check : Copy} />
+      {isCopied ? <CheckIcon className="text-success" /> : <CopyIcon />}
       {isCopied ? "Copied" : "Copy error"}
     </Button>
   );

@@ -25,6 +25,10 @@ const LinuxDesktopEntryConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   appImagePath: trimmedString("APPIMAGE").pipe(Config.map(Option.getOrUndefined)),
+  // electron-updater sets this on the AppImage it relaunches after installing an update.
+  relaunchedByUpdater: trimmedString("APPIMAGE_SILENT_INSTALL").pipe(
+    Config.map((value) => Option.contains(value, "true")),
+  ),
 });
 
 /** @public */

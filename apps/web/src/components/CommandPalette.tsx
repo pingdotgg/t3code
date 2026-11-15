@@ -1,3 +1,4 @@
+import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
@@ -40,6 +41,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 
   return (
     <ComposerHandleContext value={composerHandleRef}>
+      <ThreadContextDragGhost />
       <CommandDialog
         open={state.open}
         onOpenChange={(open, eventDetails) => {

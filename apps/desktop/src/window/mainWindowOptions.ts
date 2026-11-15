@@ -23,12 +23,12 @@ export function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): s
   return shouldUseDarkColors ? "#000000" : "#ffffff";
 }
 
-type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
+export type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
 // A window snapped to a display edge can be reported 1px past that edge.
 const SAVED_BOUNDS_EDGE_TOLERANCE_PX = 1;
 
-function windowFitsWithinDisplay(
+export function windowFitsWithinDisplay(
   windowBounds: DesktopAppSettings.DesktopWindowBounds,
   displayBounds: DisplayBounds,
 ): boolean {

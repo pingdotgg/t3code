@@ -578,6 +578,11 @@ function acceptsEncoding(header: string | undefined, encoding: string): boolean 
   }
   return wildcard;
 }
+// The app can approve agents and start threads in one click, so no other site may frame it.
+const SPA_FRAME_HEADERS = {
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+};
 
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
@@ -692,6 +697,7 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     };
     const headers: Record<string, string> = {
       "Cache-Control": cacheControl,
+      ...(isHtml ? SPA_FRAME_HEADERS : {}),
       ...validators(fileInfo),
       ...(encoding ? { Vary: "Accept-Encoding" } : {}),
     };
