@@ -358,6 +358,27 @@ describe("ACP Registry probe", () => {
     });
   });
 
+  it("routes Devin's Skills-category commands to the provider skill menu", () => {
+    const skillMeta = { "cognition.ai/icon": "zap", "cognition.ai/category": "Skills" };
+    expect(
+      normalizeAcpRegistryCommands([
+        { name: "probe-skill", description: "Probe skill", _meta: skillMeta },
+        { name: "compact", description: "Compact", _meta: { "cognition.ai/category": "Session" } },
+      ]),
+    ).toEqual({
+      slashCommands: [{ name: "compact", description: "Compact" }],
+      skills: [
+        {
+          name: "probe-skill",
+          description: "Probe skill",
+          path: "acp://skill/probe-skill",
+          scope: "agent",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
     const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
