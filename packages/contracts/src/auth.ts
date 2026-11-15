@@ -637,7 +637,8 @@ export class AuthMcpApprovalError extends Schema.TaggedError<AuthMcpApprovalErro
 ) {}
 
 export const AuthMcpTokenRequest = Schema.Struct({
-  grant_type: Schema.optionalKey(Schema.String),
+  // A repeated parameter decodes as an array; keep it so the handler answers invalid_request.
+  grant_type: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
   code: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
   redirect_uri: Schema.optionalKey(Schema.String),
   client_id: Schema.optionalKey(Schema.String),
