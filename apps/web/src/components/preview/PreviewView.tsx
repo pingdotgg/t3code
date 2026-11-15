@@ -1,4 +1,3 @@
-import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -36,6 +35,7 @@ import {
 } from "~/browserHistoryStore";
 import { type ComposerImageAttachment, useComposerDraftStore } from "~/composerDraftStore";
 import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
+import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
@@ -860,6 +860,7 @@ export function PreviewView({
       const capture = capturePreviewAnnotationScreenshot(picked);
       const cropDropped = screenshotFailed || capture.status === "failed";
       const annotation = capture.status === "failed" ? { ...picked, screenshot: null } : picked;
+      if (capture.status === "captured") await readComposerImageBytes(capture.file);
       addPreviewAnnotation(threadRef, annotation);
       if (cropDropped) {
         toastManager.add(
@@ -884,7 +885,6 @@ export function PreviewView({
             } satisfies ComposerImageAttachment)
           : null;
       if (image) {
-        await readComposerImageBytes(image.file);
         addImage(threadRef, image);
       }
       if (
