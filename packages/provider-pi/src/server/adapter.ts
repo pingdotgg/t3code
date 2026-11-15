@@ -521,6 +521,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             launchArgs: resolvedLaunchArgs.args,
             environment: {
               ...options.environment,
+              // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
+              T3CODE_THREAD_ID: input.threadId,
               [T3_PI_ORCHESTRATION_INSTRUCTIONS_ENV]: t3OrchestrationInstructions(
                 (yield* host.settings.get).visualInstructions,
               ).trim(),
