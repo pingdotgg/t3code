@@ -236,6 +236,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       args: [],
     },
     { label: "a newer service", status: newerServiceStatus, hint: "update", args: ["999.0.0"] },
+    {
+      label: "a stopped service",
+      status: { ...status, problems: ["service-stopped"] as const },
+      hint: "service install",
+      args: [],
+    },
+    {
+      label: "a restart-pending service",
+      status: { ...status, problems: ["restart-pending"] as const },
+      hint: "service restart",
+      args: [],
+    },
   ])("status of $label names its next step with --base-dir", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -261,7 +273,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
           ),
         ),
       );
-      expect(lines.join("\n")).toContain(`Next: Run \`${next.command}\``);
+      expect(lines.join("\n")).toContain(`\`${next.command}\``);
     }),
   );
 

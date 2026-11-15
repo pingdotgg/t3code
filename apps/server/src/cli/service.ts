@@ -174,7 +174,7 @@ function formatProtection(
 function formatServiceStatus(
   status: BootService.BootServiceStatus,
   cliVersion: string,
-  commands: { readonly install: string; readonly update: string },
+  commands: { readonly install: string; readonly restart: string; readonly update: string },
   protection?: ServiceProtection.ServiceProtectionState,
 ): string {
   if (!status.supported) {
@@ -193,7 +193,7 @@ function formatServiceStatus(
   }
   const installedVersion = status.installedVersion ?? cliVersion;
   const problems = (status.problems ?? []).map(
-    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
+    (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem, commands)}`,
   );
   if (
     !status.current &&
@@ -362,6 +362,7 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
             : undefined;
         const commands = {
           install: yield* resolveHostCliHint("service install", flags.baseDir),
+          restart: yield* resolveHostCliHint("service restart", flags.baseDir),
           update: yield* resolveHostCliHint("update", flags.baseDir, [
             status.installedVersion ?? packageJson.version,
           ]),
