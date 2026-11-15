@@ -537,6 +537,30 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.isNull(preview.publish);
       assert.isNull(previewChannel.publish);
+
+      for (const [platform, target] of [
+        ["mac", "dmg"],
+        ["win", "nsis"],
+        ["linux", "AppImage"],
+      ] as const) {
+        const forkRelease = yield* createBuildConfig(
+          platform,
+          target,
+          "0.1.9-fork.20261115.2",
+          false,
+          false,
+          undefined,
+          undefined,
+        ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+        assert.deepStrictEqual(forkRelease.publish, [
+          {
+            provider: "github",
+            owner: "LaMarCab76",
+            repo: "t3code",
+            releaseType: "release",
+          },
+        ]);
+      }
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
