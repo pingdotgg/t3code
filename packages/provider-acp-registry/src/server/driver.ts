@@ -82,6 +82,18 @@ interface AcpRegistryEnrichmentCache {
   } | null;
 }
 
+export function isAcpRegistryCacheValid(
+  entry: NonNullable<AcpRegistryEnrichmentCache["entry"]>,
+  inspectedVersion: string | null,
+  local: boolean,
+  now: number,
+): boolean {
+  return (
+    entry.expiresAt > now &&
+    ((local && inspectedVersion === null) || entry.provider.version === inspectedVersion)
+  );
+}
+
 export function updateAcpRegistryEnrichmentCache(input: {
   readonly cache: AcpRegistryEnrichmentCache;
   readonly configuration: AcpRegistryLiveConfiguration;
@@ -751,8 +763,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const cached = cacheState.entry;
       if (
         cached !== null &&
-        cached.expiresAt > now &&
-        cached.provider.version === baseSnapshot.version
+        isAcpRegistryCacheValid(
+          cached,
+          baseSnapshot.version,
+          effectiveConfig.source === "local",
+          now,
+        )
       ) {
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },

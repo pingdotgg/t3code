@@ -29,6 +29,7 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  isAcpRegistryCacheValid,
   updateAcpRegistryEnrichmentCache,
 } from "./driver.ts";
 import {
@@ -693,6 +694,13 @@ describe("acpRegistrySnapshotReadiness", () => {
 });
 
 describe("acpRegistryEnrichmentCache", () => {
+  it("reuses a local probe until expiry even when inspection has no version", () => {
+    const entry = { provider: providerWithModels([], null), expiresAt: 1_000 };
+    expect(isAcpRegistryCacheValid(entry, null, true, 999)).toBe(true);
+    expect(isAcpRegistryCacheValid(entry, null, true, 1_000)).toBe(false);
+    expect(isAcpRegistryCacheValid(entry, "2.0.0", false, 999)).toBe(false);
+    expect(isAcpRegistryCacheValid(entry, "1.0.0", false, 999)).toBe(true);
+  });
   const settledConfiguration = {
     models: [
       { id: "auto", name: "Auto", description: null },
