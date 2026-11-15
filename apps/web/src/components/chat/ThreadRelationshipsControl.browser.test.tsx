@@ -1,9 +1,12 @@
+import "~/index.css";
 import * as DateTime from "effect/DateTime";
 import { EnvironmentId, NodeId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 const state = vi.hoisted(() => ({
   projection: null as unknown,
@@ -28,7 +31,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
 
 vi.mock(import("../../state/entities"), () => ({
   useQuietThreadShell: (() => null) as never,
-  useThreadProjection: ((ref: unknown) =>
+  useQuietThreadProjection: ((ref: unknown) =>
     ref === null ? null : { projection: state.projection }) as never,
   useThreadRelationshipShells: (() =>
     state.projection === null
@@ -56,6 +59,7 @@ vi.mock(import("../../state/use-atom-command"), () => ({
 
 import { render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
+import { ScrollArea } from "../ui/scroll-area";
 import { ToastProvider } from "../ui/toast";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
 
@@ -295,18 +299,20 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
         remoteChild: {
           environmentId: remoteEnvId,
           threadId: remoteThreadId,
-          label: "Remote VM",
+          label: "Remote VM with a long machine name in the office",
         },
       },
     ],
   };
   await using screen = await render(
-    <ThreadRelationshipsPanel
-      environmentId={environmentId}
-      threadId={threadId}
-      showLineage
-      showSideChats={false}
-    />,
+    <div style={{ width: 320 }}>
+      <ThreadRelationshipsPanel
+        environmentId={environmentId}
+        threadId={threadId}
+        showLineage
+        showSideChats={false}
+      />
+    </div>,
     { router: "/environment/fork" },
   );
 
@@ -316,12 +322,16 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
     .not.toBeInTheDocument();
   await screen.getByRole("button", { name: /Previous agents/ }).click();
   const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  // A long environment label must not squeeze the title out of the row.
+  expect(
+    page.getByText(longTitle, { exact: true }).element().getBoundingClientRect().width,
+  ).toBeGreaterThan(0);
   await userEvent.hover(row);
   await vi.waitFor(() =>
     expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(longTitle),
   );
   expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toContain(
-    "Runs on Remote VM. Connect to it to open the thread there.",
+    "Runs on Remote VM with a long machine name in the office. Connect to it to open the thread there.",
   );
 
   await row.click({ force: true });
@@ -397,4 +407,45 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Unloaded fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
+});
+
+it.each([1, 18])("continues scrolling the panel past a list of %i subagents", async (count) => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = projection;
+  state.relatedShells = Array.from({ length: count }, (_, index) => ({
+    id: ThreadId.make(`subagent-${index}`),
+    title: `Subagent ${index}`,
+    forkedFrom: null,
+    lineage: { parentThreadId: projection.thread.id, relationshipToParent: "subagent" },
+    activityRunStatus: "running",
+    status: "running",
+  }));
+  await using screen = await render(
+    <div data-testid="panel" style={{ height: 320, width: 280 }}>
+      <ScrollArea>
+        <ThreadRelationshipsPanel
+          environmentId={environmentId}
+          threadId={projection.thread.id}
+          showLineage
+          showSideChats
+        />
+        <div style={{ height: 600 }} />
+      </ScrollArea>
+    </div>,
+  );
+  if (count > 6) {
+    await screen.getByRole("button", { name: "Show 12 more" }).click();
+    await expect.element(screen.getByText("Subagent 17", { exact: true })).toBeInTheDocument();
+  }
+  const list = screen.getByRole("list", { name: "Related threads" }).element();
+  const viewport = screen
+    .getByTestId("panel")
+    .element()
+    .querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
+  list.scrollTop = list.scrollHeight;
+  if (count > 6) expect(list.scrollTop).toBeGreaterThan(0);
+  viewport.scrollTop = 0;
+  await userEvent.wheel(list, { delta: { y: 300 } });
+  await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });

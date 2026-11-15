@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SPEECH_MAX_OPTIONS_BYTES } from "@t3tools/contracts";
 
 import {
+  chooseSetupSpeechModel,
   decodeSpeechPcmRequest,
   encodeSpeechPcmRequest,
   resolveSpeechVocabulary,
@@ -69,5 +70,83 @@ describe("resolveSpeechVocabulary", () => {
     ]);
     expect(resolved.filter(({ term }) => term === "word1")).toHaveLength(1);
     expect(resolved.at(-1)?.term).toBe("word97");
+  });
+});
+
+describe("chooseSetupSpeechModel", () => {
+  const model = (
+    id: string,
+    languages: string[],
+    supportsLanguageDetection: boolean,
+    recommended: boolean,
+  ) => ({ id, languages, supportsLanguageDetection, recommended });
+  const catalog = [
+    model("unrecommended", ["en", "de", "es"], true, false),
+    model("english", ["en"], false, true),
+    model("fixed", ["en", "de"], false, true),
+    model("detecting", ["en", "de", "fr"], true, true),
+  ];
+
+  it.each([
+    [
+      "keeps the selected English model for an English speaker",
+      "english",
+      "auto",
+      ["en"],
+      { id: "english", language: "en" },
+    ],
+    [
+      "skips models that would transcribe English instead of German",
+      "english",
+      "auto",
+      ["de", "en"],
+      { id: "detecting", language: "de" },
+    ],
+    [
+      "accepts a model without detection for a chosen language",
+      "english",
+      "de",
+      ["en"],
+      { id: "fixed", language: "de" },
+    ],
+    [
+      "keeps a selected model that transcribes the language",
+      "unrecommended",
+      "auto",
+      ["de"],
+      { id: "unrecommended", language: "de" },
+    ],
+    [
+      "moves on to the next preferred language a model transcribes",
+      "english",
+      "auto",
+      ["ja", "fr"],
+      { id: "detecting", language: "fr" },
+    ],
+    [
+      "falls back to a model that is not recommended",
+      "english",
+      "auto",
+      ["es"],
+      { id: "unrecommended", language: "es" },
+    ],
+    ["offers nothing when no model transcribes the language", "english", "auto", ["ja"], undefined],
+    [
+      "offers the selected model without a language recommendation when Auto has no preferences",
+      "fixed",
+      "auto",
+      [],
+      { id: "fixed", language: null },
+    ],
+    [
+      "does not guess another model when Auto has no preferences or selection",
+      "gone",
+      "auto",
+      [],
+      undefined,
+    ],
+  ] as const)("%s", (_, selectedModelId, intent, preferred, expected) => {
+    const choice = chooseSetupSpeechModel(catalog, { selectedModelId, intent, preferred });
+    expect(choice && { id: choice.model.id, language: choice.language }).toEqual(expected);
   });
 });
