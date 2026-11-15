@@ -3030,10 +3030,10 @@ it.effect("re-reads every reader a save touched when one of them sees the host r
         environmentId: target.environmentId,
         input: { state: "open", cursors: { "github.example.com": "page-2" } },
       });
-      for (const atom of [detail, page] as const) {
-        registry.mount(atom);
-        yield* Effect.promise(() => executeAtomQuery(registry, atom));
-      }
+      registry.mount(detail);
+      registry.mount(page);
+      yield* Effect.promise(() => executeAtomQuery(registry, detail));
+      yield* Effect.promise(() => executeAtomQuery(registry, page));
       const editing = yield* Effect.promise(() =>
         atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
       ).pipe(Effect.forkScoped);
