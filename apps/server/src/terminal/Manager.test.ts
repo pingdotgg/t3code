@@ -64,7 +64,7 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 class FakePtyProcess implements PtyAdapter.PtyProcess {
-  readonly writes: string[] = [];
+  readonly writes: Array<string | Buffer> = [];
   readonly resizeCalls: Array<{ cols: number; rows: number }> = [];
   readonly killSignals: Array<string | undefined> = [];
   readonly pid: number;
@@ -80,7 +80,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
     this.pid = pid;
   }
 
-  write(data: string): void {
+  write(data: string | Buffer): void {
     if (this.writeFailure !== undefined) {
       throw this.writeFailure;
     }
@@ -891,9 +891,15 @@ it.layer(
 
       yield* manager.write({ threadId: "thread-1", terminalId: "default", data: "pwd\n" });
       yield* manager.write({ threadId: "thread-1", terminalId: "term-2", data: "ls\n" });
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: "term-2",
+        data: "\x1b[M \x80(",
+        binary: true,
+      });
 
       expect(first.writes).toEqual(["pwd\n"]);
-      expect(second.writes).toEqual(["ls\n"]);
+      expect(second.writes).toEqual(["ls\n", Buffer.from([0x1b, 0x5b, 0x4d, 0x20, 0x80, 0x28])]);
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
     }),
   );

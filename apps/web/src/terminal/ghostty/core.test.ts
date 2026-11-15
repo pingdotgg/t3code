@@ -10,7 +10,12 @@ import {
 } from "@t3tools/client-runtime/state/terminal";
 
 import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
-import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
+import {
+  GHOSTTY_CELL_WIDE,
+  GhosttyTerminalCore,
+  ghosttyCellText,
+  type GhosttyMouseReport,
+} from "./core";
 import { loadGhosttyRuntime } from "./runtime";
 import { terminalNavigationShortcutData } from "../../keybindings";
 
@@ -578,7 +583,7 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       },
       () => {},
     );
-    const mouse = (
+    const report = (
       x: number,
       y: number,
       paddingTop: number,
@@ -601,6 +606,12 @@ describe("GhosttyTerminalCore mouse encoding", () => {
         paddingBottom: 279 - paddingTop - 15 * cellHeight,
         anyButtonPressed: true,
       });
+    const mouse = (...args: Parameters<typeof report>) => report(...args).data;
+    // The PTY receives binary data as one byte per code unit, and text as UTF-8.
+    const ptyBytes = ({ data, binary }: GhosttyMouseReport) =>
+      binary
+        ? Array.from(data, (unit) => unit.charCodeAt(0))
+        : Array.from(new TextEncoder().encode(data));
     try {
       core.write("\x1b[?1002h\x1b[?1006h");
       expect(mouse(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
@@ -610,6 +621,22 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       expect(mouse(500, 140, 4, 305, "release")).toBe("\x1b[<0;37;8m");
       core.write("\x1b[?1016h");
       expect(mouse(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
+      core.resize(160, 15, cellWidth, cellHeight);
+      core.write("\x1b[?1002;1005;1006;1015;1016l\x1b[?1000h");
+      for (const col of [10, 95, 96, 100, 128]) {
+        expect
+          .soft(ptyBytes(report(4 + (col - 0.5) * cellWidth, 140, 4, 1261)))
+          .toEqual([0x1b, 0x5b, 0x4d, 32, col + 32, 40]);
+      }
+      core.write("\x1b[?1005h");
+      expect(report(4 + 99.5 * cellWidth, 140, 4, 1261)).toEqual({
+        data: "\x1b[M \u0084(",
+        binary: false,
+      });
+      core.write("\x1b[?1005l\x1b[?1006h");
+      expect(mouse(4 + 99.5 * cellWidth, 140, 4, 1261)).toBe("\x1b[<0;100;8M");
+      core.write("\x1b[?1000l");
+      expect(mouse(4 + 99.5 * cellWidth, 140, 4, 1261)).toBe("");
     } finally {
       core.dispose();
     }

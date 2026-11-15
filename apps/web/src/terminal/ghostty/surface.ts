@@ -523,6 +523,8 @@ export interface GhosttyTerminalSurfaceOptions {
   /** Read after font and WASM loading. */
   readonly visible?: boolean;
   readonly onData: (data: string) => void;
+  /** Input bytes that are not UTF-8, one UTF-16 code unit per byte. */
+  readonly onBinary: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -2251,7 +2253,7 @@ export class GhosttyTerminalSurface {
 
   private sendMouse(action: TerminalMouseAction, button: number | null, event: MouseEvent): void {
     const bounds = this.canvas.getBoundingClientRect();
-    const data = this.core.encodeMouse({
+    const report = this.core.encodeMouse({
       action,
       button,
       mods:
@@ -2271,9 +2273,11 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
       anyButtonPressed: event.buttons !== 0,
     });
-    const resolution = resolveTerminalMouseData(action, data, this.lastMouseMotionData);
+    const resolution = resolveTerminalMouseData(action, report.data, this.lastMouseMotionData);
     this.lastMouseMotionData = resolution.nextMotionData;
-    if (resolution.send) this.options.onData(data);
+    if (!resolution.send) return;
+    if (report.binary) this.options.onBinary(report.data);
+    else this.options.onData(report.data);
   }
 
   private synchronizeMouseTrackingState(): boolean {
