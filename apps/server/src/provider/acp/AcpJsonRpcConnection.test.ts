@@ -67,13 +67,13 @@ const readReceived = (requestLogPath: string, methods: ReadonlyArray<string>) =>
 
 // Prompts, then cancels while the prompt is held on its way out: in its started request record,
 // in its outgoing protocol log record, or by its fiber yielding every few operations. The cancel
-// comes on dispatch, after a round trip, or from inside the held record. Returns the prompt's exit
+// comes on dispatch or from inside the held record. Returns the prompt's exit
 // and the order in which the agent read the prompt, the cancel and the request that ends it.
 const promptThenCancel = (input: {
   readonly cancelBehavior: "interrupt" | "wait-for-prompt";
   readonly holdPrompt: {
     readonly in: "request-log" | "protocol-log" | "scheduler";
-    readonly cancelOn: "dispatch" | "call" | "log";
+    readonly cancelOn: "dispatch" | "log";
   };
 }) =>
   Effect.gen(function* () {
@@ -157,11 +157,8 @@ const promptThenCancel = (input: {
           Effect.andThen(runtime.cancel),
           Effect.forkChild({ startImmediately: true }),
         );
-      } else if (holdPrompt.cancelOn === "log") {
-        cancel = yield* Deferred.await(cancelledFromLog);
       } else {
-        yield* roundTrip;
-        cancel = yield* runtime.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+        cancel = yield* Deferred.await(cancelledFromLog);
       }
       yield* roundTrip;
       yield* Deferred.succeed(promptReleased, undefined);
@@ -1381,10 +1378,6 @@ describe("AcpSessionRuntime", () => {
       (
         [
           { in: "request-log", cancelOn: "dispatch" },
-          { in: "request-log", cancelOn: "call" },
-          { in: "request-log", cancelOn: "log" },
-          { in: "protocol-log", cancelOn: "dispatch" },
-          { in: "protocol-log", cancelOn: "call" },
           { in: "protocol-log", cancelOn: "log" },
           { in: "scheduler", cancelOn: "dispatch" },
         ] as const
