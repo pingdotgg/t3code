@@ -262,7 +262,9 @@ export type PreviewAutomationResizeInput = typeof PreviewAutomationResizeInput.T
 export const PreviewAutomationResizeResult = Schema.Struct({
   tabId: PreviewTabId,
   setting: PreviewViewportSetting,
-  viewport: PreviewRenderedViewportSize,
+  viewport: Schema.optional(PreviewRenderedViewportSize).annotate({
+    description: "Viewport size after the resize. Omitted when it could not be measured.",
+  }),
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
@@ -567,10 +569,18 @@ export const PreviewAutomationSnapshot = Schema.Struct({
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
+// pixelsRequired is false when the caller discards the screenshot; hosts that ignore it still return a PNG.
 export const PreviewAutomationSnapshotInput = Schema.Struct({
   fullScreenshot: Schema.optional(Schema.Boolean),
+  pixelsRequired: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
+
+export const PreviewAutomationSnapshotMetadata = Schema.Struct({
+  ...PreviewAutomationSnapshot.fields,
+  screenshot: Schema.Struct({ width: Schema.Int, height: Schema.Int }),
+});
+export type PreviewAutomationSnapshotMetadata = typeof PreviewAutomationSnapshotMetadata.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
@@ -778,17 +788,35 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<Previe
   }
 }
 
+export const PreviewAutomationSnapshotStage = Schema.Literals([
+  "metrics",
+  "frames",
+  "page state",
+  "screenshot",
+  "accessibility tree",
+]);
+
+export const PreviewAutomationTimeoutDetail = Schema.Struct({
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  pendingStages: Schema.Array(PreviewAutomationSnapshotStage).check(Schema.isMaxLength(5)),
+});
+
 export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
+    pendingStages: Schema.optional(PreviewAutomationTimeoutDetail.fields.pendingStages),
     reason: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return this.reason === undefined ? summary : `${summary} ${this.reason}`;
+    const stages = this.pendingStages?.length
+      ? ` Waiting for: ${this.pendingStages.join(", ")}.`
+      : "";
+    const reason = this.reason === undefined ? "" : ` ${this.reason}`;
+    return `${summary}${stages}${reason}`;
   }
 }
 
