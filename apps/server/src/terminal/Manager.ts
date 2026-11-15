@@ -255,6 +255,7 @@ interface TerminalSubprocessInspectResult {
 interface TerminalSubprocessInspector {
   (
     terminalPid: number,
+    shell: string | null,
   ): Effect.Effect<TerminalSubprocessInspectResult, TerminalSubprocessCheckError>;
 }
 
@@ -715,6 +716,8 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
 interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
   readonly commandById: ReadonlyMap<number, string>;
+  // The controlling terminal's foreground process group; only `ps` reports it.
+  readonly foregroundGroupById?: ReadonlyMap<number, number>;
 }
 
 // Idles at least four times as long as the last fallback query took, so a slow
@@ -733,19 +736,21 @@ function subprocessSnapshotPollDelayMs(
 function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
+  const foregroundGroupById = new Map<number, number>();
   for (const line of stdout.split(/\r?\n/g)) {
-    // The final comm column can contain spaces; only the first two tokens are structural.
-    const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    // The final comm column can contain spaces; only the first three tokens are structural.
+    const match = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/.exec(line);
     if (!match) continue;
     const pid = Number(match[1]);
     const ppid = Number(match[2]);
     if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    commandById.set(pid, (match[3] ?? "").trim());
+    commandById.set(pid, (match[4] ?? "").trim());
+    foregroundGroupById.set(pid, Number(match[3]));
     const children = childrenByParent.get(ppid) ?? [];
     children.push(pid);
     childrenByParent.set(ppid, children);
   }
-  return { childrenByParent, commandById };
+  return { childrenByParent, commandById, foregroundGroupById };
 }
 
 function processTableSnapshotFromProcesses(
@@ -767,18 +772,32 @@ function processTableSnapshotFromProcesses(
 function deriveSubprocessInspectResult(
   snapshot: TerminalProcessTableSnapshot,
   terminalPid: number,
+  shell: string | null,
   platform: NodeJS.Platform,
 ): TerminalSubprocessInspectResult {
   const commandName = (pid: number) =>
     normalizeChildCommandName(snapshot.commandById.get(pid) ?? "", platform);
-  const shellName = commandName(terminalPid);
-  // Async prompt themes fork childless shell helpers that are not user commands.
-  const childPid = (snapshot.childrenByParent.get(terminalPid) ?? []).find(
+  const rootName = commandName(terminalPid);
+  const children = snapshot.childrenByParent.get(terminalPid) ?? [];
+  // `exec` replaces the shell in place, so the root itself is the command.
+  const execReplaced =
+    platform !== "win32" &&
+    shell !== null &&
+    rootName !== null &&
+    rootName !== normalizeChildCommandName(shell, platform);
+  // The PTY root leads its process group, so any other foreground group is a job.
+  const foregroundGroup = snapshot.foregroundGroupById?.get(terminalPid) ?? 0;
+  const foregroundJob = foregroundGroup > 0 && foregroundGroup !== terminalPid;
+  // Async prompt themes fork childless background shell helpers that are not user commands.
+  const userChildPid = children.find(
     (pid) =>
-      shellName === null ||
-      commandName(pid) !== shellName ||
+      rootName === null ||
+      commandName(pid) !== rootName ||
       (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0,
   );
+  const childPid = execReplaced
+    ? terminalPid
+    : (userChildPid ?? (foregroundJob ? children[0] : undefined));
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
@@ -825,7 +844,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
   const result = yield* processRunner
     .run({
       command: psCommand,
-      args: ["-eo", "pid=,ppid=,comm="],
+      args: ["-eo", "pid=,ppid=,tpgid=,comm="],
       timeout,
       maxOutputBytes: 524_288,
       outputMode: "truncate",
@@ -1818,8 +1837,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             inspector: Result.map(
               snapshot,
               (table): TerminalSubprocessInspector =>
-                (terminalPid) =>
-                  Effect.succeed(deriveSubprocessInspectResult(table, terminalPid, platform)),
+                (terminalPid, shell) =>
+                  Effect.succeed(
+                    deriveSubprocessInspectResult(table, terminalPid, shell, platform),
+                  ),
             ),
             snapshotSucceeded,
             queryElapsedMs,
@@ -2942,7 +2963,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       let mark = candidate.mark;
       const previous = quietSessions.get(session);
       quietSessions.delete(session);
-      const inspectResult = yield* subprocessInspector(terminalPid).pipe(
+      const inspectResult = yield* subprocessInspector(terminalPid, session.shell).pipe(
         Effect.asSome,
         Effect.catch((reason) =>
           Effect.logWarning("failed to check terminal subprocess activity", {
@@ -3732,7 +3753,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* Effect.forEach(
           running,
           (session) =>
-            inspector(session.pid).pipe(
+            inspector(session.pid, session.shell).pipe(
               Effect.flatMap((result) =>
                 result.hasRunningSubprocess ||
                 terminalActivityMark(session) !== marks.get(session.terminalId)
