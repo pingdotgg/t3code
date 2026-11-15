@@ -238,6 +238,8 @@ for readOnly in [true, false] {
 }
 
 func pastedText(_ items: [String], maxInputChars: Int = 120_000) -> String? {
+  let savedItems = UIPasteboard.general.items
+  defer { UIPasteboard.general.items = savedItems }
   let editor = ComposerTextView()
   editor.textPasteThresholdBytes = 32 * 1024
   editor.maxInputChars = maxInputChars
