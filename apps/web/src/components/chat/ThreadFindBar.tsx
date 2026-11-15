@@ -20,7 +20,7 @@ interface ThreadFindBarProps {
   readonly activeIndex: number;
   /** Bumped by each user search or step; background refreshes keep it. */
   readonly navigationId: number;
-  /** Whether the label shows the settled result of `navigationId`. */
+  /** Whether the label shows the outcome of `navigationId`: a count or a failure. */
   readonly settled: boolean;
   readonly focusRequestId: number;
   readonly onQueryChange: (query: string) => void;
@@ -58,6 +58,7 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
     navigationId: props.navigationId,
     text: label,
     settled: props.settled,
+    failed: props.status === "error",
   });
   if (announcement !== storedAnnouncement) setAnnouncement(announcement);
 

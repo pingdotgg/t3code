@@ -215,7 +215,8 @@ export function useThreadFind({
       activeIndex,
       status,
       navigationId: state.navigationId,
-      settled: status === null && !counting && navigationId === state.navigationId,
+      settled:
+        status === "error" || (status === null && !counting && navigationId === state.navigationId),
       focusRequestId: state.focusRequestId,
       onRetry: remote.refresh,
       onQueryChange: (query: string) => {

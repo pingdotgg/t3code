@@ -27,19 +27,22 @@ export function formatThreadFindCount(index: number, total: number): string {
 export interface ThreadFindAnnouncement {
   readonly navigationId: number;
   readonly text: string;
+  /** The label shows the outcome of `navigationId`: a count or a failure. */
   readonly settled: boolean;
+  readonly failed: boolean;
 }
 
 /**
- * What the find counter's live region says. It follows the label until the
- * result of the user's latest search or step settles, then holds still while
- * streamed content refreshes the count, so only user actions are spoken.
+ * What the find counter's live region says: the settled outcome of each
+ * user search or step, once. Background refreshes during streaming keep the
+ * navigation, so they stay silent; a failure stays open for a Retry.
  */
 export function nextThreadFindAnnouncement(
   previous: ThreadFindAnnouncement | null,
   next: ThreadFindAnnouncement,
 ): ThreadFindAnnouncement {
-  if (!previous || previous.navigationId !== next.navigationId) return next;
-  if (previous.settled) return previous;
-  return previous.text === next.text && !next.settled ? previous : next;
+  if (!next.settled) return previous ?? { ...next, text: "" };
+  if (previous?.navigationId !== next.navigationId) return next;
+  if (previous.settled && !previous.failed) return previous;
+  return previous.text === next.text ? previous : next;
 }
