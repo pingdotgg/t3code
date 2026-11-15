@@ -31,11 +31,11 @@ describe("resolveProjectChipIcon", () => {
     ).toEqual({ kind: "emoji", emoji: "🚀" });
     expect(
       resolveProjectChipIcon(
-        project("lucide proj", { kind: "lucide", name: "rocket", color: "emerald" }),
+        project("Zermatt", { kind: "lucide", name: "snowflake", color: "cyan" }),
         null,
         favicon,
       ),
-    ).toEqual({ kind: "monogram", text: "LP", color: "emerald" });
+    ).toEqual({ kind: "lucide", name: "snowflake", color: "cyan" });
   });
 
   it("uses the favicon, then a monogram of the title", () => {

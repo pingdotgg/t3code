@@ -1,7 +1,7 @@
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useMemo, useState } from "react";
+import { memo, Suspense, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
@@ -13,6 +13,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { projectFaviconUrlAtom } from "../state/assets";
+import { LucideProjectIcon } from "./LucideProjectIcon";
 import {
   countGlyphs,
   projectAutoMonogram,
@@ -44,7 +45,7 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
 }) {
   const size = props.size ?? 42;
   const symbol = resolveProjectIconSymbol(props.projectIcon);
-  const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
+  const glyph = resolveProjectIconGlyph(props.projectIcon);
   const faviconUrl = useAtomValue(
     props.workspaceRoot == null || glyph !== null
       ? EMPTY_FAVICON_URL
@@ -92,6 +93,13 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
 
 function ProjectIconGlyphView(props: { readonly glyph: ProjectIconGlyph; readonly size: number }) {
   const { glyph, size } = props;
+  if (glyph.kind === "lucide") {
+    return (
+      <Suspense fallback={<View style={{ width: size, height: size }} />}>
+        <LucideProjectIcon name={glyph.name} color={glyph.color} size={size} />
+      </Suspense>
+    );
+  }
   if (glyph.kind === "emoji") {
     return (
       <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>

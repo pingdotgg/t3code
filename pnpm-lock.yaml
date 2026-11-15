@@ -742,6 +742,9 @@ importers:
       gt-react-native:
         specifier: 11.4.18
         version: 11.4.18(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+      lucide:
+        specifier: ^0.564.0
+        version: 0.564.0
       pele:
         specifier: 'catalog:'
         version: 1.8.0
@@ -10430,6 +10433,9 @@ packages:
     resolution: {integrity: sha512-JJ8GVTQqFwuliifD48U6+h7DXEHdkhJ/E87kksGByII3qHxtPciVb8T8woQONHBQgHVOl7rSMrrip3SeVNy7Fg==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  lucide@0.564.0:
+    resolution: {integrity: sha512-FasyXKHWon773WIl3HeCQpd5xS6E0aLjqxiQStlHNKktni+HDncc1sqY+6vRUbCfmDsIaKQz43EEQLAUDLZO0g==}
 
   lz-string@1.5.0:
     resolution: {integrity: sha512-h5bgJWpxJNswbU7qCrV0tIKQCaS3blPDrqKWx+QxzuzL1zGUzij9XCWLrSLsJPu5t+eWA/ycetzYAO5IOMcWAQ==}
@@ -20767,6 +20773,8 @@ snapshots:
   lucide-react@0.564.0(react@19.3.0):
     dependencies:
       react: 19.3.0
+
+  lucide@0.564.0: {}
 
   lz-string@1.5.0: {}
 

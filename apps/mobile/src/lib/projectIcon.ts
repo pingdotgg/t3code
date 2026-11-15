@@ -5,7 +5,8 @@ import type { AppSymbolName } from "../components/ui/AppSymbol";
 
 export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
-  | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor };
+  | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor }
+  | { readonly kind: "lucide"; readonly name: string; readonly color: ProjectIconColor };
 
 /** Hermes lacks Intl.Segmenter; fold combining marks into base characters instead. */
 export function countGlyphs(text: string): number {
@@ -50,7 +51,6 @@ export function projectAutoMonogram(projectTitle: string): ProjectIconGlyph | nu
 
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
-  projectTitle: string,
 ): ProjectIconGlyph | null {
   switch (projectIcon?.kind) {
     case "emoji":
@@ -58,7 +58,7 @@ export function resolveProjectIconGlyph(
     case "monogram":
       return { kind: "monogram", text: projectIcon.text, color: projectIcon.color };
     case "lucide":
-      return { kind: "monogram", text: projectMonogram(projectTitle), color: projectIcon.color };
+      return { kind: "lucide", name: projectIcon.name, color: projectIcon.color };
     case undefined:
       return null;
   }
@@ -88,7 +88,7 @@ export function resolveProjectChipIcon(
   faviconUrl: () => string | null,
 ): ProjectChipIcon | null {
   if (!project || isScratchProject(project, scratchWorkspaceRoot)) return null;
-  const glyph = resolveProjectIconGlyph(project.projectIcon, project.title);
+  const glyph = resolveProjectIconGlyph(project.projectIcon);
   if (glyph) return glyph;
   const url = faviconUrl();
   if (url && !isProjectFaviconFallbackUrl(url)) return { kind: "favicon", uri: url };
