@@ -136,6 +136,11 @@ final class T3NativeImageViewer: NSObject {
         controller?.setImage(image, at: index, full: true)
       } else {
         // A corrupt download or an SVG whose thumbnail is scrolled away; retrying downloads it again.
+        // A file that is not an image must not reach Share.
+        if !isSVG {
+          Self.remove(file)
+          files[index] = nil
+        }
         controller?.setFailed(at: index, retryable: true)
       }
     }
@@ -909,7 +914,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   }
 
   private func share() {
-    let item: Any? = fileForPage(currentIndex) ?? pages[currentIndex].image
+    let page = pages[currentIndex]
+    let item: Any? = fileForPage(currentIndex) ?? (page.isFull ? page.image : nil)
     guard let item else { return }
     let sheet = UIActivityViewController(activityItems: [item], applicationActivities: nil)
     sheet.popoverPresentationController?.sourceView = shareButton ?? view
