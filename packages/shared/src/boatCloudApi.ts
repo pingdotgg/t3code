@@ -118,19 +118,16 @@ const CommandResult = Schema.Struct({
 export type BoatCommandResult = typeof CommandResult.Type;
 const FileUrl = Schema.Struct({ url: Schema.String });
 const HostResponse = Schema.Struct({ url: Schema.String });
-const SnapshotFields = {
-  status: Schema.optional(Schema.String),
-  sourceSandboxId: Schema.optional(Schema.NullOr(Schema.String)),
-};
 const SavedSnapshot = Schema.Struct({
-  snapshot: Schema.optional(Schema.Struct(SnapshotFields)),
-  ...SnapshotFields,
+  name: Schema.String,
+  status: Schema.String,
+  /** The VM it was saved from. A save under the same name replaces it. */
+  sourceSandboxId: Schema.optional(Schema.NullOr(Schema.String)),
+  /** When the name was first saved; a later save under it keeps this. */
+  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
-export interface BoatSnapshot {
-  readonly status: string;
-  /** The VM it was saved from. Each save replaces it, while Boat keeps the first `createdAt`. */
-  readonly sourceSandboxId: string | null;
-}
+export type BoatSnapshot = typeof SavedSnapshot.Type;
+const SavedSnapshotList = Schema.Struct({ snapshots: Schema.Array(SavedSnapshot) });
 
 // Commands right after a create or resume can land while the VM mounts its files.
 const transientRetry = Schedule.spaced(Duration.seconds(2));
@@ -307,13 +304,17 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
       ).pipe(Effect.map((response) => response.url)),
     saveSnapshot: (sandboxId: string, name: string) =>
       send(json("POST", "/saved-snapshots", { sandboxId, name }), Schema.Unknown),
-    getSnapshot: (name: string) =>
+    listSnapshots: () =>
+      send(HttpClientRequest.get(url("/saved-snapshots")), SavedSnapshotList).pipe(
+        Effect.map((list) => list.snapshots),
+      ),
+    deleteSnapshot: (name: string) =>
       orNull(
-        send(HttpClientRequest.get(url(`/saved-snapshots/${name}`)), SavedSnapshot).pipe(
-          Effect.map((response): BoatSnapshot => ({
-            status: response.snapshot?.status ?? response.status ?? "unknown",
-            sourceSandboxId: response.snapshot?.sourceSandboxId ?? response.sourceSandboxId ?? null,
-          })),
+        send(
+          HttpClientRequest.delete(url(`/saved-snapshots/${name}`)).pipe(
+            HttpClientRequest.setHeader("X-Ascii-Confirm-Delete", name),
+          ),
+          Schema.Unknown,
         ),
       ),
     listEnvironments: () =>

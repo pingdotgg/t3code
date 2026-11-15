@@ -1,5 +1,4 @@
 import {
-  BOAT_CLOUD_SNAPSHOT_NAME,
   type BoatCloudEnvironmentAccess,
   type BoatCloudSession,
   type BoatCloudStatus,
@@ -11,7 +10,9 @@ import {
   buildSnapshot,
   findSandboxByHttpBaseUrl,
   latestCliRelease,
+  snapshotToBuild,
   startMachine,
+  startingSnapshot,
   wakeMachine,
 } from "@t3tools/shared/boatCloudStart";
 import {
@@ -82,18 +83,23 @@ const errorMessage = (error: unknown) =>
 
 // Bumped once the key is stored or removed, so a refresh that read the old key drops its result.
 let keyGeneration = 0;
+/** The saved snapshot new VMs start from, or null before setup. */
+let snapshotName: string | null = null;
 
-/** Reads the key, the snapshot and the VMs from Boat. Leaves a setup in progress alone. */
+/**
+ * Reads the key, the snapshot and the VMs from Boat. Leaves a setup in progress alone,
+ * and saves the latest t3 build when Boat has no snapshot of it.
+ */
 export function refreshPhoneBoatCloud(): Promise<void> {
   const generation = keyGeneration;
   const stale = () => generation !== keyGeneration;
   return run(
     Effect.gen(function* () {
       const api = yield* phoneApi;
-      const [account, snapshot, sandboxes, environments, profiles, stored] = yield* Effect.all(
+      const [account, snapshots, sandboxes, environments, profiles, stored] = yield* Effect.all(
         [
           api.me(),
-          api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME),
+          api.listSnapshots(),
           api.listSandboxes(MACHINE_LABEL_FILTER),
           api.listEnvironments().pipe(Effect.result),
           // Without it the sign-ins are unknown, and every provider stays offered.
@@ -114,6 +120,8 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         );
         if (stale()) return;
       }
+      snapshotName = startingSnapshot(snapshots);
+      const ready = snapshotName !== null;
       setStatus((status) => ({
         ...status,
         connected: true,
@@ -121,12 +129,12 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         setup:
           status.setup.status === "running"
             ? status.setup
-            : snapshot?.status === "ready"
+            : ready
               ? { status: "ready", step: null, error: null }
               : status.setup.status === "failed"
                 ? status.setup
                 : { status: "idle", step: null, error: null },
-        snapshotReady: snapshot?.status === "ready",
+        snapshotReady: ready,
         machines: sandboxes.map((sandbox) => ({
           sandboxId: sandbox.id,
           environmentId: null,
@@ -143,6 +151,12 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         environments: listed,
         environmentsError: Result.isFailure(environments) ? environments.failure.message : null,
       }));
+      // Before the first setup, Settings offers it; a failed one waits for the button.
+      if (!ready || appAtomRegistry.get(phoneBoatCloudAtom).setup.status !== "ready") return;
+      const version = yield* snapshotToBuild(api, yield* HttpClient.HttpClient, false).pipe(
+        Effect.orElseSucceed(() => null),
+      );
+      if (version !== null && !stale()) void runPhoneBoatCloudSetup(version);
     }).pipe(
       Effect.catchTags({
         BoatApiError: (error) =>
@@ -226,18 +240,18 @@ export async function configurePhoneBoatCloudEnvironment(
 }
 
 /**
- * Builds the snapshot from the phone, with the latest Boat cloud build of t3 and no
- * skills. Only a machine holder rebuilds an outdated snapshot on its own, since it keeps the skills.
+ * Builds the snapshot from the phone, with the latest Boat cloud build of t3. The phone
+ * has no skills; a machine holding the key saves the build again with its own.
  */
-export async function runPhoneBoatCloudSetup(): Promise<void> {
+export async function runPhoneBoatCloudSetup(knownVersion?: string): Promise<void> {
   if (appAtomRegistry.get(phoneBoatCloudAtom).setup.status === "running") return;
   setStatus((status) => ({ ...status, setup: { status: "running", step: null, error: null } }));
   try {
     await run(
       Effect.gen(function* () {
         const api = yield* phoneApi;
-        const version = yield* latestCliRelease(yield* HttpClient.HttpClient);
-        yield* buildSnapshot({
+        const version = knownVersion ?? (yield* latestCliRelease(yield* HttpClient.HttpClient));
+        snapshotName = yield* buildSnapshot({
           api,
           version,
           setStep: (step) =>
@@ -280,11 +294,23 @@ export function startOnPhone(input: {
   return run(
     Effect.gen(function* () {
       const api = yield* phoneApi;
+      if (snapshotName === null) {
+        snapshotName = startingSnapshot(yield* api.listSnapshots());
+      }
+      if (snapshotName === null) {
+        return yield* new BoatApiError({
+          status: 0,
+          code: "no_snapshot",
+          message: "Finish Boat cloud setup in Settings, Cloud.",
+          retryable: false,
+        });
+      }
       const started = yield* startMachine({
         api,
         repository,
         baseBranch: input.baseBranch,
         environment: appAtomRegistry.get(phoneBoatCloudAtom).environment,
+        snapshot: snapshotName,
         // The phone keeps no record of stopped VMs, so it resumes them only for load.
         knownWorkspaceRoots: () => [],
         paired: input.paired ?? [],

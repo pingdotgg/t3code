@@ -9,9 +9,6 @@ import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * The environment holding the Boat API key creates, wakes and stops the VMs.
  */
 
-/** Boat saved snapshot names allow only lowercase letters, digits and dashes. */
-export const BOAT_CLOUD_SNAPSHOT_NAME = "t3-code";
-
 /** Boat serves every VM's ports under this domain, so its URL marks an environment as a VM. */
 const BOAT_HOST_SUFFIX = ".on.boat.dev";
 

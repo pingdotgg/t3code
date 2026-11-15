@@ -4,7 +4,12 @@ import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { makeBoatApi } from "./boatCloudApi.ts";
-import { latestCliRelease, snapshotIsOutdated, startMachine } from "./boatCloudStart.ts";
+import {
+  latestCliRelease,
+  needsSnapshot,
+  startingSnapshot,
+  startMachine,
+} from "./boatCloudStart.ts";
 import { PAIRING_MARKER, parseRepository } from "./boatCloudVm.ts";
 
 const repository = parseRepository("https://github.com/acme/app")!;
@@ -55,6 +60,7 @@ const start = (vm: ReturnType<typeof runningVm>, pairedEnvironmentId: string | n
     repository,
     baseBranch: null,
     environment: "base",
+    snapshot: "t3-code-0-1-9-boat-1",
     knownWorkspaceRoots: () => [],
     paired:
       pairedEnvironmentId === null
@@ -110,15 +116,26 @@ describe("latestCliRelease", () => {
   );
 });
 
-describe("snapshotIsOutdated", () => {
-  it("rebuilds a snapshot this holder did not save with the latest build", () => {
-    const ready = { status: "ready", sourceSandboxId: "vm-2" };
-    const built = { sourceSandboxId: "vm-2", version: "0.1.9-boat.2" };
-    assert.isFalse(snapshotIsOutdated(ready, built, "0.1.9-boat.2"));
-    assert.isTrue(snapshotIsOutdated(ready, built, "0.1.9-boat.3"));
-    // Boat replaced it from another holder, or it predates the record.
-    assert.isTrue(snapshotIsOutdated(ready, { ...built, sourceSandboxId: "vm-1" }, "0.1.9-boat.2"));
-    assert.isTrue(snapshotIsOutdated(ready, null, "0.1.9-boat.2"));
-    assert.isFalse(snapshotIsOutdated({ ...ready, status: "saving" }, null, "0.1.9-boat.2"));
+describe("snapshot choice", () => {
+  const saved = (name: string, status: string, createdAt: string) => ({ name, status, createdAt });
+  const old = saved("t3-code-0-1-9-boat-1-skills", "ready", "2026-11-01T00:00:00Z");
+
+  it("starts VMs from the newest ready snapshot, the previous one while the next saves", () => {
+    const next = saved("t3-code-0-1-9-boat-2", "ready", "2026-11-02T00:00:00Z");
+    assert.strictEqual(startingSnapshot([old, next]), next.name);
+    assert.strictEqual(startingSnapshot([old, { ...next, status: "saving" }]), old.name);
+    assert.isNull(startingSnapshot([saved("other", "ready", "2026-11-03T00:00:00Z")]));
+  });
+
+  it("saves each build once, and only a holder with skills replaces one saved without", () => {
+    const plain = saved("t3-code-0-1-9-boat-2", "ready", "2026-11-02T00:00:00Z");
+    const skills = saved("t3-code-0-1-9-boat-2-skills", "saving", "2026-11-02T00:00:00Z");
+    for (const withSkills of [true, false]) {
+      assert.isTrue(needsSnapshot([old], "0.1.9-boat.2", withSkills));
+      assert.isFalse(needsSnapshot([skills], "0.1.9-boat.2", withSkills));
+      assert.isTrue(needsSnapshot([{ ...skills, status: "failed" }], "0.1.9-boat.2", withSkills));
+    }
+    assert.isTrue(needsSnapshot([plain], "0.1.9-boat.2", true));
+    assert.isFalse(needsSnapshot([plain], "0.1.9-boat.2", false));
   });
 });

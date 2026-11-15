@@ -1,5 +1,4 @@
 import {
-  BOAT_CLOUD_SNAPSHOT_NAME,
   type BoatCloudSetupStep,
   type BoatCloudStartStep,
   type BoatCloudStepProgress,
@@ -35,6 +34,7 @@ import {
   checkoutScript,
   cliVersionOfTag,
   installCliScript,
+  isBoatCloudSnapshot,
   machineLabelOf,
   machineStateOf,
   measureScript,
@@ -42,6 +42,7 @@ import {
   pairScript,
   pickMachine,
   prepareSnapshotScript,
+  snapshotNameOf,
   startServerScript,
   subdomainOfHttpBaseUrl,
 } from "./boatCloudVm.ts";
@@ -248,6 +249,8 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
   readonly baseBranch: string | null;
   /** The Boat environment a new VM starts on and a reused one must already run; Boat's default when null. */
   readonly environment: string | null;
+  /** The saved snapshot a new VM starts from, from `startingSnapshot`. */
+  readonly snapshot: string;
   /** Boat's list of VMs, when the caller just read it. */
   readonly sandboxes?: ReadonlyArray<BoatSandbox>;
   /** Checkouts the holder remembers on stopped VMs, which cannot be asked. */
@@ -314,7 +317,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
           // Several threads share a VM, so it gets the medium size.
           type: "default",
           labels: MACHINE_LABELS,
-          from: BOAT_CLOUD_SNAPSHOT_NAME,
+          from: input.snapshot,
           ttlSeconds: IDLE_TTL_SECONDS,
           ...(input.environment === null ? {} : { environment: input.environment }),
         });
@@ -439,28 +442,57 @@ export const latestCliRelease = Effect.fn("BoatCloud.latestCliRelease")(
   ),
 );
 
-/** Which t3 build a holder saved in the snapshot, known only to the holder that saved it. */
-export interface SnapshotBuild {
-  readonly sourceSandboxId: string;
-  readonly version: string;
-}
+const createdMillis = (snapshot: BoatSnapshot) => Date.parse(snapshot.createdAt ?? "") || 0;
+
+/** The snapshot new VMs start from: the newest ready one, the previous build while one is saved. */
+export const startingSnapshot = (snapshots: ReadonlyArray<BoatSnapshot>) => {
+  let newest: BoatSnapshot | null = null;
+  for (const snapshot of snapshots) {
+    if (snapshot.status !== "ready" || !isBoatCloudSnapshot(snapshot.name)) continue;
+    if (newest === null || createdMillis(snapshot) > createdMillis(newest)) newest = snapshot;
+  }
+  return newest?.name ?? null;
+};
 
 /**
- * A ready snapshot this holder did not save, such as one from npm's t3 or another
- * holder, or one with an older build, should be rebuilt.
+ * Whether a holder should save the latest build: a machine wants it with its skills, and
+ * a holder without skills, such as the phone, takes any snapshot of it. One being saved
+ * counts, so holders never undo each other's work.
  */
-export const snapshotIsOutdated = (
-  snapshot: BoatSnapshot,
-  built: SnapshotBuild | null,
-  latestVersion: string,
-) =>
-  snapshot.status === "ready" &&
-  (built?.sourceSandboxId !== snapshot.sourceSandboxId || built.version !== latestVersion);
+export const needsSnapshot = (
+  snapshots: ReadonlyArray<BoatSnapshot>,
+  version: string,
+  withSkills: boolean,
+) => {
+  const has = (name: string) =>
+    snapshots.some((snapshot) => snapshot.name === name && snapshot.status !== "failed");
+  return (
+    !has(snapshotNameOf(version, true)) && (withSkills || !has(snapshotNameOf(version, false)))
+  );
+};
 
-// Until Boat starts saving, it still reports the previous snapshot as ready.
-const waitSnapshot = (api: BoatApi, sourceSandboxId: string) =>
-  api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
-    Effect.flatMap((snapshot) => {
+/**
+ * The build a holder should save a snapshot of, or null when the snapshot is current or
+ * another holder is setting one up right now.
+ */
+export const snapshotToBuild = Effect.fn("BoatCloud.snapshotToBuild")(function* (
+  api: BoatApi,
+  http: HttpClient.HttpClient,
+  withSkills: boolean,
+) {
+  const [version, snapshots, setups] = yield* Effect.all(
+    [latestCliRelease(http), api.listSnapshots(), api.listSandboxes(SETUP_LABEL_FILTER)],
+    { concurrency: "unbounded" },
+  );
+  if (setups.some((sandbox) => machineStateOf(sandbox.state) !== "stopped")) return null;
+  return needsSnapshot(snapshots, version, withSkills) ? version : null;
+});
+
+// Until Boat starts saving, a name saved before still reports its previous snapshot as ready.
+const waitSnapshot = (api: BoatApi, name: string, sourceSandboxId: string) =>
+  api.listSnapshots().pipe(
+    Effect.flatMap((snapshots) => {
+      const snapshot = snapshots.find((candidate) => candidate.name === name);
       if (snapshot?.status === "ready" && snapshot.sourceSandboxId === sourceSandboxId) {
         return Effect.void;
       }
@@ -478,16 +510,18 @@ const waitSnapshot = (api: BoatApi, sourceSandboxId: string) =>
 
 /**
  * Builds the snapshot every VM starts from: a VM with the given t3 build installed
- * as a service that starts at boot, the holder's skills, and no T3 state.
+ * as a service that starts at boot, the holder's skills, and no T3 state. Older
+ * snapshots are deleted once it is saved. Returns its name.
  */
 export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (input: {
   readonly api: BoatApi;
   readonly version: string;
-  /** Absent on a holder with no skills of its own, such as the phone. */
+  /** Absent on a holder with no skills, such as the phone. */
   readonly copySkills?: (sandboxId: string) => Effect.Effect<void, BoatApiError>;
   readonly setStep: (step: BoatCloudSetupStep) => Effect.Effect<void>;
 }) {
   const { api } = input;
+  const name = snapshotNameOf(input.version, input.copySkills !== undefined);
   yield* input.setStep("create-vm");
   // A setup that died midway leaves its VM behind.
   for (const leftover of yield* api.listSandboxes(SETUP_LABEL_FILTER)) {
@@ -509,8 +543,13 @@ export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (inp
     if (input.copySkills) yield* input.copySkills(created.id);
     yield* input.setStep("save-snapshot");
     yield* exec(api, created.id, prepareSnapshotScript);
-    yield* api.saveSnapshot(created.id, BOAT_CLOUD_SNAPSHOT_NAME);
-    yield* waitSnapshot(api, created.id);
+    yield* api.saveSnapshot(created.id, name);
+    yield* waitSnapshot(api, name, created.id);
   }).pipe(Effect.ensuring(api.delete(created.id).pipe(Effect.ignore)));
-  return { sourceSandboxId: created.id, version: input.version } satisfies SnapshotBuild;
+  for (const older of yield* api.listSnapshots()) {
+    if (older.name !== name && isBoatCloudSnapshot(older.name)) {
+      yield* api.deleteSnapshot(older.name).pipe(Effect.ignore);
+    }
+  }
+  return name;
 });

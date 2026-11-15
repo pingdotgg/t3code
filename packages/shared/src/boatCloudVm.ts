@@ -44,6 +44,19 @@ export const cliVersionOfTag = (tag: string) => {
   return EXACT_VERSION.test(version) ? version : null;
 };
 
+const SNAPSHOT_PREFIX = "t3-code";
+
+/**
+ * Boat keeps nothing else a holder can read about a snapshot, so its name records the
+ * t3 build and whether a machine's skills are in it. Names allow lowercase letters,
+ * digits and dashes; plain `t3-code` is from before builds were named.
+ */
+export const snapshotNameOf = (version: string, withSkills: boolean) =>
+  `${SNAPSHOT_PREFIX}-${version.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "-")}${withSkills ? "-skills" : ""}`;
+
+export const isBoatCloudSnapshot = (name: string) =>
+  name === SNAPSHOT_PREFIX || name.startsWith(`${SNAPSHOT_PREFIX}-`);
+
 /** Installs that build into the runtime layout `t3 service install` expects, checksum first. */
 export const installCliScript = (version: string) => {
   const base = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download/${CLI_RELEASE_TAG_PREFIX}${version}`;

@@ -1,8 +1,8 @@
 name: Boat cloud CLI
 
 # Builds this fork's t3 for Boat cloud VMs and publishes it as the latest
-# GitHub release. Setup installs that release in the snapshot, and a machine
-# holding the Boat key rebuilds a snapshot saved before it (packages/shared/src/boatCloudStart.ts).
+# GitHub release. Setup installs that release in the snapshot, and the holder
+# of the Boat key saves a snapshot of each new one (packages/shared/src/boatCloudStart.ts).
 # Push a tag such as boat-cli-v0.1.9-boat.1; v* tags stay with release.yml.
 
 on:
