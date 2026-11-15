@@ -267,6 +267,7 @@ export function ComposerControlsBar(props: {
         target={routeKind === "draft" && draftId ? draftId : routeThreadRef}
         selection={selectedModelSelection}
         disabled={isSendBusy}
+        size={controlSize}
       />
 
       <>

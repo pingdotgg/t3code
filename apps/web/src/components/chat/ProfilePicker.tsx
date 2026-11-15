@@ -5,9 +5,12 @@ import { type EnvironmentId, type ModelSelection } from "@t3tools/contracts";
 import { selectProfile, supportsProfiles } from "@t3tools/shared/profiles";
 import { type ComposerThreadTarget, useComposerDraftStore } from "../../composerDraftStore";
 import { serverEnvironment } from "../../state/server";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "../ui/select";
+import { ChevronDownIcon } from "lucide-react";
+import { Select, SelectValue, SelectPopup, SelectItem } from "../ui/select";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { ComposerSelectControl, type ComposerControlSize } from "./ComposerControl";
+import { useComposerMenuProps } from "./composerEventScope";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
 
 /** A menu entry, not a profile: profile names cannot start with "_". */
@@ -18,10 +21,12 @@ export function ProfilePicker(props: {
   target: ComposerThreadTarget;
   selection: ModelSelection;
   disabled?: boolean;
+  size: ComposerControlSize;
 }) {
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const apply = useApplyThreadModelPick();
   const navigate = useNavigate();
+  const composerMenuProps = useComposerMenuProps();
   const freshAtom = serverEnvironment.profileConfig({
     environmentId: props.environmentId,
     input: {},
@@ -42,8 +47,10 @@ export function ProfilePicker(props: {
   const supported = driver !== undefined && supportsProfiles(driver);
   return (
     <Tooltip>
-      <TooltipTrigger render={<div />}>
+      {/* A wrapper keeps the tooltip on a disabled trigger; flex keeps it centred in the row. */}
+      <TooltipTrigger render={<div className="flex shrink-0" data-composer-profile-picker />}>
         <Select
+          modal={false}
           value={props.selection.profileId ?? ""}
           disabled={props.disabled || !supported}
           onOpenChange={(open) => {
@@ -80,10 +87,13 @@ export function ProfilePicker(props: {
             });
           }}
         >
-          <SelectTrigger size="compact" variant="ghost" aria-label="Profile">
-            <SelectValue>{props.selection.profileId ?? "No profile"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup>
+          <ComposerSelectControl size={props.size} aria-label="Profile">
+            <span data-composer-control-label className="max-w-20 truncate sm:max-w-32">
+              <SelectValue>{props.selection.profileId ?? "No profile"}</SelectValue>
+            </span>
+            <ChevronDownIcon data-composer-control-chevron className="size-3.5 opacity-70" />
+          </ComposerSelectControl>
+          <SelectPopup alignItemWithTrigger={false} {...composerMenuProps}>
             <p className="max-w-72 px-3 py-2 text-xs text-muted-foreground">
               Changes apply at the next session start. Stop and restart the thread to apply
               immediately.
