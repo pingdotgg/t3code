@@ -3744,20 +3744,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { env: undefined, omitted: false, excludesStagedDeletions: false };
     if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
       return { unavailable: "Too many untracked files to count." };
-    const index = yield* prepareReviewIndex(cwd, paths, allowPartial, includeStagedDeletions).pipe(
-      Effect.catchTags({
-        PlatformError: (cause) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "GitVcsDriver.prepareReviewIndex",
-              cwd,
-              command: "git diff",
-              detail: "Could not prepare the review index.",
-              cause,
-            }),
-          ),
-      }),
-    );
+    const index = yield* prepareReviewIndex(cwd, paths, allowPartial, includeStagedDeletions);
     if (index.omitted && !allowPartial)
       return { unavailable: "Untracked files are too large to count." };
     return index;
