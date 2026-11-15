@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   forgotten: [] as { environmentId: string; threadId: string }[],
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
+  onArchivedRefresh: undefined as (() => void) | undefined,
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   requests: [] as {
@@ -62,6 +63,7 @@ vi.mock("../../components/ui/Dialog", () => ({
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
     state.archivedRefreshes.push(environmentId);
+    state.onArchivedRefresh?.();
   },
 }));
 vi.mock("../../state/session", () => ({
@@ -78,8 +80,9 @@ vi.mock("../../state/presentation", () => ({
 vi.mock("../../state/server", () => ({
   environmentServerConfigsAtom: "server-configs",
 }));
-vi.mock("../../state/atom-registry", () => ({
-  appAtomRegistry: {
+vi.mock("../../state/atom-registry", async () => {
+  const registry = (await import("effect/reactivity")).AtomRegistry.make();
+  const stub = {
     set: (_atom: string, value: boolean) => {
       state.dropBusy = value;
     },
@@ -110,8 +113,21 @@ vi.mock("../../state/atom-registry", () => ({
                       },
                     ]),
                   ),
-  },
-}));
+  };
+  // Real atoms such as composerDraftsAtom go to a real registry; strings are stubbed state.
+  return {
+    appAtomRegistry: {
+      get: (atom: unknown) =>
+        typeof atom === "string"
+          ? stub.get(atom)
+          : registry.get(atom as Parameters<typeof registry.get>[0]),
+      set: (atom: unknown, value: unknown) =>
+        typeof atom === "string"
+          ? stub.set(atom, value as boolean)
+          : registry.set(atom as Parameters<typeof registry.set>[0], value),
+    },
+  };
+});
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));
@@ -171,7 +187,10 @@ vi.mock("../../state/threads", () => ({
   ),
 }));
 
+import { appAtomRegistry } from "../../state/atom-registry";
+import { composerDraftsAtom } from "../../state/use-composer-drafts";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
+import * as ThreadUndoNotice from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
 const primaryEnvironmentId = EnvironmentId.make("primary");
@@ -206,6 +225,7 @@ beforeEach(() => {
   state.forgotten = [];
   state.titleOutcome = null;
   state.archivedRefreshes = [];
+  state.onArchivedRefresh = undefined;
   state.pendingOrder = null;
   state.dropBusy = false;
   state.holdingRows = false;
@@ -259,7 +279,9 @@ describe("thread list operation permissions", () => {
     expect(state.requests).toEqual([]);
   });
 
-  it("rechecks permission after a retained delete confirmation", async () => {
+  it("rechecks permission after a retained delete confirmation, then clears the draft", async () => {
+    const draft = { text: "unsent", attachments: [] };
+    appAtomRegistry.set(composerDraftsAtom, { "primary:thread": draft, "primary:other": draft });
     useThreadListActions().confirmDeleteThread(makeThread());
     const confirm = state.dialogs[0]?.onConfirm;
     expect(confirm).toBeTypeOf("function");
@@ -268,6 +290,15 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
+    expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toContain("primary:thread");
+
+    state.scopes.get(primaryEnvironmentId)!.add(AuthOrchestrationOperateScope);
+    const deleted = new Promise<void>((resolve) => (state.onArchivedRefresh = resolve));
+    confirm!();
+    await deleted;
+
+    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
+    expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toEqual(["primary:other"]);
   });
 });
 
@@ -462,6 +493,7 @@ describe("thread action undo", () => {
     const thread = makeThread({
       pinnedAt: "2026-09-02T00:00:00.000Z",
       pinOrderKey: "m",
+      unsettledAt: "2026-09-01T00:00:00.000Z",
       snoozedUntil: "2099-01-01T09:00:00.000Z",
     });
     expect(await useThreadListActions().settleThread(thread)).toBe(true);
@@ -475,6 +507,11 @@ describe("thread action undo", () => {
       "pin",
       "snooze",
     ]);
+    expect(state.requests[1]?.input).toEqual({
+      threadId: thread.id,
+      reason: "user",
+      restoreUnsettledAt: thread.unsettledAt,
+    });
     expect(state.requests[2]?.input).toEqual({ threadId: thread.id, orderKey: "m" });
     expect(state.requests[3]?.input).toEqual({
       threadId: thread.id,
@@ -603,6 +640,19 @@ describe("thread action undo", () => {
     await undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
   });
+
+  it("keeps the earlier Undo until archiving succeeds", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    await actions.settleThread(thread);
+    state.failedAction = "archive";
+    expect(await actions.archiveThread(thread)).toBe(false);
+    expect(readThreadUndoNotice()?.action).toBe("Settled");
+
+    state.failedAction = null;
+    expect(await actions.archiveThread(thread)).toBe(true);
+    expect(readThreadUndoNotice()).toBeNull();
+  });
 });
 
 describe("thread action failure dialog", () => {
@@ -651,8 +701,16 @@ describe("thread action failure dialog", () => {
       await useThreadListActions().settleThread(thread);
       state.failedAction = null;
       state.shells = [{ ...thread, pinnedAt }];
+      const noticeShown = Promise.withResolvers<void>();
+      const showNotice = ThreadUndoNotice.showThreadUndoNotice;
+      using _notice = vi
+        .spyOn(ThreadUndoNotice, "showThreadUndoNotice")
+        .mockImplementation((notice) => {
+          showNotice(notice);
+          noticeShown.resolve();
+        });
       pressButton("Try again");
-      await vi.waitFor(() => expect(readThreadUndoNotice()).not.toBeNull());
+      await noticeShown.promise;
       await readThreadUndoNotice()!.undo();
 
       expect(state.requests.map(({ action }) => action)).toEqual(requests);
@@ -712,10 +770,10 @@ describe("thread action failure dialog", () => {
 
     expect(state.alerts.at(-1)?.title).toBe("Thread is archived");
     state.failedAction = null;
+    const refreshed = new Promise<void>((resolve) => (state.onArchivedRefresh = resolve));
     pressButton("Unarchive");
-    await vi.waitFor(() =>
-      expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unarchive"]),
-    );
+    await refreshed;
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "unarchive"]);
   });
 
   it("keeps the server's reason for other failures and can try again", async () => {
@@ -727,10 +785,10 @@ describe("thread action failure dialog", () => {
     expect(alert.title).toBe("Could not settle thread");
     expect(alert.message).toBe("Server rejected action");
     state.failedAction = null;
+    const retried = new Promise<void>((resolve) => (state.afterRequest = resolve));
     pressButton("Try again");
-    await vi.waitFor(() =>
-      expect(state.requests.map(({ action }) => action)).toEqual(["settle", "settle"]),
-    );
+    await retried;
+    expect(state.requests.map(({ action }) => action)).toEqual(["settle", "settle"]);
   });
 });
 

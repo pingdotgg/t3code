@@ -19,6 +19,7 @@ import { forgetThread } from "../../state/forgotten-threads";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
+import { clearComposerDraft } from "../../state/use-composer-drafts";
 import {
   environmentThreadShells,
   steadyNavigationThreadShellsAtom,
@@ -172,10 +173,9 @@ function useThreadActionExecutor(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
-    // Sends the dialog's retry or Unarchive through the caller's full handler, so Undo
-    // bookkeeping such as settle's still runs; without it the bare executor runs them.
-    // null offers no retry: retrying one compound step would skip the rest of its plan.
+    // null disables retries of individual steps in compound actions.
     rerun?: ThreadActionRerun | null,
+    restoreUnsettledAt?: string | null,
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -206,9 +206,6 @@ function useThreadActionExecutor(
         return false;
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
-      if (action === "archive" || action === "delete") {
-        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
-      }
       onStarted?.();
       const result = await withThreadDismissal(
         key,
@@ -218,7 +215,11 @@ function useThreadActionExecutor(
               // suppressed until real activity clears the pin server-side.
               await unsettleMutation({
                 environmentId: thread.environmentId,
-                input: { threadId: thread.id, reason: "user" },
+                input: {
+                  threadId: thread.id,
+                  reason: "user",
+                  ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
+                },
               })
             : await (
                 action === "settle"
@@ -250,9 +251,13 @@ function useThreadActionExecutor(
         );
         return false;
       }
+      if (action === "archive" || action === "delete") {
+        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
+      }
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
       }
+      if (action === "delete") clearComposerDraft(key);
       onCompleted?.(action, thread);
       return true;
     })();
@@ -336,11 +341,27 @@ export function useThreadListActions(): {
             async (step) => {
               switch (step.action) {
                 case "unsettle":
-                  return (await executeAction("unsettle", thread, undefined, null)) === true;
+                  return (
+                    (await executeAction(
+                      "unsettle",
+                      thread,
+                      undefined,
+                      null,
+                      step.restoreUnsettledAt,
+                    )) === true
+                  );
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
                   return pinThread(thread, step.orderKey);
+                case "reorderActive": {
+                  const result = await reorderActiveMutation({
+                    environmentId: thread.environmentId,
+                    input: { threadId: thread.id, orderKey: step.orderKey },
+                  });
+                  if (result._tag === "Failure") throw Cause.squash(result.cause);
+                  return true;
+                }
                 case "snooze": {
                   const failureTitle =
                     action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
@@ -490,8 +511,10 @@ export function useThreadListActions(): {
     snoozeInFlightThreadKeys.current.delete(key);
     return succeeded;
   };
-  const unsettleThread = async (thread: EnvironmentThreadShell) =>
-    (await executeAction("unsettle", thread)) === true;
+  const unsettleThread = async (
+    thread: EnvironmentThreadShell,
+    restoreUnsettledAt?: string | null,
+  ) => (await executeAction("unsettle", thread, undefined, undefined, restoreUnsettledAt)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {
