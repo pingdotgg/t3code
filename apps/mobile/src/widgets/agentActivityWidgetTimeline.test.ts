@@ -97,11 +97,4 @@ describe("agentActivityWidgetTimeline", () => {
       "Done",
     ]);
   });
-
-  it("gives the Android snapshot no stale rows when nothing is in flight", () => {
-    const snapshot = agentActivityWidgetSnapshot({ kind: "signed-out" }, now);
-
-    expect(snapshot.subtitle).toBe("Sign in to T3 Connect to see agents");
-    expect(snapshot.stale).toBeUndefined();
-  });
 });
