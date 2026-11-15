@@ -34,5 +34,6 @@ export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
 export const DESKTOP_DOWNLOAD_URL = PRODUCT_LINKS.latestReleaseUrl;
 export const PRODUCT_REPOSITORY_SLUG = PRODUCT_LINKS.repositorySlug;
 export const UPSTREAM_PRODUCT = PRODUCT_BRAND.upstream;
+export const PRODUCT_SHORT_NAME = PRODUCT_BRAND.shortName;
 // The upstream T3 Code phone app pairs with Continuum servers; this redirects to its store page.
 export const MOBILE_APP_URL = "https://t3.codes/mobile";
