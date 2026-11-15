@@ -601,28 +601,30 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }).pipe(Effect.orDie),
   );
   let initialScanTimedOut = false;
-  let contentIndexPending = false;
+  // The content index reads every file, which takes minutes where antivirus scans each open,
+  // so content searches do not wait for it; git grep answers until it is ready.
+  let contentIndexPending = variant === "content";
   const vcsProcess = yield* VcsProcess.VcsProcess;
   let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
-  yield* waitForIndexReady(
-    cwd,
-    finder,
-    ({ reason, cause }) =>
-      new WorkspaceSearchIndexCreateFailed({
-        cwd,
-        reason,
-        cause,
-      }),
-  ).pipe(
-    Effect.catchTags({
-      WorkspaceSearchIndexScanTimedOut: () =>
-        Effect.sync(() => {
-          // A failed build would be cached and thrown away, so a slow content index never finishes.
-          if (variant === "paths") initialScanTimedOut = true;
-          else contentIndexPending = true;
+  if (variant === "paths") {
+    yield* waitForIndexReady(
+      cwd,
+      finder,
+      ({ reason, cause }) =>
+        new WorkspaceSearchIndexCreateFailed({
+          cwd,
+          reason,
+          cause,
         }),
-    }),
-  );
+    ).pipe(
+      Effect.catchTags({
+        WorkspaceSearchIndexScanTimedOut: () =>
+          Effect.sync(() => {
+            initialScanTimedOut = true;
+          }),
+      }),
+    );
+  }
 
   // fff's isScanning takes the picker lock too, so progress is read off the JS thread.
   const isScanning = Effect.promise(async () => {
@@ -688,15 +690,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       .pipe(Effect.option);
   });
 
-  // fff's grep before its content index is ready opens every file itself, as slowly as the
-  // build (minutes on Windows with Defender), so git grep answers until the index is ready.
+  // fff's grep before its content index is ready opens every file itself, as slowly as the build.
+  // None when git cannot search this folder (not a repository, git missing).
   const searchContentsWithGit = Effect.fn("WorkspaceSearchIndex.searchContentsWithGit")(function* (
     input: Omit<ProjectSearchContentsInput, "cwd">,
-  ): Effect.fn.Return<ProjectSearchContentsResult, WorkspaceSearchIndexScanTimedOut> {
-    const notReady = new WorkspaceSearchIndexScanTimedOut({
-      cwd,
-      timeout: WORKSPACE_INDEX_SCAN_TIMEOUT,
-    });
+  ): Effect.fn.Return<Option.Option<ProjectSearchContentsResult>> {
     const options = {
       ignoreCase: !input.caseSensitive,
       maxMatchesPerFile: CONTENT_SEARCH_MAX_MATCHES_PER_FILE,
@@ -711,7 +709,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       regexMode = false;
       result = yield* runGitGrep(input.query, { ...options, regexMode });
     }
-    if (Option.isNone(result) || result.value.exitCode > 1) return yield* notReady;
+    if (Option.isNone(result) || result.value.exitCode > 1) return Option.none();
 
     const regexRanges = new Map<string, Array<readonly [number, number]>>();
     if (regexMode) {
@@ -776,11 +774,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       });
       if (matches.length > input.limit) break;
     }
-    return {
+    return Option.some({
       matches: matches.slice(0, input.limit),
       truncated: matches.length > input.limit || result.value.stdoutTruncated,
       ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
-    };
+    });
   });
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
@@ -1213,7 +1211,23 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
-    if (!(yield* isContentIndexReady())) return yield* searchContentsWithGit(input);
+    if (!(yield* isContentIndexReady())) {
+      const gitResult = yield* searchContentsWithGit(input);
+      if (Option.isSome(gitResult)) return gitResult.value;
+      yield* waitForIndexReady(
+        cwd,
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexSearchFailed({
+            cwd,
+            queryLength: input.query.length,
+            pageSize: input.limit,
+            reason,
+            cause,
+          }),
+      );
+      contentIndexPending = false;
+    }
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
