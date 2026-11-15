@@ -472,10 +472,16 @@ it.effect("waitForThread after a run waits on the next run that brings new work"
     const runId = RunId.make("run:thread-management:wait-after");
     const progressRunId = RunId.make("run:thread-management:wait-after:progress");
     const wakeRunId = RunId.make("run:thread-management:wait-after:wake");
+    const restartedRunId = RunId.make("run:thread-management:wait-after:wake:2");
     const subscribed = yield* Deferred.make<void>();
     const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
     const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"]) =>
-      ({ id, ordinal, status, startedAt: DateTime.makeUnsafe(ordinal * 1_000) }) as never;
+      ({
+        id,
+        ordinal,
+        status,
+        startedAt: DateTime.makeUnsafe(ordinal * 1_000),
+      }) as unknown as OrchestrationV2Run;
     let runs: Array<OrchestrationV2Run> = [run(runId, 1, "completed")];
     // A monitor's progress update reports on old work; it is not the next run.
     const messages = [
@@ -526,7 +532,12 @@ it.effect("waitForThread after a run waits on the next run that brings new work"
     yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
     runs = [...runs, run(progressRunId, 2, "completed"), run(wakeRunId, 3, "running")];
     yield* Queue.offer(events, stored(1));
-    runs = [...runs.slice(0, 2), run(wakeRunId, 3, "completed")];
+    // Restarted, it ends as its continuation, but is answered by the id a task here records.
+    runs = [
+      ...runs.slice(0, 2),
+      run(wakeRunId, 3, "cancelled"),
+      { ...run(restartedRunId, 4, "completed"), restartContinuationOfRunId: wakeRunId },
+    ];
     yield* Queue.offer(events, stored(2));
 
     expect(yield* Fiber.join(fiber)).toMatchObject({

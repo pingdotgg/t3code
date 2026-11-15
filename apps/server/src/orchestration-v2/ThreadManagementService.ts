@@ -1139,9 +1139,15 @@ const make = Effect.gen(function* () {
       const resultRun = yield* delegatedWorkResult;
       return { ...current, settled: resultRun !== undefined, resultRun };
     });
+    const answered = selectedRun;
     const settledResult = (current: Effect.Success<ReturnType<typeof evaluate>>) => ({
       threadId: input.threadId,
-      run: current.run,
+      // The run found after `afterRunId` keeps its own id, which is what a task records,
+      // with how its restart chain ended.
+      run:
+        afterRunId === undefined
+          ? current.run
+          : { ...answered, status: current.run.status, completedAt: current.run.completedAt },
       timedOut: !current.settled,
       ...(current.resultRun === undefined ? {} : { resultRun: current.resultRun }),
     });

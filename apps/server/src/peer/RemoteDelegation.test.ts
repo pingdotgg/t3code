@@ -314,7 +314,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
           return {
             threadId: input.threadId,
             run: {
-              id: latest(boxLaterRunId),
+              // A wait after a run answers with the run it found, however it was restarted.
+              id: input.afterRunId === undefined ? latest(boxLaterRunId) : boxLaterRunId,
               status: Option.isSome(laterDone) ? "completed" : "running",
             } as OrchestrationV2Run,
             timedOut: Option.isNone(laterDone),
@@ -2202,6 +2203,19 @@ it.effect.each([
           status: "completed",
           result: "The slow suite passes too.",
         });
+        // The original task's watch for later runs sees the follow-up's run, restarted or not,
+        // as that follow-up's own: one task and one wake per send.
+        const tasks = (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents;
+        expect(tasks).toHaveLength(3);
+        const woken = yield* SubscriptionRef.changes(offers).pipe(
+          Stream.map((seen) => seen.filter((offer) => offer.threadId === parentThreadId).length),
+          Stream.filter((count) => count >= 2),
+          Stream.runHead,
+        );
+        expect(woken).toEqual(Option.some(2));
+        expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(
+          3,
+        );
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
