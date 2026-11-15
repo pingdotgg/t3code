@@ -1038,6 +1038,25 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(relay));
     });
 
+    it.effect("ends an existing Live Activity when the relay has no agent work to show", () => {
+      vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true } as Preferences);
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi.fn(() => Promise.resolve(null)),
+        addPushTokenListener: vi.fn(),
+        end: vi.fn(() => Promise.resolve()),
+      };
+      widgetMocks.getInstances.mockReturnValue([activity] as never);
+      const relay = fakeRelay(() => Effect.succeed({ aggregate: null as never }));
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token"), "user-a");
+
+      return Effect.gen(function* () {
+        yield* refreshActiveLiveActivityRemoteRegistration();
+
+        expect(activity.end).toHaveBeenCalled();
+      }).pipe(Effect.provide(relay));
+    });
+
     it.effect("keeps the newest rows when an older overlapping read finishes last", () =>
       Effect.gen(function* () {
         const newer = { ...aggregate, activeCount: 2 };
