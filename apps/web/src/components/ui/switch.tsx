@@ -11,7 +11,7 @@ function Switch({
   return (
     <SwitchPrimitive.Root
       className={cn(
-        "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-[2px] outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 data-[mixed]:bg-input",
+        "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-[2px] outline-none transition-[background-color,box-shadow] duration-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input not-data-disabled:data-checked:hover:bg-primary/90 not-data-disabled:data-unchecked:hover:bg-muted-foreground/40 not-data-disabled:dark:data-unchecked:hover:bg-muted-foreground/25 data-disabled:cursor-not-allowed data-disabled:opacity-64 data-[mixed]:bg-input",
         size === "sm"
           ? "[--thumb-size:--spacing(4)] sm:[--thumb-size:--spacing(3.5)]"
           : "[--thumb-size:--spacing(5)] sm:[--thumb-size:--spacing(4)]",
