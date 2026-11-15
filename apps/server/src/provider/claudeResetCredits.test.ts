@@ -171,6 +171,35 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
       expect([darwin, limited]).toEqual([undefined, undefined]);
     }),
   );
+
+  it.effect("waits out Retry-After after a 429 and keeps the last grants", () =>
+    Effect.gen(function* () {
+      const { configDir } = yield* writeLogin;
+      const answers = [
+        () =>
+          Response.json({
+            cedar_ember: { eligible: true, next_grant_id: "grant_a", grants: [grant({})] },
+          }),
+        () => Response.json({}, { status: 429, headers: { "retry-after": "3600" } }),
+      ];
+      let requests = 0;
+      const client = HttpClient.make((request) => {
+        const answer = answers[requests++];
+        return answer
+          ? Effect.succeed(HttpClientResponse.fromWeb(request, answer()))
+          : Effect.die("must not send a request inside the Retry-After window");
+      });
+      const read = ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      yield* read;
+      yield* read;
+      const insideWindow = yield* read;
+      expect(requests).toBe(2);
+      expect(insideWindow).toMatchObject({ availableCount: 1, nextCreditId: "grant_a" });
+    }),
+  );
 });
 
 const ClaimBody = Schema.fromJsonString(
