@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { ignoredCommandPrefixesAtom } from "../../state/preferences";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2629,6 +2631,7 @@ function useThreadFeedPresentation(
   revealedMessageId: MessageId | null,
 ) {
   const [feedCache] = useState(createThreadFeedCache);
+  const ignoredCommandPrefixes = useAtomValue(ignoredCommandPrefixesAtom);
   return appendPendingThreadMessages(
     deriveThreadFeedPresentation(
       props.feed,
@@ -2642,7 +2645,11 @@ function useThreadFeedPresentation(
       props.activeWorkStartedAt,
       props.runlessWorkActive ?? false,
       feedCache,
-      { toolCallVisibility: props.toolCallVisibility ?? "showAll", revealedMessageId },
+      {
+        toolCallVisibility: props.toolCallVisibility ?? "showAll",
+        revealedMessageId,
+        ignoredCommandPrefixes,
+      },
     ),
     props.feed,
     props.queuedMessages,

@@ -152,6 +152,12 @@ describe("turnDetail", () => {
     expect(turnDetail(entries, undefined, null).activity).toBe(activity);
   });
 
+  it("names the wrapped command when its prefix is ignored", () => {
+    const entries = [prompt, command("wrapped", { command: "rtk proxy git status" })];
+    expect(turnDetail(entries, undefined, null).activity).toBe("Running rtk");
+    expect(turnDetail(entries, undefined, null, ["rtk", "rtk proxy"]).activity).toBe("Running git");
+  });
+
   it("cuts a long step without splitting an emoji", () => {
     const edit = work("edit", { itemType: "file_change", changedFiles: [`${"a".repeat(111)}😀z`] });
     expect(turnDetail([prompt, edit], undefined, null).activity).not.toMatch(/[\uD800-\uDFFF]/u);

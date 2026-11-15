@@ -39,6 +39,7 @@ const command = (program: string): TimelineEntry => ({
   },
 });
 const prompt = message("prompt", "user");
+const noIgnoredPrefixes: ReadonlyArray<string> = [];
 
 const announcer = (props: Partial<ComponentProps<typeof ThreadActivityAnnouncer>>) => (
   <ThreadActivityAnnouncer
@@ -51,6 +52,7 @@ const announcer = (props: Partial<ComponentProps<typeof ThreadActivityAnnouncer>
     level="everything"
     entries={[prompt]}
     workspaceRoot={undefined}
+    ignoredCommandPrefixes={noIgnoredPrefixes}
     {...props}
   />
 );
