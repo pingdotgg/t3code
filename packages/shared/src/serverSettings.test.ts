@@ -542,14 +542,14 @@ describe("serverSettings helpers", () => {
     );
   });
 
-  it("skips a preferred fallback whose instance is missing or not installed", () => {
+  it("uses an available thread fallback and skips missing or unusable providers", () => {
     const preferredFallback = createModelSelection(
       ProviderInstanceId.make("gone-thread"),
       "claude-opus-4-6",
     );
     const loadedProvider = {
-      instanceId: ProviderInstanceId.make("claude"),
-      driver: ProviderDriverKind.make("claude"),
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -561,6 +561,33 @@ describe("serverSettings helpers", () => {
       slashCommands: [],
       skills: [],
     } satisfies ServerProvider;
+
+    const threadSelection = createModelSelection(loadedProvider.instanceId, "claude-opus-4-6");
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [loadedProvider],
+        null,
+        threadSelection,
+      ),
+    ).toBe(threadSelection);
+    const dedicatedWriter = createModelSelection(loadedProvider.instanceId, "claude-haiku-4-5");
+    expect(
+      resolveSourceControlWriterModelSelection(
+        { ...DEFAULT_SERVER_SETTINGS, sourceControlWriterModelSelection: dedicatedWriter },
+        [loadedProvider],
+        null,
+        threadSelection,
+      ),
+    ).toBe(dedicatedWriter);
+    expect(
+      resolveSourceControlWriterModelSelection(
+        DEFAULT_SERVER_SETTINGS,
+        [{ ...loadedProvider, auth: { status: "unauthenticated" } }],
+        null,
+        threadSelection,
+      ),
+    ).toBe(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
 
     expect(
       resolveSourceControlWriterModelSelection(
