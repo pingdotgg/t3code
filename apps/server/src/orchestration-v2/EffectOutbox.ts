@@ -3,7 +3,9 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  ModelSelection,
   NodeId,
+  NonNegativeInt,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -33,12 +35,19 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+    processLossCount: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
     revokeMcpCredential: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-session.apply-model-selection"),
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
+    modelSelection: ModelSelection,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
@@ -57,6 +66,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
     messageId: MessageId,
+    modelSelection: Schema.optional(ModelSelection),
+    steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.restart"),
@@ -107,6 +118,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
+    skipReferenced: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread-title.generate"),
@@ -136,6 +148,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 export const PROCESS_BOUND_EFFECT_TYPES = [
+  "provider-session.apply-model-selection",
   "provider-turn.start",
   "provider-turn.interrupt",
   "provider-turn.steer",
@@ -693,6 +706,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         const cutoff = DateTime.formatIso(
           DateTime.subtractDuration(yield* DateTime.now, SETTLED_EFFECT_RETENTION),
         );
+        // Live continuations retain their preceding intent's cumulative crash budget.
         // Separate batch statements release the write lock between batches.
         const deleteBatch = sql<{ readonly effect_id: string }>`
           DELETE FROM orchestration_v2_effect_outbox
@@ -701,6 +715,16 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             FROM orchestration_v2_effect_outbox
             WHERE status IN ('succeeded', 'cancelled')
               AND completed_at < ${cutoff}
+              AND NOT (
+                effect_type = 'provider-runtime.continue'
+                AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runs AS recovery_run
+                  WHERE recovery_run.thread_id = orchestration_v2_effect_outbox.thread_id
+                    AND recovery_run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                    AND json_extract(recovery_run.payload_json, '$.restartContinuationOfRunId') =
+                      json_extract(orchestration_v2_effect_outbox.payload_json, '$.sourceRunId')
+                )
+              )
             LIMIT ${PRUNE_BATCH_SIZE}
           )
           RETURNING effect_id

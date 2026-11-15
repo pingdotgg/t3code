@@ -15,6 +15,7 @@ import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
+  readTailscaleServeRootHolder,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
@@ -47,7 +48,7 @@ import {
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
-import { resolveHostCliCommand } from "./invocation.ts";
+import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -83,12 +84,16 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+  {
+    serverVersion: Schema.String,
+    serverProtocolVersion: Schema.Number,
+    pairCommand: Schema.String,
+  },
 ) {
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `Pair with the matching CLI instead: \`${this.pairCommand}\`.`,
     ].join("\n");
   }
 }
@@ -135,6 +140,15 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
 ) {
   override get message(): string {
     return `tailscale serve failed for HTTPS port ${String(this.servePort)}. Run \`tailscale serve --https=${String(this.servePort)} --bg <local-url>\` by hand to see why.`;
+  }
+}
+
+export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
+  "TailscaleServeTargetRefusedError",
+  { localHost: Schema.String },
+) {
+  override get message(): string {
+    return `This Tailscale install can only proxy to localhost, and the server listens on ${this.localHost}. Restart it with \`--host 127.0.0.1\` or \`--host 0.0.0.0\`, then run this command again.`;
   }
 }
 
@@ -405,13 +419,26 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (isDevServerNotProxiableError(localTarget)) {
       return yield* localTarget;
     }
+    // The probe above fails whenever this host cannot reach its own MagicDNS name, so the Serve
+    // config, not the probe, decides whether the port is free.
+    const holder = yield* readTailscaleServeRootHolder(input.servePort, {
+      host: (localTarget.localHost ?? "127.0.0.1").replace(/^\[|\]$/gu, ""),
+      port: localTarget.localPort,
+    }).pipe(Effect.mapError((cause) => new TailscaleUnavailableError({ cause })));
+    if (holder === "other") {
+      return yield* new ServePortOccupiedError({ servePort: input.servePort });
+    }
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
+      Effect.mapError((cause) =>
+        cause._tag === "TailscaleCommandExitError" &&
+        cause.stderrDiagnostic === "unsupported-target" &&
+        localTarget.localHost !== undefined
+          ? new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost })
+          : new TailscaleServeFailedError({ servePort: input.servePort, cause }),
       ),
     );
     notes.push(
@@ -498,15 +525,22 @@ export const pairCommand = Command.make("pair", {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
-      const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
+      const target = yield* discoverPairTarget(explicitBaseDir);
       // Each protocol keeps auth in its own database, so a token minted here
       // for another protocol's server would never be accepted by it. Refuse
       // before any local layer opens (and migrates) that database.
       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+        const platform = yield* HostProcess.Platform;
+        const baseDirArgs =
+          explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0
+            ? ` --base-dir ${hostShellWord(platform, explicitBaseDir)}`
+            : "";
         return yield* new IncompatibleServerProtocolError({
           serverVersion: target.descriptor.serverVersion,
           serverProtocolVersion,
+          pairCommand: `npx t3@${target.descriptor.serverVersion} pair${baseDirArgs}`,
         });
       }
 

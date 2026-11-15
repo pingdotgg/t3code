@@ -58,6 +58,7 @@ interface MutableBucket {
   speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
+  unpricedTokens: number;
   providerReportedRecords: number;
   sessions: Set<string>;
 }
@@ -78,15 +79,26 @@ export interface AggregateOptions {
 export function resolveModelAliases(
   aliases: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, string> {
-  const resolved = new Map<string, string>();
-  for (const model of Object.keys(aliases)) {
-    const seen = new Set([model]);
-    let target = aliases[model]!;
-    while (Object.hasOwn(aliases, target) && !seen.has(target)) {
-      seen.add(target);
+  const models = Object.keys(aliases);
+  const memo = new Map<string, string | null>();
+  for (const model of models) {
+    if (memo.has(model)) continue;
+    const path: string[] = [];
+    let target = model;
+    while (Object.hasOwn(aliases, target) && !memo.has(target)) {
+      path.push(target);
+      // Null marks both the active walk and paths that end in a cycle.
+      memo.set(target, null);
       target = aliases[target]!;
     }
-    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
+    const terminal = Object.hasOwn(aliases, target) ? (memo.get(target) ?? null) : target;
+    for (const alias of path) memo.set(alias, terminal);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const model of models) {
+    const target = memo.get(model);
+    if (target !== null && target !== undefined) resolved.set(model, target);
   }
   return resolved;
 }
@@ -146,18 +158,48 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
     b.cacheCreationTokens <= a.cacheCreationTokens &&
     b.outputTokens <= a.outputTokens &&
     b.reasoningTokens <= a.reasoningTokens &&
+    (copy.cacheCreation1hTokens ?? 0) <= (held.cacheCreation1hTokens ?? 0) &&
     reportedCostUsd === held.reportedCostUsd
   ) {
     return held;
   }
+  const cacheCreation1hTokens = Math.max(
+    held.cacheCreation1hTokens ?? 0,
+    copy.cacheCreation1hTokens ?? 0,
+  );
   return {
     ...held,
+    ...(cacheCreation1hTokens > 0 ? { cacheCreation1hTokens } : {}),
     totals: {
       uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
       cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
       cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
       outputTokens: Math.max(a.outputTokens, b.outputTokens),
       reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+/**
+ * Grok reports each turn once, complete, so real copies are equal. A larger one is a deleted
+ * transcript's pre-v17 maximum over turns that shared a prompt id, whichever source it came from.
+ */
+function smallestGrokCopy(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.min(held.reportedCostUsd, copy.reportedCostUsd);
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.min(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.min(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.min(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.min(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.min(a.reasoningTokens, b.reasoningTokens),
     },
     reportedCostUsd,
   };
@@ -210,7 +252,12 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
-        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
+        if (held.bucket !== null) {
+          held.record =
+            record.provider === "grok"
+              ? smallestGrokCopy(held.record, record)
+              : mergeUsageCopies(held.record, record);
+        }
         return false;
       }
     }
@@ -283,7 +330,14 @@ export class UsageAggregator {
       this.#options.priceOverrides,
     );
     bucket.records += 1;
-    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
+    if (priced.costSource === "unpriced") {
+      bucket.unpricedRecords += 1;
+      bucket.unpricedTokens +=
+        record.totals.uncachedInputTokens +
+        record.totals.cachedInputTokens +
+        record.totals.cacheCreationTokens +
+        record.totals.outputTokens;
+    }
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
   }
 
@@ -330,6 +384,7 @@ export class UsageAggregator {
         speedPremiumUsd: 0,
         records: 0,
         unpricedRecords: 0,
+        unpricedTokens: 0,
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
@@ -377,6 +432,7 @@ export class UsageAggregator {
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
+        unpricedTokens: bucket.unpricedTokens,
         sessions: bucket.sessions.size,
       });
     }

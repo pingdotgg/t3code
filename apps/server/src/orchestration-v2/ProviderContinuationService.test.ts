@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -22,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -410,6 +412,43 @@ describe("ProviderContinuationService", () => {
             "a disabled instance must clear the offer via the explicit callback " +
               "when the adapter itself does not clear on dispatch failure",
           );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "clears a sticky continuation offer when a non-delegated wake dispatch fails generically",
+    () => {
+      return Effect.gen(function* () {
+        const cleared = yield* Deferred.make<void>();
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) =>
+            Effect.fail(
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: CommandId.make(String(command.commandId)),
+                commandType: command.type,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            clearIfCurrent: () => Deferred.succeed(cleared, undefined),
+          });
+          yield* Deferred.await(cleared);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,

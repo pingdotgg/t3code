@@ -372,6 +372,28 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("skips the empty-response fallback the timeline hides beside an HTML render", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      const shownRunId = RunId.make("run:shown");
+      yield* commit([run(threadId, shownRunId, 2)]);
+      yield* putItems([
+        {
+          ...item("render", 0, ""),
+          type: "dynamic_tool",
+          toolName: "html_render",
+          input: {},
+          output: { htmlRender: { attachmentId: "visual", title: "Result", height: 120 } },
+        },
+        item("hidden", 1, ""),
+        { ...item("shown", 2, ""), runId: shownRunId },
+      ]);
+      const result = yield* projection.searchThread({ threadId, query: "empty" });
+      assert.equal(result.totalMatches, 1);
+      assert.equal(result.match?.entryId, "shown");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("searches displayed skill labels and invalidates parsed text when labels change", () =>
     Effect.gen(function* () {
       const projection = yield* setup;

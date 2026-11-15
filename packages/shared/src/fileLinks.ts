@@ -13,6 +13,10 @@ const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+)|-L?(\d+))?$/i;
 export function parseFileUrlHref(
   href: string,
 ): { readonly path: string; readonly hash: string } | null {
+  // Chromium on Windows parses any one-letter scheme as a drive letter
+  // (`new URL("d:x")` is `file:///D:/x`), so the protocol check alone would turn
+  // such links into file links only on Windows.
+  if (!href.trim().toLowerCase().startsWith("file:")) return null;
   try {
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
@@ -101,7 +105,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
     }
   } else if (!isAbsolutePath(path)) {
     const separator: "/" | "\\" = isWindowsPathStyle(cwd) ? "\\" : "/";
-    resolvedPath = joinPath(cwd, path, separator);
+    resolvedPath = joinPath(cwd, path.replace(/^(?:\.\/)+/, ""), separator);
   }
 
   return formatFilePathPosition({ ...position, path: resolvedPath });
@@ -135,31 +139,26 @@ export function buildFileLinkParentSuffixByPath(
     const parentSegmentsByPath = new Map(
       uniquePaths.map((filePath) => [filePath, pathParentSegments(filePath)]),
     );
-    const minUniqueDepthByPath = new Map<string, number>();
+    const suffixCounts = new Map<string, number>();
+    for (const segments of parentSegmentsByPath.values()) {
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        const suffix = segments.slice(-depth).join("/");
+        suffixCounts.set(suffix, (suffixCounts.get(suffix) ?? 0) + 1);
+      }
+    }
 
     for (const filePath of uniquePaths) {
       const segments = parentSegmentsByPath.get(filePath) ?? [];
       let resolvedDepth = segments.length;
       for (let depth = 1; depth <= segments.length; depth += 1) {
         const candidate = segments.slice(-depth).join("/");
-        const collision = uniquePaths.some((otherPath) => {
-          if (otherPath === filePath) return false;
-          const otherSegments = parentSegmentsByPath.get(otherPath) ?? [];
-          return otherSegments.slice(-depth).join("/") === candidate;
-        });
-        if (!collision) {
+        if (suffixCounts.get(candidate) === 1) {
           resolvedDepth = depth;
           break;
         }
       }
-      minUniqueDepthByPath.set(filePath, resolvedDepth);
-    }
-
-    for (const filePath of uniquePaths) {
-      const segments = parentSegmentsByPath.get(filePath) ?? [];
       if (segments.length === 0) continue;
-      const minUniqueDepth = minUniqueDepthByPath.get(filePath) ?? 1;
-      const suffixDepth = Math.min(segments.length, Math.max(minUniqueDepth, 2));
+      const suffixDepth = Math.min(segments.length, Math.max(resolvedDepth, 2));
       suffixByPath.set(filePath, segments.slice(-suffixDepth).join("/"));
     }
   }

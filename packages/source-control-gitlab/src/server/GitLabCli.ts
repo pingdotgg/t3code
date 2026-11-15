@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -22,6 +23,11 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// GitLab allows ~1M-character descriptions; glab's JSON escaping (`\u003c`) can grow one sixfold.
+const MERGE_REQUEST_LIST_MAX_BYTES = 8_000_000;
+const decodeJsonArray = Schema.decodeUnknownExit(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -154,6 +160,7 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
       VcsProcessOutputLimitError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsProcessMissingExitCodeError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsRepositoryDetectionError: (cause) => new GitLabCliCommandError({ ...context, cause }),
+      VcsCheckpointStorageError: (cause) => new GitLabCliCommandError({ ...context, cause }),
       VcsUnsupportedOperationError: (cause) => new GitLabCliCommandError({ ...context, cause }),
     });
   }
@@ -196,7 +203,12 @@ export class GitLabRepositoryDecodeError extends Schema.TaggedError<GitLabReposi
   "GitLabRepositoryDecodeError",
   {
     ...gitLabCliDecodeErrorContext,
-    operation: Schema.Literals(["getRepositoryCloneUrls", "createRepository", "getDefaultBranch"]),
+    operation: Schema.Literals([
+      "getRepositoryCloneUrls",
+      "createRepository",
+      "getDefaultBranch",
+      "createMergeRequest",
+    ]),
     repository: Schema.optional(Schema.String),
   },
 ) {
@@ -332,6 +344,10 @@ const RawGitLabDefaultBranchSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
+const decodeGitLabMergeRequestProject = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.Number, path: TrimmedNonEmptyString })),
+);
+
 const RawGitLabNamespaceSchema = Schema.Struct({
   id: Schema.Number,
 });
@@ -378,12 +394,6 @@ function sourceRefName(input: {
   readonly source?: SourceControlProvider.SourceControlRefSelector;
 }): string {
   return input.source?.refName ?? normalizeHeadSelector(input.headSelector);
-}
-
-function sourceProjectIdentifier(
-  source: SourceControlProvider.SourceControlRefSelector | undefined,
-): string | null {
-  return source?.repository ?? source?.owner ?? null;
 }
 
 function toSummaryWithOptionalUpdatedAt(
@@ -477,43 +487,57 @@ export const make = Effect.gen(function* () {
 
   return GitLabCli.of({
     execute,
-    listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function (input) {
-      return execute({
-        cwd: input.cwd,
-        args: [
-          "mr",
-          "list",
-          "--source-branch",
-          sourceRefName(input),
-          ...stateArgs(input.state),
-          "--per-page",
-          String(input.limit ?? 20),
-          "--output",
-          "json",
-        ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          raw.length === 0
-            ? Effect.succeed([])
-            : Effect.sync(() => decodeGitLabMergeRequestListJson(raw)).pipe(
-                Effect.flatMap((decoded) => {
-                  if (!Result.isSuccess(decoded)) {
-                    return Effect.fail(
-                      new GitLabMergeRequestListDecodeError({
-                        operation: "listMergeRequests",
-                        command: "glab",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    );
-                  }
-
-                  return Effect.succeed(decoded.success.map(toSummaryWithOptionalUpdatedAt));
-                }),
-              ),
-        ),
-      );
+    listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
+      const limit = input.limit ?? 20;
+      let pageSize = limit;
+      let page = 1;
+      const items: GitLabMergeRequestSummary[] = [];
+      while (items.length < limit) {
+        const result = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "mr",
+            "list",
+            "--source-branch",
+            sourceRefName(input),
+            ...stateArgs(input.state),
+            "--per-page",
+            String(pageSize),
+            ...(page > 1 ? ["--page", String(page)] : []),
+            "--output",
+            "json",
+          ],
+          maxOutputBytes: MERGE_REQUEST_LIST_MAX_BYTES,
+        });
+        if (result.stdoutTruncated && pageSize > 1) {
+          pageSize = Math.max(1, Math.floor(pageSize / 2));
+          page = 1;
+          items.length = 0;
+          continue;
+        }
+        const raw = result.stdout.trim();
+        if (raw.length === 0) break;
+        const decoded = decodeGitLabMergeRequestListJson(raw);
+        if (result.stdoutTruncated || !Result.isSuccess(decoded)) {
+          return yield* new GitLabMergeRequestListDecodeError({
+            operation: "listMergeRequests",
+            command: "glab",
+            cwd: input.cwd,
+            cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
+          });
+        }
+        items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
+        // Count raw entries: the decoder drops invalid ones, which would end paging early.
+        const entries = decodeJsonArray(raw);
+        if (
+          page * pageSize >= limit ||
+          (Exit.isSuccess(entries) && entries.value.length < pageSize)
+        ) {
+          break;
+        }
+        page += 1;
+      }
+      return items.slice(0, limit);
     }),
     getMergeRequest: Effect.fn("GitLabCli.getMergeRequest")(function (input) {
       return executeMergeRequest({
@@ -631,26 +655,47 @@ export const make = Effect.gen(function* () {
         Effect.map(normalizeRepositoryCloneUrls),
       );
     }),
-    createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function (input) {
-      const sourceProject = sourceProjectIdentifier(input.source);
-      return execute({
+    createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function* (input) {
+      let project = ":fullpath";
+      let targetProjectId: number | undefined;
+      if (input.source?.repository || input.source?.owner) {
+        const result = yield* execute({ cwd: input.cwd, args: ["api", "projects/:fullpath"] });
+        const targetProject = yield* decodeGitLabMergeRequestProject(result.stdout).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitLabRepositoryDecodeError({
+                operation: "createMergeRequest",
+                command: "glab",
+                cwd: input.cwd,
+                cause,
+              }),
+          ),
+        );
+        project = encodeURIComponent(
+          input.source.repository ?? `${input.source.owner}/${targetProject.path}`,
+        );
+        targetProjectId = targetProject.id;
+      }
+      yield* execute({
         cwd: input.cwd,
         args: [
           "api",
           "--method",
           "POST",
-          "projects/:fullpath/merge_requests",
+          `projects/${project}/merge_requests`,
           "--raw-field",
           `source_branch=${sourceRefName(input)}`,
           "--raw-field",
           `target_branch=${input.target?.refName ?? input.baseBranch}`,
-          ...(sourceProject ? ["--raw-field", `source_project_id=${sourceProject}`] : []),
+          ...(targetProjectId === undefined
+            ? []
+            : ["--raw-field", `target_project_id=${targetProjectId}`]),
           "--raw-field",
           `title=${input.title}`,
           "--field",
           `description=@${input.bodyFile}`,
         ],
-      }).pipe(Effect.asVoid);
+      });
     }),
     getDefaultBranch: Effect.fn("GitLabCli.getDefaultBranch")(function (input) {
       return execute({

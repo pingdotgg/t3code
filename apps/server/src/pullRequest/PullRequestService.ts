@@ -198,8 +198,14 @@ export class PullRequestService extends Context.Service<
     ) => Effect.Effect<A, E | PullRequestError, R>;
     readonly summary: (
       input: PullRequestRef,
-      options?: { readonly recoverTransientFailure?: boolean },
+      options?: {
+        readonly recoverTransientFailure?: boolean;
+        /** Registration preflights must reach the provider despite a successful cached read. */
+        readonly bypassCache?: boolean;
+      },
     ) => Effect.Effect<PullRequestSummary, PullRequestError>;
+    /** Whether the reference's host batches summary reads; false when it cannot be resolved. */
+    readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
       input: PullRequestRef,
       options?: { readonly includeDetails?: boolean },
@@ -218,7 +224,13 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
-    readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
+    readonly subscribeLinkedThreadRefreshes: Stream.Stream<number>;
+    /** Wakes linked-thread readers only; other pull request reads don't depend on thread links. */
+    readonly notifyLinkedThreadsChanged: Effect.Effect<void>;
+    readonly refreshAfterTurn: (
+      projectId: ProjectId,
+      options?: { readonly pushed?: boolean },
+    ) => Effect.Effect<void>;
     /** Project and remote lookups inside `effect` read once per filter, e.g. across one sync sweep. */
     readonly withSharedProjectReads: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
@@ -533,6 +545,7 @@ function withRateLimitBackoff(
     ...(api.readsPublicHostWithoutCheckout === undefined
       ? {}
       : { readsPublicHostWithoutCheckout: api.readsPublicHostWithoutCheckout }),
+    ...(api.batchesReads === undefined ? {} : { batchesReads: api.batchesReads }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)
@@ -728,6 +741,7 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const linkedThreadRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
   const requirementOf: UnavailableRequirementOf = (kind) =>
     registry.get(kind)?.unavailableRequirement;
@@ -1295,6 +1309,9 @@ export const make = Effect.gen(function* () {
       state: input.item.state,
       isDraft: input.item.isDraft,
       mergeability: input.item.mergeability,
+      ...(input.item.rebaseRequired === undefined
+        ? {}
+        : { rebaseRequired: input.item.rebaseRequired }),
       additions: input.item.additions,
       deletions: input.item.deletions,
       createdAt: input.item.createdAt,
@@ -1536,7 +1553,18 @@ export const make = Effect.gen(function* () {
         filters: input.filters,
         ...(cursor === undefined
           ? {}
-          : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
+          : {
+              cursor: {
+                updatedBefore: cursor.updatedBefore,
+                delivered: cursor.delivered,
+                seenAt: chunk.flatMap((project) =>
+                  (cursorOf(project)?.seenAt ?? []).map((number) => ({
+                    repository: project.repository,
+                    number,
+                  })),
+                ),
+              },
+            }),
       }).pipe(
         observeRead,
         Effect.flatMap(({ value: page, observedAt }) => {
@@ -1767,6 +1795,9 @@ export const make = Effect.gen(function* () {
     ...(changeRequest.mergeability === undefined
       ? {}
       : { mergeability: changeRequest.mergeability }),
+    ...(changeRequest.rebaseRequired === undefined
+      ? {}
+      : { rebaseRequired: changeRequest.rebaseRequired }),
     ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
     ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
     ...(changeRequest.autoMergeEnabled === undefined
@@ -1866,6 +1897,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.rebaseRequired === undefined
+              ? {}
+              : { rebaseRequired: changeRequest.rebaseRequired }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
@@ -1902,6 +1936,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),
+            ...(changeRequest.mergeQueueRemoval === undefined
+              ? {}
+              : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
           })),
         ),
       ),
@@ -2068,7 +2105,14 @@ export const make = Effect.gen(function* () {
           // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
           // change request, and dropping a 300-file diff on every checkbox is the whole cost of
           // the feature.
-          Effect.ensuring(Effect.sync(() => bumpFilesViewedEpoch(ref))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              bumpFilesViewedEpoch(ref);
+              if (input.files.some((file) => file.viewed && file.revision !== undefined)) {
+                bumpEpoch(fileRevisionEpochs, ref);
+              }
+            }),
+          ),
         ),
       ),
     );
@@ -2984,6 +3028,7 @@ export const make = Effect.gen(function* () {
   const filesViewedEpoch = (ref: PullRequestRef) => filesViewedEpochs.get(refScope(ref)) ?? 0;
   const bumpFilesViewedEpoch = (ref: PullRequestRef) => bumpEpoch(filesViewedEpochs, ref);
 
+  const fileRevisionEpochs = new Map<string, number>();
   let everyFileRevisionEpoch = 0;
   const viewedFiles = ViewedFiles.make({
     filesViewedStore,
@@ -2992,7 +3037,8 @@ export const make = Effect.gen(function* () {
     toPullRequestError,
     runFork,
     refEpoch,
-    fileRevisionsEpoch: () => everyFileRevisionEpoch,
+    fileRevisionsEpoch: (ref) =>
+      `${everyFileRevisionEpoch}:${fileRevisionEpochs.get(refScope(ref)) ?? 0}`,
   });
 
   const filtersOfKey = (
@@ -3058,18 +3104,32 @@ export const make = Effect.gen(function* () {
 
   const summary: PullRequestService["Service"]["summary"] = (input, options) => {
     const key = refCacheKey(input);
-    const cached = persistedRead(input, "summary", summaryCodec, summaryUncached(input));
+    const read =
+      options?.bypassCache === true
+        ? summaryUncached(input)
+        : persistedRead(input, "summary", summaryCodec, summaryUncached(input));
     const held = lastGoodSummary.peek(key);
-    return held !== undefined &&
+    return options?.bypassCache !== true &&
+      held !== undefined &&
       input.allowStale !== false &&
       (options?.recoverTransientFailure !== false || held.state === "merged")
       ? Effect.succeed(held)
-      : cached.pipe(
+      : read.pipe(
           Effect.tap((value) =>
             shouldReplaceHeldSummary(key, value) ? lastGoodSummary.record(key, value) : Effect.void,
           ),
         );
   };
+
+  const batchesReads: PullRequestService["Service"]["batchesReads"] = Effect.fn(
+    "PullRequestService.batchesReads",
+  )(
+    function* (input) {
+      const project = yield* requireProject(input);
+      return project.api.batchesReads === true;
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
     persistedRead(
@@ -3225,9 +3285,11 @@ export const make = Effect.gen(function* () {
       return detailUncached(refOfCacheKey(key)).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
-            // GitHub detail includes the same checks; the checks TTL counts from their observation.
+            // GitHub and Azure detail include the same checks; the checks TTL counts from their observation.
+            // Azure detail answers a failed policy read with no checks, which must not be cached.
             if (
-              value.provider === "github" &&
+              (value.provider === "github" ||
+                (value.provider === "azure-devops" && value.checks.length > 0)) &&
               value.observedAt !== undefined &&
               !(yield* Cache.has(checksCache, key))
             ) {
@@ -3277,6 +3339,7 @@ export const make = Effect.gen(function* () {
     deletions: detail.deletions,
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
+    ...(detail.rebaseRequired === undefined ? {} : { rebaseRequired: detail.rebaseRequired }),
     headBranch: detail.headBranch,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,
@@ -3639,12 +3702,14 @@ export const make = Effect.gen(function* () {
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = Effect.fn(
     "PullRequestService.refreshAfterTurn",
-  )(function* (projectId) {
+  )(function* (projectId, options) {
     // Everything the provider holds, not just the project's repository: a turn can touch a
     // change request reached through another repository, and no epoch may move until those
     // reads are gone, or a reader in between keeps the old one under the new epoch.
     yield* forgetProviderReads();
-    listingsEpoch = ++epochCounter;
+    const epoch = ++epochCounter;
+    // A push can open or move a PR; a plain turn waits for the listing TTL to spare the API quota.
+    if (options?.pushed === true) listingsEpoch = epoch;
     projectEpochs.delete(projectId);
     if (projectEpochs.size >= REF_EPOCH_CAPACITY) {
       const oldest = projectEpochs.keys().next().value;
@@ -3653,11 +3718,15 @@ export const make = Effect.gen(function* () {
         projectEpochs.delete(oldest);
       }
     }
-    projectEpochs.set(projectId, listingsEpoch);
-    const epoch = listingsEpoch;
+    projectEpochs.set(projectId, epoch);
     yield* readCache.invalidate(`project:${projectId}`);
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
+
+  const notifyLinkedThreadsChanged = SubscriptionRef.update(
+    linkedThreadRefreshes,
+    (revision) => revision + 1,
+  );
 
   const invalidatedByMutation =
     <I extends PullRequestRef>(
@@ -3846,6 +3915,7 @@ export const make = Effect.gen(function* () {
       return yield* listStats({ ...input, refs: refs.flatMap(Option.toArray) });
     }),
     summary: credentialCached(summary),
+    batchesReads,
     stack: credentialCached(stack),
     subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
@@ -3857,6 +3927,10 @@ export const make = Effect.gen(function* () {
     subscribeRefreshes: SubscriptionRef.changes(pullRequestRefreshes).pipe(
       Stream.filter((revision) => revision > 0),
     ),
+    subscribeLinkedThreadRefreshes: SubscriptionRef.changes(linkedThreadRefreshes).pipe(
+      Stream.filter((revision) => revision > 0),
+    ),
+    notifyLinkedThreadsChanged,
     refreshAfterTurn,
     detail: credentialCached(detail),
     checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),

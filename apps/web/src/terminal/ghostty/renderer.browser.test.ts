@@ -29,6 +29,13 @@ function pixelsOffBackground(context: CanvasRenderingContext2D): number {
   return count;
 }
 
+/** Whether the device pixel under a CSS pixel position is closer to black than white. */
+function isDarkAt(context: CanvasRenderingContext2D, x: number, y: number): boolean {
+  const { a, d } = context.getTransform();
+  const { data } = context.getImageData(Math.floor(x * a), Math.floor(y * d), 1, 1);
+  return data[0]! < 128 && data[1]! < 128 && data[2]! < 128;
+}
+
 /** A 40 by 60 CSS pixel canvas drawn at the given device pixel ratio. */
 function scaledContext(scale: number): CanvasRenderingContext2D {
   const canvas = document.createElement("canvas");
@@ -113,5 +120,52 @@ describe.each([1.25, 2.2])("renderGhosttySnapshot at a %sx device pixel ratio", 
 
     renderGhosttySnapshot({ ...options, snapshot: firstRow(blank) });
     expect(pixelsOffBackground(context)).toBe(0);
+  });
+
+  // Cell 1 spans x 11.8 to 19.6 and row 0 spans y 4 to 21 in CSS pixels.
+  it.each([
+    ["right", "\ue0b4", { flat: 12.3, round: 19.1, neighbour: 0, outside: 11.3 }],
+    ["left", "\ue0b6", { flat: 19.1, round: 12.3, neighbour: 2, outside: 20.1 }],
+  ])("fills the rounded %s cap to the cell edges, under a block cursor too", (_side, text, x) => {
+    const context = scaledContext(scale);
+    const segment = { ...blank, background: { r: 0, g: 0, b: 0 } };
+    const cells = [blank, { ...blank, text }, blank];
+    cells[x.neighbour] = segment;
+    const snapshot = (cursorVisible: boolean): GhosttySnapshot => ({
+      cols: 3,
+      rows: 1,
+      foreground: { r: 0, g: 0, b: 0 },
+      background,
+      cursor: { r: 0, g: 0, b: 0 },
+      cursorX: 1,
+      cursorY: 0,
+      cursorVisible,
+      cursorBlinking: false,
+      cursorStyle: 1,
+      dirtyRows: new Set([0]),
+      rowData: [{ cells, text: "", isWrapContinuation: false, wrapsToNext: false }],
+    });
+
+    renderGhosttySnapshot({
+      ...layout,
+      context,
+      snapshot: snapshot(false),
+      forceFull: true,
+      cursorOn: false,
+    });
+    expect(isDarkAt(context, x.flat, 4.5)).toBe(true);
+    expect(isDarkAt(context, x.flat, 20.5)).toBe(true);
+    expect(isDarkAt(context, x.round, 12.5)).toBe(true);
+    expect(isDarkAt(context, x.round, 4.5)).toBe(false);
+
+    renderGhosttySnapshot({
+      ...layout,
+      context,
+      snapshot: snapshot(true),
+      forceFull: true,
+      cursorOn: true,
+    });
+    expect(isDarkAt(context, x.outside, 12.5)).toBe(true);
+    expect(isDarkAt(context, x.flat, 12.5)).toBe(false);
   });
 });
