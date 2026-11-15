@@ -563,25 +563,25 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add machine">
+                <Button size="xs" variant="ghost-muted">
                   <PlusIcon className="size-3" />
-                  <span>Add machine</span>
+                  <span>Connect without Tailscale</span>
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Add a machine by Tailscale, pairing code or SSH</TooltipPopup>
+        <TooltipPopup side="top">Pair by link or code, or connect over SSH</TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget ? `Add a route to ${routeTarget.label}` : "Connect without Tailscale"}
           </DialogTitle>
           <DialogDescription>
             {routeTarget
               ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+              : "Machines on your Tailscale account show up by themselves. Pair any other machine here."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

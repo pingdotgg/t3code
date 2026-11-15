@@ -79,14 +79,6 @@ interface AppRow {
   readonly hidden: number;
 }
 
-/** A machine linked to this one only, at `access`, bound to the node that proved it. */
-export interface LocalMember {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly nodeId: string;
-  readonly access: AuthMcpClientAccess;
-}
-
 const isAccess = Schema.is(TailnetDeviceAccess);
 const isClientAccess = (value: string): value is AuthMcpClientAccess =>
   (ACCESS_ORDER as ReadonlyArray<string>).includes(value);
@@ -152,16 +144,9 @@ export class Membership extends Context.Service<
     ) => Effect.Effect<Option.Option<NetworkMember>, TailnetDevicesError>;
     /** This machine's limits for members, which never leave it. */
     readonly limits: Effect.Effect<ReadonlyMap<EnvironmentId, AuthMcpClientAccess>>;
-    /** Machines linked to this one only. */
-    readonly local: Effect.Effect<ReadonlyArray<LocalMember>, TailnetDevicesError>;
-    readonly putLocal: (input: LocalMember) => Effect.Effect<void, TailnetDevicesError>;
-    readonly forgetLocal: (
-      environmentId: EnvironmentId,
-    ) => Effect.Effect<void, TailnetDevicesError>;
     /**
-     * What a machine may do here: a member's roster access narrowed by this machine's limit, or a
-     * machine linked here only at its local access. None for anything else; an unreadable entry
-     * fails closed as `revoked`.
+     * What a member may do here: its roster access narrowed by this machine's limit. None for a
+     * machine that is not in the roster; an unreadable entry fails closed as `revoked`.
      */
     readonly accessOf: (
       environmentId: EnvironmentId,
@@ -221,7 +206,7 @@ export class Membership extends Context.Service<
       { readonly members: ReadonlySet<string>; readonly apps: ReadonlySet<string> },
       TailnetDevicesError
     >;
-    /** Forgets the whole network here, when this machine leaves it. Local links stay. */
+    /** Forgets the whole network here, when this machine leaves it. */
     readonly clear: Effect.Effect<void, TailnetDevicesError>;
     /** Every write after subscribing. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<RosterChange>, never, Scope.Scope>;
@@ -332,23 +317,6 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => new Map<EnvironmentId, AuthMcpClientAccess>()),
   );
 
-  const local: Membership["Service"]["local"] = sql<{
-    readonly environment_id: string;
-    readonly label: string;
-    readonly node_id: string;
-    readonly access: string;
-  }>`SELECT * FROM network_local_members`.pipe(
-    Effect.map((rows) =>
-      rows.map((row): LocalMember => ({
-        environmentId: row.environment_id as EnvironmentId,
-        label: row.label,
-        nodeId: row.node_id,
-        access: isClientAccess(row.access) ? row.access : "read-only",
-      })),
-    ),
-    Effect.mapError(storageError),
-  );
-
   const accessOf: Membership["Service"]["accessOf"] = Effect.fn("Membership.accessOf")(
     function* (environmentId) {
       const found = yield* member(environmentId).pipe(
@@ -357,13 +325,7 @@ const make = Effect.gen(function* () {
           Option.some({ access: "revoked" as const } as Pick<NetworkMember, "access">),
         ),
       );
-      if (Option.isNone(found)) {
-        const linked = yield* local.pipe(
-          Effect.map((all) => all.find((entry) => entry.environmentId === environmentId)),
-          Effect.orElseSucceed(() => ({ access: "read-only" as const })),
-        );
-        return Option.fromNullishOr(linked?.access);
-      }
+      if (Option.isNone(found)) return Option.none();
       const access = found.value.access;
       if (access === "revoked") return Option.some(access);
       const limit = (yield* limits).get(environmentId);
@@ -445,19 +407,6 @@ const make = Effect.gen(function* () {
       stamp_json = excluded.stamp_json,
       updated_by = excluded.updated_by
   `;
-
-  /**
-   * The older build's level for a machine outside the roster: its link here only, or none once
-   * that is forgotten. A roster entry is already mirrored by its own writes and outranks it here.
-   */
-  const writeLegacyLocal = Effect.fn("Membership.writeLegacyLocal")(function* (
-    environmentId: EnvironmentId,
-    access: TailnetDeviceAccess,
-  ) {
-    if (Option.isSome(yield* member(environmentId))) return;
-    const at = yield* stamp;
-    yield* writePolicyRow(environmentId, access, yield* encodeStamp(at), at.node);
-  });
 
   const write = (entry: NetworkMember) =>
     Effect.all([
@@ -563,35 +512,6 @@ const make = Effect.gen(function* () {
                 Effect.flatMap((stampJson) => writeLegacyPolicy(found.value, stampJson)),
               ),
         ),
-        sql.withTransaction,
-        Effect.mapError(storageError),
-      );
-      yield* changed();
-    },
-  );
-
-  const putLocal: Membership["Service"]["putLocal"] = Effect.fn("Membership.putLocal")(
-    function* (input) {
-      yield* sql`
-        INSERT INTO network_local_members (environment_id, label, node_id, access)
-        VALUES (${input.environmentId}, ${input.label}, ${input.nodeId}, ${input.access})
-        ON CONFLICT (environment_id) DO UPDATE SET
-          label = excluded.label,
-          node_id = excluded.node_id,
-          access = excluded.access
-      `.pipe(
-        Effect.andThen(writeLegacyLocal(input.environmentId, input.access)),
-        sql.withTransaction,
-        Effect.mapError(storageError),
-      );
-      yield* changed();
-    },
-  );
-
-  const forgetLocal: Membership["Service"]["forgetLocal"] = Effect.fn("Membership.forgetLocal")(
-    function* (environmentId) {
-      yield* sql`DELETE FROM network_local_members WHERE environment_id = ${environmentId}`.pipe(
-        Effect.andThen(writeLegacyLocal(environmentId, "revoked")),
         sql.withTransaction,
         Effect.mapError(storageError),
       );
@@ -725,9 +645,6 @@ const make = Effect.gen(function* () {
     redeemApp,
     member,
     limits,
-    local,
-    putLocal,
-    forgetLocal,
     accessOf,
     put,
     bindNode,

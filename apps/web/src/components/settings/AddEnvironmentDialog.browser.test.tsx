@@ -65,14 +65,14 @@ const remoteCard = () => page.getByRole("button", { name: /Remote link/ });
 const sshCard = () => page.getByRole("button", { name: /^SSH/ });
 
 async function openDialogOnSsh() {
-  await userEvent.click(page.getByRole("button", { name: "Add machine" }));
+  await userEvent.click(page.getByRole("button", { name: "Connect without Tailscale" }));
   await userEvent.click(sshCard());
   await expect.element(sshCard()).toHaveAttribute("aria-pressed", "true");
 }
 
 async function expectDefaultModeAfterReopen() {
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-  await userEvent.click(page.getByRole("button", { name: "Add machine" }));
+  await userEvent.click(page.getByRole("button", { name: "Connect without Tailscale" }));
   await expect.element(remoteCard()).toHaveAttribute("aria-pressed", "true");
   await expect.element(sshCard()).toHaveAttribute("aria-pressed", "false");
   await expect.element(page.getByPlaceholder("backend.example.com")).toBeInTheDocument();

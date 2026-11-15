@@ -80,6 +80,19 @@ const makeTailnet = Effect.gen(function* () {
   >([]);
   /** Runs before each whois answers, so a test can hold handshakes at that point. */
   const beforeWhois = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+  const drains = yield* Ref.make<ReadonlyArray<Effect.Effect<void>>>([]);
+  const served = (drain: Effect.Effect<void>) => Ref.update(drains, (all) => [...all, drain]);
+  /**
+   * Waits for the linking that syncs and joins set off on every machine. One machine's linking
+   * can start another's, so each is drained again until a chain that long has run.
+   */
+  const quiet = Ref.get(drains).pipe(
+    Effect.flatMap((all) =>
+      Effect.forEach(all, () => Effect.forEach(all, (drain) => drain, { discard: true }), {
+        discard: true,
+      }),
+    ),
+  );
   const identityFor = (selfUserId: string) =>
     Layer.succeed(TailnetIdentity.TailnetIdentity, {
       read: Ref.get(peers).pipe(
@@ -155,7 +168,7 @@ const makeTailnet = Effect.gen(function* () {
   const nameOf = (origin: string) => Ref.getUnsafe(byOrigin).get(origin)?.whois.nodeName ?? origin;
   /** Tailscale's stable id for the node serving `origin`. */
   const nodeIdOf = (origin: string) => Ref.getUnsafe(byOrigin).get(origin)?.whois.nodeId ?? null;
-  return { identityFor, join, announce, nameOf, nodeIdOf, beforeWhois };
+  return { identityFor, join, announce, nameOf, nodeIdOf, beforeWhois, served, quiet };
 });
 
 type FakeTailnet = Effect.Success<typeof makeTailnet>;
@@ -272,6 +285,7 @@ const serveDeviceOn = (
     const origin = `http://127.0.0.1:${address.port}`;
     yield* Ref.set(url, origin);
     const auth = Context.get(context, EnvironmentAuth.EnvironmentAuth);
+    yield* tailnet.served(Context.get(context, TailnetDevices.TailnetDevices).drain);
     return {
       url: origin,
       descriptor,
@@ -351,6 +365,26 @@ const requestAs = (
     });
   }).pipe(Effect.provide(FetchHttpClient.layer));
 
+/** Asks a device to join the network of `admitter`, as any process on the owner's nodes could. */
+const requestJoinAs = (
+  target: { readonly url: string; readonly descriptor: ExecutionEnvironmentDescriptor },
+  admitter: { readonly environmentId: string; readonly urls: ReadonlyArray<string> },
+) =>
+  Effect.gen(function* () {
+    const client = yield* PeerLinks.peerApiClient(yield* HttpClient.HttpClient, target.url);
+    return yield* client.tailnetDevices.join({
+      payload: {
+        admitter: {
+          environmentId: EnvironmentId.make(admitter.environmentId),
+          label: "Admitter",
+          urls: admitter.urls,
+        },
+        memberEnvironmentId: target.descriptor.environmentId,
+        challenge: "c".repeat(43),
+      },
+    });
+  }).pipe(Effect.provide(FetchHttpClient.layer));
+
 type Device = Effect.Success<ReturnType<typeof serveDevice>>;
 
 /** Lets `device` find `other` on the tailnet, as a scan would, so it can be added. */
@@ -358,9 +392,10 @@ const find = (tailnet: FakeTailnet, device: Device, other: Device, nodeName: str
   Effect.gen(function* () {
     yield* tailnet.announce(nodeName, () => [other.url]);
     yield* device.devices.scan;
+    yield* tailnet.quiet;
   });
 
-/** `admitter` adds `member` to its network; both must already be on the tailnet. */
+/** The owner allows `member` on `admitter`; both must already be on the tailnet. */
 const admit = (
   tailnet: FakeTailnet,
   admitter: Device,
@@ -369,9 +404,12 @@ const admit = (
 ) =>
   Effect.gen(function* () {
     yield* find(tailnet, admitter, member, tailnet.nameOf(member.url));
-    // The owner consents on the machine being added.
-    yield* member.devices.allowJoin;
-    return yield* admitter.devices.admit(member.descriptor.environmentId, access);
+    const entry = yield* admitter.devices.admit(member.descriptor.environmentId);
+    yield* tailnet.quiet;
+    // Allowing gives full access; a narrower level is a change made afterwards.
+    return access === "full-access"
+      ? entry
+      : yield* admitter.devices.setAccess(member.descriptor.environmentId, access, "user");
   });
 
 /** Puts `member` straight into `device`'s roster, bound to `nodeId`, as if a sync had brought it. */
@@ -514,28 +552,6 @@ describe("adding a machine to the network", () => {
         (device) => device.environmentId === studio.environmentId,
       );
       expect([found?.member, found?.access, found?.outgoing]).toEqual([null, null, null]);
-    }),
-  );
-
-  it.live("a machine in another network keeps its own unless its owner allows joining", () =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(studio, tailnet);
-      const c = yield* serveDevice(box, tailnet);
-      yield* tailnet.join(a.url);
-      yield* tailnet.join(b.url);
-      yield* tailnet.join(c.url);
-      yield* admit(tailnet, b, c);
-      yield* find(tailnet, a, c, tailnet.nameOf(c.url));
-
-      const refused = yield* a.devices.admit(box.environmentId, "full-access").pipe(Effect.flip);
-
-      expect(refused).toMatchObject({ reason: "forbidden" });
-      expect(refused.message).toContain("Allow joining on it to merge the two networks");
-      expect(yield* a.membership.member(box.environmentId)).toEqual(Option.none());
-      expect(yield* c.membership.member(laptop.environmentId)).toEqual(Option.none());
-      expect(yield* c.links.get(laptop.environmentId)).toEqual(Option.none());
     }),
   );
 
@@ -762,12 +778,35 @@ const threeDevices = Effect.gen(function* () {
   yield* admit(tailnet, a, b);
   yield* admit(tailnet, a, c);
   yield* b.devices.scan;
+  yield* tailnet.quiet;
   return { a, b, c };
 });
 
 const box = descriptorOf("env-box", "Box");
 
 describe("tailnet scan", () => {
+  it.live("a machine tells each machine it finds, so that one lists it without a scan", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+
+      // The studio starts and scans; the laptop last scanned before it was there.
+      yield* find(tailnet, b, a, tailnet.nameOf(a.url));
+
+      const listed = (yield* a.devices.list()).devices.find(
+        (device) => device.environmentId === studio.environmentId,
+      );
+      expect([listed?.member, listed?.urls, listed?.nodeId]).toEqual([
+        null,
+        [b.url],
+        tailnet.nodeIdOf(b.url),
+      ]);
+    }),
+  );
+
   // Stored links are listed with a reachability probe each, all at once; a scan only needs the rows.
   it.live("probes a linked device only where it sends the link's token", () =>
     Effect.gen(function* () {
@@ -1653,10 +1692,6 @@ describe("crossing the upgrade without trusting a claim", () => {
       yield* b.sql`UPDATE network_members SET access = 'read-only', stamp_json = '{"wallMs":1,"counter":0,"node":"env-studio"}' WHERE environment_id = ${laptop.environmentId}`;
       yield* b.devices.linkIfMine({ url: a.url }).pipe(Effect.ignore);
       expect(yield* studioNode).toEqual(Option.some(null));
-      // The studio's owner still consents there.
-      yield* find(tailnet, a, b, tailnet.nameOf(b.url));
-      const refused = yield* a.devices.admit(studio.environmentId, "full-access").pipe(Effect.flip);
-      expect(refused.message).toContain("Allow joining on it first");
 
       yield* admit(tailnet, a, b);
 
@@ -1733,9 +1768,16 @@ describe("updating machines paired by code", () => {
 
   /** Each machine's scan, in `order`, until the handshakes and syncs it starts have run. */
   const settle = (order: ReadonlyArray<Device>) =>
-    Effect.forEach([1, 2, 3], () => Effect.forEach(order, (device) => device.devices.scan), {
-      discard: true,
-    });
+    Effect.forEach(
+      [1, 2, 3],
+      () =>
+        Effect.forEach(order, (device) =>
+          device.devices.scan.pipe(
+            Effect.andThen(Effect.forEach(order, (other) => other.devices.drain)),
+          ),
+        ),
+      { discard: true },
+    );
 
   const rosterOf = (device: Device) =>
     device.membership.members.pipe(
@@ -1872,41 +1914,111 @@ describe("updating machines paired by code", () => {
     }),
   );
 
-  it.live("a machine in another network merges into this one when it allows joining", () =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(studio, tailnet);
-      const b = yield* serveDevice(laptop, tailnet);
-      const c = yield* serveDevice(box, tailnet);
-      const d = yield* serveDevice(desk, tailnet);
-      for (const device of [a, b, c, d]) yield* tailnet.join(device.url);
-      // Two networks of the same owner, as the update left them: studio+laptop, box+desk.
-      yield* admit(tailnet, a, b);
-      yield* admit(tailnet, c, d);
-      const app = yield* pairApp(c, [d], { scopes: AuthStandardClientScopes, label: "Phone" });
-      yield* find(tailnet, a, c, tailnet.nameOf(c.url));
+  it.live(
+    "a machine with members of its own joins nothing uninvited, and joins once it leaves them",
+    () =>
+      Effect.gen(function* () {
+        const tailnet = yield* makeTailnet;
+        const a = yield* serveDevice(studio, tailnet);
+        const b = yield* serveDevice(laptop, tailnet);
+        const c = yield* serveDevice(box, tailnet);
+        const d = yield* serveDevice(desk, tailnet);
+        for (const device of [a, b, c, d]) yield* tailnet.join(device.url);
+        yield* admit(tailnet, a, b);
+        yield* admit(tailnet, c, d);
+        const before = yield* Effect.forEach([a, b, c, d], rosterOf);
 
-      // Without its owner's agreement the box keeps its network, and says how to merge.
-      const refused = yield* a.devices.admit(box.environmentId, "full-access").pipe(Effect.flip);
-      expect(refused.message).toContain("Allow joining on it to merge the two networks");
-      expect(yield* a.membership.member(box.environmentId)).toEqual(Option.none());
+        // Neither side knows the other: no node of the owner's can pull an existing network.
+        const refused = yield* admit(tailnet, a, c).pipe(Effect.flip);
+        expect(refused.message).toContain("Choose Leave network on it");
+        expect(yield* Effect.forEach([a, b, c, d], rosterOf)).toEqual(before);
+        expect(yield* c.links.get(studio.environmentId)).toEqual(Option.none());
 
-      yield* c.devices.allowJoin;
-      yield* a.devices.admit(box.environmentId, "full-access");
-      yield* settle([a, b, c, d]);
+        // On its own again, it is allowed like any new machine.
+        yield* c.devices.leave();
+        yield* admit(tailnet, a, c);
 
-      const everyone = [a, b, c, d]
-        .map((device) => [device.descriptor.environmentId, tailnet.nodeIdOf(device.url)] as const)
-        .toSorted(([x], [y]) => x.localeCompare(y));
-      for (const device of [a, b, c, d]) {
-        expect((yield* rosterOf(device)).map(([id, , node]) => [id, node])).toEqual(everyone);
-        // The box's app came along; nothing it had was cut.
-        expect((yield* device.membership.apps).map((known) => known.appId)).toContain(app.appId);
-      }
-    }),
+        const live = [a, b, c].map((device) => device.descriptor.environmentId).toSorted();
+        for (const device of [a, b, c]) {
+          expect(
+            (yield* rosterOf(device))
+              .filter(([, access]) => access !== "revoked")
+              .map(([id]) => id),
+          ).toEqual(live);
+        }
+      }),
   );
 
-  it.live("a refused add again leaves the tombstone it would have replaced", () =>
+  it.live(
+    "rosters that drifted apart become one by themselves, and a merged one is left alone",
+    () =>
+      Effect.gen(function* () {
+        const tailnet = yield* makeTailnet;
+        const a = yield* serveDevice(studio, tailnet);
+        const b = yield* serveDevice(laptop, tailnet);
+        const c = yield* serveDevice(box, tailnet);
+        const d = yield* serveDevice(desk, tailnet);
+        for (const device of [a, b, c, d]) yield* tailnet.join(device.url);
+        yield* admit(tailnet, a, b);
+        yield* admit(tailnet, a, c);
+        // As an older build left it: the desk joined the box alone, and the rest never heard of it.
+        yield* knowsMember(c, d, tailnet.nodeIdOf(d.url));
+        yield* knowsMember(d, c, tailnet.nodeIdOf(c.url));
+        yield* knowsMember(d, d, tailnet.nodeIdOf(d.url));
+        // And an earlier install the owner removed, which must stay out.
+        const old = EnvironmentId.make("env-old-desk");
+        yield* a.membership.adopt({
+          members: [
+            {
+              environmentId: old,
+              label: "Desk",
+              nodeId: tailnet.nodeIdOf(d.url),
+              access: "revoked",
+              updatedAt: { wallMs: 5, counter: 0, node: studio.environmentId },
+            },
+          ],
+        });
+        yield* tailnet.announce(tailnet.nameOf(d.url), () => [d.url]);
+
+        // Nobody allows, merges or adds anything.
+        yield* settle([a, b, c, d]);
+
+        const everyone = [a, b, c, d]
+          .map((device) => device.descriptor.environmentId)
+          .toSorted((x, y) => x.localeCompare(y));
+        const live = (device: Device) =>
+          rosterOf(device).pipe(
+            Effect.map((roster) =>
+              roster.filter(([, access]) => access !== "revoked").map(([id]) => id),
+            ),
+          );
+        for (const device of [a, b, c, d]) {
+          expect(yield* live(device)).toEqual(everyone);
+          expect(yield* device.membership.accessOf(old)).toEqual(Option.some("revoked"));
+        }
+        // Each reaches each, with full access.
+        for (const from of [a, b, c, d]) {
+          for (const to of [a, b, c, d]) {
+            if (from === to) continue;
+            const { token } = yield* from.links.resolve(to.descriptor.environmentId);
+            expect((yield* to.authenticate(token)).access).toBe("full-access");
+          }
+        }
+
+        // Already one network: further scans write nothing.
+        const stamps = (device: Device) =>
+          device.membership.members.pipe(
+            Effect.map((members) =>
+              members.map((member) => [member.environmentId, member.updatedAt]),
+            ),
+          );
+        const before = yield* Effect.forEach([a, b, c, d], stamps);
+        yield* settle([a, b, c, d]);
+        expect(yield* Effect.forEach([a, b, c, d], stamps)).toEqual(before);
+      }),
+  );
+
+  it.live("a refused Allow leaves the tombstone it would have replaced", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(studio, tailnet);
@@ -1917,12 +2029,23 @@ describe("updating machines paired by code", () => {
       const before = yield* a.membership.member(laptop.environmentId);
       expect(Option.map(before, (member) => member.access)).toEqual(Option.some("revoked"));
 
-      // The laptop forgot the network too and never allowed joining, so it refuses.
+      // The laptop's owner took the studio out there, so it refuses to be joined by it.
       yield* b.membership.clear;
+      yield* b.membership.adopt({
+        members: [
+          {
+            environmentId: studio.environmentId,
+            label: "Studio",
+            nodeId: null,
+            access: "revoked",
+            updatedAt: { wallMs: 5, counter: 0, node: laptop.environmentId },
+          },
+        ],
+      });
       yield* tailnet.announce("laptop-again", () => [b.url]);
       yield* a.devices.scan;
-      const refused = yield* a.devices.admit(laptop.environmentId, "full-access").pipe(Effect.flip);
-      expect(refused.message).toContain("did not join");
+      const refused = yield* a.devices.admit(laptop.environmentId).pipe(Effect.flip);
+      expect(refused.message).toContain("removed this one from the network");
 
       expect(yield* a.membership.member(laptop.environmentId)).toEqual(before);
       expect((yield* a.membership.hidden).members.has(laptop.environmentId)).toBe(true);
@@ -1983,7 +2106,7 @@ describe("updating machines paired by code", () => {
 });
 
 describe("joining a network", () => {
-  it.live("a machine in no network does not join without its owner's consent", () =>
+  it.live("an app from before the one network is never given more than it asked for", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
@@ -1992,114 +2115,43 @@ describe("joining a network", () => {
       yield* tailnet.join(b.url);
       yield* find(tailnet, a, b, tailnet.nameOf(b.url));
 
-      const refused = yield* a.devices.admit(studio.environmentId, "full-access").pipe(Effect.flip);
-
-      expect(refused.reason).toBe("forbidden");
-      expect(yield* b.membership.members).toEqual([]);
-      expect(yield* b.links.get(laptop.environmentId)).toEqual(Option.none());
-
-      const { openUntil } = yield* b.devices.allowJoin;
-      expect((yield* b.devices.list()).joinOpenUntil).toEqual(openUntil);
-      yield* a.devices.admit(studio.environmentId, "full-access");
-
-      expect(Option.isSome(yield* b.links.get(laptop.environmentId))).toBe(true);
-      // One join per consent.
-      expect((yield* b.devices.list()).joinOpenUntil).toBeNull();
-    }),
-  );
-
-  it.live("a machine linked here only joins no network, and can be promoted later", () =>
-    Effect.gen(function* () {
-      const tailnet = yield* makeTailnet;
-      const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(studio, tailnet);
-      yield* tailnet.join(a.url);
-      yield* tailnet.join(b.url);
-      yield* find(tailnet, a, b, tailnet.nameOf(b.url));
-      // The studio already reaches the laptop by pairing code.
-      const paired = {
-        environmentId: laptop.environmentId,
-        label: "Laptop",
-        urls: [a.url],
-        access: "full-access" as const,
-        origin: "paired" as const,
-        linkedAt: yield* DateTime.now,
-        expiresAt: DateTime.add(yield* DateTime.now, { days: 30 }),
-        lastReachedAt: null,
-        lastError: null,
-      };
-      yield* b.links.store(paired, "pairing-token");
-
-      // Same account is not consent, even for a link to one machine.
+      // Its picker offered a link to one machine alone, which no longer exists.
       const refused = yield* a.devices
-        .admit(studio.environmentId, "read-only", "local")
+        .admit(studio.environmentId, undefined, { access: "read-only", scope: "local" })
         .pipe(Effect.flip);
-      expect(refused.message).toContain("has not allowed joining");
-      expect(Option.map(yield* b.links.get(laptop.environmentId), (link) => link.origin)).toEqual(
-        Option.some("paired"),
-      );
-
-      yield* b.devices.allowJoin;
-      expect(yield* a.devices.admit(studio.environmentId, "read-only", "local")).toBeNull();
-      expect((yield* b.devices.list()).joinOpenUntil).toBeNull();
-
-      // The studio holds a read-only link to the laptop; the laptop holds none to it.
-      const { token } = yield* b.links.resolve(laptop.environmentId);
-      expect((yield* a.authenticate(token)).access).toBe("read-only");
-      expect(yield* a.links.get(studio.environmentId)).toEqual(Option.none());
+      expect(refused.message).toContain("Update this app");
       expect(yield* a.membership.members).toEqual([]);
-      expect(yield* b.membership.members).toEqual([]);
-      const listed = (yield* a.devices.list()).devices.find(
-        (device) => device.environmentId === studio.environmentId,
-      );
-      expect([listed?.member, listed?.access, listed?.nodeId]).toEqual([
-        null,
-        "read-only",
-        tailnet.nodeIdOf(b.url),
-      ]);
 
-      yield* b.devices.allowJoin;
-      yield* a.devices.admit(studio.environmentId, "full-access", "network");
+      yield* a.devices.admit(studio.environmentId, undefined, { access: "read-only" });
 
-      // In the network at full access; the grant it already held here stays as a limit here.
-      expect(
-        Option.map(yield* a.membership.member(studio.environmentId), (member) => member.access),
-      ).toEqual(Option.some("full-access"));
       expect(yield* a.membership.accessOf(studio.environmentId)).toEqual(Option.some("read-only"));
-      expect(yield* a.membership.local).toEqual([]);
-      expect(yield* b.membership.accessOf(laptop.environmentId)).toEqual(
-        Option.some("full-access"),
-      );
+      // It still reads the key it was built to require.
+      expect((yield* a.devices.list()).joinOpenUntil).toBeNull();
     }),
   );
 
-  it.live("a machine in a network may consent to a link to another machine alone", () =>
+  it.live("one Allow gives full access both ways at once, with nothing done on the other", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      // The studio is in a network the laptop is not part of.
-      yield* withRoster(b, [
-        [studio, "full-access"],
-        [box, "full-access"],
-      ]);
       yield* find(tailnet, a, b, tailnet.nameOf(b.url));
 
-      const refused = yield* a.devices
-        .admit(studio.environmentId, "read-only", "local")
-        .pipe(Effect.flip);
-      expect(refused.message).toContain("has not allowed joining");
+      yield* a.devices.admit(studio.environmentId);
 
-      yield* b.devices.allowJoin;
-      yield* a.devices.admit(studio.environmentId, "read-only", "local");
-
-      const { token } = yield* b.links.resolve(laptop.environmentId);
-      expect((yield* a.authenticate(token)).access).toBe("read-only");
-      expect(
-        (yield* b.membership.members).map((member) => member.environmentId).toSorted(),
-      ).toEqual([box.environmentId, studio.environmentId]);
+      // No scan, sync or second step stands between Allow and access.
+      for (const [from, to] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        expect(yield* from.membership.accessOf(to.descriptor.environmentId)).toEqual(
+          Option.some("full-access"),
+        );
+        const { token } = yield* from.links.resolve(to.descriptor.environmentId);
+        expect((yield* to.authenticate(token)).access).toBe("full-access");
+      }
     }),
   );
 
@@ -2307,9 +2359,8 @@ describe("removing and leaving", () => {
       expect(restored.message).toContain("left the network");
       expect(yield* a.membership.accessOf(box.environmentId)).toEqual(Option.some("revoked"));
 
-      // Its owner allows joining again, and the user adds it: a rejoin that outranks the leave.
-      yield* c.devices.allowJoin;
-      yield* a.devices.admit(box.environmentId, "full-access");
+      // The user allows it again: a rejoin that outranks the leave.
+      yield* a.devices.admit(box.environmentId);
       for (const device of [a, b, c]) {
         expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
           Option.some("full-access"),
@@ -2317,6 +2368,50 @@ describe("removing and leaving", () => {
       }
       expect(Option.isSome(yield* c.links.get(laptop.environmentId))).toBe(true);
     }),
+  );
+
+  it.live("a machine the network does not know cannot join it without an Allow from a member", () =>
+    Effect.gen(function* () {
+      const { a, b } = yield* threeDevices;
+      const before = yield* a.membership.members;
+      // Any process on one of the owner's nodes can send this; no member allowed it.
+      const result = yield* requestJoinAs(a, { environmentId: "env-rogue", urls: [b.url] });
+
+      expect(result).toEqual({ outcome: "refused", reason: "other_network" });
+      expect(yield* a.membership.members).toEqual(before);
+    }),
+  );
+
+  it.live(
+    "a removed machine starts no network of its own with a member; a member allows it back",
+    () =>
+      Effect.gen(function* () {
+        const { a, b, c } = yield* threeDevices;
+        yield* a.devices.forget(box.environmentId);
+        // The box starts over, as a reinstall or a leave does, and tries to bring the laptop in.
+        yield* c.membership.clear;
+
+        const refused = yield* c.devices.admit(laptop.environmentId).pipe(Effect.flip);
+
+        // No second network, and no live entry for the box that lacks the restore.
+        expect(refused.message).toContain("Allow this machine from there instead");
+        expect(yield* c.membership.members).toEqual([]);
+        for (const device of [a, b]) {
+          expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
+            Option.some("revoked"),
+          );
+        }
+
+        // Found again by the laptop's scan, it is offered there, and one Allow restores it.
+        yield* a.devices.scan;
+        yield* a.devices.admit(box.environmentId);
+
+        for (const device of [a, b, c]) {
+          expect(yield* device.membership.accessOf(box.environmentId)).toEqual(
+            Option.some("full-access"),
+          );
+        }
+      }),
   );
 
   it.live("a forgotten machine still on the tailnet can be added again", () =>
@@ -2336,13 +2431,13 @@ describe("removing and leaving", () => {
       );
       expect([found?.member, found?.access, found?.urls.length]).toEqual([null, "revoked", 1]);
 
-      yield* a.devices.admit(box.environmentId, "read-only");
+      yield* a.devices.admit(box.environmentId);
 
       const added = (yield* a.devices.list()).devices.find(
         (device) => device.environmentId === box.environmentId,
       );
-      expect(added?.member?.access).toBe("read-only");
-      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("read-only"));
+      expect(added?.member?.access).toBe("full-access");
+      expect(yield* b.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
     }),
   );
 
@@ -2361,9 +2456,8 @@ describe("removing and leaving", () => {
       expect(kept.scopes.toSorted()).toEqual(caller.scopes.toSorted());
       expect(Exit.isFailure(yield* Effect.exit(c.sessions.verify(other.token)))).toBe(true);
 
-      // From that session the owner allows joining, and the box is added again.
-      yield* c.devices.allowJoin;
-      yield* a.devices.admit(box.environmentId, "full-access");
+      // The box is allowed again.
+      yield* a.devices.admit(box.environmentId);
       expect(yield* c.membership.accessOf(box.environmentId)).toEqual(Option.some("full-access"));
       expect(Exit.isSuccess(yield* Effect.exit(c.sessions.verify(caller.token)))).toBe(true);
     }),
@@ -2391,8 +2485,7 @@ describe("removing and leaving", () => {
 
         // While the box is out, the phone is removed from the network; the box rejoins.
         yield* a.devices.setAppAccess(phone.appId, "revoked");
-        yield* c.devices.allowJoin;
-        yield* a.devices.admit(box.environmentId, "full-access");
+        yield* a.devices.admit(box.environmentId);
 
         expect(yield* c.membership.appAccessOf(phone.appId)).toEqual(Option.some("revoked"));
         expect(Exit.isFailure(yield* Effect.exit(c.sessions.verify(access_token)))).toBe(true);
@@ -2463,25 +2556,24 @@ describe("limits and the live snapshot", () => {
       const b = yield* serveDevice(studio, tailnet);
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
+      const c = yield* serveDevice(box, tailnet);
+      yield* tailnet.join(c.url);
       yield* find(tailnet, a, b, tailnet.nameOf(b.url));
       const first = yield* Deferred.make<void>();
       const snapshots = yield* a.devices.subscribe().pipe(
         Stream.tap(() => Deferred.succeed(first, undefined)),
-        Stream.takeUntil((snapshot) => snapshot.joinOpenUntil !== null),
+        Stream.takeUntil((snapshot) => snapshot.devices.length === 2),
         Stream.runCollect,
         Effect.forkChild,
       );
       yield* Deferred.await(first);
 
       yield* a.devices.scan;
-      // A change that always pushes, so the count is exact.
-      yield* a.devices.allowJoin;
+      // A machine found for the first time always pushes, so the count is exact.
+      yield* find(tailnet, a, c, tailnet.nameOf(c.url));
 
-      const [before, after] = Array.from(yield* Fiber.join(snapshots));
-      // Nothing was written, so the scan woke no subscriber either.
-      expect(after?.devices.map((device) => device.lastSeenAt)).toEqual(
-        before?.devices.map((device) => device.lastSeenAt),
-      );
+      // Nothing was written by the first rescan, so it woke no subscriber either.
+      expect(Array.from(yield* Fiber.join(snapshots)).length).toBe(2);
     }),
   );
 

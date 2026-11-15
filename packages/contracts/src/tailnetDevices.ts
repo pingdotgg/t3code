@@ -1,14 +1,13 @@
-import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { AuthGrantScope, AuthMcpClientAccess } from "./auth.ts";
 import { EnvironmentId, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
- * The owner's network of T3 servers on their tailnet. Membership is an explicit roster every
- * member replicates; Tailscale only proves which node answers an address, never what it may do.
- * The side that grants access dials the other back, so no inbound header or source address is
- * ever trusted.
+ * The owner's one network of T3 servers on their tailnet. Tailscale proves a machine is one of
+ * the owner's nodes; the owner allows it once, on any machine, and the roster every member
+ * replicates then lists it everywhere. The side that grants access dials the other back, so no
+ * inbound header or source address is ever trusted.
  */
 
 /** A hybrid logical clock stamp. Replicated writes merge last-writer-wins by it. */
@@ -145,7 +144,7 @@ export const TailnetLinkRefusal = Schema.Literals([
   "not_member",
   /** In the roster, but bound to another Tailscale node. */
   "node_mismatch",
-  /** Already a member of another network, which joining would merge. */
+  /** It has members of its own and does not know the machine asking it to join. */
   "other_network",
   /** In this network, but below full access here, so it cannot change who is in it. */
   "not_admin",
@@ -154,7 +153,7 @@ export const TailnetLinkRefusal = Schema.Literals([
   "unreachable",
   "descriptor_mismatch",
   "grant_rejected",
-  /** A machine in no network joins only while its owner allows it there: same account is not consent. */
+  /** Only a build from before the one network sends this: it wanted joining allowed there. */
   "not_consented",
   "storage",
 ]);
@@ -167,16 +166,14 @@ export const TailnetLinkResult = Schema.Union([
 export type TailnetLinkResult = typeof TailnetLinkResult.Type;
 
 /**
- * Admitter to a machine it just added to the network: "join". The machine dials the admitter
- * back, confirms the challenge there, and only then takes the roster it is offered.
+ * Admitter to a machine the owner allowed: "join". The machine dials the admitter back, confirms
+ * the challenge there, and only then takes the roster it is offered, merged with its own.
  */
 export const TailnetJoinRequest = Schema.Struct({
   admitter: TailnetDeviceDescriptor,
   /** The machine the admitter means; another environment refuses. */
   memberEnvironmentId: EnvironmentId,
   challenge: TailnetChallenge,
-  /** `local` only links the machine to the admitter; it joins no network. */
-  scope: Schema.optionalKey(Schema.Literals(["network", "local"])),
 });
 export type TailnetJoinRequest = typeof TailnetJoinRequest.Type;
 
@@ -266,7 +263,7 @@ export type TailnetDevice = typeof TailnetDevice.Type;
 
 export const TailnetDevicesSnapshot = Schema.Struct({
   self: TailnetDeviceDescriptor,
-  /** This machine's own roster entry. Null until it creates or joins a network. */
+  /** This machine's own roster entry. Null until a machine is allowed from or on it. */
   selfMember: Schema.NullOr(NetworkMember),
   devices: Schema.Array(TailnetDevice),
   /** Apps that redeemed their invitation; an unredeemed invitation is only a pairing link. */
@@ -275,8 +272,8 @@ export const TailnetDevicesSnapshot = Schema.Struct({
   enabled: Schema.Boolean,
   /** The calling session's app id when it is an app of the network: the client's network identity. */
   callerAppId: Schema.NullOr(TrimmedNonEmptyString),
-  /** While set, an admin of a network may add this unclaimed machine. */
-  joinOpenUntil: Schema.NullOr(Schema.DateTimeUtc),
+  /** Always null. Apps from before the one network refuse a snapshot without this key. */
+  joinOpenUntil: Schema.optionalKey(Schema.Null),
 });
 export type TailnetDevicesSnapshot = typeof TailnetDevicesSnapshot.Type;
 
@@ -288,15 +285,16 @@ export const TailnetDeviceSetAccessInput = Schema.Struct({
 export type TailnetDeviceSetAccessInput = typeof TailnetDeviceSetAccessInput.Type;
 
 /**
- * Adds a machine found on the tailnet. `network` puts it in the roster everywhere (and promotes a
- * machine already linked here); `local` links it to this machine only, as a pairing code would.
+ * Allows a machine found on the tailnet into the network, at full access on every machine.
+ * `urls` are addresses another machine found it at, tried when this one has not found it yet;
+ * Tailscale still has to prove each one.
  */
 export const TailnetDeviceAdmitInput = Schema.Struct({
   environmentId: EnvironmentId,
-  access: AuthMcpClientAccess,
-  scope: Schema.Literals(["network", "local"]).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed("network" as const)),
-  ),
+  urls: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /** Only an app from before the one network sends these: the level and reach its user picked. */
+  access: Schema.optionalKey(AuthMcpClientAccess),
+  scope: Schema.optionalKey(Schema.Literals(["network", "local"])),
 });
 export type TailnetDeviceAdmitInput = typeof TailnetDeviceAdmitInput.Type;
 
@@ -334,10 +332,6 @@ export const TailnetDeviceSetLimitInput = Schema.Struct({
   access: Schema.NullOr(AuthMcpClientAccess),
 });
 export type TailnetDeviceSetLimitInput = typeof TailnetDeviceSetLimitInput.Type;
-
-/** Lets an admin of a network add this unclaimed machine for a short while. */
-export const TailnetDeviceAllowJoinResult = Schema.Struct({ openUntil: Schema.DateTimeUtc });
-export type TailnetDeviceAllowJoinResult = typeof TailnetDeviceAllowJoinResult.Type;
 
 export class TailnetDevicesError extends Schema.TaggedError<TailnetDevicesError>()(
   "TailnetDevicesError",

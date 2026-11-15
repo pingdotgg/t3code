@@ -87,7 +87,6 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.tailnetDevicesForgetApp]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesSetLimit]: AuthAccessWriteScope,
   [WS_METHODS.tailnetDevicesLeave]: AuthAccessWriteScope,
-  [WS_METHODS.tailnetDevicesAllowJoin]: AuthAccessWriteScope,
   // The server-hosted agent gateway lets outside agents act here, as a pairing link does.
   [WS_METHODS.serverUpdateAgentGateway]: AuthAccessWriteScope,
   [WS_METHODS.serverRevealAgentGatewayToken]: AuthAccessWriteScope,

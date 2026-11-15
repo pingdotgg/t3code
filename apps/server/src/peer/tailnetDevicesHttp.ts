@@ -10,6 +10,7 @@ export const layer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const devices = yield* TailnetDevices.TailnetDevices;
     return handlers
+      .handle("hello", ({ payload }) => devices.handleHello(payload))
       .handle("request", ({ payload, request }) => devices.handleRequest(payload, request))
       .handle("join", ({ payload }) => devices.handleJoin(payload))
       .handle("confirm", ({ payload }) => devices.handleConfirm(payload))

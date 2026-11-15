@@ -1,17 +1,11 @@
-import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
-import {
-  type DeviceNetworkHostState,
-  refreshDeviceNetwork,
-} from "@t3tools/client-runtime/state/deviceNetwork";
+import { type DeviceNetworkHostState } from "@t3tools/client-runtime/state/deviceNetwork";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import type {
-  DeviceNetworkGroup,
-  DeviceNetworkMachine,
-} from "@t3tools/client-runtime/tailnet-devices";
+import type { DeviceNetwork, DeviceNetworkMachine } from "@t3tools/client-runtime/tailnet-devices";
 import {
   AuthAccessWriteScope,
   type AuthMcpClientAccess,
@@ -21,7 +15,7 @@ import {
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import { EllipsisIcon } from "lucide-react";
-import { type ReactNode, useContext, useId, useRef, useState } from "react";
+import { type ReactNode, useId, useRef, useState } from "react";
 
 import { networkMemberActivityLabel } from "@t3tools/client-runtime/connection";
 import { isElectron } from "~/env";
@@ -62,7 +56,7 @@ const failureToast = (title: string, description: string) =>
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
 
 const MACHINES_HELP =
-  "Machines in your network show up here by themselves. Add a machine once and every app in your network can use it.";
+  "Ada machines on your Tailscale account show up here. Allow a new one once and every machine and app in your network can use it.";
 
 /**
  * One list of machines: every network member this app can reach, joined by environment id with
@@ -84,9 +78,7 @@ export function MachinesSettings({
   readonly empty: ReactNode;
 }) {
   const hosts = useNetworkHosts();
-  const { states, groups } = useDeviceNetworkView(hosts);
-  const registry = useContext(RegistryContext);
-  const onChanged = () => refreshDeviceNetwork(registry, peerLinkEnvironment.list, states);
+  const { states, network } = useDeviceNetworkView(hosts);
   const saved = new Map(
     savedEnvironments.map((environment) => [environment.environmentId, environment]),
   );
@@ -100,49 +92,32 @@ export function MachinesSettings({
       : { state, managedBy: presentation === undefined ? null : managedBy(presentation) };
   };
   // Agent links start from the host this app works through when it takes part.
-  const linkHost =
-    groups.flatMap((group) => group.hosts).find((host) => host.enabled)?.environmentId ?? null;
+  const linkHost = network.hosts.find((host) => host.enabled)?.environmentId ?? null;
   const shown = new Set<EnvironmentId>();
-  const machineRows = groups.flatMap((group) => [
-    groups.length > 1 ? (
-      <SettingsRow
-        key={`heading:${group.key}`}
-        title={
-          group.inNetwork
-            ? "Your network"
-            : `${group.hosts[0]?.label ?? "This machine"}: not in a network`
-        }
-        description={groupDescription(group)}
+  const machineRows = network.machines.map((machine) => {
+    const environmentId = machine.entry.environmentId;
+    shown.add(environmentId);
+    const environment = saved.get(environmentId);
+    const host = hostOf(environmentId);
+    return environment === undefined ? (
+      <DeviceMachineRow
+        key={machine.key}
+        network={network}
+        machine={machine}
+        {...(host === undefined ? {} : { host })}
       />
-    ) : null,
-    ...group.machines.map((machine) => {
-      const environmentId = machine.entry.environmentId;
-      shown.add(environmentId);
-      const environment = saved.get(environmentId);
-      const host = hostOf(environmentId);
-      return environment === undefined ? (
-        <DeviceMachineRow
-          key={machine.key}
-          group={group}
-          machine={machine}
-          {...(host === undefined ? {} : { host })}
-          onChanged={onChanged}
-        />
-      ) : (
-        <SavedMachineRow
-          key={machine.key}
-          group={group}
-          machine={machine}
-          host={host ?? null}
-          environment={environment}
-          renderSaved={renderSaved}
-          onChanged={onChanged}
-        />
-      );
-    }),
-  ]);
+    ) : (
+      <SavedMachineRow
+        key={machine.key}
+        network={network}
+        machine={machine}
+        host={host ?? null}
+        environment={environment}
+        renderSaved={renderSaved}
+      />
+    );
+  });
   const outside = savedEnvironments.filter((environment) => !shown.has(environment.environmentId));
-  const apps = groups.flatMap((group) => group.apps.map((app) => ({ group, app })));
   const search = searchableSetting("machines");
   return (
     <>
@@ -161,10 +136,10 @@ export function MachinesSettings({
         {outside.map((environment) => renderSaved(environment, null))}
         {machineRows.length + outside.length === 0 ? empty : null}
       </SettingsSection>
-      {apps.length === 0 ? null : (
+      {network.apps.length === 0 ? null : (
         <SettingsSection title="Phones and browsers">
-          {apps.map(({ group, app }) => (
-            <NetworkAppRow key={app.appId} group={group} app={app} onChanged={onChanged} />
+          {network.apps.map((app) => (
+            <NetworkAppRow key={app.appId} network={network} app={app} />
           ))}
         </SettingsSection>
       )}
@@ -173,14 +148,13 @@ export function MachinesSettings({
 }
 
 function SavedMachineRow({
-  group,
+  network,
   machine,
   host,
   environment,
   renderSaved,
-  onChanged,
 }: {
-  readonly group: DeviceNetworkGroup;
+  readonly network: DeviceNetwork;
   readonly machine: DeviceNetworkMachine;
   readonly host: {
     readonly state: DeviceNetworkHostState;
@@ -191,10 +165,9 @@ function SavedMachineRow({
     environment: EnvironmentPresentation,
     network: SavedMachineNetwork | null,
   ) => ReactNode;
-  readonly onChanged: () => void;
 }) {
-  const parts = useMachineParts({ group, machine, onChanged });
-  const hostParts = useHostParts(host, onChanged);
+  const parts = useMachineParts({ network, machine });
+  const hostParts = useHostParts(host);
   const held = useAtomValue(networkMembers.statusAtom).get(machine.entry.environmentId);
   return renderSaved(environment, {
     member: parts.member,
@@ -208,7 +181,6 @@ function SavedMachineRow({
       </>
     ),
     dialogs: parts.dialogs,
-    others: parts.others,
   });
 }
 
@@ -218,18 +190,6 @@ const managedBy = (environment: EnvironmentPresentation) => {
     ? policy.organization
     : null;
 };
-
-function groupDescription(group: DeviceNetworkGroup): string {
-  if (!group.inNetwork && !group.addsToNetwork) {
-    return "Not in your network. To add it, choose Allow joining here, then add it from a full-access machine in your network.";
-  }
-  if (!group.inNetwork) {
-    return "Not in a network yet. Machines join only when you add them; adding one starts your network with this machine at full access.";
-  }
-  return group.authority === null
-    ? "Only a full-access machine can change the network, and none this app may change it through is connected."
-    : "Changes go to every machine in the network.";
-}
 
 function LinkHeaderAction({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));

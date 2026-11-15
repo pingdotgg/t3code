@@ -2658,14 +2658,13 @@ export const layerWsRpc = (
         [WS_METHODS.tailnetDevicesSetAccess]: (input) =>
           tailnetDevices.setAccess(input.environmentId, input.access, "user"),
         [WS_METHODS.tailnetDevicesAdmit]: (input) =>
-          tailnetDevices.admit(input.environmentId, input.access, input.scope),
+          tailnetDevices.admit(input.environmentId, input.urls, input),
         [WS_METHODS.tailnetDevicesForget]: (input) => tailnetDevices.forget(input.environmentId),
         [WS_METHODS.tailnetDevicesForgetApp]: (input) => tailnetDevices.forgetApp(input.appId),
         [WS_METHODS.tailnetDevicesSetLimit]: (input) =>
           tailnetDevices.setLimit(input.environmentId, input.access),
         [WS_METHODS.tailnetDevicesLeave]: () =>
           tailnetDevices.leave({ sessionId: currentSession.sessionId }),
-        [WS_METHODS.tailnetDevicesAllowJoin]: () => tailnetDevices.allowJoin,
         [WS_METHODS.pushRegistrationsRegister]: (input) =>
           pushRegistrations.register(currentSessionId, input),
         [WS_METHODS.pushRegistrationsUnregister]: (input) =>

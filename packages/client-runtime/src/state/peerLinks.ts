@@ -1,6 +1,4 @@
-import { type PeerLinkSummary, WS_METHODS } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
+import { WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
 
@@ -43,27 +41,4 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         Effect.sync(() => registry.refresh(list({ environmentId, input: {} }))),
     }),
   };
-}
-
-const EXPIRY_WARNING_DAYS = 5;
-
-export type PeerLinkHealth =
-  | { readonly kind: "reachable"; readonly expiresInDays: number | null }
-  | { readonly kind: "unreachable"; readonly detail: string | null }
-  | { readonly kind: "failing"; readonly detail: string }
-  | { readonly kind: "expired" };
-
-/**
- * Listing only checks that the peer answers, so a link whose last call failed
- * (the peer revoked it, say) is `failing` with the recorded reason; the next
- * successful call clears it.
- */
-export function peerLinkHealth(link: PeerLinkSummary, now: DateTime.Utc): PeerLinkHealth {
-  if (link.status === "expired" || DateTime.isLessThanOrEqualTo(link.expiresAt, now)) {
-    return { kind: "expired" };
-  }
-  if (link.status === "unreachable") return { kind: "unreachable", detail: link.lastError };
-  if (link.lastError !== null) return { kind: "failing", detail: link.lastError };
-  const days = Math.ceil(Duration.toDays(DateTime.distance(now, link.expiresAt)));
-  return { kind: "reachable", expiresInDays: days <= EXPIRY_WARNING_DAYS ? days : null };
 }
