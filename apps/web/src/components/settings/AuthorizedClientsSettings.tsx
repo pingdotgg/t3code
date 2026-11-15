@@ -1016,7 +1016,6 @@ export function ReachableAddressRow({
   onToggleExpanded: () => void;
 }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => toastManager.add({ type: "success", title: "Address copied" }),
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({
