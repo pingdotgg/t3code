@@ -128,9 +128,14 @@ export function draftModelPickMatchesThread(
   thread: ModelSelection,
   providers: ReadonlyArray<ServerProvider> | null | undefined,
 ): boolean {
-  const caps = providers
-    ?.find((provider) => provider.instanceId === pick.instanceId)
-    ?.models.find((model) => model.slug === pick.model)?.capabilities;
+  const provider = providers?.find((candidate) => candidate.instanceId === pick.instanceId);
+  // A workspace can advertise its own models, so the machine catalog may not match the thread's cwd.
+  const workspaceOverridesModels = provider?.workspaceSnapshots?.some(
+    (snapshot) => snapshot.models !== undefined || snapshot.optionDescriptors !== undefined,
+  );
+  const caps = workspaceOverridesModels
+    ? undefined
+    : provider?.models.find((model) => model.slug === pick.model)?.capabilities;
   const asSent = (options: ModelSelection["options"]) =>
     caps?.optionDescriptors
       ? buildExplicitProviderOptionSelectionsFromDescriptors(

@@ -156,6 +156,36 @@ describe("descriptor helpers", () => {
     expect(draftModelPickMatchesThread(pick, thread, providers)).toBe(true);
     expect(draftModelPickMatchesThread(pick, thread, [])).toBe(false);
     expect(draftModelPickMatchesThread(pick, thread, null)).toBe(false);
+    const workspaceProviders = providers.map((provider) => ({
+      ...provider,
+      workspaceSnapshots: [
+        {
+          cwd: "/repo",
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          slashCommands: [],
+          skills: [],
+          models: [
+            {
+              slug: "gpt-5.4",
+              name: "GPT-5.4",
+              isCustom: false,
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  ...(codexCaps.optionDescriptors ?? []),
+                  {
+                    id: "contextWindow",
+                    label: "Context",
+                    type: "select" as const,
+                    options: [{ id: "1m", label: "1M" }],
+                  },
+                ],
+              }),
+            },
+          ],
+        },
+      ],
+    }));
+    expect(draftModelPickMatchesThread(pick, thread, workspaceProviders)).toBe(false);
     const fastPick = createModelSelection(instanceId, "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
       { id: "fastMode", value: true },
