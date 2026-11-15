@@ -16,7 +16,46 @@ cd "$repo" || exit 1
 
 release="$repo/target/release"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/conn-check.XXXXXX")"
-trap 'rm -rf "$scratch"' EXIT
+
+# The canary (tools/canary.mjs): every check runs with a decoy HOME, marker variables in the
+# shell, a stand-in SHELL and a TMPDIR the canary watches. The last check fails when a check
+# read a decoy file, changed the decoy home, or let a marker reach its output or a file.
+# Cargo and rustup keep their real folders, named here before HOME changes.
+export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+export RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+canary="$(mktemp -d /tmp/conn-canary.XXXXXX)"
+canary_log="$canary/output.log"
+canary_watch=""
+cleanup() {
+  [ -n "$canary_watch" ] && kill "$canary_watch" 2>/dev/null
+  rm -rf "$scratch" "$canary"
+}
+trap cleanup EXIT
+node tools/canary.mjs setup "$canary" || exit 1
+# shellcheck source=/dev/null
+. "$canary/env.sh"
+: >"$canary_log"
+node tools/canary.mjs watch "$canary" &
+canary_watch=$!
+
+# Cargo reads ~/.gitconfig through HOME (its git library ignores GIT_CONFIG_GLOBAL), so cargo
+# runs with a throwaway HOME. A target runner gives the test and example binaries it starts
+# the decoy HOME back, so the canary still sees what the code under test reads; their `git`
+# runs get no global or system git configuration.
+canary_cargo_home="$canary/cargo-home"
+mkdir -p "$canary_cargo_home"
+cat >"$canary/runner" <<'RUNNER'
+#!/bin/sh
+if [ "$HOME" = "$CONN_CANARY_CARGO_HOME" ]; then HOME="$CONN_CANARY_TEST_HOME"; export HOME; fi
+exec "$@"
+RUNNER
+chmod +x "$canary/runner"
+canary_host="$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z.-' 'A-Z__')"
+export "CARGO_TARGET_${canary_host}_RUNNER=$canary/runner"
+export CONN_CANARY_CARGO_HOME="$canary_cargo_home" CONN_CANARY_TEST_HOME="$HOME"
+cargo() {
+  HOME="$canary_cargo_home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 command cargo "$@"
+}
 
 passed=()
 failed=()
@@ -29,8 +68,11 @@ run() {
   local name="$1"
   shift
   printf '\n==> %s\n' "$name"
-  local started=$SECONDS
-  if "$@"; then
+  local started=$SECONDS status
+  "$@" 2>&1 | tee -a "$canary_log"
+  status=${PIPESTATUS[0]}
+  node tools/canary.mjs mark "$canary" "$name"
+  if [ "$status" -eq 0 ]; then
     passed+=("$name")
     printf 'ok %s\n' "$name" >>"$summary"
     printf '<== ok    %s (%ss)\n' "$name" $((SECONDS - started))
@@ -63,8 +105,10 @@ run "cargo fmt --check" cargo fmt --check
 run "cargo clippy" cargo clippy --workspace --all-targets --all-features -- -D warnings
 run "cargo test" cargo test --workspace
 run "release build" cargo build --release --workspace --bins --examples
-run "decode check" env CARGO_TARGET_DIR="$repo/target" \
-  cargo test --manifest-path fixtures/decode-check/Cargo.toml
+decode_check() {
+  CARGO_TARGET_DIR="$repo/target" cargo test --manifest-path fixtures/decode-check/Cargo.toml
+}
+run "decode check" decode_check
 
 # Advisories, licences, bans and sources (deny.toml). Advisories need network access for the
 # RustSec database; DENY_OFFLINE=1 (`cargo deny --offline`) uses the cached copy.
@@ -94,6 +138,7 @@ monorepo_checks=(
   "webhook-diff"
   "limits-diff"
   "parity"
+  "idle-diff"
   "codex instructions --check"
   "codex conformance"
   "codex model catalog --check"
@@ -152,6 +197,8 @@ else
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
+  # Orbit's idle check: the shell route in 14 states on both servers, Codex on a stub (no model).
+  run "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
   run "codex instructions --check" \
     node crates/conn-provider-codex/tools/gen-instructions.mjs --check
   run "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs
@@ -198,6 +245,15 @@ else
   printf '\nhelpers/sdk-host has no node_modules: skipping instances-flow (run npm ci in helpers/sdk-host).\n'
   skipped_tools+=("instances-flow")
 fi
+
+# The canary goes last: it reads what every check above left.
+touch "$canary/stop"
+wait "$canary_watch"
+canary_watch=""
+canary_check() {
+  node tools/canary.mjs selftest && node tools/canary.mjs verify "$canary" "$canary_log" "$scratch"
+}
+run "canary" canary_check
 
 printf '\n== Summary\n'
 printf 'passed  %d\n' "${#passed[@]}"

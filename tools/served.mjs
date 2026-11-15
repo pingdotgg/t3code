@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { repoRoot } from "./monorepo.mjs";
+import { sealedEnv } from "./sealed-env.mjs";
 
 /** Every method of the contract, from the generated `methods.json`: [{ tag, stream }]. */
 export function contractMethods() {
@@ -51,9 +52,7 @@ export async function binaryCoverage(binary) {
   const child = NodeChildProcess.spawn(
     program,
     ["--listen", "127.0.0.1:0", "--state-dir", NodePath.join(tmp, "state"), "--project", project],
-    // CONN_CLAUDE_STATUS_PROBE=off and CONN_CODEX_STATUS_PROBE=off: no run of this machine's
-    // `claude` or `codex` for the status.
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off", CONN_CODEX_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" } },
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(tmp) },
   );
   try {
     return await new Promise((ok) => {

@@ -130,21 +130,40 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         )
         .map_err(|e| format!("store: {e}"))?;
 
-    // Queued runs and runs cancelled from the queue never started: the thread's status is the
-    // latest run that did.
+    // `latestUnheldRun`: the newest run, a queued one too (the thread shows `queued` while a
+    // message waits behind a running turn), but not a run held in the queue, nor a run
+    // cancelled before it started that an earlier run outlived (a steered queued message).
     let latest_run = one(
         tx,
-        "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
-         AND json_extract(body, '$.status') != 'queued'
+        "SELECT body FROM entities AS r WHERE thread_id = ?1 AND kind = 'runs'
+         AND NOT (json_extract(body, '$.status') = 'queued' AND json_extract(body, '$.queueHeld') IS 1)
          AND NOT (json_extract(body, '$.status') = 'cancelled' AND json_extract(body, '$.startedAt') IS NULL
-                  AND json_extract(body, '$.activeAttemptId') IS NULL)
+                  AND json_extract(body, '$.completedAt') IS NOT NULL
+                  AND EXISTS (SELECT 1 FROM entities AS e WHERE e.thread_id = ?1 AND e.kind = 'runs'
+                              AND e.ordinal < r.ordinal
+                              AND json_extract(e.body, '$.status') != 'queued'
+                              AND (json_extract(e.body, '$.completedAt') IS NULL
+                                   OR json_extract(e.body, '$.completedAt')
+                                      >= json_extract(r.body, '$.completedAt'))))
          ORDER BY ordinal DESC LIMIT 1",
         params![thread_id],
     )?;
-    let active_run = latest_run
-        .as_ref()
-        .filter(|run| ACTIVE_RUN_STATUSES.contains(&run["status"].as_str().unwrap_or("")));
-    let activity_run = active_run;
+    // `isInterruptibleRunForShell` and `isActivityRunForShell`: the newest run in those
+    // states, whichever run is latest.
+    let newest_in = |statuses: &str| {
+        one(
+            tx,
+            &format!(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runs'
+                 AND json_extract(body, '$.status') IN ({statuses})
+                 ORDER BY ordinal DESC LIMIT 1"
+            ),
+            params![thread_id],
+        )
+    };
+    let active_run = newest_in("'preparing', 'starting', 'running'")?;
+    let activity_run = newest_in("'preparing', 'starting', 'running', 'waiting'")?;
+    let (active_run, activity_run) = (active_run.as_ref(), activity_run.as_ref());
     let pending = one(
         tx,
         "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'runtimeRequests'

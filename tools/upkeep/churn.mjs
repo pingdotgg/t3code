@@ -12,6 +12,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { gitEnv } from "../sealed-env.mjs";
 
 const repo = process.env.CONN_MONOREPO;
 if (!repo) {
@@ -31,6 +32,7 @@ const git = (argv) =>
   NodeChildProcess.execFileSync("git", ["-C", repo, ...argv], {
     encoding: "utf8",
     maxBuffer: 1 << 30,
+    env: gitEnv(),
   });
 
 const pinTime = Number(git(["show", "-s", "--format=%ct", pin]).trim());

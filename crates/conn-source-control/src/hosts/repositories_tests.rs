@@ -65,6 +65,8 @@ async fn github_reads_and_creates_repositories_over_rest() {
     })
     .await;
     let stubs = StubDir::new("gh-repo");
+    // A `gh` without a login: without it, the lookup would run this machine's own `gh`.
+    stubs.executable("gh", &[], "echo 'not logged in' >&2; exit 1");
     let settings = Settings::default();
     let env = Environment::fixed([("GH_TOKEN", "env-token")]);
     let endpoints = Endpoints {

@@ -11,6 +11,7 @@ import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { gitEnv } from "./sealed-env.mjs";
 
 export const repoRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -34,6 +35,7 @@ function warnWhenNotPinned(root) {
     head = NodeChildProcess.execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
+      env: gitEnv(),
     }).trim();
   } catch {
     return;

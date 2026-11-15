@@ -19,6 +19,7 @@ import * as NodeHttp from "node:http";
 import * as NodeZlib from "node:zlib";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnvTemp } from "../../../tools/sealed-env.mjs";
 
 const load = packageImporter("apps/server");
 const Effect = await load("effect/Effect");
@@ -81,7 +82,7 @@ const base = `http://127.0.0.1:${stub.address().port}`;
 
 // ---- The Rust side -----------------------------------------------------------------------
 
-const probe = NodeChildProcess.spawn(binary, [], { stdio: ["pipe", "pipe", "inherit"] });
+const probe = NodeChildProcess.spawn(binary, [], { stdio: ["pipe", "pipe", "inherit"], env: sealedEnvTemp() });
 let pending = "";
 const waiting = [];
 probe.stdout.on("data", (data) => {

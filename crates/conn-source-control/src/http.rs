@@ -378,6 +378,57 @@ fn is_link_local(ip: IpAddr) -> bool {
 /// Opens the connection, trying each address the host resolves to in turn, as
 /// `TcpStream::connect` does; with [`LinkLocal::Refuse`] a link-local address is skipped.
 async fn dial(target: &Target<'_>, link_local: LinkLocal) -> io::Result<TcpStream> {
+    dial_logged(target, link_local, std::env::var_os(NETWORK_LOG)).await
+}
+
+/// The variable a check sets (`tools/canary.mjs`): with it, a host outside loopback is
+/// refused and named on one line of the file it holds, so the check fails on any call the
+/// server makes outside. Unset in use, so nothing changes there.
+const NETWORK_LOG: &str = "CONN_NETWORK_LOG";
+
+/// `localhost`, `127.0.0.0/8` and `::1`, by name, before any lookup.
+fn is_loopback_host(host: &str) -> bool {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    bare.eq_ignore_ascii_case("localhost")
+        || bare.parse::<IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Appends `line` to `log`; a failed write only loses the record (the call is refused anyway).
+fn record_outside(log: &std::ffi::OsStr, line: &str) {
+    use std::io::Write as _;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+async fn dial_logged(
+    target: &Target<'_>,
+    link_local: LinkLocal,
+    log: Option<std::ffi::OsString>,
+) -> io::Result<TcpStream> {
+    // A link-local literal under `LinkLocal::Refuse` is refused below without a dial.
+    let refused_anyway = link_local == LinkLocal::Refuse
+        && target
+            .host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .is_ok_and(is_link_local);
+    if let Some(log) = log
+        && !is_loopback_host(target.host)
+        && !refused_anyway
+    {
+        let line = format!("{}:{}\n", target.host, target.port);
+        let _ = tokio::task::spawn_blocking(move || record_outside(&log, &line)).await;
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "outside network refused (CONN_NETWORK_LOG)",
+        ));
+    }
     if link_local == LinkLocal::Allow {
         return TcpStream::connect((target.host, target.port)).await;
     }
@@ -711,6 +762,32 @@ mod tests {
         ] {
             assert!(!is_link_local(ip.parse().expect("ip")), "{ip}");
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn with_a_network_log_an_outside_host_is_refused_and_named() {
+        let dir = std::env::temp_dir().join(format!("conn-network-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("network.log");
+        let target = parse_url("https://example.invalid:8443/x").unwrap();
+        let error = dial_logged(&target, LinkLocal::Refuse, Some(log.clone().into()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            "example.invalid:8443\n"
+        );
+
+        // Loopback is dialled as before: a closed port answers "refused", not the log's error.
+        let target = parse_url("http://127.0.0.1:9/").unwrap();
+        let error = dial_logged(&target, LinkLocal::Refuse, Some(log.clone().into()))
+            .await
+            .unwrap_err();
+        assert_ne!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(is_loopback_host("[::1]") && is_loopback_host("LOCALHOST"));
+        assert!(!is_loopback_host("raw.githubusercontent.com") && !is_loopback_host("10.0.0.1"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[tokio::test(flavor = "current_thread")]

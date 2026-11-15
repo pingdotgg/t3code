@@ -407,4 +407,22 @@ mod tests {
         assert!(!has_replay_key(&db, "t", "k", 2_000).expect("released"));
         std::fs::remove_dir_all(dir).expect("clean up");
     }
+
+    /// A replay key is kept 7 days by the wall clock, as T3's `claimReplayKey`
+    /// (`webhookDedupe.ts`): it still holds after a container woke 10 minutes, 2 hours or
+    /// 3 days later, and is gone after 7 days.
+    #[test]
+    fn replay_keys_hold_through_wall_clock_jumps() {
+        let dir = std::env::temp_dir().join(format!("conn-hooks-jump-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let db = dir.join("hooks.sqlite");
+        let t0 = 1_782_896_400_000;
+        assert!(claim_replay_key(&db, "t", "k", "d1", t0).expect("claim"));
+        for jump_ms in [600_000, 7_200_000, 259_200_000] {
+            assert!(has_replay_key(&db, "t", "k", t0 + jump_ms).expect("held"));
+            assert!(!claim_replay_key(&db, "t", "k", "d2", t0 + jump_ms).expect("duplicate"));
+        }
+        assert!(claim_replay_key(&db, "t", "k", "d3", t0 + REPLAY_KEY_MS).expect("expired"));
+        std::fs::remove_dir_all(dir).expect("clean up");
+    }
 }

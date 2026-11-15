@@ -22,6 +22,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const load = packageImporter("packages/contracts");
 const Effect = await load("effect/Effect");
@@ -127,9 +128,7 @@ async function startServer(stored) {
   const server = NodeChildProcess.spawn(
     NodePath.resolve(binary),
     ["--listen", "127.0.0.1:0", "--state-dir", stateDir],
-    // CONN_CLAUDE_STATUS_PROBE=off and CONN_CODEX_STATUS_PROBE=off: no run of this machine's
-    // `claude` or `codex` for the status.
-    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, CONN_CLAUDE_STATUS_PROBE: "off", CONN_CODEX_STATUS_PROBE: "off", CONN_MODEL_MANIFEST_URL: "off" } },
+    { cwd: tmp, stdio: ["ignore", "pipe", "pipe"], env: sealedEnv(tmp) },
   );
   const stderr = [];
   server.stderr.on("data", (d) => stderr.push(String(d)));

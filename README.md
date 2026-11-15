@@ -89,6 +89,7 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
 | Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | The host definition registry answers as T3's own on every literal of T3's definition tests and a fixed grid (24,085 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
+| Orbit idle check    | `node crates/conn-server/tools/idle-diff.mjs target/release/conn-server` | `/api/orchestration/shell` as Orbit's idle sleep and thread index read it equals the T3 server's in 14 states (no thread to a restart mid-turn) and 5 refusals; Codex on the conformance stub; differences listed in its `KNOWN` must stay exactly those |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`; also the `codex mcp list` and `codex exec` runs of a thread title |
 | ACP instructions    | `node crates/conn-provider-acp/tools/gen-instructions.mjs --check` | T3's ACP prompt wrapper and runtime notes are current, byte for byte |
@@ -105,6 +106,21 @@ line when the variable is missing. Without it, `tools/check.sh` runs the Rust ch
 | Model manifest diff | `node crates/conn-server/tools/model-manifest-diff.mjs target/release/examples/model_manifest_cache` | `model-manifest.json` as this server writes it equals T3's `encodeManifestCache`, byte for byte |
 | Orbit flow          | `node crates/conn-server/tools/orbit-flow.mjs target/release/examples/replay_server`                                            | Orbit's container flow: start, project add, session issue, launch over `/mcp`, revoke, clean stop; then its task-turn path: the model check, `t3 thread` start, list, show, send, a turn that asks, and `t3_copy_rpc.mjs`'s read and interrupt   |
 | Instances flow      | `node crates/conn-server/tools/instances-flow.mjs target/release/conn-server` (skipped without `npm ci` in `helpers/sdk-host`)  | Claude and Codex instances from `providerInstances` written before start: a turn on each starts its stub with its settings; a change and a removal through `server.updateSettings` apply to the next session; disabled instances refused and listed disabled |
+| Canary (last)       | `node tools/canary.mjs verify` (set up by `tools/check.sh` before the first check) | No check read a decoy file of the home, changed the home, let a marker variable or file reach any output or written file, ran a provider or host CLI, or connected outside loopback; no passwd home lookup in our code |
+
+**The canary.** `tools/check.sh` runs every check with a decoy HOME (marker files where
+`~/.claude`, `~/.codex`, `~/.grok`, `~/.config/gh`, `~/.gitconfig`, `~/.netrc` and `~/.t3` would
+be; the credential files mode 000), marker values in `ANTHROPIC_*`, `OPENAI_API_KEY`,
+`CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and
+`CONN_CANARY`, a stand-in `SHELL`, and a `TMPDIR` that the canary scans twice a second. Cargo
+and rustup keep their real folders (`CARGO_HOME`, `RUSTUP_HOME`), and cargo runs without the
+global git configuration. Reads are seen by access time (a self-test fails the check on a
+`noatime` file system), opens of a mode-000 file only when the error names the decoy path, and
+a stat or a file that lived less than half a second without printing a marker not at all. Marker
+executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`, `glab`,
+`fj`, `tea`, `az`, `cafe`) go first on `PATH` and fail the canary when run; a Node hook
+(`NODE_OPTIONS=--import`) and `CONN_NETWORK_LOG` in our server refuse and record any
+connection outside loopback. `mark` names the check behind each record.
 
 `replay_server` is `conn-server` with the engine's scripted fake provider, so these checks call
 no model. Each server they start gets a temp state folder; `parity.mjs` gives the T3 server a

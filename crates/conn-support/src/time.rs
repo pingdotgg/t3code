@@ -99,6 +99,31 @@ fn days_in_month(y: i64, m: i64) -> i64 {
     }
 }
 
+/// A moment read on both clocks, for an idle or expiry window that must hold when the host
+/// was frozen or asleep (Orbit freezes containers) and when the wall clock is stepped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mark {
+    pub wall_ms: u64,
+    pub mono: std::time::Instant,
+}
+
+impl Mark {
+    pub fn now() -> Self {
+        Self {
+            wall_ms: now_ms(),
+            mono: std::time::Instant::now(),
+        }
+    }
+
+    /// The time from `self` to `later`: the larger of the two clocks' readings, as T3's
+    /// `idleMs` (`McpSessionRegistry.ts`). Wall time that passed while the monotonic clock
+    /// stood still counts, and a wall clock stepped back cannot extend a window.
+    pub fn elapsed_to(&self, later: &Self) -> std::time::Duration {
+        let wall = std::time::Duration::from_millis(later.wall_ms.saturating_sub(self.wall_ms));
+        wall.max(later.mono.saturating_duration_since(self.mono))
+    }
+}
+
 /// Howard Hinnant's `days_from_civil`.
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -126,7 +151,32 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{iso_from_millis, iso_from_ms, millis_from_iso, now_iso, now_ms};
+    use super::{Mark, iso_from_millis, iso_from_ms, millis_from_iso, now_iso, now_ms};
+    use std::time::Duration;
+
+    /// A jump of the wall clock with the monotonic clock still (a frozen container), a
+    /// monotonic advance with the wall clock still, and a wall clock stepped back.
+    #[test]
+    fn a_mark_counts_the_larger_clock() {
+        let start = Mark::now();
+        for jump in [10 * 60, 2 * 3600, 3 * 86_400] {
+            let jumped = Mark {
+                wall_ms: start.wall_ms + jump * 1000,
+                mono: start.mono,
+            };
+            assert_eq!(start.elapsed_to(&jumped), Duration::from_secs(jump));
+            let advanced = Mark {
+                wall_ms: start.wall_ms,
+                mono: start.mono + Duration::from_secs(jump),
+            };
+            assert_eq!(start.elapsed_to(&advanced), Duration::from_secs(jump));
+        }
+        let stepped_back = Mark {
+            wall_ms: start.wall_ms - 3_600_000,
+            mono: start.mono + Duration::from_secs(5),
+        };
+        assert_eq!(start.elapsed_to(&stepped_back), Duration::from_secs(5));
+    }
 
     #[test]
     fn formats_like_to_iso_string() {

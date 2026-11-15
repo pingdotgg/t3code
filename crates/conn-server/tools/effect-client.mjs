@@ -10,7 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
-import { sealedEnv } from "../../../tools/sealed-env.mjs";
+import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 // Packages resolve as packages/contracts sees them, so the sources share one `effect`.
 const load = packageImporter("packages/contracts");
@@ -76,7 +76,7 @@ const git = (cwd, ...args) =>
       cwd,
       stdio: "ignore",
       env: {
-        ...process.env,
+        ...gitEnv(),
         GIT_AUTHOR_NAME: "t",
         GIT_AUTHOR_EMAIL: "t@example.com",
         GIT_COMMITTER_NAME: "t",

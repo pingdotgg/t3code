@@ -14,6 +14,7 @@ import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { canaryEnv, gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
 const argv = process.argv.slice(2);
@@ -45,11 +46,11 @@ process.once("exit", () => {
 function scratchProject(name) {
   const dir = NodePath.join(root, name, "parity");
   NodeFS.mkdirSync(dir, { recursive: true });
-  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir });
+  NodeChildProcess.execFileSync("git", ["init", "-q"], { cwd: dir, env: gitEnv() });
   NodeChildProcess.execFileSync(
     "git",
     ["-c", "user.name=p", "-c", "user.email=p@p", "commit", "-q", "--allow-empty", "-m", "init"],
-    { cwd: dir },
+    { cwd: dir, env: gitEnv() },
   );
   return dir;
 }
@@ -94,6 +95,8 @@ async function startTs() {
   const project = scratchProject("ts");
   const base = NodePath.join(root, "ts", "base");
   NodeFS.mkdirSync(base);
+  const tsHome = NodePath.join(root, "ts", "home");
+  NodeFS.mkdirSync(tsHome);
   // The T3 server fetches model-manifest.json from GitHub while this is on (its default).
   NodeFS.mkdirSync(NodePath.join(base, "userdata"));
   NodeFS.writeFileSync(
@@ -102,6 +105,23 @@ async function startTs() {
   );
   const port = await freePort();
   const node = process.execPath;
+  const tsPath = [
+    NodePath.dirname(node),
+    ...(noModel ? [] : [NodePath.join(NodeOS.homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]),
+    "/usr/bin",
+    "/bin",
+  ];
+  // Without --model, no provider or host CLI is on the T3 server's PATH, so its provider and
+  // source control probes can start none of this machine's (they find nothing, as on a host
+  // without them). Fails here when one is found.
+  if (noModel) {
+    const clis = ["claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe", "cursor-agent", "opencode", "kiro-cli"];
+    const found = tsPath.flatMap((dir) => clis.filter((cli) => NodeFS.existsSync(NodePath.join(dir, cli))).map((cli) => NodePath.join(dir, cli)));
+    if (found.length > 0) {
+      console.error(`parity: the T3 server's PATH holds provider or host CLIs: ${found.join(", ")}`);
+      process.exit(1);
+    }
+  }
   const { origin, code } = await start(
     node,
     [
@@ -120,18 +140,16 @@ async function startTs() {
     {
       cwd: project,
       env: {
-        HOME: NodeOS.homedir(),
+        // Without --model, a throwaway HOME and no folder of user tools on PATH: the T3
+        // server's provider probes then find no CLI, login or setting of this machine.
+        // `--model` runs one real Haiku turn, which needs the real `claude` and its login.
+        HOME: noModel ? tsHome : NodeOS.homedir(), // canary: allow (--model only)
         USER: NodeOS.userInfo().username,
-        PATH: [
-          NodePath.dirname(node),
-          NodePath.join(NodeOS.homedir(), ".local/bin"),
-          "/opt/homebrew/bin",
-          "/usr/local/bin",
-          "/usr/bin",
-          "/bin",
-        ].join(":"),
+        PATH: tsPath.join(":"),
         T3CODE_HOME: base,
         T3CODE_NO_BROWSER: "1",
+        SHELL: "/bin/sh",
+        ...canaryEnv(),
       },
     },
     port,
@@ -151,7 +169,7 @@ async function startRust() {
   const { origin, code } = await start(
     rustBinary,
     ["--listen", `127.0.0.1:${port}`, "--state-dir", state, "--project", project],
-    {},
+    { env: sealedEnv(NodePath.join(root, "rust")) },
     port,
   );
   return { name: "Conn Server", origin, authorization: `Bearer ${await pairBearer(origin, code)}` };

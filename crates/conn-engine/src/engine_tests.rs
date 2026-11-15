@@ -453,6 +453,42 @@ async fn a_restart_continues_the_running_turn_in_the_same_provider_thread() {
     assert_eq!(shell["threads"][0]["status"], "completed");
 }
 
+/// A clean stop (SIGTERM, a service restart) keeps the running turn for the next start, as T3
+/// does: the closing session's end of the turn is not stored, so the next start continues it.
+/// `idle-diff.mjs` compares the shell after such a restart with the T3 server's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shutdown_leaves_the_running_turn_for_the_next_start() {
+    let db = TempDb::new("shutdown-running");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        engine.shutdown().await;
+        let p = projection(&engine, "t1").await;
+        assert_eq!(
+            run_statuses(&p),
+            [("run:t1:1".into(), "running".into())],
+            "shutdown stores no end of the turn"
+        );
+    }
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "cancelled".into()),
+            ("run:t1:2".into(), "completed".into())
+        ]
+    );
+    assert_eq!(p["runs"][1]["restartContinuationOfRunId"], "run:t1:1");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn restart_continuations_stop_after_three_in_a_row() {
     let db = TempDb::new("restart-loop");
@@ -680,11 +716,15 @@ async fn a_message_sent_during_a_turn_queues_and_starts_after_it() {
     );
     assert_eq!(p["runs"][1]["queuePosition"], 1);
     assert_eq!(p["runs"][2]["queuePosition"], 2);
-    // Queued messages have no turn item yet, and the shell still shows the running run.
+    // Queued messages have no turn item yet. The shell's latest run is the newest queued one
+    // (T3's `latestUnheldRun`; `idle-diff.mjs` compares it with the T3 server); the running
+    // run stays the active and the activity run.
     assert_eq!(item_texts(&p), ["turn_start hang"]);
     let shell = engine.shell_snapshot().await.unwrap();
-    assert_eq!(shell["threads"][0]["status"], "running");
+    assert_eq!(shell["threads"][0]["status"], "queued");
+    assert_eq!(shell["threads"][0]["latestRunId"], "run:t1:3");
     assert_eq!(shell["threads"][0]["activeRunId"], "run:t1:1");
+    assert_eq!(shell["threads"][0]["activityRunStatus"], "running");
 
     // Reorder: third before second.
     dispatch(
@@ -1883,6 +1923,85 @@ impl crate::Clock for PausedClock {
 
 fn paused_clock() -> Arc<dyn crate::Clock> {
     Arc::new(PausedClock(tokio::time::Instant::now()))
+}
+
+/// Paused tokio time plus a wall-clock jump, as a container sees on wake after Orbit froze
+/// it with a still monotonic clock.
+struct JumpClock {
+    start: tokio::time::Instant,
+    jumped: std::sync::atomic::AtomicU64,
+}
+
+impl crate::Clock for JumpClock {
+    fn now_millis(&self) -> u64 {
+        u64::try_from(self.start.elapsed().as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_add(self.jumped.load(std::sync::atomic::Ordering::SeqCst))
+    }
+}
+
+impl JumpClock {
+    fn jump(&self, by: Duration) {
+        let by = u64::try_from(by.as_millis()).unwrap_or(u64::MAX);
+        self.jumped
+            .fetch_add(by, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// An engine with T3's idle limits (30 minutes, a 4-hour hold) on a [`JumpClock`].
+async fn engine_on_jump_clock(name: &str, first: &str) -> (TempDb, SqliteEngine, Arc<JumpClock>) {
+    let db = TempDb::new(name);
+    let clock = Arc::new(JumpClock {
+        start: tokio::time::Instant::now(),
+        jumped: std::sync::atomic::AtomicU64::new(0),
+    });
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.clock = clock.clone();
+    config.idle_session = Some(Duration::from_secs(30 * 60));
+    config.idle_max_hold = Duration::from_secs(4 * 60 * 60);
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", first)).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    (db, engine, clock)
+}
+
+/// The idle release reads the engine's wall clock when the reaper wakes (every 15 minutes
+/// of monotonic time). After a wall jump with a still monotonic clock, the jump counts as
+/// idle time: 10 minutes plus one 15-minute reaper wait keeps the session; 2 hours or
+/// 3 days release it at that wait. T3 waits on `Effect.sleep(idleTimeoutMs)`
+/// (`ProviderSessionManager.ts`), monotonic, so there it would wait 30 minutes after the
+/// thaw. With a monotonic clock that ran on, both release at the thaw.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn an_idle_session_after_a_wall_clock_jump() {
+    for (jump, live) in [(10 * 60, 1), (2 * 3600, 0), (3 * 86_400, 0)] {
+        let (_db, engine, clock) = engine_on_jump_clock("idle-jump", "first").await;
+        clock.jump(Duration::from_secs(jump));
+        tokio::time::sleep(Duration::from_secs(15 * 60 + 1)).await;
+        assert_eq!(engine.inner().live_count(), live, "+{jump}s");
+    }
+}
+
+/// Background work holds an idle session up to 4 hours from the first idle check that finds
+/// it, by the wall clock, as T3's `pinnedSinceMs` (`Clock.currentTimeMillis`). A 2-hour
+/// jump starts the hold; a 3-day jump after it ends the hold at the next reaper wait.
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn background_work_holds_through_a_jump_until_the_wall_clock_passes_the_hold() {
+    let (_db, engine, clock) = engine_on_jump_clock("idle-hold-jump", "background-hold").await;
+    clock.jump(Duration::from_secs(10 * 60));
+    tokio::time::sleep(Duration::from_secs(15 * 60 + 1)).await;
+    assert_eq!(engine.inner().live_count(), 1, "+10 minutes: not idle yet");
+    clock.jump(Duration::from_secs(2 * 3600));
+    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+    assert_eq!(engine.inner().live_count(), 1, "+2 hours: held");
+    clock.jump(Duration::from_secs(3 * 86_400));
+    tokio::time::sleep(Duration::from_secs(15 * 60)).await;
+    assert_eq!(engine.inner().live_count(), 0, "+3 days: the hold is over");
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]
