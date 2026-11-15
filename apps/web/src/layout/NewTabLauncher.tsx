@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { ChartNoAxesColumnIcon, SettingsIcon, SquareDashedIcon } from "lucide-react";
+import { SquareDashedIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
 import { useBrowserDefaults } from "../browser/browserDefaults";
@@ -296,20 +296,8 @@ function NewTabLauncherBody({
         <div aria-hidden className="h-2 shrink-0" />
         <DraftProjectGroupLabel>Open a page</DraftProjectGroupLabel>
         <DraftProjectRow
-          icon={<SettingsIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Settings"
-          detail=""
-          onSelect={() => openPage("settings")}
-        />
-        <DraftProjectRow
-          icon={<ChartNoAxesColumnIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Usage"
-          detail=""
-          onSelect={() => openPage("usage")}
-        />
-        <DraftProjectRow
           icon={<PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />}
-          label="Pull requests"
+          label="All pull requests"
           detail=""
           onSelect={() => openPage("pull-requests")}
         />
