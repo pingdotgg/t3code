@@ -197,7 +197,6 @@ export function UsagePage() {
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
-  useUsageLimitsVisible(showingLimits);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -333,6 +332,11 @@ export function UsagePage() {
     .map(([environmentId]) => environmentId)
     .sort()
     .join(",");
+  useUsageLimitsVisible(
+    showingLimits && connectedLimitsEnvironments !== ""
+      ? (connectedLimitsEnvironments.split(",") as EnvironmentId[])
+      : [],
+  );
   const autoRefreshLimits = useEffectEvent(() => {
     void refreshLimits(true);
   });

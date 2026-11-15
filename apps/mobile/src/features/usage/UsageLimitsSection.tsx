@@ -330,7 +330,7 @@ export function useRefreshLimits(
     .map(([environmentId]) => environmentId);
   const connectedKey = environmentIdsKey(connectedIds);
   useAtomMount(active && connectedKey !== "" ? limitsAutoRefreshSetAtom(connectedKey) : IDLE_ATOM);
-  useUsageLimitsVisible(active);
+  useUsageLimitsVisible(active ? connectedIds : []);
   const failedIds = new Set(
     useAtomValue(limitsRefreshFailuresAtom(environmentIdsKey(selected.map(([id]) => id)))),
   );

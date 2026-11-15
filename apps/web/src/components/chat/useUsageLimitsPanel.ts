@@ -49,7 +49,7 @@ export function useUsageLimitsPanel(input: {
           setPanel(null),
         )
       : null;
-  useUsageLimitsVisible(banner !== null);
+  useUsageLimitsVisible(banner !== null ? [environmentId] : []);
   // Intercept /usage-limits only when Limits has selected-provider data.
   const offered =
     providerDriver !== null && hasProviderUsageLimits(providerDriver, providers, sources);

@@ -1008,7 +1008,7 @@ function ThreadDetailBody(
           usageLimitsPanel.now,
         )
       : null;
-  useUsageLimitsVisible(usageLimitsReport !== null);
+  useUsageLimitsVisible(usageLimitsReport !== null ? [props.environmentId] : []);
   const showUsageLimits = (report: UsageLimitsReport | null) =>
     setUsageLimitsPanel(
       report === null

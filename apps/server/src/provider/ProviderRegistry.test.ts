@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import {
   EnvironmentId,
   ClaudeSettings,
@@ -4253,6 +4254,46 @@ it.layer(
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.auth.status, "unauthenticated");
         assert.strictEqual(status.auth.type, undefined);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("a check that may not read the quota skips Claude's reset credits too", () =>
+      Effect.gen(function* () {
+        const creditReads = yield* Ref.make(0);
+        const check = checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          () =>
+            Effect.succeed({
+              email: "dev@example.com",
+              subscriptionType: "max",
+              tokenSource: "claude.ai",
+              apiKeySource: undefined,
+              apiProvider: undefined,
+              slashCommands: [],
+              usage: { rate_limits_available: true, rate_limits: { five_hour: null } },
+            }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          () => Ref.update(creditReads, (count) => count + 1).pipe(Effect.as(undefined)),
+        );
+
+        const hidden = yield* check.pipe(Effect.provideService(UsagePolling, false));
+        assert.strictEqual(hidden.usageLimits?.unavailable?.reason, "probeFailed");
+        assert.strictEqual(yield* Ref.get(creditReads), 0);
+
+        const visible = yield* check;
+        assert.strictEqual(visible.usageLimits?.unavailable, undefined);
+        assert.strictEqual(yield* Ref.get(creditReads), 1);
       }).pipe(
         Effect.provide(
           layerMockSpawner((args) => {

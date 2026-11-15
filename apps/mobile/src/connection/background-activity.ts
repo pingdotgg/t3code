@@ -74,7 +74,7 @@ export const layerReporter = Layer.effectDiscard(
                 focused: active,
                 recentlyInteracted: active,
                 appState: normalizeAppState(appState),
-                usageLimitsVisible: isUsageLimitsViewRetained(),
+                usageLimitsVisible: isUsageLimitsViewRetained(environmentId as EnvironmentId),
                 scopes: [
                   ...BASELINE_SCOPES,
                   ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),

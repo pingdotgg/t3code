@@ -46,18 +46,24 @@ function notifyRetainedScopesChanged(): void {
   }
 }
 
-let usageLimitsViews = 0;
+const usageLimitsViews = new Map<EnvironmentId, number>();
 
-/** Counts a usage limits view as on screen until the returned release runs. */
-export function retainUsageLimitsView(): () => void {
-  usageLimitsViews += 1;
-  if (usageLimitsViews === 1) notifyRetainedScopesChanged();
+/** Counts a usage limits view of these environments as on screen until the release runs. */
+export function retainUsageLimitsView(environmentIds: ReadonlyArray<EnvironmentId>): () => void {
+  for (const environmentId of environmentIds) {
+    usageLimitsViews.set(environmentId, (usageLimitsViews.get(environmentId) ?? 0) + 1);
+  }
+  if (environmentIds.length > 0) notifyRetainedScopesChanged();
   let released = false;
   return () => {
     if (released) return;
     released = true;
-    usageLimitsViews -= 1;
-    if (usageLimitsViews === 0) notifyRetainedScopesChanged();
+    for (const environmentId of environmentIds) {
+      const count = (usageLimitsViews.get(environmentId) ?? 1) - 1;
+      if (count > 0) usageLimitsViews.set(environmentId, count);
+      else usageLimitsViews.delete(environmentId);
+    }
+    if (environmentIds.length > 0) notifyRetainedScopesChanged();
   };
 }
 
@@ -118,7 +124,7 @@ function createActivityReport(
     focused: document.hasFocus(),
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
     appState: document.visibilityState === "visible" ? "active" : "background",
-    usageLimitsVisible: usageLimitsViews > 0,
+    usageLimitsVisible: usageLimitsViews.has(environmentId),
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),

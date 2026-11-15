@@ -59,7 +59,10 @@ import {
   readClaudeSettingsEnv,
 } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "@t3tools/provider-core/server/driver";
-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  makeUnavailableUsageLimits,
+  UsagePolling,
+} from "@t3tools/provider-core/server/usageLimits";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -869,15 +872,18 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       apiKeySource: capabilities.apiKeySource,
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
+  // A check that may not read the quota reports none, cached or not: a reading here would
+  // trigger the reset-credit read and replace the published credits.
+  const usage = (yield* UsagePolling) ? capabilities.usage : undefined;
+  const usageLimits = !usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
+          response: usage,
           checkedAt: usageCheckedAt,
         })
       : claudeUsageResponseToLimits({
-          response: capabilities.usage,
+          response: usage,
           checkedAt: usageCheckedAt,
         }).limits;
   const resetCredits =
