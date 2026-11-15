@@ -153,7 +153,6 @@ final class T3NativeImageViewer: NSObject {
     decodeQueue = task
   }
 
-
   private func finish() {
     guard !finished else { return }
     finished = true
