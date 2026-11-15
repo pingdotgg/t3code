@@ -17,7 +17,7 @@ use crate::{ClaudeConfig, ClaudeSession};
 const FAKE_HOST: &str = r#"
 import * as fs from "node:fs";
 import { createInterface } from "node:readline";
-const [LOG, EXIT_ON_CLOSE, FN_DELAY] = [__LOG__, __EXIT__, __DELAY__];
+const [LOG, EXIT_ON_CLOSE, FN_DELAY, HANG_INIT] = [__LOG__, __EXIT__, __DELAY__, __HANG_INIT__];
 const log = (text) => fs.appendFileSync(LOG, `${text}\n`);
 const write = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
 const reply = (id, value) => write({ ch: "reply", id, ok: true, value });
@@ -36,8 +36,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       break;
     case "call":
       log(`call ${cmd.method}`);
-      reply(cmd.id, null);
+      // A CLI still booting: `initializationResult` does not answer.
+      if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
       break;
+    case "abort": {
+      log("abort");
+      const session = sessions.get(cmd.sessionId);
+      if (session !== undefined)
+        setTimeout(() => {
+          log("end");
+          write({ ch: "sdk", t: "end", ...session });
+        }, 100);
+      break;
+    }
     case "fn":
       log(`fn ${cmd.name}`);
       setTimeout(
@@ -85,7 +96,8 @@ fn fake_host_with_delay(
     let text = FAKE_HOST
         .replace("__LOG__", &serde_json::to_string(&log).unwrap())
         .replace("__EXIT__", if exit_on_close { "true" } else { "false" })
-        .replace("__DELAY__", &fn_delay_ms.to_string());
+        .replace("__DELAY__", &fn_delay_ms.to_string())
+        .replace("__HANG_INIT__", "false");
     std::fs::write(&script, text).unwrap();
     (
         claude_host(HelperCommand::from_path(&script), "claudeAgent"),
@@ -93,17 +105,21 @@ fn fake_host_with_delay(
     )
 }
 
+/// A Claude home that does not exist: a session reads `settings.json` from its home, and the
+/// default is `~/.claude`, the real one of whoever runs the tests.
+fn no_home_config() -> ClaudeConfig {
+    ClaudeConfig {
+        home_path: Some(std::env::temp_dir().join("conn-claude-interrupt-tests-no-home")),
+        ..ClaudeConfig::default()
+    }
+}
+
 fn session(helper: &Helper) -> (ClaudeSession, mpsc::Receiver<conn_provider::ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let session = ClaudeSession::open(
         "provider-session-interrupt".into(),
         "claudeAgent",
-        // A Claude home that does not exist: the session reads `settings.json` from its home,
-        // and the default is `~/.claude`, the real one of whoever runs the tests.
-        ClaudeConfig {
-            home_path: Some(std::env::temp_dir().join("conn-claude-interrupt-tests-no-home")),
-            ..ClaudeConfig::default()
-        },
+        no_home_config(),
         helper.clone(),
         tx,
         vec![],
@@ -334,5 +350,86 @@ async fn a_steer_during_a_cold_start_waits_for_the_query() {
         lines,
         ["fn resolveSettings", "open resume=-", "input", "input"]
     );
+    session.close().await;
+}
+
+/// Stop during the CLI's boot (the session has MCP servers, so the start waits for
+/// `initializationResult`, as T3's `openQuery`): the engine abandons the start, and the query
+/// is aborted (the host ends the prompt stream, SIGKILLs the CLI, waits, disposes) instead of
+/// closed. The early turn ends `interrupted`, no prompt is sent, and the next start opens a new
+/// query. Before: the start held `turn_control` until the boot ended (up to 5 minutes).
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_aborts_the_booting_query() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("abandon-boot");
+    let (helper, log) = fake_host(&scratch.0, true);
+    let script = scratch.0.join("fake-host.mjs");
+    let text = std::fs::read_to_string(&script)
+        .unwrap()
+        // HANG_INIT is the last value of the first line's list.
+        .replace(", false];", ", true];");
+    std::fs::write(&script, text).unwrap();
+    let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let session = ClaudeSession::open(
+        "provider-session-abandon".into(),
+        "claudeAgent",
+        no_home_config(),
+        helper.clone(),
+        tx,
+        vec![conn_provider::McpServer {
+            name: "t3".into(),
+            url: "http://127.0.0.1:9/mcp".into(),
+            headers: vec![],
+        }],
+    );
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let started = std::time::Instant::now();
+    let (result, ()) = tokio::join!(
+        session.start_turn(turn(1, &thread, "one", "full-access", &cwd)),
+        async {
+            running_turn_id(&mut events).await;
+            // Wait for the boot call, then Stop.
+            for _ in 0..100 {
+                if std::fs::read_to_string(&log)
+                    .unwrap_or_default()
+                    .contains("call initializationResult")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            session
+                .abandon_turn_start(conn_provider::AbandonTurnStartInput {
+                    thread_id: "thread-live".into(),
+                    run_id: "run-1".into(),
+                })
+                .await;
+        }
+    );
+    assert!(result.is_err(), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    let seen = until(&mut events, is_terminal).await;
+    assert_eq!(seen.last().unwrap()["status"], "interrupted");
+    let lines: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "fn resolveSettings",
+            "open resume=-",
+            "call initializationResult",
+            "abort",
+            "end"
+        ],
+        "aborted, never closed or prompted"
+    );
+    assert!(session.live_query().is_none());
     session.close().await;
 }

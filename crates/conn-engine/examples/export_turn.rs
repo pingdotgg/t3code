@@ -388,6 +388,36 @@ async fn main() {
     read(&mut stuck, &mut stop_items, |_| false).await;
     drop(stuck);
 
+    // A Stop while the provider still starts the turn (a cold start): the run ends at once.
+    let mut cold_stop_items = vec![];
+    engine
+        .launch_thread(launch_input("launch-6", "thread-6", "coldstart"))
+        .await
+        .unwrap();
+    let mut cold = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "thread-6", "requestCompletionMarker": true})).unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut cold, &mut cold_stop_items, |item| {
+        item["event"]["type"] == "provider-turn.updated"
+    })
+    .await;
+    let cold_stop_at = cold_stop_items.len();
+    engine
+        .dispatch(
+            from_json(
+                json!({"type": "thread.stop", "commandId": "stop-6", "threadId": "thread-6"}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    read(&mut cold, &mut cold_stop_items, run_ended).await;
+    read(&mut cold, &mut cold_stop_items, |_| false).await;
+    drop(cold);
+
     // A turn that leaves a background command running after it completed.
     let mut background_items = vec![];
     engine
@@ -553,6 +583,8 @@ async fn main() {
         "backgroundItems": background_items,
         "backgroundShell": background_shell,
         "stopUnresponsiveAt": unresponsive_at,
+        "coldStopItems": cold_stop_items,
+        "coldStopAt": cold_stop_at,
         "restartShellItems": restart_shell,
         "restartThreadItems": restart_thread,
         "pullRequestLinkItems": links_items,

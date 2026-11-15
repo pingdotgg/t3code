@@ -22,7 +22,7 @@ pinned pair.
 
 | Target | Methods to build | `/mcp` tools to build | HTTP routes to build | Rough size [estimate] |
 | --- | --- | --- | --- | --- |
-| (a) Orbit container only | **0** of 67 needed (all served); 23 more are useful | **1** (`t3_background_wait`); 31 more are useful | **0**; 8 more are useful | about 1.5 to 3 k lines of Rust, plus the Orbit additions (section 4, about 2 to 4 k) |
+| (a) Orbit container only | **0** of 67 needed (all served); 23 more are useful | **0** (`t3_background_wait` served since 2026-11-14); 31 more are useful | **0**; 8 more are useful | about 1.5 to 3 k lines of Rust, plus the Orbit additions (section 4, about 2 to 4 k) |
 | (b) Container and host, what the client really uses | **67** needed (121 with the useful ones the rip-out list keeps) | **38** needed (54 with the useful ones) | **2** needed (17 with the useful ones) | about 25 to 35 k lines for the needed set; about 40 to 50 k with the useful set |
 | (c) Full parity with the T3 server | **137** | **54** | **44** | about 55 to 70 k lines |
 
@@ -33,9 +33,10 @@ sizes: pull requests and GitHub reads, devices (about 8,400 lines in T3), the ag
 
 Five points carry the rest of the document:
 
-1. **A container is already served.** Every method a container needs is served. One `/mcp`
-   tool is missing: `t3_background_wait`. Our own Claude instructions tell the agent to call
-   it, so an agent call fails today [code, `R/crates/conn-mcp/src/claude-instructions.txt:5`].
+1. **A container is already served.** Every method a container needs is served, and since
+   2026-11-14 every `/mcp` tool too: `t3_background_wait`, which our Claude instructions tell
+   the agent to call, is served as T3 serves it. A Stop during a Claude cold start now ends the
+   run at once, as in T3 (it waited for the boot, up to about 6.5 minutes).
    Orbit's task-turn path also uses four CLI items; they are built (section 1b).
 2. **Selectivity buys little in bytes.** The macOS release binary is 17.1 MB. The generated
    contract is 36% of its code, and SQLite is 15%. Turning off everything a container does
@@ -168,10 +169,9 @@ Codex"].
 
 ### 1c. The agent itself, through `/mcp`
 
-Agents in a thread call `/mcp` with a token per provider session. They use the 33 tools we
+Agents in a thread call `/mcp` with a token per provider session. They use the 34 tools we
 serve (threads, delegated tasks, the queue, pending requests, scheduled tasks, annotations,
-PR links). The instructions we send them also name `t3_background_wait`, which we do not
-serve (see the answer above).
+PR links, and `t3_background_wait` since 2026-11-14).
 
 **The Conn Server already accepts an environment session on `/mcp`**, with
 `orchestration:read`. T3 accepts only an MCP OAuth client there. This is one deliberate
@@ -240,12 +240,12 @@ in section 11 agree: an item the list hides or removes is X or U.
 | Container | 21 (20 served) | 44 (13 served) | 14 | 8 |
 | Host | 67 (29 served) | 20 (4 served) | 0 | 0 |
 
-- The one container gap is `t3_background_wait`.
+- No container gap is left: `t3_background_wait` is served (2026-11-14).
 - On a host, 38 needed tools are missing. They are the agent browser (`preview_*` and
   `t3_preview_*`, 15), `html_preview` and `html_render`, `device_*` (4), linked machines
   (`t3_environment_link/links/unlink/preferences_update`), PR watching and guides (4),
-  attachments between threads (3), worktree hand-off (3), `create_threads`, `request_secret`
-  and `t3_background_wait`.
+  attachments between threads (3), worktree hand-off (3), `create_threads` and
+  `request_secret`.
 
 ### HTTP routes (57; 13 served) [measured counts]
 
@@ -293,7 +293,7 @@ Rough sizes [estimate, by area, in Rust lines; T3 sizes from `M/apps/server/src`
 | Devices | 10 methods, 4 tools | 5 to 7 k (T3's `device/` is about 8,400 lines) |
 | Peer links, linked environments, MCP OAuth | 4 methods, 4 tools, 8 routes (U) | 3 to 5 k |
 | Provider sign-in | 6 methods | 1.5 to 2.5 k |
-| The rest (secrets, restart, transcript, attachments, worktree hand-off, `create_threads`, `t3_background_wait`) | about 10 items | 2 to 3 k |
+| The rest (secrets, restart, transcript, attachments, worktree hand-off, `create_threads`) | about 10 items | 2 to 3 k |
 
 **What full parity still adds beyond (b):** about 16 methods and 27 routes that the
 section 11 list removes (T3 Connect, voice, guest share, ACP registry installs, Electron
@@ -649,7 +649,7 @@ Every stage is built and proven in isolation first:
 | Stage | Proven before it (checkable) | State that moves | How it ships and starts | In isolation, in practice | First live step | Way back |
 | --- | --- | --- | --- | --- | --- | --- |
 | 0. The isolated client copy | The copy builds with its own identity. The 22 recorder scenarios pass against the Conn Server in the copy. No file in `nckrtl/conn` changes. | None | A separate repository or fork branch of the client, never merged into Conn | Its own bundle id, URL scheme and data folder, so it never reads Conn's saved environments | Nick installs the copy beside Conn | Delete the copy |
-| 1. Orbit containers | (a) is complete: `t3_background_wait`; the four CLI items (built 2026-11-14) or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
+| 1. Orbit containers | (a) is complete: `t3_background_wait` (done 2026-11-14); the four CLI items (built 2026-11-14) or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
 | 2. The Mac mini | (b) for what Nick uses there: `peerLinks`, linked environments, scheduled tasks, PR panels. A supervisor for `server.restart`. The converter, proven on a **copy** of a T3 home that Nick makes. | Threads and projects: one import event per thread from T3's projection rows, keeping ids. Scheduled tasks: from the `scheduled_tasks` table into JSON. Settings secrets: from `secrets/*.bin` back into `settings.json`. Sessions **cannot** move (T3 signs tokens; we store hashes), so devices pair again. | A launchd service running `conn-server serve`, with its own `--base-dir` and port | A second server with its own state folder and port, beside the T3 server; the T3 service is untouched | The isolated client connects to it; Nick runs one orchestrator thread there | Stop the Conn Server service; the T3 server never stopped |
 | 3. The Mac with the desktop app | (b) for the desktop: previews and the agent browser, devices, PR panels, provider sign-in. A native spawn path (no `ELECTRON_RUN_AS_NODE`, `--bootstrap-fd 3`). A replacement for fds 4 to 7 (updates, telemetry, the in-app browser), or an explicit drop. Signed binaries. | As stage 2, from a copy of the Mac's T3 home | The binary in the isolated desktop copy's bundle. The desktop updates the server by updating itself. The SDK host could run on Electron's own Node (`ELECTRON_RUN_AS_NODE`) instead of a 152 MB single executable [estimate]. | The isolated desktop copy, with its own data folder and home; Conn's desktop keeps its T3 server | Nick uses the isolated desktop for one project | Use the normal Conn app |
 | 4. The T3 server leaves Conn | Stages 1 to 3 have run for an agreed time. The loose fork's merge gate (section 10) works. | None new | Conn's desktop and mobile take the client copy's changes | Only now does `nckrtl/conn` change | A Conn release with the Conn Server | The previous Conn release, which still bundles the T3 server |
@@ -1171,7 +1171,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `send_to_user` | yes | N | N |  | core orchestration |
 | `t3_attachment_discard` | no | U | N | M | attachments between threads |
 | `t3_attachment_prepare_upload` | no | U | N | M | attachments between threads |
-| `t3_background_wait` | no | N | N | M | agents wait on background commands; named in T3's instructions |
+| `t3_background_wait` | yes (2026-11-14) | N | N | M | agents wait on background commands; named in T3's instructions |
 | `t3_environment_link` | no | X | N | L | linked machines |
 | `t3_environment_links` | no | X | N | L | linked machines |
 | `t3_environment_preferences_update` | no | X | N | L | linked machines |

@@ -327,18 +327,15 @@ impl AppServer {
             state.pending.insert(id, tx);
             (id, rx)
         };
-        if let Err(e) = self.write(generation, request(id, method, params)).await {
-            self.lock().pending.remove(&id);
-            return Err(e);
-        }
+        // A caller that gives up (a Stop abandons a start) takes its pending slot with it; a
+        // late answer then finds none and is dropped.
+        let _slot = PendingSlot { server: self, id };
+        self.write(generation, request(id, method, params)).await?;
         match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
             Ok(Ok(Ok(value))) => Ok(value),
             Ok(Ok(Err(e))) => Err(CallError::Rpc(e)),
             Ok(Err(_)) => Err(CallError::Stopped),
-            Err(_) => {
-                self.lock().pending.remove(&id);
-                Err(CallError::Timeout)
-            }
+            Err(_) => Err(CallError::Timeout),
         }
     }
 
@@ -538,6 +535,18 @@ fn newer_minor(version: &str, tested: &str) -> bool {
         (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
     };
     parse(version) > parse(tested)
+}
+
+/// Removes a request's pending slot when the request ends or is dropped.
+struct PendingSlot<'a> {
+    server: &'a AppServer,
+    id: u64,
+}
+
+impl Drop for PendingSlot<'_> {
+    fn drop(&mut self) {
+        self.server.lock().pending.remove(&self.id);
+    }
 }
 
 #[cfg(test)]

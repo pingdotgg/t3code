@@ -283,3 +283,128 @@ async fn live_codex_approval_then_interrupt() {
     assert_eq!(terminal(&seen)["status"], "interrupted");
     session.close().await;
 }
+
+/// A stand-in `codex app-server` that answers the start's requests, logs every method it
+/// gets, and never answers `HOLD` (as a Codex still starting the thread or the turn). No model.
+const FAKE_CODEX: &str = r#"#!/usr/bin/env node
+const fs = require("node:fs");
+const [LOG, HOLD] = [__LOG__, __HOLD__];
+const write = (o) => process.stdout.write(`${JSON.stringify(o)}\n`);
+const answers = {
+  initialize: { userAgent: "fake-codex/0.0.0" },
+  "thread/start": { thread: { id: "thr-fake", createdAt: 0, updatedAt: 0 }, model: "m" },
+  "config/read": { config: {} },
+  "turn/start": { turn: { id: "turn-fake", status: "inProgress", items: [], startedAt: null } },
+};
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (msg.method === undefined) return;
+  fs.appendFileSync(LOG, `${msg.id === undefined ? "notify " : ""}${msg.method}\n`);
+  if (msg.id === undefined || msg.method === HOLD) return;
+  write({ id: msg.id, result: answers[msg.method] ?? {} });
+});
+process.stdin.on("end", () => process.exit(0));
+"#;
+
+/// Stop before Codex accepted the turn: the engine abandons the start. As T3's interrupted
+/// `startTurn`, ours stops at the request it waits on and sends nothing more: held at
+/// `config/read`, no `turn/start`; held at `turn/start`, no `turn/interrupt`. The session
+/// stays usable. No CLI, no model.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_sends_nothing_more() {
+    if std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .map_or(true, |o| !o.status.success())
+    {
+        eprintln!("skipped: no node");
+        return;
+    }
+    for hold in ["config/read", "turn/start"] {
+        let dir = Workspace::new(&format!("abandon-{}", hold.replace('/', "-")));
+        let log = dir.0.join("codex.log");
+        let binary = dir.0.join("codex");
+        std::fs::write(
+            &binary,
+            FAKE_CODEX
+                .replace("__LOG__", &serde_json::to_string(&log).unwrap())
+                .replace("__HOLD__", &serde_json::to_string(hold).unwrap()),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let config = CodexConfig {
+            binary,
+            home_path: Some(dir.0.join("codex-home")),
+            ..CodexConfig::default()
+        };
+        let provider = CodexProvider::new("codex".into(), config);
+        let cwd = dir.cwd();
+        let OpenedSession { session, .. } = provider
+            .open_session(OpenSessionInput {
+                thread_id: "live-thread".into(),
+                provider_session_id: "live-session".into(),
+                model_selection: selection(),
+                runtime_policy: policy("full-access", &cwd),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+            .await
+            .expect("session opens");
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "live-thread".into(),
+                title: None,
+                model_selection: selection(),
+                runtime_policy: policy("full-access", &cwd),
+                existing_provider_thread: None,
+            })
+            .await
+            .expect("thread/start answers");
+        let input = turn(&thread, 1, "full-access", &cwd, "hello");
+        let run_id = input.run_id.clone();
+        let methods = || -> Vec<String> {
+            std::fs::read_to_string(&log)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        };
+        let both = async {
+            tokio::join!(session.start_turn(input), async {
+                for _ in 0..200 {
+                    if methods().last().map(String::as_str) == Some(hold) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                session
+                    .abandon_turn_start(conn_provider::AbandonTurnStartInput {
+                        thread_id: "live-thread".into(),
+                        run_id: run_id.clone(),
+                    })
+                    .await;
+            })
+        };
+        let (started, ()) = tokio::time::timeout(Duration::from_secs(5), both)
+            .await
+            .unwrap_or_else(|_| panic!("{hold}: the abandoned start did not end"));
+        assert!(started.is_err(), "{hold}: {started:?}");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let seen = methods();
+        assert_eq!(
+            seen.last().map(String::as_str),
+            Some(hold),
+            "{hold}: {seen:?}"
+        );
+        assert!(
+            !seen.iter().any(|m| m == "turn/interrupt"),
+            "{hold}: {seen:?}"
+        );
+        session.close().await;
+    }
+}

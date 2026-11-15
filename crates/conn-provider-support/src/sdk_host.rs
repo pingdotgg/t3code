@@ -400,19 +400,30 @@ impl Inner {
             state.replies.insert(id, tx);
             (id, rx)
         };
+        // A caller that gives up (its future is dropped, as a Stop does to a start) takes its
+        // reply slot with it.
+        let _slot = ReplySlot { inner: self, id };
         command["id"] = json!(id);
         if writer.send((self.driver.encode)(&command)).await.is_err() {
-            self.lock().replies.remove(&id);
             return Err("the Claude helper stopped".into());
         }
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,
             Ok(Err(_)) => Err("the Claude helper stopped".into()),
-            Err(_) => {
-                self.lock().replies.remove(&id);
-                Err("no answer in time".into())
-            }
+            Err(_) => Err("no answer in time".into()),
         }
+    }
+}
+
+/// Removes a request's reply slot when the request ends or is dropped.
+struct ReplySlot<'a> {
+    inner: &'a Inner,
+    id: u64,
+}
+
+impl Drop for ReplySlot<'_> {
+    fn drop(&mut self) {
+        self.inner.lock().replies.remove(&self.id);
     }
 }
 
@@ -707,6 +718,17 @@ impl QueryHandle {
         let _ = writer
             .send((self.helper.inner.driver.encode)(&command))
             .await;
+    }
+
+    /// Gives up a query whose open was interrupted, as the T3 server's query runner does: the
+    /// prompt stream ends, the CLI gets SIGKILL, the host waits up to 10 s for it to exit, then
+    /// disposes the query. The query's `End` follows.
+    pub async fn abort(&self) {
+        if let Some(writer) = self.writer() {
+            let _ = writer
+                .send(json!({"t": "abort", "sessionId": self.id}).to_string())
+                .await;
+        }
     }
 
     /// Asks the SDK to close the query (stdin EOF, then the SDK's own kill sequence). The

@@ -1243,6 +1243,17 @@ impl<E: Env> Mapper<E> {
     /// The CLI exited. Ends a running turn as failed (or interrupted when we stopped it).
     /// A turn opened before its query could not start (the SDK host, the options, the MCP
     /// servers): it fails with the start error. Nothing else of the session changes.
+    /// The engine abandoned the start (a Stop before Claude took the turn): the turn opened
+    /// for it ends `interrupted`, as a stopped turn does.
+    pub fn abandon_start(&mut self) -> Vec<Out> {
+        let mut out = Vec::new();
+        if let Some(turn) = &mut self.turn {
+            turn.interrupt_requested = true;
+            self.finalize(TurnStatus::Interrupted, None, None, &mut out);
+        }
+        out
+    }
+
     pub fn fail_start(&mut self, detail: &str) -> Vec<Out> {
         let mut out = Vec::new();
         if self.turn.is_some() {

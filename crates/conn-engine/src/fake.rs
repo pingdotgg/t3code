@@ -7,6 +7,9 @@
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
+//! - `background-task`: the turn completes with background task `bg-1` on its provider
+//!   thread's roster, which `await_background_tasks` marks or clears. `background-task-hang`:
+//!   the same roster, and the turn waits for an interrupt.
 //! - `background-reported`: like `background-hold`, but the work shows only as
 //!   `background_work.updated` (pending), and a running background command row.
 //! - anything else: streams `echo: <text>` in three chunks and completes.
@@ -66,6 +69,8 @@ pub struct FakeProvider {
     /// Stop and rollback take this long after their work, as a slow provider.
     control_delay: std::time::Duration,
     steering: bool,
+    /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
+    background_wait: bool,
     close_delay: std::time::Duration,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
@@ -100,6 +105,7 @@ impl FakeProvider {
             fail_rollbacks: Arc::new(AtomicUsize::new(0)),
             control_delay: std::time::Duration::ZERO,
             steering: true,
+            background_wait: true,
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
@@ -147,6 +153,13 @@ impl FakeProvider {
         self.steering = false;
         self
     }
+
+    /// A provider whose sessions have no background roster to mark (`awaitBackgroundTasks`
+    /// absent), as Codex and ACP.
+    pub fn without_background_wait(mut self) -> Self {
+        self.background_wait = false;
+        self
+    }
 }
 
 #[derive(Clone)]
@@ -160,12 +173,18 @@ struct Turn {
 
 struct FakeSession {
     id: ProviderSessionId,
+    /// The run whose start the engine abandoned (`abandon_turn_start`), and its wake-up.
+    abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
     instance: String,
     driver: String,
     events: mpsc::Sender<ProviderEvent>,
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
+    background_wait: bool,
+    /// The background roster of the `background-task` script: task id and whether it is
+    /// awaited. At most one entry.
+    roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
@@ -180,6 +199,25 @@ struct FakeSession {
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+}
+
+impl FakeSession {
+    /// Waits `wait`, or until the engine abandons `run_id`'s start. True when abandoned.
+    async fn wait_unless_abandoned(&self, run_id: &str, wait: std::time::Duration) -> bool {
+        let deadline = tokio::time::Instant::now() + wait;
+        loop {
+            let notified = self.abandoned.1.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if crate::lock(&self.abandoned.0).as_deref() == Some(run_id) {
+                return true;
+            }
+            tokio::select! {
+                () = &mut notified => {}
+                () = tokio::time::sleep_until(deadline) => return false,
+            }
+        }
+    }
 }
 
 impl Provider for FakeProvider {
@@ -226,12 +264,15 @@ impl Provider for FakeProvider {
                 background_tasks_end_with_process: true,
                 session: Box::new(FakeSession {
                     id: input.provider_session_id,
+                    abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
                     events: tx,
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
+                    background_wait: self.background_wait,
+                    roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
@@ -309,6 +350,25 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
 }
 
 impl FakeSession {
+    /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
+    /// marked, as Claude's `emitRosterUpdate`.
+    fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
+        let tasks: Vec<Value> = crate::lock(&self.roster)
+            .iter()
+            .map(|(id, awaited)| {
+                let mut task = json!({"taskId": id, "kind": "command",
+                    "description": "sleep 600", "providerInstanceId": self.instance});
+                if *awaited {
+                    task["awaited"] = json!(true);
+                }
+                task
+            })
+            .collect();
+        provider_thread["pendingBackgroundTasks"] = json!(tasks);
+        provider_thread["updatedAt"] = json!(now_iso());
+        event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+    }
+
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
     fn continuation(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
@@ -433,6 +493,42 @@ impl Session for FakeSession {
                     return Err(ProviderError::SessionStopped);
                 }
             }
+            // `coldstart`: a start that takes 500 ms with its provider turn shown at once, as
+            // Claude's cold start. Abandoned, it ends that turn interrupted and fails.
+            if text.starts_with("coldstart") {
+                emit(&self.events, [provider_turn(&turn, "running")]).await;
+                *crate::lock(&self.turn) = Some(turn.clone());
+                let wait = std::time::Duration::from_millis(500);
+                if self.wait_unless_abandoned(&turn.run_id, wait).await {
+                    crate::lock(&self.calls).push(format!("start abandoned {}", turn.run_id));
+                    emit(
+                        &self.events,
+                        [
+                            provider_turn(&turn, "interrupted"),
+                            terminal(&turn, TurnStatus::Interrupted, None),
+                        ],
+                    )
+                    .await;
+                    return Err(ProviderError::Failed {
+                        operation: "start_turn",
+                        detail: "the turn start was abandoned".into(),
+                    });
+                }
+                let done = [
+                    provider_turn(&turn, "completed"),
+                    terminal(&turn, TurnStatus::Completed, None),
+                ];
+                tokio::spawn({
+                    let tx = self.events.clone();
+                    async move { emit(&tx, done).await }
+                });
+                return Ok(());
+            }
+            // `latestart`: a provider that does not abandon: 300 ms, then a turn that runs until
+            // it is stopped (as `hang`).
+            if text.starts_with("latestart") {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            }
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
             if let (Some(rest), Some(cwd)) = (
@@ -456,6 +552,7 @@ impl Session for FakeSession {
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             match text.as_str() {
                 "hang" | "stuck" => {}
+                t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
                     "id": "request:1", "nodeId": turn.root, "providerTurnId": format!("turn:{}", turn.run_id),
@@ -515,6 +612,16 @@ impl Session for FakeSession {
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "left running", false));
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                "background-task" | "background-task-hang" => {
+                    self.background.store(true, Ordering::SeqCst);
+                    *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
+                    started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
+                    if text == "background-task" {
+                        started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
+                        started.push(provider_turn(&turn, "completed"));
+                        started.push(terminal(&turn, TurnStatus::Completed, None));
+                    }
                 }
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);
@@ -627,6 +734,14 @@ impl Session for FakeSession {
         })
     }
 
+    fn abandon_turn_start(&self, input: conn_provider::AbandonTurnStartInput) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            crate::lock(&self.calls).push(format!("abandon {}", input.run_id.as_str()));
+            *crate::lock(&self.abandoned.0) = Some(input.run_id.as_str().to_owned());
+            self.abandoned.1.notify_waiters();
+        })
+    }
+
     fn interrupt_turn(&self, _input: InterruptInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
             if self.stuck.load(Ordering::SeqCst) {
@@ -709,6 +824,45 @@ impl Session for FakeSession {
 
     fn has_pending_background_work(&self) -> bool {
         self.background.load(Ordering::SeqCst)
+    }
+
+    /// Marks or clears roster tasks by id, as Claude's `awaitBackgroundTasks`: each id once,
+    /// only ids on the roster; a change reports the roster.
+    fn await_background_tasks(
+        &self,
+        input: conn_provider::AwaitBackgroundTasksInput,
+    ) -> BoxFuture<'_, ProviderResult<Vec<String>>> {
+        Box::pin(async move {
+            if !self.background_wait {
+                return Err(ProviderError::Unsupported {
+                    operation: "await_background_tasks",
+                });
+            }
+            let matched: Vec<String> = {
+                let mut roster = crate::lock(&self.roster);
+                let mut matched: Vec<String> = Vec::new();
+                for id in &input.task_ids {
+                    if matched.contains(id) {
+                        continue;
+                    }
+                    if let Some(entry) = roster.iter_mut().find(|(task, _)| task == id) {
+                        entry.1 = input.awaited;
+                        matched.push(id.clone());
+                    }
+                }
+                matched
+            };
+            crate::lock(&self.calls).push(format!(
+                "await {} {}",
+                input.task_ids.join(","),
+                input.awaited
+            ));
+            if !matched.is_empty() {
+                let update = self.roster_update(conn_contract::to_json(&input.provider_thread));
+                emit(&self.events, [update]).await;
+            }
+            Ok(matched)
+        })
     }
 
     fn rollback_thread(

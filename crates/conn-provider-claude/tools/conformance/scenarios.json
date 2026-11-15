@@ -353,6 +353,48 @@
           "turn": "Reply with exactly: pong"
         }
       ]
+    },
+    {
+      "name": "stop_during_boot",
+      "runtimeMode": "full-access",
+      "mcp": true,
+      "hold": {
+        "0": "initialize"
+      },
+      "scripts": [
+        "e01_turn",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong",
+          "stopDuringStart": true
+        },
+        {
+          "turn": "Reply only: alive"
+        }
+      ]
+    },
+    {
+      "name": "stop_during_mcp_registration",
+      "runtimeMode": "full-access",
+      "mcp": true,
+      "hold": {
+        "0": "mcp_set_servers"
+      },
+      "scripts": [
+        "e01_turn",
+        "e01_turn"
+      ],
+      "steps": [
+        {
+          "turn": "Reply with exactly: pong",
+          "stopDuringStart": true
+        },
+        {
+          "turn": "Reply only: alive"
+        }
+      ]
     }
   ]
 }

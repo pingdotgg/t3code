@@ -187,7 +187,28 @@ pub(crate) struct Store {
     clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
+    /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
+    /// every active run again, so nothing here outlives the process.
+    starts: StartLedger,
 }
+
+/// The turn starts a Stop must know about, kept beside the store so a command decides under
+/// the store lock (T3's Stop plans under the thread lock from the stored provider turns).
+///
+/// A run's provider turn is *accepted* once `Session::start_turn` returned for it; before
+/// that, Stop ends the run at once and abandons the start ("before provider start" in T3's
+/// `dispatchRunInterrupt`). Each set holds only runs of threads whose start is in flight or
+/// whose run is still active, and each is capped at [`START_LEDGER_CAP`].
+#[derive(Clone, Default)]
+pub(crate) struct StartLedger {
+    /// Run id to its thread id.
+    accepted: std::collections::HashMap<String, String>,
+    abandoned: std::collections::HashSet<String>,
+}
+
+/// More entries than this means runs ended on a path that did not forget them; the oldest
+/// cannot be told apart, so the set is pruned to the runs that are still active.
+const START_LEDGER_CAP: usize = 1024;
 
 impl Store {
     pub(crate) fn open(path: &Path) -> StoreResult<Self> {
@@ -216,6 +237,7 @@ impl Store {
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
+            starts: StartLedger::default(),
         })
     }
 
@@ -250,6 +272,8 @@ impl Store {
         let generates_titles = self.generates_titles;
         Ok(Tx {
             generates_titles,
+            starts: &mut self.starts,
+            starts_changed: None,
             tx: self.conn.transaction().map_err(err)?,
             store_seq: &mut self.next_seq,
             next_seq: start,
@@ -640,9 +664,92 @@ pub(crate) struct Tx<'a> {
     /// Threads whose shell row may have changed, with the last sequence that touched them.
     touched: Vec<(String, u64)>,
     pub(crate) generates_titles: bool,
+    starts: &'a mut StartLedger,
+    /// The ledger as this write changed it; it replaces the store's on commit only.
+    starts_changed: Option<StartLedger>,
 }
 
 impl Tx<'_> {
+    fn starts(&self) -> &StartLedger {
+        self.starts_changed.as_ref().unwrap_or(self.starts)
+    }
+
+    fn starts_mut(&mut self) -> &mut StartLedger {
+        let base = &*self.starts;
+        self.starts_changed.get_or_insert_with(|| base.clone())
+    }
+
+    /// The provider accepted this run's turn start (`Session::start_turn` returned).
+    pub(crate) fn start_accepted(&self, run_id: &str) -> bool {
+        self.starts().accepted.contains_key(run_id)
+    }
+
+    /// Records that the provider accepted the run's start, while the run is still active.
+    pub(crate) fn accept_start(&mut self, thread_id: &str, run_id: &str) -> StoreResult<()> {
+        if self
+            .active_run(thread_id)?
+            .is_none_or(|run| run["id"] != run_id)
+        {
+            return Ok(());
+        }
+        if self.starts().accepted.len() >= START_LEDGER_CAP {
+            let mut keep = std::collections::HashMap::new();
+            for (run, thread) in self.starts().accepted.clone() {
+                if self.run_is_active(&thread, &run)? {
+                    keep.insert(run, thread);
+                }
+            }
+            self.starts_mut().accepted = keep;
+        }
+        self.starts_mut()
+            .accepted
+            .insert(run_id.to_owned(), thread_id.to_owned());
+        Ok(())
+    }
+
+    /// A run ended: Stop no longer needs to know about its start.
+    pub(crate) fn forget_start(&mut self, run_id: &str) {
+        if self.starts().accepted.contains_key(run_id) {
+            self.starts_mut().accepted.remove(run_id);
+        }
+    }
+
+    /// Stop ended the run before the provider accepted it; its start is abandoned.
+    pub(crate) fn abandon_start(&mut self, run_id: &str) {
+        let ledger = self.starts_mut();
+        ledger.accepted.remove(run_id);
+        if ledger.abandoned.len() >= START_LEDGER_CAP {
+            // Each entry is taken back when its start ends; a full set means starts that never
+            // ran (a shutdown), and none of them can run any more.
+            ledger.abandoned.clear();
+        }
+        ledger.abandoned.insert(run_id.to_owned());
+    }
+
+    /// Whether Stop abandoned the run's start. With `take`, the entry goes (the start ended).
+    pub(crate) fn start_abandoned(&mut self, run_id: &str, take: bool) -> bool {
+        let abandoned = self.starts().abandoned.contains(run_id);
+        if abandoned && take {
+            self.starts_mut().abandoned.remove(run_id);
+        }
+        abandoned
+    }
+
+    fn run_is_active(&self, thread_id: &str, run_id: &str) -> StoreResult<bool> {
+        let status: Option<String> = self
+            .tx
+            .query_row(
+                "SELECT json_extract(body, '$.status') FROM entities
+                 WHERE thread_id = ?1 AND kind = 'runs' AND id = ?2",
+                [thread_id, run_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)?
+            .flatten();
+        Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
+    }
+
     pub(crate) fn now(&self) -> &str {
         &self.now
     }
@@ -1070,6 +1177,9 @@ impl Tx<'_> {
         }
         self.tx.commit().map_err(err)?;
         *self.store_seq = self.next_seq;
+        if let Some(starts) = self.starts_changed.take() {
+            *self.starts = starts;
+        }
         Ok(high)
     }
 

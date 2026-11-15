@@ -129,10 +129,26 @@ function openSession(command) {
       session.impl = d;
       if (shuttingDown) return session.end({ error: { message: "the host is stopping" } });
       d.open(session, command);
-      if (session.closeRequested) closeSession(session).catch(() => {});
+      if (session.abortRequested) abortSession(session).catch(() => {});
+      else if (session.closeRequested) closeSession(session).catch(() => {});
     },
     (error) => session.end({ error: describeError(error) }),
   );
+}
+
+/**
+ * Aborts a session whose open the server gave up on (a Stop during the start). The driver's
+ * `abort` tears it down as the T3 server's query runner does when the open is interrupted;
+ * drivers without it close.
+ */
+function abortSession(session) {
+  session.closeRequested = true;
+  session.abortRequested = true;
+  for (const pending of session.pending.values()) pending.reject(new Error("session closed"));
+  session.pending.clear();
+  if (session.impl === undefined) return Promise.resolve();
+  if (typeof session.impl.abort === "function") return session.impl.abort(session);
+  return session.impl.close(session);
 }
 
 function closeSession(session) {
@@ -209,6 +225,13 @@ function handle(command) {
       const session = sessions.get(command.sessionId);
       if (session !== undefined) {
         closeSession(session).catch((error) => log("warn", describeError(error).message));
+      }
+      return;
+    }
+    case "abort": {
+      const session = sessions.get(command.sessionId);
+      if (session !== undefined) {
+        abortSession(session).catch((error) => log("warn", describeError(error).message));
       }
       return;
     }
