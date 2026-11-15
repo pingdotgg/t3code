@@ -24,9 +24,10 @@ OpenCode reads its SQLite database and older JSON history. Antigravity reads loc
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
-Devin CLI reads `~/.local/share/devin/cli/sessions.db`. Set `DEVIN_SESSIONS_DIR` to the directory
-holding `sessions.db`, or `DEVIN_DATA_DIR` to the data root that holds `cli/`; comma-separated paths
-read several databases. Costs are estimated, because Devin keeps billing on the Devin account.
+Devin CLI reads `~/.local/share/devin/cli/sessions.db`, or `$XDG_DATA_HOME/devin/cli/sessions.db`
+when `XDG_DATA_HOME` names an absolute path. Set `DEVIN_SESSIONS_DIR` to the directory holding
+`sessions.db`, or `DEVIN_DATA_DIR` to the data root that holds `cli/`; comma-separated paths read
+several databases. Costs are estimated, because Devin keeps billing on the Devin account.
 
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`. This includes headless T3 sessions and desktop usage across machines; the same

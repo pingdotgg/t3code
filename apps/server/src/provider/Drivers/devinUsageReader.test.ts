@@ -70,7 +70,7 @@ const insertMessage = (
     chatMessage,
   ]);
 
-const scan = (dirs: string) =>
+const scan = (dirs: string, windowStartMs = 0) =>
   devinUsageReader.kind === "scan"
     ? devinUsageReader.scan({
         instances: [
@@ -82,7 +82,7 @@ const scan = (dirs: string) =>
           },
         ],
         settings: DEFAULT_SERVER_SETTINGS,
-        windowStartMs: 0,
+        windowStartMs,
         retentionCutoffMs: 0,
         awaitRefresh: false,
       })
@@ -184,12 +184,15 @@ describe("devinUsageReader", () => {
           },
         ],
       );
-      assert.strictEqual(devinRateModel("claude-opus-5-5-high"), "claude-opus-5-5");
     }).pipe(
       Effect.provideService(HostProcess.HomeDirectory, "/tmp"),
       Effect.provide(NodeServices.layer),
     ),
   );
+
+  it("strips thinking-effort suffixes so pricing resolves the base model", () => {
+    assert.strictEqual(devinRateModel("claude-opus-5-5-high"), "claude-opus-5-5");
+  });
 
   it.effect("reports a missing source and an unreadable database", () =>
     Effect.gen(function* () {
@@ -211,6 +214,26 @@ describe("devinUsageReader", () => {
       assert.strictEqual(corruptScan!.status, "partial");
       assert.strictEqual(corruptScan!.files![0]!.records.length, 0);
       assert.include(corruptScan!.message ?? "", "could not be read");
+    }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, "/tmp"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("reports a database stat cannot read as an error rather than missing", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      // A symlink loop fails stat with ELOOP, which is not a "no file" error.
+      yield* fileSystem.symlink("sessions.db", path.join(dir, "sessions.db"));
+
+      const scanned = yield* scan(dir);
+
+      assert.strictEqual(scanned.length, 1);
+      assert.strictEqual(scanned[0]!.status, "partial");
+      assert.strictEqual(scanned[0]!.files![0]!.records.length, 0);
+      assert.include(scanned[0]!.message ?? "", "could not be read");
     }).pipe(
       Effect.provideService(HostProcess.HomeDirectory, "/tmp"),
       Effect.provide(NodeServices.layer),
@@ -265,9 +288,7 @@ describe("devinUsageReader", () => {
         ),
       );
       const recordsOf = (windowStartMs: number) =>
-        Effect.map(scan(dir), (scanned) =>
-          scanned[0]!.files![0]!.records.filter((record) => record.timestampMs >= windowStartMs),
-        );
+        Effect.map(scan(dir, windowStartMs), (scanned) => scanned[0]!.files![0]!.records);
 
       yield* create;
       assert.strictEqual((yield* recordsOf(0)).length, 1);
@@ -281,6 +302,72 @@ describe("devinUsageReader", () => {
         after.map(({ dedupeKey }) => dedupeKey),
         ["devin:session-1:request-1", "devin:session-1:request-2"],
       );
+    }).pipe(
+      Effect.provideService(HostProcess.HomeDirectory, "/tmp"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("re-reads a symlinked database when commits land in its resolved WAL", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "usage-reader-test-" });
+      const real = path.join(dir, "history.db");
+      yield* seedDatabase(real, (db) =>
+        Effect.gen(function* () {
+          yield* Effect.forEach(TABLES, db.exec);
+          yield* db.exec("PRAGMA journal_mode = WAL");
+          yield* db.run(
+            "INSERT INTO sessions VALUES ('session-1', 'gpt-6-astra-medium', '/home/dev/project')",
+            [],
+          );
+          yield* insertMessage(
+            db,
+            "session-1",
+            T0,
+            assistantMessage({
+              requestId: "request-1",
+              model: null,
+              metrics: {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+              },
+            }),
+          );
+        }),
+      );
+      const linked = path.join(dir, "linked");
+      yield* fileSystem.makeDirectory(linked);
+      yield* fileSystem.symlink(real, path.join(linked, "sessions.db"));
+
+      const first = (yield* scan(linked))[0]!;
+      assert.strictEqual(first.files![0]!.records.length, 1);
+
+      // The writer stays open so its commit lands in the real database's WAL while
+      // the main file's stats stay unchanged.
+      yield* Effect.gen(function* () {
+        const writer = yield* openDatabase(real);
+        yield* insertMessage(
+          writer,
+          "session-1",
+          T0 + 60,
+          assistantMessage({
+            requestId: "request-2",
+            model: null,
+            metrics: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_read_tokens: 0,
+              cache_creation_tokens: 0,
+            },
+          }),
+        );
+        const second = (yield* scan(linked))[0]!;
+        assert.strictEqual(second.files![0]!.records.length, 2);
+      }).pipe(Effect.scoped);
     }).pipe(
       Effect.provideService(HostProcess.HomeDirectory, "/tmp"),
       Effect.provide(NodeServices.layer),

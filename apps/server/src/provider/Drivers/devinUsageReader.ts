@@ -31,6 +31,22 @@ function tokens(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
 }
 
+// A stat failure means "nothing here" only for ENOENT and ENOTDIR; other failures,
+// such as EACCES, are scan errors.
+const absent = (cause: unknown) => {
+  const code = (cause as { readonly code?: unknown } | undefined)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+};
+
+class DevinStatError extends Schema.TaggedError<DevinStatError>()("DevinStatError", {
+  path: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return `Devin history could not be read from ${this.path}.`;
+  }
+}
+
 // Devin appends a thinking-effort suffix to model names; the base name carries the price.
 export const devinRateModel = (model: string) =>
   model.replace(/-(?:low|medium|high|xhigh|max)$/, "");
@@ -162,23 +178,31 @@ const readDevinUsage = Effect.fn("readDevinUsage")(function* (
   const path = yield* Path.Path;
   const database = path.join(dir, "sessions.db");
   const canonical = yield* fileSystem.realPath(database).pipe(Effect.orElseSucceed(() => database));
-  const stamp = (file: string) =>
+  const fingerprintOf = (file: string) =>
     Effect.tryPromise({
       try: () => NodeFSP.stat(file),
-      catch: () => "unavailable",
+      catch: (cause) => new DevinStatError({ path: file, cause }),
     }).pipe(
       Effect.map(
         (stat) => `${stat.dev}:${stat.ino}:${stat.birthtimeMs}:${stat.size}:${stat.mtimeMs}`,
       ),
-      Effect.option,
-      Effect.map(Option.getOrElse(() => "unavailable")),
     );
-  const main = yield* stamp(database);
-  if (main === "unavailable") {
-    return { canonical, records: [], missing: true, error: false };
+  const main = yield* fingerprintOf(database).pipe(
+    Effect.map((value) => ({ value, cause: null })),
+    Effect.orElseSucceed((cause) => ({ value: null, cause })),
+  );
+  if (main.value === null) {
+    return absent(main.cause.cause)
+      ? { canonical, records: [], missing: true, error: false }
+      : { canonical, records: [], missing: false, error: true };
   }
-  const wal = yield* stamp(`${database}-wal`);
-  const fingerprint = `${main}/${wal}`;
+  // SQLite names the WAL after the database's resolved path, so a symlinked database's
+  // WAL sits beside the target, not beside the link.
+  const wal = yield* fingerprintOf(`${canonical}-wal`).pipe(
+    Effect.option,
+    Effect.map(Option.getOrElse(() => "unavailable")),
+  );
+  const fingerprint = `${main.value}/${wal}`;
   const cached = databaseCache.get(canonical);
   if (cached?.fingerprint === fingerprint) {
     return {
