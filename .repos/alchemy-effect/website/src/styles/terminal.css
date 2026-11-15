@@ -35,8 +35,8 @@
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(232, 220, 192, 0.08);
-  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(var(--alc-code-edge), 0.08);
+  background: rgba(var(--alc-code-lift), 0.02);
 }
 .alc-term__title {
   margin-left: 10px;
