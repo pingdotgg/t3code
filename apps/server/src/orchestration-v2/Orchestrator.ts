@@ -12510,6 +12510,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .filter((subagent) => subagent.origin === "app_owned")
         .map((subagent) => subagent.id),
     );
+    // Callers load only tool and message items; the request cards close with the requests below.
+    const requestCards = yield* projectionStore
+      .getThreadRecords(run.threadId, ["turnItems"], {
+        turnItemTypes: ["approval_request", "user_input_request"],
+        turnItemRunIds: [run.id],
+        turnItemStatuses: ["waiting"],
+      })
+      .pipe(mapDispatchError(input.command));
     const cascaded = yield* RunExecutionService.cascadeTerminalizeRunOwnedSubagents({
       run,
       status: "interrupted",
@@ -12532,13 +12540,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
         turnItems: new Map(),
         childTurnItems: new Map(
-          input.projection.turnItems
-            .filter(
+          [
+            ...input.projection.turnItems.filter(
               (item) =>
                 item.runId === run.id &&
                 (item.type === "assistant_message" || item.type === "reasoning"),
-            )
-            .map((item) => [item.id, item]),
+            ),
+            ...requestCards.turnItems,
+          ].map((item) => [item.id, item]),
         ),
         linkedChildThreadIds: new Set([run.threadId]),
       },
@@ -15286,6 +15295,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: "Continue the limited thread before resuming its queue.",
+          });
+        }
+        if (worktreeSetupPending(projection)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Retry worktree setup or choose a workspace before resuming the queue.",
           });
         }
         const now = yield* DateTime.now;
