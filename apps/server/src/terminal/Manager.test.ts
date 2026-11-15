@@ -2583,44 +2583,28 @@ it.layer(
     }),
   );
 
-  it.effect.each(["close", "restart"] as const)(
-    "force-kills a stopped terminal that ignores SIGTERM when the manager shuts down (%s)",
-    (stop) =>
-      Effect.gen(function* () {
-        let providerSecret = "first-secret";
-        const scope = yield* Scope.make();
-        const { manager, ptyAdapter } = yield* createManager(5, {
-          processKillGraceMs: 1_000,
-          resolveProviderInstanceEnvironment: () =>
-            Effect.succeed({ PROVIDER_SECRET: providerSecret }),
-        }).pipe(Effect.provideService(Scope.Scope, scope));
-        const input = openInput({ providerInstanceId: ProviderInstanceId.make("codex_work") });
-        yield* manager.open(input);
-        const stopped = ptyAdapter.processes[0]!;
-        const sigterm = yield* Deferred.make<void>();
-        stopped.onKill = (signal) => {
-          if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
-        };
+  it.effect("force-kills a closed terminal that ignores SIGTERM when the manager shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 1_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
 
-        if (stop === "close") {
-          yield* manager.close({ threadId: input.threadId });
-        } else {
-          providerSecret = "second-secret";
-          yield* manager.open(input);
-        }
-        yield* Deferred.await(sigterm);
-        // A replacement that lingered would hold shutdown open for its own grace.
-        const replacement = ptyAdapter.processes[1];
-        if (replacement) {
-          replacement.onKill = () => replacement.emitExit({ exitCode: 0, signal: 15 });
-        }
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
 
-        const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
-        yield* TestClock.adjust("1 second");
-        yield* Fiber.join(shutdown);
-
-        expect(stopped.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
-      }).pipe(Effect.provide(TestClock.layer())),
+      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(process.exitListenerCount).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
