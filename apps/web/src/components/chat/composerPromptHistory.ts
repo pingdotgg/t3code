@@ -141,8 +141,9 @@ export function recallableComposerPrompt(
   return trimmed;
 }
 
-function recallMessage(
-  message: ComposerPromptHistoryMessage,
+/** A sent message's text as the composer can hold it, with the mention records its chips need. */
+export function recallComposerMessage(
+  message: Pick<ComposerPromptHistoryMessage, "text" | "context">,
 ): Pick<ComposerPromptHistoryEntry, "prompt" | "mentions"> {
   const records = message.context?.records ?? [];
   const threadRecords = records.filter(isThreadContextRecord);
@@ -172,7 +173,7 @@ export function buildComposerPromptHistoryEntries(
     if (message.role !== "user") continue;
     // Automations and other agents send user-role messages; recall only what the user typed.
     if (resolveUserMessagePresentation(message).attribution !== null) continue;
-    const { prompt, mentions } = recallMessage(message);
+    const { prompt, mentions } = recallComposerMessage(message);
     if (prompt.length === 0) continue;
     const entry = { id: message.id, prompt, mentions };
     const previous = entries[entries.length - 1];
