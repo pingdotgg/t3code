@@ -92,7 +92,9 @@ pub(crate) fn replay(name: &str) -> (Replay, Vec<Value>, String) {
                 Out::Skipped(kind) => skipped.push(kind),
                 // One mapper sees every frame here; the TS test kit answers child reads
                 // itself (`withCodexReplayChildMetadata`) with no model.
-                Out::ChildMetadata(_) | Out::InterruptChild { .. } => {}
+                Out::ChildMetadata(_)
+                | Out::InterruptChild { .. }
+                | Out::InterruptAbandoned { .. } => {}
             }
         }
     };

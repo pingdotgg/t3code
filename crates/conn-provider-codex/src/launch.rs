@@ -48,6 +48,9 @@ pub struct CodexConfig {
     /// How long Stop waits for Codex to end the turn before it reports an interrupt timeout
     /// (T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`, 10 s). Tests shorten it.
     pub stop_confirm_timeout: std::time::Duration,
+    /// How long the session waits for the answer to a `turn/start` that Stop abandoned after
+    /// it was written (the request's own limit, 60 s). Tests shorten it.
+    pub abandoned_start_timeout: std::time::Duration,
 }
 
 impl Default for CodexConfig {
@@ -59,6 +62,7 @@ impl Default for CodexConfig {
             instance_env: InstanceEnv::default(),
             attachments_dir: None,
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
+            abandoned_start_timeout: crate::client::REQUEST_TIMEOUT,
         }
     }
 }

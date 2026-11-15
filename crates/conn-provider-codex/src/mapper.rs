@@ -49,6 +49,22 @@ pub enum Out {
         thread: String,
         turn: String,
     },
+    /// A turn whose start Stop abandoned reached Codex anyway: stop it (`turn/interrupt`).
+    InterruptAbandoned {
+        thread: String,
+        turn: String,
+    },
+}
+
+/// A `turn/start` that Stop abandoned after it was written ([`Mapper::abandon_turn_start`]).
+/// Its turn, once Codex names it, gets `turn/interrupt`, and none of its frames become events.
+#[derive(Debug, Clone, PartialEq)]
+struct AbandonedStart {
+    /// Tells this abandon from a later one ([`Mapper::abandoned_start_settled`]).
+    id: u64,
+    native_thread_id: String,
+    /// Set once the answer or a `turn/started` names the turn.
+    native_turn_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -226,6 +242,10 @@ pub struct Mapper<E: Env> {
     ended_unfinished: HashSet<String>,
     /// The latest ended turns, newest last; at most [`ENDED_TURNS_KEPT`].
     ended: VecDeque<String>,
+    /// The session has one native thread, so one abandoned start at a time: the next start
+    /// waits for it to settle ([`Mapper::abandoned_start_open`]).
+    abandoned: Option<AbandonedStart>,
+    abandoned_seq: u64,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -357,6 +377,8 @@ impl<E: Env> Mapper<E> {
             interrupting: HashSet::new(),
             ended_unfinished: HashSet::new(),
             ended: VecDeque::new(),
+            abandoned: None,
+            abandoned_seq: 0,
         }
     }
 
@@ -386,6 +408,7 @@ impl<E: Env> Mapper<E> {
             ("interrupting", self.interrupting.len()),
             ("ended_unfinished", self.ended_unfinished.len()),
             ("ended", self.ended.len()),
+            ("abandoned", usize::from(self.abandoned.is_some())),
         ]
     }
 
@@ -419,6 +442,131 @@ impl<E: Env> Mapper<E> {
     /// `turn/start` failed: forget the pending input.
     pub fn abandon_turn(&mut self, native_thread_id: &str) {
         self.pending_turns.remove(native_thread_id);
+    }
+
+    /// Stop abandoned a start whose `turn/start` was already written: forget the pending
+    /// input, and take the next unknown turn on this thread for the abandoned one. Returns
+    /// the id the session passes to [`Self::abandoned_start_answered`] and
+    /// [`Self::abandoned_start_settled`]. When a `turn/started` already registered the turn,
+    /// that turn is running as the run's own turn and the engine stops it; nothing is kept.
+    pub fn abandon_turn_start(&mut self, native_thread_id: &str) -> Option<u64> {
+        self.pending_turns.remove(native_thread_id)?;
+        self.abandoned_seq = self.abandoned_seq.wrapping_add(1);
+        self.abandoned = Some(AbandonedStart {
+            id: self.abandoned_seq,
+            native_thread_id: native_thread_id.to_owned(),
+            native_turn_id: None,
+        });
+        Some(self.abandoned_seq)
+    }
+
+    /// The answer to an abandoned `turn/start` named its turn. Stops the turn unless a
+    /// `turn/started` did already or it ended. Also after the session closed or the next
+    /// start stopped waiting: the turn still runs on in Codex.
+    pub fn abandoned_start_answered(
+        &mut self,
+        id: u64,
+        native_thread_id: &str,
+        native_turn_id: &str,
+    ) -> Vec<Out> {
+        let mut out = Vec::new();
+        if self.turns.contains_key(native_turn_id) || self.ended.iter().any(|t| t == native_turn_id)
+        {
+            return out;
+        }
+        if let Some(abandoned) = self.abandoned.as_mut().filter(|a| a.id == id) {
+            abandoned.native_turn_id = Some(native_turn_id.to_owned());
+        }
+        self.stop_abandoned_turn(native_thread_id, native_turn_id, &mut out);
+        out
+    }
+
+    /// The abandoned `turn/start` got no turn (an error, no answer in time, the process
+    /// stopped): nothing reached Codex that a later frame could name, unless a
+    /// `turn/started` named it already.
+    pub fn abandoned_start_settled(&mut self, id: u64) {
+        if self
+            .abandoned
+            .as_ref()
+            .is_some_and(|a| a.id == id && a.native_turn_id.is_none())
+        {
+            self.abandoned = None;
+        }
+    }
+
+    /// Whether an abandoned start has not settled: its answer has not come, or its turn has
+    /// not ended. The next start on the thread waits for it.
+    pub fn abandoned_start_open(&self) -> bool {
+        self.abandoned.is_some()
+    }
+
+    /// The next start stopped waiting for the abandoned one. Its turn id, when known, stays
+    /// among the ended turns, so its late frames are still dropped.
+    pub fn forget_abandoned_start(&mut self) {
+        self.abandoned = None;
+    }
+
+    fn stop_abandoned_turn(
+        &mut self,
+        native_thread_id: &str,
+        native_turn_id: &str,
+        out: &mut Vec<Out>,
+    ) {
+        self.ended.push_back(native_turn_id.to_owned());
+        while self.ended.len() > ENDED_TURNS_KEPT {
+            self.ended.pop_front();
+        }
+        out.push(Out::InterruptAbandoned {
+            thread: native_thread_id.to_owned(),
+            turn: native_turn_id.to_owned(),
+        });
+    }
+
+    /// A frame of the abandoned start's turn: never an event. The first frame that names an
+    /// unknown turn on its thread, while no other start is pending there, names that turn
+    /// and stops it. Its `turn/completed` settles the abandoned start.
+    fn abandoned_frame(&mut self, inbound: &Inbound, out: &mut Vec<Out>) -> bool {
+        let (method, params) = match inbound {
+            Inbound::Notification { method, params } | Inbound::Request { method, params, .. } => {
+                (method.as_str(), params)
+            }
+            Inbound::Response { .. } | Inbound::Invalid(_) => return false,
+        };
+        let Some(abandoned) = &self.abandoned else {
+            return false;
+        };
+        if params["threadId"].as_str() != Some(abandoned.native_thread_id.as_str()) {
+            return false;
+        }
+        let Some(turn) = params["turnId"]
+            .as_str()
+            .or_else(|| params["turn"]["id"].as_str())
+        else {
+            return false;
+        };
+        match &abandoned.native_turn_id {
+            Some(known) if known == turn => {}
+            Some(_) => return false,
+            None => {
+                // Thread-level frames name the previous turn (token usage after a resume).
+                let unknown = !method.starts_with("thread/")
+                    && !self.turns.contains_key(turn)
+                    && !self.ended.iter().any(|t| t == turn)
+                    && !self.pending_turns.contains_key(&abandoned.native_thread_id);
+                if !unknown {
+                    return false;
+                }
+                let thread = abandoned.native_thread_id.clone();
+                if let Some(abandoned) = self.abandoned.as_mut() {
+                    abandoned.native_turn_id = Some(turn.to_owned());
+                }
+                self.stop_abandoned_turn(&thread, turn, out);
+            }
+        }
+        if method == "turn/completed" {
+            self.abandoned = None;
+        }
+        true
     }
 
     /// The `turn/start` result. Registers the turn unless `turn/started` already did.
@@ -512,6 +660,14 @@ impl<E: Env> Mapper<E> {
         }
     }
 
+    /// Whether a `turn/started` already registered the run's turn while its `turn/start`
+    /// waits for the answer.
+    pub fn run_registered(&self, run_id: &str) -> bool {
+        self.turns
+            .values()
+            .any(|t| t.subagent.is_none() && t.run_id.as_deref() == Some(run_id))
+    }
+
     /// Whether a root turn on this native thread is running or starting.
     pub fn thread_busy(&self, native_thread_id: &str) -> bool {
         self.pending_turns.contains_key(native_thread_id)
@@ -556,6 +712,9 @@ impl<E: Env> Mapper<E> {
         let mut out = Vec::new();
         self.pending_turns.clear();
         self.requests.clear();
+        // A process that exited runs no turn; after a close the answer may still come (a
+        // shared process), and [`Self::abandoned_start_answered`] stops it then.
+        self.abandoned = None;
         let open: Vec<String> = self.turns.keys().cloned().collect();
         for native in open {
             let now = self.env.now();
@@ -584,6 +743,9 @@ impl<E: Env> Mapper<E> {
 
     pub fn handle(&mut self, inbound: Inbound) -> Vec<Out> {
         let mut out = Vec::new();
+        if self.abandoned_frame(&inbound, &mut out) {
+            return out;
+        }
         match inbound {
             Inbound::Notification { method, params } => {
                 // Thread-level frames do not adopt: a resumed thread reports the previous
