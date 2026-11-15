@@ -14126,6 +14126,65 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("fails and closes a Claude that takes a prompt and then goes silent", () =>
+    Effect.gen(function* () {
+      const closed = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: () => Deferred.succeed(closed, undefined),
+      });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-silent-start"),
+          text: "Land the next branch.",
+          attachments: [],
+        }),
+      );
+      // Claude 2.1.325: the prompt started, then nothing but a background task's frames for hours.
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "command_lifecycle",
+          command_uuid: harness.promptUuid(0),
+          state: "started",
+          uuid: "00000000-0000-4000-8000-000000000797",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("4 minutes");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+          uuid: "00000000-0000-4000-8000-000000000798",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* TestClock.adjust("2 minutes");
+      assert.equal(harness.terminalEvents().length, 0);
+
+      yield* TestClock.adjust("4 minutes");
+      yield* harness.awaitTerminal(1);
+      const [terminal] = harness.terminalEvents();
+      assert.equal(terminal?.status, "failed");
+      if (terminal?.status !== "failed") return;
+      assert.include(terminal.failure.message, "sent nothing back for 5 minutes");
+      yield* Deferred.await(closed);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
   it.effect.each([
     { case: "fails a turn whose mod requests focus for a pane T3 cannot show", focus: true },

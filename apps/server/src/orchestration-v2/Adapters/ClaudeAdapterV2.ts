@@ -362,6 +362,9 @@ const CLAUDE_BOOT_TIMEOUT = "5 minutes";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
+// Claude Code can take a prompt ("started") and then emit nothing at all, for hours. Before its
+// turn begins it has no tool or approval to wait on, so this much silence means it is hung.
+const CLAUDE_TURN_START_SILENCE_TIMEOUT = "5 minutes";
 // Claude Code flushes transcript writes every 100 ms, so a workflow member's
 // reply can land after the progress frame that settles it. Its transcript
 // stays the source of its answer this long after it settles.
@@ -1458,6 +1461,23 @@ export const layerQueryRunner: Layer.Layer<
             // A spawn that fails emits only "error".
             const releaseAgent = portDiscovery.trackAgent();
             child.once("exit", releaseAgent);
+            // A turn start that fails only says the query ended, so keep why the CLI exited.
+            child.once("exit", (code, signal) => {
+              if (answered) return;
+              runFork(
+                Effect.promise(() => stderrClosed).pipe(
+                  Effect.timeoutOption(CLAUDE_STDERR_DRAIN_TIMEOUT),
+                  Effect.andThen(
+                    Effect.logWarning("orchestration-v2.claude-cli-exited-before-answering", {
+                      threadId: input.threadId,
+                      code,
+                      signal,
+                      stderrTail,
+                    }),
+                  ),
+                ),
+              );
+            });
             child.on("error", releaseAgent);
             processExited = child.exitCode !== null || child.signalCode != null;
             processExit = new Promise<void>((resolve) => {
@@ -4836,7 +4856,8 @@ interface ActiveClaudeTurnContext {
   readonly promptUuid: string | null;
   promptEcho: "pending" | "confirmed";
   promptStarted: boolean;
-  nativeWakeStarted: boolean;
+  nativeTurnStarted: boolean;
+  heardSinceStartCheck: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
   // Steers Claude has not started or echoed yet, by prompt uuid. Claude holds
@@ -11523,12 +11544,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             yield* markSteersAccepted(context, message);
           }
-          if (
-            context?.promptUuid === null &&
-            liveQuery?.query === input.query &&
-            isClaudeRootTurnFrame(message)
-          ) {
-            context.nativeWakeStarted = true;
+          if (context !== null && liveQuery?.query === input.query) {
+            context.heardSinceStartCheck = true;
+            if (isClaudeRootTurnFrame(message)) context.nativeTurnStarted = true;
           }
           if (
             context === null ||
@@ -12538,6 +12556,47 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return context;
         });
 
+        // Any frame restarts the window, so a prompt queued behind work the CLI reports on keeps waiting.
+        const failSilentTurnStart = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          querySession: ClaudeLiveQueryContext,
+        ) {
+          const turnBegan = () => context.nativeTurnStarted || context.promptEcho === "confirmed";
+          do {
+            context.heardSinceStartCheck = false;
+            yield* Effect.sleep(CLAUDE_TURN_START_SILENCE_TIMEOUT);
+          } while (context.heardSinceStartCheck && !turnBegan());
+          const stalled = yield* sdkMessageLock.withPermits(1)(
+            Effect.gen(function* () {
+              if (
+                turnBegan() ||
+                (yield* Ref.get(activeTurn)) !== context ||
+                (yield* Ref.get(queryContext)) !== querySession ||
+                querySession.stopping ||
+                (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+              )
+                return false;
+              yield* Effect.logWarning("orchestration-v2.claude-turn-start-stalled", {
+                providerTurnId: context.providerTurnId,
+                nativeThreadId: context.nativeThreadId,
+                promptStarted: context.promptStarted,
+              });
+              yield* finalizeActiveTurn({
+                context,
+                status: "failed",
+                completedAt: yield* DateTime.now,
+                failure: makeProviderFailure({
+                  class: "provider_error",
+                  message: `Claude took the message but sent nothing back for 5 minutes, so ${APP_NAME} stopped it. Send it again to retry in a fresh Claude process.`,
+                }),
+              });
+              return true;
+            }),
+          );
+          // Outside the lock: closing waits for the stream fiber, which takes the lock per frame.
+          if (stalled) yield* closeLiveQueryForNativeThread(context.nativeThreadId);
+        });
+
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             modelCatalog = yield* loadModelCatalog;
@@ -12704,7 +12763,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptUuid,
               promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
               promptStarted: false,
-              nativeWakeStarted: false,
+              nativeTurnStarted: false,
+              heardSinceStartCheck: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
               pendingSteers: new Map(),
@@ -12817,6 +12877,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ),
                 ),
               );
+              yield* failSilentTurnStart(context, querySession).pipe(
+                Effect.forkIn(sessionScope, { startImmediately: true }),
+              );
               return;
             }
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
@@ -12909,11 +12972,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
                   return;
                 }
-                if (wakeAbsorbed || (hasOpaqueTaskNotification && !context.nativeWakeStarted)) {
+                if (wakeAbsorbed || (hasOpaqueTaskNotification && !context.nativeTurnStarted)) {
                   const completedAt = yield* DateTime.now;
                   yield* finalizeActiveTurn({ context, status: "completed", completedAt });
                   if (leavesLaterWake) yield* offerBufferedWake(nativeThreadId);
-                } else if (!context.nativeWakeStarted) {
+                } else if (!context.nativeTurnStarted) {
                   yield* Effect.sleep(CLAUDE_WAKE_TURN_START_DEADLINE).pipe(
                     Effect.andThen(
                       sdkMessageLock.withPermits(1)(
@@ -12922,7 +12985,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                             (yield* Ref.get(activeTurn)) !== context ||
                             (yield* Ref.get(queryContext)) !== querySession ||
                             querySession.stopping ||
-                            context.nativeWakeStarted ||
+                            context.nativeTurnStarted ||
                             (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
                           )
                             return;
