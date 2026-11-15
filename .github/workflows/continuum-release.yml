@@ -1,0 +1,197 @@
+name: Continuum release
+
+# Builds Continuum IDE installers on GitHub-hosted runners and publishes them as a
+# GitHub Release of this repository. Upstream T3 Code's release.yml signs with
+# T3's certificates and publishes to T3's channels; it is disabled in this fork.
+#
+# Run it from the Actions tab (workflow_dispatch) with a version such as 0.1.0, or
+# push a tag such as v0.1.0. Installers are unsigned unless signing secrets are added.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, without the leading v (for example 0.1.0)
+        required: true
+        type: string
+      publish:
+        description: Publish a GitHub Release (otherwise only upload workflow artifacts)
+        required: false
+        default: true
+        type: boolean
+      prerelease:
+        description: Mark the GitHub Release as a prerelease
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: continuum-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
+
+jobs:
+  package:
+    name: Package ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64 (AppImage, deb, rpm)
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            arch: x64
+          - label: Windows x64 (NSIS installer)
+            runner: windows-2025
+            platform: win
+            target: nsis
+            arch: x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          version="${VERSION#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Version '$version' is not semver (expected X.Y.Z or X.Y.Z-suffix)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+ and dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Install Linux build tools
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config imagemagick rpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: Install Electron runtime
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Align package versions to the release version
+        run: node scripts/update-release-package-versions.ts "${{ steps.version.outputs.version }}"
+
+      # GITHUB_REPOSITORY makes the update feed point at this repository's releases.
+      - name: Build installer
+        shell: bash
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: >-
+          vp run dist:desktop:artifact
+          --platform ${{ matrix.platform }}
+          --target ${{ matrix.target }}
+          --arch ${{ matrix.arch }}
+          --version ${{ steps.version.outputs.version }}
+          --verbose
+
+      - name: Add an RPM package
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_TELEMETRY_CHANNEL: dev
+        run: >-
+          vp run dist:desktop:artifact
+          --platform linux
+          --target rpm
+          --arch x64
+          --version ${{ steps.version.outputs.version }}
+          --skip-build
+          --verbose
+        continue-on-error: true
+
+      - name: Verify the Linux packages are Continuum's
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l release
+          test -f release/Continuum-IDE-x86_64.AppImage
+          test -f release/Continuum-IDE-amd64.deb
+          test "$(dpkg-deb --field release/Continuum-IDE-amd64.deb Package)" = "continuum-ide"
+          dpkg-deb --contents release/Continuum-IDE-amd64.deb | grep -q "io.github.swashxdev.continuumide.metainfo.xml"
+          if [ -f release/latest-linux.yml ]; then grep -q "Continuum-IDE-x86_64.AppImage" release/latest-linux.yml; fi
+
+      - name: Verify the Windows installer is Continuum's
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l release
+          test -f release/Continuum-IDE-Setup-x64.exe
+          if [ -f release/latest.yml ]; then grep -q "Continuum-IDE-Setup-x64.exe" release/latest.yml; fi
+
+      - name: Upload installers
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: continuum-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.exe
+            release/*.blockmap
+            release/latest*.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Download installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: continuum-*
+          path: dist
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || contains(github.ref_name, '-') }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          tag="v${version}"
+          flags=(--title "Continuum IDE ${version}" --notes-file .github/continuum-release-notes.md)
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then flags+=(--target "${{ github.sha }}"); fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* "${flags[@]}"
+          fi

@@ -1,0 +1,110 @@
+name: Continuum CI
+
+# Continuum IDE's own checks on GitHub-hosted runners. Upstream T3 Code's ci.yml
+# targets paid Blacksmith runners and is disabled in this fork's Actions settings.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "continuum/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: continuum-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint and typecheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Vite+ and dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Lint
+        run: vp run lint
+
+      - name: Typecheck
+        run: vp run typecheck
+
+  test:
+    name: Test ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: contracts, shared, client-runtime
+            command: vp run --filter @t3tools/contracts --filter @t3tools/shared --filter @t3tools/client-runtime test
+          - name: desktop
+            command: vp run --filter @t3tools/desktop test
+          - name: server
+            command: vp run --filter t3 test
+          - name: web
+            command: vp run --filter @t3tools/web test
+            browsers: true
+          - name: scripts
+            command: vp run --filter @t3tools/scripts test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Vite+ and dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Install native build libraries
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+
+      - name: Install Electron runtime
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Install Playwright Chromium
+        if: matrix.browsers
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+
+      - name: Test
+        run: ${{ matrix.command }}
+
+  desktop-build:
+    name: Linux desktop package (smoke)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Vite+ and dependencies
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+
+      - name: Install Electron runtime
+        run: vp run --filter @t3tools/desktop ensure:electron
+
+      - name: Build AppImage and .deb
+        run: vp run dist:desktop:artifact --platform linux --target AppImage --arch x64 --verbose
+
+      - name: Check the package identity
+        run: |
+          set -euo pipefail
+          ls -l release
+          test -f release/Continuum-IDE-x86_64.AppImage
+          test -f release/Continuum-IDE-amd64.deb
+          dpkg-deb --field release/Continuum-IDE-amd64.deb Package Version Maintainer
+          test "$(dpkg-deb --field release/Continuum-IDE-amd64.deb Package)" = "continuum-ide"
