@@ -208,9 +208,6 @@ export function HomeScreen(props: HomeScreenProps) {
   const queuedThreadKeys = useQueuedThreadKeys();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const homeScrollGesture = useNativeGesture();
-  // Only iPad trackpad pans need rows to swipe while the list scrolls; on Android touch it lets
-  // a diagonal swipe scroll the list, which the scroll gate then turns into a closed row.
-  const rowSwipeScrollGesture = Platform.OS === "ios" ? homeScrollGesture : undefined;
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
   const emptyTopInset = useWorkspaceListEmptyTopInset();
@@ -487,7 +484,7 @@ export function HomeScreen(props: HomeScreenProps) {
           fullSwipeWidth={fullSwipeWidth}
           onSwipeableClose={handleSwipeableClose}
           onSwipeableWillOpen={handleSwipeableWillOpen}
-          simultaneousSwipeGesture={rowSwipeScrollGesture}
+          simultaneousSwipeGesture={homeScrollGesture}
           activationKey={item.key}
         />
       );
@@ -588,7 +585,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onMoveThread={handleMoveThread}
         onSwipeableClose={handleSwipeableClose}
         onSwipeableWillOpen={handleSwipeableWillOpen}
-        simultaneousSwipeGesture={rowSwipeScrollGesture}
+        simultaneousSwipeGesture={homeScrollGesture}
         activationKey={item.key}
       />
     );
