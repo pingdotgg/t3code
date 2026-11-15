@@ -287,7 +287,6 @@ it.each([
   },
 );
 
-// The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
 it("distinguishes text edits from caret moves in change notifications", async () => {
   const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
   await using screen = await mountEditor("", true, [], onChange);
@@ -304,6 +303,7 @@ it("distinguishes text edits from caret moves in change notifications", async ()
   expect(onChange.mock.lastCall?.[5]).toBe(false);
 });
 
+// The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
 it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
   await using screen = await mountEditor("first\nsecond");
