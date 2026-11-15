@@ -49,6 +49,7 @@ import {
   verifyStashedAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { remainingComposerAttachmentSlots } from "./composerThreadImport";
+import { composerImageDedupKey } from "./composerAttachmentFiles";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { registerCommands } from "../../shortcuts/dispatcher";
@@ -387,28 +388,20 @@ export function useComposerStash(input: {
     if (entry.attachments.length > 0) {
       const attachmentDraft = readAttachmentDraft();
       const existingIds = new Set(attachmentDraft.images.map((image) => image.id));
-      // The draft store also dedupes by mimeType+sizeBytes+name, so filter
-      // on the same key here. Counting a duplicate against capacity would
-      // burn a slot the store then refuses to fill, pushing a genuinely
-      // unique image into the overflow list for nothing.
-      const existingDedupKeys = new Set(
-        attachmentDraft.images.map(
-          (image) => `${image.mimeType}\0${image.sizeBytes}\0${image.name}`,
-        ),
-      );
+      // Filter on the draft store's dedupe key here. Counting a duplicate
+      // against capacity would burn a slot the store then refuses to fill,
+      // pushing a genuinely unique image into the overflow list for nothing.
+      const existingDedupKeys = new Set(attachmentDraft.images.map(composerImageDedupKey));
       const capacity = remainingComposerAttachmentSlots(
         attachmentDraft.images.length + attachmentDraft.files.length + restoredFileCount,
         pendingThreadImportsRef.current.get(composerTargetKey(composerDraftTarget)) ?? 0,
       );
-      const pending = entry.attachments.filter(
-        (attachment) =>
-          !existingIds.has(attachment.id) &&
-          !existingDedupKeys.has(
-            `${attachment.mimeType}\0${attachment.sizeBytes}\0${attachment.name}`,
-          ),
+      const pending = hydrateImagesFromPersisted(entry.attachments).filter(
+        (image) =>
+          !existingIds.has(image.id) && !existingDedupKeys.has(composerImageDedupKey(image)),
       );
-      unrestoredImageNames = pending.slice(capacity).map((attachment) => attachment.name);
-      const restoredImages = hydrateImagesFromPersisted(pending.slice(0, capacity));
+      unrestoredImageNames = pending.slice(capacity).map((image) => image.name);
+      const restoredImages = pending.slice(0, capacity);
       if (restoredImages.length > 0) {
         addComposerDraftImages(composerDraftTarget, restoredImages);
       }
