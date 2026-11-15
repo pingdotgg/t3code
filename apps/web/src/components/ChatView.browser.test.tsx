@@ -480,8 +480,14 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
   const parent = threadWithHistory("focus-parent", 1);
-  const side = { ...threadWithHistory("focus-side", 1), sideChatOf: parent.id };
-  const otherSide = { ...threadWithHistory("focus-other-side", 1), sideChatOf: parent.id };
+  // The shell loaded by the file's first test stays; a family read serves side chats added later.
+  const sideChat = (name: string) => ({
+    ...threadWithHistory(name, 1),
+    sideChatOf: parent.id,
+    olderSettled: true as const,
+  });
+  const side = sideChat("focus-side");
+  const otherSide = sideChat("focus-other-side");
   await page.viewport(1400, 900);
   using _environment = installFakeEnvironment([parent, side, otherSide]);
   __setClientSettingsForTests({
