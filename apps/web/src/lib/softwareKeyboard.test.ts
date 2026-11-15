@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createSoftwareKeyboardStore } from "./softwareKeyboard";
+import {
+  createSoftwareKeyboardStore,
+  measureKeyboardViewport,
+  pinShellToKeyboardViewport,
+} from "./softwareKeyboard";
 
 function fixture(options: { native?: boolean; overlay?: boolean; desktop?: boolean } = {}) {
   const viewport = Object.assign(new EventTarget(), { width: 390, height: 844, scale: 1 });
@@ -132,5 +136,81 @@ describe("software keyboard detection", () => {
     expect(store.getSnapshot()).toBe(false);
     expect(listener).not.toHaveBeenCalled();
     unsubscribe();
+  });
+});
+
+describe("keyboard viewport measurement", () => {
+  // Measured on an iPad Pro 13-inch in portrait, where innerHeight follows the keyboard.
+  it("measures the visible area Safari panned to under a docked keyboard", () => {
+    expect(measureKeyboardViewport(1244, { height: 841, offsetTop: 403, scale: 1 })).toEqual({
+      height: 841,
+      offsetTop: 403,
+    });
+  });
+
+  it("leaves the layout alone without a keyboard or with only the shortcut bar", () => {
+    expect(measureKeyboardViewport(1244, { height: 1244, offsetTop: 0, scale: 1 })).toBeNull();
+    expect(measureKeyboardViewport(1244, { height: 1176, offsetTop: 0, scale: 1 })).toBeNull();
+  });
+
+  it("leaves a keyboard that already resized the layout viewport to the browser", () => {
+    expect(measureKeyboardViewport(444, { height: 444, offsetTop: 0, scale: 1 })).toBeNull();
+  });
+
+  it("stands down while pinch-zoomed", () => {
+    expect(measureKeyboardViewport(1244, { height: 400, offsetTop: 300, scale: 2 })).toBeNull();
+  });
+});
+
+describe("pinning the shell to the keyboard viewport", () => {
+  function pinFixture(desktop = false) {
+    const viewport = Object.assign(new EventTarget(), { height: 1244, offsetTop: 0, scale: 1 });
+    const properties = new Map<string, string>();
+    const setProperty = vi.fn((key: string, value: string) => properties.set(key, value));
+    const root = {
+      clientHeight: 1244,
+      dataset: {} as DOMStringMap,
+      style: { setProperty, removeProperty: (key: string) => properties.delete(key) },
+    };
+    const stop = pinShellToKeyboardViewport(
+      { visualViewport: viewport, document: { documentElement: root } } as unknown as Window,
+      desktop,
+    );
+    const move = (event: "resize" | "scroll", height: number, offsetTop: number) => {
+      Object.assign(viewport, { height, offsetTop });
+      viewport.dispatchEvent(new Event(event));
+    };
+    return { root, properties, setProperty, stop, move };
+  }
+
+  it("follows the keyboard and Safari's pan, then restores the layout when it closes", () => {
+    const { root, properties, setProperty, stop, move } = pinFixture();
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+
+    move("resize", 841, 0);
+    move("scroll", 841, 403);
+    expect(root.dataset.keyboardViewport).toBe("");
+    expect(Object.fromEntries(properties)).toEqual({
+      "--keyboard-viewport-height": "841px",
+      "--keyboard-viewport-top": "403px",
+    });
+    const writes = setProperty.mock.calls.length;
+    move("scroll", 841, 403);
+    expect(setProperty.mock.calls.length).toBe(writes);
+
+    move("resize", 1244, 0);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+
+    move("resize", 841, 403);
+    stop();
+    expect(root.dataset.keyboardViewport).toBeUndefined();
+    expect(properties.size).toBe(0);
+  });
+
+  it("never pins on desktop", () => {
+    const { root, move } = pinFixture(true);
+    move("resize", 841, 403);
+    expect(root.dataset.keyboardViewport).toBeUndefined();
   });
 });
