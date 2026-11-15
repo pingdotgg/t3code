@@ -22,9 +22,11 @@ let mainAppHref: string | null = null;
 let appModalReturnHref: string | null = null;
 let appModalReturnHistoryIndex: number | null = null;
 let appModalReturnThreadTarget: ThreadRouteTarget | null = null;
+let initialHistoryIndex = 0;
 
 /** Remembers where Settings, Usage, and the utility pages lead back to. */
 export function startMainAppLocationTracking(router: AnyRouter): () => void {
+  initialHistoryIndex = router.state.location.state.__TSR_index;
   const record = () => {
     const { pathname } = router.state.location;
     if (isAppModalPage(pathname) || SHELL_LESS_PATHS.has(pathname)) return;
@@ -60,7 +62,14 @@ export function useCloseAppModal() {
     const href = appModalReturnHref ?? mainAppHref ?? "/";
     const returnIndex = appModalReturnHistoryIndex ?? 0;
     const steps = router.state.location.state.__TSR_index - returnIndex;
-    if (returnIndex === 0 || steps <= 0) return navigate({ href });
+    if (
+      !Number.isSafeInteger(initialHistoryIndex) ||
+      returnIndex <= initialHistoryIndex ||
+      !Number.isSafeInteger(steps) ||
+      steps <= 0
+    ) {
+      return navigate({ href, replace: true });
+    }
     // Go back to the entry before the return page and push it again: only a push drops the
     // modal's entries from forward history, and reusing the old entry avoids a duplicate stop.
     const unsubscribe = router.history.subscribe(() => {
