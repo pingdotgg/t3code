@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The Codex probe and wake branch (2026-11-15, merged with `main` at 958e748) passes 43: `codex model catalog --check` and `codex probe conformance` added; the canary is clean. The branch that seals hand runs (`t3/seal-cargo-hand-runs`, 2026-11-15) adds `sealed-run`: CHECKCOUNT. The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The Codex probe and wake branch (2026-11-15, merged with `main` at 958e748) passes 43: `codex model catalog --check` and `codex probe conformance` added; the canary is clean. The branch that seals hand runs (`t3/seal-cargo-hand-runs`, 2026-11-15) adds `sealed-run`: 44 pass, none skipped, the canary clean (`check exit: 0`). The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
