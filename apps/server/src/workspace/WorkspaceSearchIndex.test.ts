@@ -4,16 +4,24 @@ import {
   type GrepCursor,
   type GrepOptions,
   type GrepResult,
+  type WatchEvent,
 } from "@ff-labs/fff-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspaceSearchIndex from "./WorkspaceSearchIndex.ts";
+
+const testLayer = VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer));
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -39,7 +47,7 @@ it.effect("filters image searches before applying the result limit", () =>
         ...Array.from({ length: 200 }, (_, index) => fileItem(`src/file-${index}.ts`)),
         fileItem("public/icon.svg"),
       ];
-      const fileSearch = vi.fn(() => ({
+      const fileSearch = vi.fn(async () => ({
         ok: true as const,
         value: {
           items,
@@ -51,7 +59,12 @@ it.effect("filters image searches before applying the result limit", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        fileSearch,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
+        watch: () => ({ ok: true as const, value: () => undefined }),
+        fileSearchAsync: fileSearch,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -64,7 +77,84 @@ it.effect("filters image searches before applying the result limit", () =>
       expect(fileSearch).toHaveBeenCalledTimes(2);
       expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("fetches past a first page of Git-ignored results", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-ignored-" });
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+      yield* fs.writeFileString(path.join(cwd, ".git", "info", "exclude"), "hidden/\n");
+      yield* fs.makeDirectory(path.join(cwd, "hidden"));
+      yield* fs.writeFileString(path.join(cwd, "hidden", "a.ts"), "");
+
+      const items = [
+        fileItem("hidden/a.ts"),
+        fileItem("hidden/b.ts"),
+        fileItem("hidden/c.ts"),
+        fileItem("src/a.ts"),
+      ];
+      const fileSearch = vi.fn(async (_query: string, options?: { pageSize?: number }) => ({
+        ok: true as const,
+        value: {
+          items: items.slice(0, options?.pageSize),
+          scores: [],
+          totalMatched: items.length,
+          totalFiles: items.length,
+        },
+      }));
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
+        watch: () => ({ ok: true as const, value: () => undefined }),
+        fileSearchAsync: fileSearch,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const result = yield* searchIndex.search("a", 1, "file", false);
+
+      expect(result).toEqual({ entries: [{ kind: "file", path: "src/a.ts" }], truncated: false });
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+// A backslash is a file name character on Linux and macOS, so only Windows may treat it as a separator.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "keeps a backslash in a POSIX folder name as part of the search result path",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const items = [fileItem("dir\\one/report.txt")];
+        const finder = {
+          destroy: vi.fn(),
+          waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+          getScanProgressAsync: async () => ({
+            ok: true as const,
+            value: { isScanning: false },
+          }),
+          watch: () => ({ ok: true as const, value: () => undefined }),
+          fileSearchAsync: vi.fn(async () => ({
+            ok: true as const,
+            value: { items, scores: [], totalMatched: 1, totalFiles: 1 },
+          })),
+        } as unknown as FileFinder;
+        vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+        const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
+        const result = yield* searchIndex.search("report", 50, "file");
+
+        expect(result.entries).toEqual([{ kind: "file", path: "dir\\one/report.txt" }]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
 );
 
 it.effect("continues whole-word searches after a filtered grep page", () =>
@@ -103,7 +193,7 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
         filteredFileCount: 1,
         nextCursor: cursor,
       });
-      const grep = vi.fn((_query: string, options?: GrepOptions) =>
+      const grep = vi.fn(async (_query: string, options?: GrepOptions) =>
         options?.cursor
           ? { ok: true as const, value: grepResult("needle", [[0, 6]], null) }
           : {
@@ -114,7 +204,12 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       const finder = {
         destroy: vi.fn(),
         waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        grep,
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false },
+        }),
+        watch: () => ({ ok: true as const, value: () => undefined }),
+        grepAsync: grep,
       } as unknown as FileFinder;
       vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
 
@@ -141,7 +236,250 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
       expect(grep).toHaveBeenCalledTimes(2);
       expect(grep.mock.calls[1]?.[1]?.cursor).toBe(nextCursor);
     }),
-  ),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+function fakeSymlinkFinder(
+  directories: ReadonlyArray<string>,
+  options: {
+    readonly indexed?: ReadonlyArray<{
+      readonly path: string;
+      readonly kind: "file" | "directory";
+    }>;
+    readonly watchFailures?: number;
+  } = {},
+) {
+  const watchers: Array<(events: ReadonlyArray<WatchEvent>) => void> = [];
+  let watchFailures = options.watchFailures ?? 0;
+  // fff's pageIndex is an offset into the results, not a page number.
+  const directorySearch = vi.fn(
+    async (_query: string, searchOptions?: { pageIndex?: number; pageSize?: number }) => {
+      const offset = searchOptions?.pageIndex ?? 0;
+      const items = directories.slice(offset, offset + (searchOptions?.pageSize ?? 100));
+      return {
+        ok: true as const,
+        value: {
+          items: items.map((relativePath) => ({ relativePath })),
+          totalMatched: directories.length,
+        },
+      };
+    },
+  );
+  const indexedItems = (options.indexed ?? []).map((entry) => ({
+    type: entry.kind,
+    item: { relativePath: entry.path, fileName: entry.path.split("/").at(-1) },
+  }));
+  const finder = {
+    destroy: vi.fn(),
+    waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    // fff's isScanning waits on the picker lock on the JS thread.
+    isScanning: () => {
+      throw new Error("isScanning must not run on the JS thread");
+    },
+    getScanProgressAsync: async () => ({
+      ok: true as const,
+      value: { isScanning: false },
+    }),
+    watch: (callback: (events: ReadonlyArray<WatchEvent>) => void) => {
+      if (watchFailures > 0) {
+        watchFailures -= 1;
+        throw new Error("File system watcher is not ready");
+      }
+      watchers.push(callback);
+      return { ok: true as const, value: () => undefined };
+    },
+    directorySearchAsync: directorySearch,
+    fileSearchAsync: async () => {
+      const items = indexedItems.flatMap((entry) => (entry.type === "file" ? [entry.item] : []));
+      return { ok: true as const, value: { items, scores: [], totalMatched: items.length } };
+    },
+    mixedSearchAsync: async () => ({
+      ok: true as const,
+      value: { items: indexedItems, totalMatched: indexedItems.length },
+    }),
+  } as unknown as FileFinder;
+  vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+  return {
+    directorySearch,
+    notifyWatchers: (events: ReadonlyArray<WatchEvent>) =>
+      watchers.forEach((watcher) => watcher(events)),
+  };
+}
+
+const listedPaths = (searchIndex: WorkspaceSearchIndex.WorkspaceSearchIndex["Service"]) =>
+  searchIndex.list().pipe(Effect.map((result) => result.entries.map((entry) => entry.path)));
+
+it.effect("reads symlinks again after the watcher reports a change", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-watch-" });
+      const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-outside-" });
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "old-link.ts"));
+      const { directorySearch, notifyWatchers } = fakeSymlinkFinder([]);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const concurrent = yield* Effect.all(
+        Array.from({ length: 8 }, () => listedPaths(searchIndex)),
+        { concurrency: "unbounded" },
+      );
+      yield* fileSystem.remove(path.join(cwd, "old-link.ts"));
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "new-link.ts"));
+      const beforeNotice = yield* listedPaths(searchIndex);
+      // Editing a file cannot move a link, so it does not cost a rescan.
+      notifyWatchers([{ kind: "modified", path: path.join(cwd, "a.ts") }]);
+      const afterEdit = yield* listedPaths(searchIndex);
+      notifyWatchers([{ kind: "created", path: path.join(cwd, "new-link.ts") }]);
+      const afterNotice = yield* listedPaths(searchIndex);
+      // fff reports a link replaced in place as modified.
+      yield* fileSystem.remove(path.join(cwd, "new-link.ts"));
+      yield* fileSystem.symlink(outside, path.join(cwd, "new-link.ts"));
+      notifyWatchers([{ kind: "modified", path: path.join(cwd, "new-link.ts") }]);
+      const afterReplace = yield* listedPaths(searchIndex);
+
+      expect(concurrent).toEqual(Array.from({ length: 8 }, () => ["old-link.ts"]));
+      expect(beforeNotice).toEqual(["old-link.ts"]);
+      expect(afterEdit).toEqual(["old-link.ts"]);
+      expect(afterNotice).toEqual(["new-link.ts"]);
+      expect(afterReplace).toEqual([]);
+      expect(directorySearch).toHaveBeenCalledTimes(3);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("answers from the last symlink scan while a slow rescan runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-stale-" });
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "old-link.ts"));
+      const { notifyWatchers } = fakeSymlinkFinder([]);
+      // Holding git's ignore check open keeps the rescan from finishing.
+      const gate = yield* Deferred.make<void>();
+      let holdIgnoreChecks = false;
+      const vcsProcess = yield* VcsProcess.VcsProcess;
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd).pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          ...vcsProcess,
+          run: (input) =>
+            holdIgnoreChecks && input.operation === "WorkspaceSearchIndex.listGitIgnored"
+              ? Deferred.await(gate).pipe(Effect.andThen(vcsProcess.run(input)))
+              : vcsProcess.run(input),
+        }),
+      );
+      expect(yield* listedPaths(searchIndex)).toEqual(["old-link.ts"]);
+
+      holdIgnoreChecks = true;
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "new-link.ts"));
+      notifyWatchers([{ kind: "created", path: path.join(cwd, "new-link.ts") }]);
+      const duringRescan = yield* Effect.forkChild(listedPaths(searchIndex));
+      yield* TestClock.adjust("1 second");
+      expect(yield* Fiber.join(duringRescan)).toEqual(["old-link.ts"]);
+
+      yield* Deferred.succeed(gate, undefined);
+      expect(yield* listedPaths(searchIndex)).toEqual(["new-link.ts", "old-link.ts"]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("keeps symlinks once the watcher subscribes after starting late", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-watch-" });
+      yield* fileSystem.writeFileString(path.join(cwd, "a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "link.ts"));
+      const { directorySearch } = fakeSymlinkFinder([], { watchFailures: 2 });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+      const scansAfterRound: number[] = [];
+      for (let round = 0; round < 5; round += 1) {
+        expect(yield* listedPaths(searchIndex)).toEqual(["link.ts"]);
+        expect(yield* listedPaths(searchIndex)).toEqual(["link.ts"]);
+        scansAfterRound.push(directorySearch.mock.calls.length);
+        yield* TestClock.adjust("1 minute");
+      }
+
+      // An unwatched scan serves reads only briefly; the third has a watcher and is kept.
+      expect(scansAfterRound).toEqual([1, 2, 3, 3, 3]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect(
+  "lists a symlink the watcher indexed once, with the link's kind, and drops rejected ones",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-dupe-" });
+        const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-outside-" });
+        yield* fileSystem.makeDirectory(path.join(cwd, "src"));
+        yield* fileSystem.symlink("src", path.join(cwd, "src-link"));
+        // A link the scan rejects stays out even when the watcher indexed it.
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+        fakeSymlinkFinder([], {
+          indexed: [
+            { path: "outside-link", kind: "file" },
+            { path: "src-link", kind: "file" },
+            { path: "link-file.ts", kind: "file" },
+          ],
+        });
+
+        const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+        const searched = yield* searchIndex.search("link", 10);
+        const files = yield* searchIndex.search("link", 1, "file");
+        const listed = yield* searchIndex.list();
+
+        expect(searched.entries).toEqual([
+          { path: "src-link", kind: "directory" },
+          { path: "link-file.ts", kind: "file" },
+        ]);
+        // The dropped link does not take the only slot.
+        expect(files).toEqual({
+          entries: [{ path: "link-file.ts", kind: "file" }],
+          truncated: false,
+        });
+        expect(listed.entries).toEqual([
+          { path: "link-file.ts", kind: "file" },
+          { path: "src-link", kind: "directory" },
+        ]);
+      }),
+    ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("finds symlinks in folders past the first page of the index", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-symlink-pages-" });
+      yield* fileSystem.makeDirectory(path.join(cwd, "late"));
+      yield* fileSystem.writeFileString(path.join(cwd, "late/a.ts"), "");
+      yield* fileSystem.symlink("a.ts", path.join(cwd, "late/link.ts"));
+      // Folders fff lists but that are gone by the time they are read are skipped.
+      const firstPage = Array.from({ length: 1_000 }, (_, index) => `missing-${index}`);
+      const { directorySearch } = fakeSymlinkFinder([...firstPage, "late"]);
+
+      const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+
+      expect(yield* listedPaths(searchIndex)).toEqual(["late", "late/link.ts"]);
+      expect(directorySearch.mock.calls.map(([, options]) => options?.pageIndex)).toEqual([
+        0, 1_000,
+      ]);
+    }),
+  ).pipe(Effect.provide(testLayer)),
 );
 
 // fff reads HOME on Linux and macOS but the user profile on Windows, so a temp HOME cannot stand in there.
@@ -172,5 +510,5 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
         expect(result).toBe("WorkspaceSearchIndexCreateFailed");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(testLayer)),
 );

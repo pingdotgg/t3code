@@ -36,9 +36,22 @@ describe("findReusableProjectScriptTerminal", () => {
       runningTerminalIds: ["term-1"],
       expected: null,
     },
-  ])("$name", ({ panelTerminalIds, expected, ...input }) => {
+    {
+      name: "skips an idle terminal whose close is still pending",
+      drawerTerminalIds: ["term-1"],
+      activeTerminalId: "term-1",
+      panelTerminalIds: [],
+      runningTerminalIds: [],
+      closingTerminalIds: ["term-1"],
+      expected: null,
+    },
+  ])("$name", ({ panelTerminalIds, closingTerminalIds = [], expected, ...input }) => {
     expect(
-      findReusableProjectScriptTerminal({ ...input, panelTerminalIds: new Set(panelTerminalIds) }),
+      findReusableProjectScriptTerminal({
+        ...input,
+        panelTerminalIds: new Set(panelTerminalIds),
+        closingTerminalIds,
+      }),
     ).toBe(expected);
   });
 });

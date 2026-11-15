@@ -34,6 +34,7 @@ import {
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
   type ScopedThreadRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 
@@ -1704,6 +1705,7 @@ describe("composerDraftStore modelSelection", () => {
     const remoteModel = DEFAULT_MODEL_BY_PROVIDER[CLAUDE_AGENT_DRIVER]!;
     h.update({ modelSelection: modelSelection(CLAUDE_AGENT_DRIVER, remoteModel) });
     const effective = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: draftFor(threadId, TEST_ENVIRONMENT_ID),
       providers: [
         {
@@ -1744,6 +1746,7 @@ describe("composerDraftStore modelSelection", () => {
     const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId);
     h.update({ modelSelection: primary });
     const fallback = deriveEffectiveComposerModelState({
+      threadStarted: false,
       draft: before,
       providers: [],
       selectedProvider: CODEX_DRIVER,
@@ -1850,6 +1853,115 @@ describe("composerDraftStore modelSelection", () => {
     ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "xhigh" }));
   });
 
+  describe("seeded draft model on a started thread", () => {
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId: CODEX_INSTANCE,
+        driver: CODEX_DRIVER,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: ["gpt-5.4", "gpt-5.3-codex"].map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const threadSelection = modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+      reasoningEffort: "low",
+    });
+    const effective = (threadStarted: boolean, baseSelection = threadSelection) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: useComposerDraftStore.getState().getComposerDraft(threadRef),
+        threadStarted,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        selectedInstanceId: CODEX_INSTANCE,
+        threadModelSelection: baseSelection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
+      return {
+        model: state.selectedModel,
+        options: state.modelOptions?.[CODEX_INSTANCE] ?? [],
+      };
+    };
+
+    it("applies the seed only until the thread starts, then only an explicit pick wins", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+      );
+
+      expect(effective(false)).toEqual({
+        model: "gpt-5.4",
+        options: toSelections({ reasoningEffort: "high" }),
+      });
+      expect(effective(true)).toEqual({
+        model: "gpt-5.3-codex",
+        options: toSelections({ reasoningEffort: "low" }),
+      });
+
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+        { explicit: true },
+      );
+      expect(effective(true)).toEqual({
+        model: "gpt-5.4",
+        options: toSelections({ reasoningEffort: "high" }),
+      });
+    });
+
+    it.each([false, true])(
+      "an explicit optionless pick overrides base traits when threadStarted=%s",
+      (threadStarted) => {
+        const store = useComposerDraftStore.getState();
+        store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+        expect(effective(threadStarted)).toEqual({ model: "gpt-5.4", options: [] });
+      },
+    );
+
+    it("restores saved traits when the base model uses an alias", () => {
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+      expect(
+        effective(true, modelSelection(CODEX_DRIVER, "5.4", { reasoningEffort: "low" })),
+      ).toEqual({ model: "gpt-5.4", options: toSelections({ reasoningEffort: "low" }) });
+    });
+
+    it("keeps the thread's model when traits change over a seed", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+      store.setProviderModelOptions(
+        threadRef,
+        CODEX_DRIVER,
+        toSelections({ reasoningEffort: "high" }),
+        { instanceId: CODEX_INSTANCE, model: "gpt-5.3-codex" },
+      );
+
+      expect(effective(true)).toEqual({
+        model: "gpt-5.3-codex",
+        options: toSelections({ reasoningEffort: "high" }),
+      });
+    });
+  });
+
   it("stores provider option changes on a selected custom instance", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1932,6 +2044,38 @@ describe("composerDraftStore per-model sticky options", () => {
         "gpt-5.4": toSelections({ reasoningEffort: "high" }),
       },
     );
+  });
+
+  it("keeps the sticky model's own traits when traits change on another shown model", () => {
+    const store = useComposerDraftStore.getState();
+    store.setStickyModelSelection(
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", { reasoningEffort: "xhigh" }),
+    );
+
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "low" }),
+      { instanceId: CODEX_INSTANCE, model: "gpt-5.4", persistSticky: true },
+    );
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", { reasoningEffort: "xhigh" }),
+    );
+    expect(
+      useComposerDraftStore.getState().stickyOptionsByModelByProvider[CODEX_INSTANCE]?.["gpt-5.4"],
+    ).toEqual(toSelections({ reasoningEffort: "low" }));
+
+    store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
+      instanceId: CODEX_INSTANCE,
+      model: "gpt-5.4",
+      persistSticky: true,
+    });
+
+    const state = useComposerDraftStore.getState();
+    expect(state.stickyModelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", { reasoningEffort: "xhigh" }),
+    );
+    expect(state.stickyOptionsByModelByProvider[CODEX_INSTANCE]?.["gpt-5.4"]).toBeUndefined();
   });
 
   it("seeds per-model memory from a persisted sticky selection on upgrade", () => {

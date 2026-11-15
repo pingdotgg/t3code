@@ -17,6 +17,7 @@ import {
   repositoryUrlFromPagePath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
+import { parseUrl } from "@t3tools/shared/url";
 import { icon } from "./icon.ts";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
@@ -115,7 +116,7 @@ export const definition = defineSourceControl({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: (reference) => {
-    const url = URL.parse(reference);
+    const url = parseUrl(reference);
     return (
       url !== null &&
       isBitbucketHost(url.hostname) &&

@@ -652,7 +652,7 @@ export function scorePullRequestMatch(entry: PullRequestListEntry, query: string
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return 0;
   const number = needle.replace(/^#/u, "");
-  if (/^\d+$/u.test(number)) return String(entry.number) === number ? 100 : 0;
+  if (String(entry.number) === number) return 100;
 
   const title = entry.title.toLowerCase();
   const terms = needle.split(/\s+/u).filter((term) => term.length > 0);

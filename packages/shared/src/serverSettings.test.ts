@@ -377,6 +377,23 @@ describe("serverSettings helpers", () => {
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
   });
 
+  it("falls back from a removed instance whose id matches an inherited object key", () => {
+    for (const id of ["constructor", "toString", "valueOf"]) {
+      const speechPostProcessingModelSelection = createModelSelection(
+        ProviderInstanceId.make(id),
+        "gpt-5.4-mini",
+      );
+      const settings = { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingModelSelection };
+
+      expect(isModelSelectionProviderEnabled(settings, speechPostProcessingModelSelection)).toBe(
+        false,
+      );
+      expect(resolveSpeechPostProcessingModelSelection(settings)).toBe(
+        settings.textGenerationModelSelection,
+      );
+    }
+  });
+
   it("falls back from a writer provider that cannot generate application text", () => {
     const instanceId = ProviderInstanceId.make("acp_writer");
     const sourceControlWriterModelSelection = createModelSelection(instanceId, "default");

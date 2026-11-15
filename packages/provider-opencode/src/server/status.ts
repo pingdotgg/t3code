@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   type ModelCapabilities,
   type ServerProviderModel,
@@ -25,6 +26,7 @@ import {
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import type { ProbedOpenCode } from "./versionProbe.ts";
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
+import { ServiceUnavailableError } from "@opencode/protocol/errors";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 
 const OPENCODE_PRESENTATION = {
@@ -193,7 +195,7 @@ function inferDefaultVariant(
   if (providerID === "anthropic" || providerID.startsWith("google")) {
     return variants.includes("high") ? "high" : undefined;
   }
-  if (providerID === "openai" || providerID === "opencode") {
+  if (providerID === "openai" || providerID === "opencode" || providerID === "opencode-go") {
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
@@ -497,6 +499,15 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
     .toSorted()
     .join("\n");
 
+// A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
+const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
+
+const isServiceUnavailable = Schema.is(ServiceUnavailableError);
+const isActivatingPlugins = (error: unknown): boolean =>
+  OpenCodeRuntime.isOpenCodeRuntimeError(error)
+    ? isActivatingPlugins(error.cause)
+    : isServiceUnavailable(error) && error.service === "plugin";
+
 /** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 const settleOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -517,10 +528,11 @@ const settleOpenCode2Catalog = <E>(
     );
   });
 
-const OPENCODE_2_CATALOG_SETTLE_TIMEOUT = "5 seconds";
+const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
 
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
@@ -534,11 +546,22 @@ export const makeOpenCode2ModelLoader = <E>(
         ),
       );
       // The first read can include a cold server start, so only settling shares the budget.
+      // Each retry borrows the managed server, so retries well inside its idle TTL keep it alive.
       return tracked.pipe(
+        Effect.retry({ while: isActivatingPlugins, schedule: Schedule.spaced("1 second") }),
+        Effect.timeoutOption(PLUGIN_ACTIVATION_DEADLINE),
         Effect.flatMap((first) =>
-          settleOpenCode2Catalog(tracked, first).pipe(
-            Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
-          ),
+          Option.isNone(first)
+            ? Effect.succeedNone
+            : settleOpenCode2Catalog(tracked, first.value).pipe(
+                Effect.timeoutOption(
+                  resolveProviderProbeTimeoutMs(
+                    "opencode",
+                    OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                    environment,
+                  ),
+                ),
+              ),
         ),
         Effect.catch((error) =>
           latest.length > 0 ? Effect.succeedSome(latest) : Effect.fail(error),
@@ -556,9 +579,12 @@ export const makeOpenCode2ModelLoader = <E>(
 /** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
 export const readSettledOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  environment?: NodeJS.ProcessEnv,
 ) =>
   settleOpenCode2Catalog(list).pipe(
-    Effect.timeoutOption(OPENCODE_2_CATALOG_SETTLE_TIMEOUT),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS, environment),
+    ),
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 
@@ -587,12 +613,15 @@ export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpen
     scanned: Effect.Effect<void>,
     loaded: Effect.Effect<boolean>,
     settled: Effect.Effect<void> = Effect.void,
+    environment?: NodeJS.ProcessEnv,
   ) {
     const wasLoaded = yield* loaded;
     yield* settled;
     const first = yield* read;
     if (wasLoaded && first.commands.length > 0) return first;
-    yield* scanned.pipe(Effect.timeoutOption("10 seconds"));
+    yield* scanned.pipe(
+      Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, environment)),
+    );
     return yield* read;
   },
 );
@@ -749,6 +778,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
+  environment?: NodeJS.ProcessEnv,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -865,6 +895,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           ...(settingsSecretLiteral(openCodeSettings.serverPassword)
             ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
+          ...(environment !== undefined ? { environment } : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)
     : serverOwner.withServer(loadInventory);

@@ -19,6 +19,10 @@ import { ChevronDownIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
+  title: cn(
+    THREAD_DETAILS_PANEL_ROW_CLASS,
+    "h-auto min-h-8 items-start pt-1.5 pb-0 disabled:opacity-100 sm:h-auto [&>svg]:mt-px",
+  ),
   select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
   primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
   secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
