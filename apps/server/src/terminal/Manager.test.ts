@@ -949,47 +949,67 @@ it.layer(
       }),
   );
 
-  it.effect.each([
-    {
-      label: "exec root",
-      command: `exec node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
-      keep: true,
-      atPrompt: false,
-    },
-    {
-      label: "foreground Bash builtin",
-      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
-      keep: true,
-      atPrompt: false,
-    },
-    {
-      label: "nested interactive shell",
-      command: `PS1='SETTLE''READY> ' bash --norc --noprofile`,
-      keep: true,
-      atPrompt: false,
-    },
-    {
-      label: "foreground job control",
-      command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
-      keep: true,
-      atPrompt: false,
-    },
-    {
-      label: "background job control",
-      command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()' < hold &`,
-      keep: true,
-      atPrompt: true,
-    },
-    {
-      label: "async prompt helper control",
-      command: `PROMPT_COMMAND="PROMPT_COMMAND=; bash -c 'exec 3<>hold; printf SETTLE%s\\\\n READY; read -r -u 3 value' &"`,
-      keep: false,
-      atPrompt: true,
-    },
-  ])(
-    "settlement on a real Bash PTY closes only idle shells: $label",
-    ({ command, keep, atPrompt }) =>
+  // A pid/ppid/name table read from the live host, shaped like the native sidecar's.
+  const nativeShapedProcessTable = Effect.gen(function* () {
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const { stdout } = yield* runner
+      .run({ command: "ps", args: ["-eo", "pid=,ppid=,comm="] })
+      .pipe(Effect.orDie);
+    return stdout.split("\n").flatMap((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      return match ? [{ pid: Number(match[1]), ppid: Number(match[2]), name: match[3] ?? "" }] : [];
+    });
+  });
+
+  it.effect.each(
+    [
+      {
+        label: "exec root",
+        command: `exec node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
+        keep: true,
+        atPrompt: false,
+      },
+      {
+        label: "foreground Bash builtin",
+        command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
+        keep: true,
+        atPrompt: false,
+      },
+      {
+        label: "nested interactive shell",
+        command: `PS1='SETTLE''READY> ' bash --norc --noprofile`,
+        keep: true,
+        atPrompt: false,
+      },
+      {
+        label: "foreground job control",
+        command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
+        keep: true,
+        atPrompt: false,
+      },
+      {
+        label: "background job control",
+        command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()' < hold &`,
+        keep: true,
+        atPrompt: true,
+      },
+      {
+        label: "async prompt helper control",
+        command: `PROMPT_COMMAND="PROMPT_COMMAND=; bash -c 'exec 3<>hold; printf SETTLE%s\\\\n READY; read -r -u 3 value' &"`,
+        keep: false,
+        atPrompt: true,
+      },
+    ].flatMap((testCase) =>
+      (["ps", "native table"] as const).map((source) => ({ ...testCase, source })),
+    ),
+  )(
+    "settlement on a real Bash PTY closes only idle shells: $label ($source)",
+    ({ command, keep, atPrompt, source }, ctx) =>
       Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) !== "linux") {
+          return ctx.skip("Only Linux Bash PTY settlement is measured.");
+        }
+        const runner = yield* ProcessRunner.ProcessRunner;
         const fs = yield* FileSystem.FileSystem;
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "terminal-settlement-" });
         yield* fs.writeFileString(
@@ -1003,6 +1023,13 @@ it.layer(
           env: { ...process.env, HOME: home },
           ptyAdapter: adapter,
           processKillGraceMs: 0,
+          ...(source === "native table"
+            ? {
+                processTable: nativeShapedProcessTable.pipe(
+                  Effect.provideService(ProcessRunner.ProcessRunner, runner),
+                ),
+              }
+            : {}),
         });
         const prompt = yield* Deferred.make<void>();
         const ready = yield* Deferred.make<void>();

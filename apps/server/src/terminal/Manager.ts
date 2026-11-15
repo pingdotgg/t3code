@@ -716,7 +716,7 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
 interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
   readonly commandById: ReadonlyMap<number, string>;
-  // The controlling terminal's foreground process group; only `ps` reports it.
+  // The controlling terminal's foreground process group; `ps` reports it, native tables do not.
   readonly foregroundGroupById?: ReadonlyMap<number, number>;
 }
 
@@ -769,10 +769,17 @@ function processTableSnapshotFromProcesses(
   return { childrenByParent, commandById };
 }
 
+// Field 8 of Linux `/proc/<pid>/stat` is tpgid; comm (field 2) may contain spaces and parentheses.
+function parseProcStatForegroundGroup(stat: string): number | undefined {
+  const tpgid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[5]);
+  return Number.isInteger(tpgid) ? tpgid : undefined;
+}
+
 function deriveSubprocessInspectResult(
   snapshot: TerminalProcessTableSnapshot,
   terminalPid: number,
   shell: string | null,
+  foregroundGroup: number | undefined,
   platform: NodeJS.Platform,
 ): TerminalSubprocessInspectResult {
   const commandName = (pid: number) =>
@@ -786,8 +793,7 @@ function deriveSubprocessInspectResult(
     rootName !== null &&
     rootName !== normalizeChildCommandName(shell, platform);
   // The PTY root leads its process group, so any other foreground group is a job.
-  const foregroundGroup = snapshot.foregroundGroupById?.get(terminalPid) ?? 0;
-  const foregroundJob = foregroundGroup > 0 && foregroundGroup !== terminalPid;
+  const foregroundJob = (foregroundGroup ?? 0) > 0 && foregroundGroup !== terminalPid;
   // Async prompt themes fork childless background shell helpers that are not user commands.
   const userChildPid = children.find(
     (pid) =>
@@ -1837,10 +1843,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             inspector: Result.map(
               snapshot,
               (table): TerminalSubprocessInspector =>
-                (terminalPid, shell) =>
-                  Effect.succeed(
-                    deriveSubprocessInspectResult(table, terminalPid, shell, platform),
-                  ),
+                (terminalPid, shell) => {
+                  const inspect = (foregroundGroup: number | undefined) =>
+                    deriveSubprocessInspectResult(
+                      table,
+                      terminalPid,
+                      shell,
+                      foregroundGroup,
+                      platform,
+                    );
+                  const result = inspect(table.foregroundGroupById?.get(terminalPid));
+                  // A native table leaves out the foreground group, so a shell whose children all
+                  // look like prompt helpers reads it from procfs; other platforms keep the table's answer.
+                  if (
+                    result.hasRunningSubprocess ||
+                    table.foregroundGroupById !== undefined ||
+                    platform !== "linux" ||
+                    !table.childrenByParent.has(terminalPid)
+                  ) {
+                    return Effect.succeed(result);
+                  }
+                  return fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
+                    Effect.map((stat) => {
+                      const foregroundGroup = parseProcStatForegroundGroup(stat);
+                      return foregroundGroup === undefined ? result : inspect(foregroundGroup);
+                    }),
+                    Effect.orElseSucceed(() => result),
+                  );
+                },
             ),
             snapshotSucceeded,
             queryElapsedMs,
