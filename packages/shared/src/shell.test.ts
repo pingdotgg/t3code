@@ -427,6 +427,40 @@ describe("readEnvironmentFromWindowsShell", () => {
     }),
   );
 
+  effectIt.effect("asks PowerShell for UTF-8 output", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+
+      yield* readEnvironmentFromWindowsShell(["PATH"], {}, (...args) =>
+        Effect.sync(() => Option.liftThrowable(execFile)(...args)),
+      );
+      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+      );
+    }),
+  );
+
+  effectIt.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads a non-ASCII value from the real shell",
+    () =>
+      Effect.gen(function* () {
+        const name = "T3CODE_TEST_NON_ASCII_PATH";
+        const value = "C:\\Users\\Jürgen\\Grüße";
+        process.env[name] = value;
+        try {
+          expect(yield* readEnvironmentFromWindowsShell([name])).toEqual({ [name]: value });
+        } finally {
+          delete process.env[name];
+        }
+      }),
+  );
+
   effectIt.effect("omits -NoProfile when loadProfile is enabled", () =>
     Effect.gen(function* () {
       const execFile = vi.fn<

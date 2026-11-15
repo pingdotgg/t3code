@@ -910,6 +910,29 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("asks PowerShell for UTF-8 output on Windows", () =>
+    Effect.gen(function* () {
+      const scripts: Array<string> = [];
+      yield* runShellEnvironment({
+        env: { PATH: "C:\\Windows\\System32" },
+        platform: "win32",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          scripts.push(command.args.at(-1) ?? "");
+          return envOutput({ PATH: "C:\\Working" });
+        },
+      });
+
+      assert.isNotEmpty(scripts);
+      for (const script of scripts) {
+        assert.include(
+          script,
+          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+        );
+      }
+    }),
+  );
+
   it.effect.each([false, true])(
     "leaves Windows preparation incomplete when loadProfile=%s fails",
     (loadProfile) =>
