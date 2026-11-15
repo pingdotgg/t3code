@@ -909,7 +909,7 @@ function SpeechModelBrowser(props: {
                 <InputGroup>
                   <InputGroupInput
                     size="compact"
-                    aria-label={t("voiceModels.searchModels")}
+                    aria-label={t("voiceModels.searchModelsAria")}
                     placeholder={t("voiceModels.searchModels")}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}

@@ -3011,6 +3011,7 @@
     "modelsFor": "{{languages}}的模型",
     "allModels": "全部模型",
     "searchModels": "搜索模型",
+    "searchModelsAria": "搜索转写模型",
     "sortFilterAria": "排序和筛选模型：{{sort}}{{downloadedOnly}}",
     "downloadedOnlySuffix": "，仅已下载",
     "sortBy": "排序方式",

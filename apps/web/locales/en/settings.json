@@ -3031,6 +3031,7 @@
     "modelsFor": "Models for {{languages}}",
     "allModels": "All models",
     "searchModels": "Search models",
+    "searchModelsAria": "Search transcription models",
     "sortFilterAria": "Sort and filter models: {{sort}}{{downloadedOnly}}",
     "downloadedOnlySuffix": ", downloaded only",
     "sortBy": "Sort by",
