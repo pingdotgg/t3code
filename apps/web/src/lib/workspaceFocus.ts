@@ -115,6 +115,58 @@ export function canReturnFocusTo(element: HTMLElement) {
   );
 }
 
+let returnedSurfaceFocus: HTMLElement | null = null;
+
+export function isReturnedSurfaceFocus() {
+  return returnedSurfaceFocus !== null && document.activeElement === returnedSurfaceFocus;
+}
+
+export function holdSurfaceFocusOrigin(host: HTMLElement, initialOrigin: Element | null) {
+  const doc = host.ownerDocument;
+  let origin = initialOrigin instanceof HTMLElement ? initialOrigin : null;
+  // A pane's tab strip is portalled outside its content slot.
+  const contains = (target: EventTarget | null) =>
+    target instanceof Element &&
+    (host.contains(target) ||
+      (host.dataset.layoutTabId !== undefined &&
+        target.closest<HTMLElement>("[data-layout-pane-tab]")?.dataset.layoutPaneTab ===
+          host.dataset.layoutTabId));
+  let ownsFocus = contains(doc.activeElement);
+  const remember = (event: FocusEvent) => {
+    const entered = contains(event.target);
+    const from = event.relatedTarget;
+    if (
+      entered &&
+      !ownsFocus &&
+      from instanceof HTMLElement &&
+      !contains(from) &&
+      canReturnFocusTo(from)
+    ) {
+      origin = from;
+    }
+    ownsFocus = entered;
+  };
+  doc.addEventListener("focusin", remember);
+  return () => {
+    doc.removeEventListener("focusin", remember);
+    if (!ownsFocus || !origin || !canReturnFocusTo(origin)) {
+      return;
+    }
+    const tabId = paneId(origin);
+    if (tabId) useLayoutStore.getState().focusTab(tabId);
+    const target = origin;
+    returnedSurfaceFocus = target;
+    target.addEventListener(
+      "blur",
+      () => {
+        if (returnedSurfaceFocus === target) returnedSurfaceFocus = null;
+      },
+      { once: true },
+    );
+    origin.focus({ preventScroll: true });
+  };
+}
+
 /**
  * Brings a restored control into view, innermost scrolling list first.
  * scrollIntoView would also scroll overflow-hidden layout containers out of place.

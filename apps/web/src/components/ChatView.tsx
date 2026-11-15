@@ -1,6 +1,6 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { ComposerTaskStatus } from "./chat/ComposerTaskStatus";
-import { workspaceAreaProps } from "../lib/workspaceFocus";
+import { isReturnedSurfaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
@@ -2214,6 +2214,7 @@ export default function ChatView(props: ChatViewProps) {
   // Moving between panes keeps the workspace control the user chose in the pane it enters.
   const threadEntryPaneFocusedRef = useRef(layoutPane.focused);
   const keepsEnteredPaneFocus = useStableCallback(() => {
+    if (isReturnedSurfaceFocus()) return true;
     if (threadEntryPaneFocusedRef.current || layoutPane.tabId === null) return false;
     const activeArea = document.activeElement?.closest<HTMLElement>("[data-workspace-area]");
     return (
