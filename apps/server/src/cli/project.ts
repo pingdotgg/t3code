@@ -7,6 +7,8 @@ import {
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -299,9 +301,13 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
       ? normalizedWorkspaceRootResult.success
       : normalizedWorkspaceRootResult.failure.normalizedWorkspaceRoot;
 
-  const exactWorkspaceMatch = activeProjects.find(
-    (project) => project.workspaceRoot === normalizedWorkspaceRoot,
+  const path = yield* Path.Path;
+  const savedWorkspaceRoot = path.resolve(
+    expandHomePath(trimmedIdentifier, yield* HostProcess.HomeDirectory),
   );
+  const exactWorkspaceMatch =
+    activeProjects.find((project) => project.workspaceRoot === savedWorkspaceRoot) ??
+    activeProjects.find((project) => project.workspaceRoot === normalizedWorkspaceRoot);
 
   const resolved =
     exactWorkspaceMatch ??
