@@ -635,13 +635,12 @@ const make = Effect.gen(function* () {
 
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
+      const notLinked = new PeerLinkError({
+        reason: "unknown_link",
+        message: `This environment is not linked to ${environmentId}. t3_environment_links lists the linked ones.`,
+      });
       const row = yield* readRow(environmentId);
-      if (Option.isNone(row)) {
-        return yield* new PeerLinkError({
-          reason: "unknown_link",
-          message: `This environment is not linked to ${environmentId}. t3_environment_links lists the linked ones.`,
-        });
-      }
+      if (Option.isNone(row)) return yield* notLinked;
       const link = yield* toLink(row.value);
       if (DateTime.isLessThanOrEqualTo(link.expiresAt, yield* DateTime.now)) {
         return yield* new PeerLinkError({
@@ -651,42 +650,45 @@ const make = Effect.gen(function* () {
       }
       const stored = yield* secrets.get(row.value.secret_name).pipe(Effect.catch(failStorage));
       if (Option.isNone(stored)) {
+        // An unlink between the two reads removes the row before its secret.
+        if (Option.isNone(yield* readRow(environmentId))) return yield* notLinked;
         return yield* new PeerLinkError({
           reason: "unknown_link",
           message: `The link to ${link.label} lost its credential. Link it again.`,
         });
       }
       // The token goes only to an address that still answers as this peer,
-      // so one that now answers as another machine never receives it.
-      let fenced = true;
-      let label = link.label;
-      const url = yield* Effect.findFirst(link.urls, (candidate) =>
-        answersAs(candidate, environmentId).pipe(
-          Effect.map((found) => {
-            if (Option.isNone(found)) return false;
-            fenced = linkLimitsHold(found.value);
-            label = found.value.label;
-            return true;
-          }),
-        ),
-      );
-      if (Option.isNone(url)) {
+      // so one that now answers as another machine never receives it. The
+      // addresses race, so a silent one never delays one that answers.
+      const answered =
+        link.urls.length === 0
+          ? Option.none()
+          : yield* Effect.raceAll(
+              link.urls.map((url) =>
+                answersAs(url, environmentId).pipe(
+                  Effect.flatMap(Effect.fromOption),
+                  Effect.map((peer) => ({ url, peer })),
+                ),
+              ),
+            ).pipe(Effect.option);
+      if (Option.isNone(answered)) {
         return yield* new PeerLinkError({
           reason: "unreachable",
           message: `${link.label} did not answer at ${link.urls.join(", ")}.`,
         });
       }
+      const { url, peer } = answered.value;
       // A link made before the peer had to fence linked work, or a peer moved
       // back to such a version, would carry work past those limits.
-      if (!fenced) {
+      if (!linkLimitsHold(peer)) {
         return yield* new PeerLinkError({
           reason: "incompatible",
           message: `${link.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
         });
       }
       return {
-        link: yield* withLabel(link, label),
-        url: url.value,
+        link: yield* withLabel(link, peer.label),
+        url,
         token: new TextDecoder().decode(stored.value),
       };
     },
