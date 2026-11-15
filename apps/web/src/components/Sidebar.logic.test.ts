@@ -37,6 +37,7 @@ import {
   resolveSidebarFolderDot,
   sidebarFolderExpansionKeys,
   isThreadInSidebarScope,
+  olderSettledScopes,
   resolveSidebarThreadScope,
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -1518,6 +1519,37 @@ describe("pendingSidebarRouteReveal", () => {
     pendingSidebarRouteReveal(reveal, "env:a1");
     expect(pendingSidebarRouteReveal(reveal, null)).toBeNull();
     expect(pendingSidebarRouteReveal(reveal, "env:a1")).toBe("env:a1");
+  });
+});
+
+describe("olderSettledScopes", () => {
+  const tagged = EnvironmentId.make("tagged");
+  const legacy = EnvironmentId.make("legacy");
+  const configs = new Map(
+    [
+      [tagged, true],
+      [legacy, false],
+    ].map(([environmentId, threadTagRename]) => [
+      environmentId as EnvironmentId,
+      { environment: { capabilities: { threadTagRename } } } as never,
+    ]),
+  );
+
+  it("pages a project's untagged threads and a folder's threads, where the server can", () => {
+    const scope = { projectKeys: new Set(["tagged:a", "legacy:b"]), tags: new Set(["ops"]) };
+    expect(olderSettledScopes(configs, scope)).toEqual([
+      { environmentId: tagged, projectIds: [ProjectId.make("a")], tagScope: { type: "untagged" } },
+      { environmentId: tagged, projectIds: null, tagScope: { type: "tagged", tags: ["ops"] } },
+      // Without tag scopes a project pages every thread, and a folder pages none.
+      { environmentId: legacy, projectIds: [ProjectId.make("b")] },
+    ]);
+    expect(olderSettledScopes(configs, { projectKeys: new Set(), tags: new Set(["ops"]) })).toEqual(
+      [{ environmentId: tagged, projectIds: null, tagScope: { type: "tagged", tags: ["ops"] } }],
+    );
+    expect(olderSettledScopes(configs, null)).toEqual([
+      { environmentId: tagged, projectIds: null },
+      { environmentId: legacy, projectIds: null },
+    ]);
   });
 });
 

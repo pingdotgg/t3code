@@ -37,6 +37,7 @@ import {
   createOlderSettledThreadAtoms,
   isListedSettledThread,
   olderSettledCountKey,
+  olderSettledScopeKey,
   settledShelfFrontier,
   unloadedOlderSettledCount,
   wantedOlderSettledPages,
@@ -60,6 +61,7 @@ const row = (
     readonly settledDay?: number;
     readonly createdDay?: number;
     readonly subagent?: boolean;
+    readonly tags?: ReadonlyArray<string>;
   },
 ) =>
   ({
@@ -73,6 +75,7 @@ const row = (
     settledOverride: input.settledDay === undefined ? null : "settled",
     settledAt: input.settledDay === undefined ? null : DateTime.makeUnsafe(input.settledDay * DAY),
     createdAt: DateTime.makeUnsafe((input.createdDay ?? 1) * DAY),
+    tags: input.tags ?? [],
   }) as unknown as OrchestrationV2ThreadShell;
 
 describe("olderSettledCountKey", () => {
@@ -97,6 +100,8 @@ describe("olderSettledCountKey", () => {
     expect(key([{ ...base[0]!, projectId: ProjectId.make("project-b") }, base[1]!])).not.toBe(
       start,
     );
+    // An older row that enters or leaves a folder.
+    expect(key([{ ...base[0]!, tags: ["work"] }, base[1]!])).not.toBe(start);
   });
 
   it("stays put for new threads and subagents", () => {
@@ -204,6 +209,26 @@ it("counts older threads the client does not hold, once", () => {
       ],
     }),
   ).toBe(18);
+  // Tag scopes subtract only loaded rows in their tag scope.
+  const tagged = [
+    { source: row("in-folder", { settledDay: 10, tags: ["work"] }), environmentId },
+    { source: row("other-folder", { settledDay: 10, tags: ["home"] }), environmentId },
+    { source: row("untagged", { settledDay: 10 }), environmentId },
+  ];
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled,
+      scopes: [{ environmentId, projectIds: null, tagScope: { type: "tagged", tags: ["work"] } }],
+      threads: tagged,
+    }),
+  ).toBe(2);
+  expect(
+    unloadedOlderSettledCount({
+      olderSettled,
+      scopes: [{ environmentId, projectIds: [project], tagScope: { type: "untagged" } }],
+      threads: tagged,
+    }),
+  ).toBe(2);
 });
 
 describe("wantedOlderSettledPages", () => {
@@ -498,6 +523,49 @@ describe("createOlderSettledThreadAtoms", () => {
       const retried = yield* until(onePage, (pages) => pages.status === "ready");
       expect(retried.reads).toHaveLength(1);
       expect(retried.frontier).toBeNull();
+    }),
+  );
+
+  it.effect("a tag scope reads its own counts and pages", () =>
+    Effect.gen(function* () {
+      const { replies, requests, atoms, registry, setShell, until } = yield* makeAtoms();
+      setShell({
+        snapshot: shellSnapshot({ sequence: 3, asOfSequence: 3, count: 30 }),
+        generation: 1,
+      });
+      const folder = {
+        environmentId,
+        projectIds: null,
+        tagScope: { type: "tagged" as const, tags: ["work", "home"] as const },
+      };
+      const shelf = atoms.shelfAtom([{ scope: folder, pages: 1 }]);
+      registry.mount(shelf);
+      // Until its own count arrives, the folder holds its cut but counts nothing.
+      const folderKey = olderSettledScopeKey(folder);
+      expect(registry.get(shelf).get(folderKey)?.older?.counts.size).toBe(0);
+      yield* Queue.offer(replies, Effect.succeed({ snapshotSequence: 3, threads: [], counts: [] }));
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 3,
+          threads: [],
+          counts: [{ projectId: project, count: 4 }],
+        }),
+      );
+      yield* TestClock.adjust("500 millis");
+      const read = yield* until(
+        shelf,
+        (value) => value.get(folderKey)?.older?.counts.get(project) === 4,
+      );
+      expect(read.get(folderKey)?.pages.status).toBe("ready");
+      const tagScope = { type: "tagged", tags: ["home", "work"] };
+      expect(requests).toEqual(
+        expect.arrayContaining([
+          { before: { settledAt: before }, tagScope, limit: 25 },
+          { before: { settledAt: before }, tagScope, limit: 0 },
+        ]),
+      );
+      expect(requests).toHaveLength(2);
     }),
   );
 

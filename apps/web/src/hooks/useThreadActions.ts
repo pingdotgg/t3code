@@ -10,6 +10,7 @@ import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  CommandId,
   EnvironmentAuthorizationError,
   EnvironmentId,
   type ScopedThreadRef,
@@ -38,6 +39,7 @@ import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsStat
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { announce } from "../lib/announce";
 import { readLocalApi } from "../localApi";
+import { randomUUID } from "../lib/utils";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
@@ -275,7 +277,7 @@ export function canTurnThreadIntoProject(threadRef: ScopedThreadRef): boolean {
   return project !== null && isScratchProject(project, config.scratchWorkspaceRoot);
 }
 
-function threadOperationFailure(target: ScopedThreadRef) {
+function threadOperationFailure(target: Pick<ScopedThreadRef, "environmentId">) {
   return readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
     ? null
     : AsyncResult.failure(
@@ -311,6 +313,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadTagMutation = useOrchestrationCommand(threadEnvironment.setTag, {
+    reportFailure: false,
+  });
+  const renameThreadTagMutation = useOrchestrationCommand(threadEnvironment.renameTag, {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
@@ -795,6 +800,16 @@ export function useThreadActions() {
       folderTagChanges(readThreadShell(target)?.source.tags ?? [], folder),
     );
 
+  /** Renames or removes (`to` null) a tag on every thread of one environment, loaded or not. */
+  const renameThreadTag = (environmentId: EnvironmentId, from: string, to: string | null) => {
+    const permissionFailure = threadOperationFailure({ environmentId });
+    if (permissionFailure) return Promise.resolve(permissionFailure);
+    return renameThreadTagMutation({
+      environmentId,
+      input: { commandId: CommandId.make(randomUUID()), from, to },
+    });
+  };
+
   const sendPin = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentServerConfigLoaded(target.environmentId)) {
       return AsyncResult.failure(
@@ -1080,6 +1095,7 @@ export function useThreadActions() {
     setThreadAutoSettle,
     moveThreadToFolder,
     applyThreadTagChanges,
+    renameThreadTag,
     turnThreadIntoProject: (target: ScopedThreadRef) =>
       createProjectFromThread({
         environmentId: target.environmentId,

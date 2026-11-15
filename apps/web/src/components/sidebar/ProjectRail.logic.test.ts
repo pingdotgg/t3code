@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildProjectRailTiles,
   folderEditPlan,
+  folderEditTargets,
   nextProjectRailScope,
   railOrderAfterMove,
   railKeysAfterFolderEdit,
@@ -200,6 +201,21 @@ describe("folder rename and delete", () => {
       { id: "a", changes: [{ tag: "ops", tagged: false }] },
       { id: "b", changes: [{ tag: "ops", tagged: false }] },
     ]);
+  });
+
+  it("sends one server rename per capable environment and per-thread changes elsewhere", () => {
+    const other = EnvironmentId.make("environment-other");
+    const mixed = [
+      { id: "local", environmentId, tags: ["ops"] },
+      { id: "remote", environmentId: other, tags: ["ops"] },
+    ];
+    const targets = folderEditTargets(mixed, "ops", "build", [environmentId]);
+    expect(targets.environmentIds).toEqual([environmentId]);
+    expect(targets.plan.map(({ thread }) => thread.id)).toEqual(["remote"]);
+    expect(folderEditTargets(mixed, "ops", "ops", [environmentId])).toEqual({
+      environmentIds: [],
+      plan: [],
+    });
   });
 
   it("keeps a renamed folder's rail place and drops a deleted one", () => {

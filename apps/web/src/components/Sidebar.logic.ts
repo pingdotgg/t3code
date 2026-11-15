@@ -1,7 +1,7 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { isShownUnderParent, type OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -20,6 +20,7 @@ import {
   isListedThreadLineage,
   type ContextMenuItem,
   type EnvironmentId,
+  ProjectId,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
@@ -670,6 +671,47 @@ export function isThreadInSidebarScope(
   return tags.length === 0
     ? scope.projectKeys.has(`${thread.environmentId}:${thread.projectId}`)
     : tags.some((tag) => scope.tags.has(tag));
+}
+
+/**
+ * The sidebar's scope per environment, as `isThreadInSidebarScope` reads it: the scoped projects'
+ * untagged threads, and the scoped folders' threads. Servers without tag scopes page by project only.
+ */
+export function olderSettledScopes(
+  serverConfigs: ReadonlyMap<EnvironmentId, Pick<EnvironmentServerConfig, "environment">>,
+  scope: SidebarThreadScope | null,
+): ReadonlyArray<OlderSettledScope> {
+  if (scope === null) {
+    return [...serverConfigs.keys()].map((environmentId) => ({ environmentId, projectIds: null }));
+  }
+  const [firstTag, ...otherTags] = scope.tags;
+  return [...serverConfigs].flatMap(([environmentId, config]) => {
+    const tagScopes = config.environment.capabilities.threadTagRename === true;
+    const prefix = `${environmentId}:`;
+    const projectIds = [...scope.projectKeys].flatMap((key) =>
+      key.startsWith(prefix) ? [ProjectId.make(key.slice(prefix.length))] : [],
+    );
+    return [
+      ...(projectIds.length === 0
+        ? []
+        : [
+            {
+              environmentId,
+              projectIds,
+              ...(tagScopes ? { tagScope: { type: "untagged" as const } } : {}),
+            },
+          ]),
+      ...(tagScopes && firstTag !== undefined
+        ? [
+            {
+              environmentId,
+              projectIds: null,
+              tagScope: { type: "tagged" as const, tags: [firstTag, ...otherTags] as const },
+            },
+          ]
+        : []),
+    ];
+  });
 }
 
 export function buildBulkTitleRegenerationContextMenuItem(input: {

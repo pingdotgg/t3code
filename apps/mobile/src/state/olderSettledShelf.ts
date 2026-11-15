@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   isListedSettledThread,
+  olderSettledScopeKey,
   settledShelfFrontier,
   sortOlderSettledScopes,
   unloadedOlderSettledCount,
@@ -16,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { appAtomRegistry } from "./atom-registry";
 import { olderSettledThreads, threadFamilies } from "./threads";
 
-const NO_PAGES: ReadonlyMap<EnvironmentId, number> = new Map();
+const NO_PAGES: ReadonlyMap<string, number> = new Map();
 const NO_OLDER_SETTLED: Atom.Atom<OlderSettled | null> = Atom.make(null);
 
 /**
@@ -37,7 +38,7 @@ export function useOlderSettledShelf(input: {
   const pages = requested.scopeKey === scopeKey && input.expanded ? requested.pages : NO_PAGES;
   const shelfScopes = scopes.map((scope) => ({
     scope,
-    pages: pages.get(scope.environmentId) ?? 0,
+    pages: pages.get(olderSettledScopeKey(scope)) ?? 0,
   }));
   const shelfKey = JSON.stringify(shelfScopes);
   const shelf = useAtomValue(olderSettledThreads.shelfAtom(shelfScopes));
@@ -60,21 +61,22 @@ export function useOlderSettledShelf(input: {
     };
   }, [shelfKey]);
 
-  const olderOf = (environmentId: EnvironmentId) => shelf.get(environmentId)?.older ?? null;
-  const pagesOf = (environmentId: EnvironmentId) => shelf.get(environmentId)?.pages;
+  const olderOf = (scope: OlderSettledScope) =>
+    shelf.get(olderSettledScopeKey(scope))?.older ?? null;
+  const pagesOf = (scope: OlderSettledScope) => shelf.get(olderSettledScopeKey(scope))?.pages;
   const frontier = settledShelfFrontier([...shelf.values()]);
   const loaded = shelfScopes.filter(({ pages }) => pages > 0);
   return {
     environments: shelf,
     visibleCount: input.expanded ? input.visibleCount : 0,
     pages,
-    grow: (next: ReadonlyMap<EnvironmentId, number>) => setRequested({ scopeKey, pages: next }),
+    grow: (next: ReadonlyMap<string, number>) => setRequested({ scopeKey, pages: next }),
     isListed: (thread: EnvironmentThreadShell) => isListedSettledThread(thread.source, frontier),
     /** Older settled threads in scope that are not local; add it to the local Settled rows. */
     unloadedCount: (threads: ReadonlyArray<EnvironmentThreadShell>) =>
       unloadedOlderSettledCount({ olderSettled: olderOf, scopes, threads }),
-    loading: loaded.some(({ scope }) => pagesOf(scope.environmentId)?.status === "pending"),
-    failed: loaded.some(({ scope }) => pagesOf(scope.environmentId)?.status === "failed"),
+    loading: loaded.some(({ scope }) => pagesOf(scope)?.status === "pending"),
+    failed: loaded.some(({ scope }) => pagesOf(scope)?.status === "failed"),
     retry: () => {
       for (const { scope, pages } of loaded) {
         olderSettledThreads.retryPages(appAtomRegistry, scope, pages);
@@ -110,8 +112,8 @@ export function readUnloadedThreadCount(
   threads: ReadonlyArray<EnvironmentThreadShell>,
 ): number {
   return unloadedOlderSettledCount({
-    olderSettled: (environmentId) =>
-      appAtomRegistry.get(olderSettledThreads.olderSettledAtom(environmentId)),
+    olderSettled: (scope) =>
+      appAtomRegistry.get(olderSettledThreads.olderSettledAtom(scope.environmentId)),
     scopes: [...new Set(members.map((member) => member.environmentId))].map((environmentId) => ({
       environmentId,
       projectIds: members.flatMap((member) =>

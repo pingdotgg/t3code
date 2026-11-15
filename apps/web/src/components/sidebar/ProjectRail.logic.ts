@@ -182,6 +182,27 @@ export function folderEditPlan<TThread extends Pick<RailThread, "tags">>(
 }
 
 /**
+ * A folder edit: one server rename per environment in `renameEnvironmentIds`, which also reaches
+ * threads this client has not loaded, and per-thread tag changes for loaded threads elsewhere.
+ */
+export function folderEditTargets<TThread extends Pick<RailThread, "tags" | "environmentId">>(
+  threads: readonly TThread[],
+  from: string,
+  to: string | null,
+  renameEnvironmentIds: ReadonlyArray<TThread["environmentId"]>,
+) {
+  if (from === to) return { environmentIds: [], plan: [] };
+  return {
+    environmentIds: renameEnvironmentIds,
+    plan: folderEditPlan(
+      threads.filter((thread) => !renameEnvironmentIds.includes(thread.environmentId)),
+      from,
+      to,
+    ),
+  };
+}
+
+/**
  * Rail order or scope keys with folder `from` renamed to `to` in place, or dropped when `to` is
  * null. A `from` that kept threads after a partial failure keeps its key, with `to` beside it.
  */

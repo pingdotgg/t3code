@@ -57,11 +57,9 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
-  ProjectId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
 import {
   CheckIcon,
@@ -226,6 +224,7 @@ import {
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarRowThreadId,
+  olderSettledScopes,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -238,6 +237,7 @@ import {
   nextProjectRailScope,
   buildProjectRailTiles,
   folderEditPlan,
+  folderEditTargets,
   railKeysAfterFolderEdit,
   folderIconsPatchAfterEdit,
   type ProjectRailTile,
@@ -550,7 +550,7 @@ function useSidebarThreads(input: {
     partition;
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const olderSettledShelf = useOlderSettledShelf({
-    scopes: olderSettledScopes([...serverConfigs.keys()], scope),
+    scopes: olderSettledScopes(serverConfigs, scope),
     expanded: settledShelfExpanded,
     visibleCount: settledVisibleCount,
   });
@@ -771,26 +771,6 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   };
 }
 
-/**
- * The sidebar's scope per environment: the scoped projects there, or every project.
- * Older settled pages are read by project, so a folder scope does not page them in.
- */
-function olderSettledScopes(
-  environmentIds: ReadonlyArray<EnvironmentId>,
-  scope: SidebarThreadScope | null,
-): ReadonlyArray<OlderSettledScope> {
-  if (scope === null) {
-    return environmentIds.map((environmentId) => ({ environmentId, projectIds: null }));
-  }
-  return environmentIds.flatMap((environmentId) => {
-    const prefix = `${environmentId}:`;
-    const projectIds = [...scope.projectKeys].flatMap((key) =>
-      key.startsWith(prefix) ? [ProjectId.make(key.slice(prefix.length))] : [],
-    );
-    return projectIds.length === 0 ? [] : [{ environmentId, projectIds }];
-  });
-}
-
 function isOptimisticDropReleased(input: {
   readonly optimisticDrop: SidebarOptimisticDrop;
   readonly threads: readonly EnvironmentThreadShell[];
@@ -989,6 +969,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setThreadAutoSettle,
     moveThreadToFolder,
     applyThreadTagChanges,
+    renameThreadTag,
     turnThreadIntoProject,
     reorderPinnedThread,
     reorderActiveThread,
@@ -1338,27 +1319,59 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const updatePrimarySettings = useUpdatePrimarySettings();
   const [folderIconTag, setFolderIconTag] = useState<string | null>(null);
   const editRailFolder = async (from: string, to: string | null) => {
-    const plan = folderEditPlan(readThreadShells(), from, to);
+    const { environmentIds, plan } = folderEditTargets(
+      readThreadShells(),
+      from,
+      to,
+      [...serverConfigs].flatMap(([environmentId, config]) =>
+        config.environment.capabilities.threadTagRename === true &&
+        readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+          ? [environmentId]
+          : [],
+      ),
+    );
     const threadCount = `${plan.length} thread${plan.length === 1 ? "" : "s"}`;
-    if (to === null && plan.length > 0) {
+    if (to === null && (plan.length > 0 || environmentIds.length > 0)) {
       const api = readLocalApi();
       if (!api) return;
       const confirmed = await settlePromise(() =>
         api.dialogs.confirm(
-          [`Delete folder "${from}"?`, `Its ${threadCount} leave this folder.`].join("\n"),
+          [
+            `Delete folder "${from}"?`,
+            // Server renames also reach threads this client has not loaded, so no count is known.
+            environmentIds.length > 0
+              ? "All threads in this folder leave it."
+              : `Its ${threadCount} leave this folder.`,
+          ].join("\n"),
           { variant: "destructive" },
         ),
       );
       if (confirmed._tag === "Failure" || !confirmed.value) return;
     }
-    const results = await Promise.all(
-      plan.map(({ thread, changes }) =>
-        applyThreadTagChanges(scopeThreadRef(thread.environmentId, thread.id), changes),
-      ),
+    const holdsFrom = new Set(
+      folderEditPlan(readThreadShells(), from, to).map(({ thread }) => thread.environmentId),
     );
-    const fromSurvives = results.some((result) => result._tag === "Failure");
+    const renames = await Promise.all(
+      environmentIds.map(async (environmentId) => ({
+        environmentId,
+        result: await renameThreadTag(environmentId, from, to),
+      })),
+    );
+    const results = [
+      ...renames.map(({ result }) => result),
+      ...(await Promise.all(
+        plan.map(({ thread, changes }) =>
+          applyThreadTagChanges(scopeThreadRef(thread.environmentId, thread.id), changes),
+        ),
+      )),
+    ];
+    // An environment none of whose loaded threads carry the folder cannot keep its tile alive.
+    const fromSurvives =
+      renames.some(
+        ({ environmentId, result }) => result._tag === "Failure" && holdsFrom.has(environmentId),
+      ) || results.slice(renames.length).some((result) => result._tag === "Failure");
     // While every thread still carries the old tag, the folder keeps its filter and icon.
-    const anyMoved = plan.length === 0 || results.some((result) => result._tag === "Success");
+    const anyMoved = results.length === 0 || results.some((result) => result._tag === "Success");
     if (anyMoved) {
       const iconsPatch = folderIconsPatchAfterEdit(
         appAtomRegistry.get(primaryServerSettingsAtom).folderIcons,
@@ -1388,10 +1401,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scopeKeys.join("\n") !== sidebarProjectScopeKeys.join("\n")) {
       setProjectScopeKeys(scopeKeys);
     }
-    toastThreadCommandFailures(
-      results,
-      (count) =>
-        `Failed to ${to === null ? "delete" : "rename"} the folder for ${count} of ${threadCount}`,
+    toastThreadCommandFailures(results, (count) =>
+      environmentIds.length > 0
+        ? `Failed to ${to === null ? "delete" : "rename"} the folder`
+        : `Failed to ${to === null ? "delete" : "rename"} the folder for ${count} of ${threadCount}`,
     );
   };
   const handleProjectFolderContextMenu = useStableCallback(
