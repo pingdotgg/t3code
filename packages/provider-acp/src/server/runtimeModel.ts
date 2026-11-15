@@ -1353,6 +1353,13 @@ export function sessionModelStateFromInitialize(
   return isSessionModelState(modelState) ? modelState : undefined;
 }
 
+/** Whether a session setup is the placeholder replay idle stood in for the `session/load` response. */
+export function isReplayIdleSessionSetup(setup: {
+  readonly _meta?: { readonly [key: string]: unknown } | null;
+}): boolean {
+  return isRecord(setup._meta) && setup._meta.t3SessionLoadReady === "replay_idle";
+}
+
 export function syntheticLoadSessionResponseFromInitialize(
   initializeResult: EffectAcpSchema.InitializeResponse,
 ): EffectAcpSchema.LoadSessionResponse {
@@ -1366,6 +1373,61 @@ export function syntheticLoadSessionResponseFromInitialize(
     _meta: {
       t3SessionLoadReady: "replay_idle",
     },
+  };
+}
+
+/**
+ * A `session/load` response that arrives after replay idle only fills in what the session
+ * lacks: anything already live was written or pushed after the agent built that response.
+ */
+export function mergeLateSessionLoadResponse(input: {
+  readonly response: EffectAcpSchema.LoadSessionResponse;
+  /** What the session held at readiness: initialize-time modes, or a previous session's state. */
+  readonly baseline: {
+    readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+    /** Whether those options came from this session's own updates, not a previous session. */
+    readonly ownConfigOptions: boolean;
+    readonly modeState: AcpSessionModeState | undefined;
+  };
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly modeState: AcpSessionModeState | undefined;
+}): {
+  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+  readonly modeState: AcpSessionModeState | undefined;
+} {
+  // Every write and update replaces these values, so one still identical is older than the response.
+  const liveModeState = input.modeState === input.baseline.modeState ? undefined : input.modeState;
+  const liveModeId = liveModeState?.currentModeId;
+  const liveConfigOptions = input.configOptions.filter(
+    (option) => !input.baseline.configOptions.includes(option),
+  );
+  // A response without options leaves the ones this session already announced in place.
+  const loaded =
+    input.response.configOptions ??
+    (input.baseline.ownConfigOptions ? input.baseline.configOptions : []);
+  const configOptions = [
+    ...loaded.map((option) => {
+      const live = liveConfigOptions.find((candidate) => candidate.id === option.id);
+      if (live !== undefined) return live;
+      // A mode T3 selected through `session/set_mode` is newer than the loaded option's value.
+      return liveModeId !== undefined &&
+        option.type === "select" &&
+        option.category === "mode" &&
+        collectSessionConfigOptionValues(option).includes(liveModeId)
+        ? { ...option, currentValue: liveModeId }
+        : option;
+    }),
+    ...liveConfigOptions.filter((live) => !loaded.some((option) => option.id === live.id)),
+  ];
+  const loadedModeState = parseSessionModeState({ ...input.response, configOptions });
+  if (loadedModeState === undefined || liveModeId === undefined) {
+    return { configOptions, modeState: liveModeState ?? loadedModeState };
+  }
+  return {
+    configOptions,
+    modeState: loadedModeState.availableModes.some((mode) => mode.id === liveModeId)
+      ? { ...loadedModeState, currentModeId: liveModeId }
+      : liveModeState,
   };
 }
 

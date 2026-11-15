@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import {
+  mergeLateSessionLoadResponse,
   decideToolCallUpdateEmission,
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
@@ -116,6 +117,91 @@ describe("AcpRuntimeModel", () => {
         "session-loading",
       ),
     ).toBe(true);
+  });
+
+  it("fills in a late session/load response without undoing what the session already has", () => {
+    const select = (
+      id: string,
+      category: "mode" | "model",
+      currentValue: string,
+      values: ReadonlyArray<string>,
+    ): EffectAcpSchema.SessionConfigOption => ({
+      id,
+      name: id,
+      category,
+      type: "select",
+      currentValue,
+      options: values.map((value) => ({ value, name: value })),
+    });
+    const response = {
+      configOptions: [
+        select("mode", "mode", "ask", ["ask", "architect"]),
+        select("model", "model", "default", ["default", "fast"]),
+      ],
+    } satisfies EffectAcpSchema.LoadSessionResponse;
+
+    // Nothing live: the response is the session's configuration.
+    const empty = mergeLateSessionLoadResponse({
+      response,
+      baseline: { configOptions: [], ownConfigOptions: true, modeState: undefined },
+      configOptions: [],
+      modeState: undefined,
+    });
+    expect(empty.configOptions).toEqual(response.configOptions);
+    expect(empty.modeState?.currentModeId).toBe("ask");
+
+    // Initialize-time modes and a previous session's options are older than the response.
+    const initializeModes = {
+      currentModeId: "architect",
+      availableModes: [{ id: "architect", name: "architect" }],
+    };
+    const inherited = [
+      select("model", "model", "fast", ["fast"]),
+      select("effort", "model", "high", ["high"]),
+    ];
+    const untouched = mergeLateSessionLoadResponse({
+      response,
+      baseline: { configOptions: inherited, ownConfigOptions: false, modeState: initializeModes },
+      configOptions: inherited,
+      modeState: initializeModes,
+    });
+    expect(untouched.configOptions).toEqual(response.configOptions);
+    expect(untouched.modeState?.currentModeId).toBe("ask");
+
+    // A response without options keeps what this session announced, not a previous session's.
+    const withoutOptions = (ownConfigOptions: boolean) =>
+      mergeLateSessionLoadResponse({
+        response: {},
+        baseline: { configOptions: inherited, ownConfigOptions, modeState: undefined },
+        configOptions: inherited,
+        modeState: undefined,
+      }).configOptions;
+    expect(withoutOptions(true)).toEqual(inherited);
+    expect(withoutOptions(false)).toEqual([]);
+
+    // A model written since readiness and a mode set through session/set_mode both stay.
+    const liveModel = select("model", "model", "fast", ["default", "fast"]);
+    const merged = mergeLateSessionLoadResponse({
+      response,
+      baseline: { configOptions: inherited, ownConfigOptions: false, modeState: initializeModes },
+      configOptions: [liveModel, inherited[1]!],
+      modeState: {
+        currentModeId: "architect",
+        availableModes: [{ id: "architect", name: "architect" }],
+      },
+    });
+    expect(merged.configOptions).toEqual([
+      select("mode", "mode", "architect", ["ask", "architect"]),
+      liveModel,
+    ]);
+    // The selected mode stays, and the modes the response offers replace the earlier list.
+    expect(merged.modeState).toEqual({
+      currentModeId: "architect",
+      availableModes: [
+        { id: "ask", name: "ask" },
+        { id: "architect", name: "architect" },
+      ],
+    });
   });
 
   it("ignores malformed initialize mode state in synthetic load responses", () => {
