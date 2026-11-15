@@ -84,6 +84,11 @@ const shellsSettledAtom = Atom.make((get) => {
 let pendingLink: string | null = null;
 let stopWaitingForShells: (() => void) | null = null;
 
+// The New task screen a resolving link landed on. Leaving that screen or a newer link releases it,
+// so work the link started cannot write a draft or navigate once its awaits return.
+type LinkClaim = { readonly routeKey: string };
+let resolvingClaim: LinkClaim | null = null;
+
 /**
  * `new?prompt=…&repo=…` drops its params as it arrives, so the screen never sees them and each
  * opening resolves once. It resolves when its screen is on the navigation state that follows and
@@ -98,6 +103,7 @@ export function takeNewTaskPromptLink(
   );
   if (search === null) return state;
   pendingLink = search;
+  resolvingClaim = null;
   return updateLinkedRoute(state, NEW_TASK_ROUTES, (linked) => ({
     ...linked,
     params: withoutPromptLinkParams(linked.params),
@@ -106,17 +112,24 @@ export function takeNewTaskPromptLink(
 
 /** Wired to the navigation container's state changes. */
 export function resolvePendingNewTaskPromptLink(state: NavigationState | undefined): void {
+  const screen = findStackRoute(state, NEW_TASK_ROUTE);
+  // A screen pushed above New task (such as Add project) drops the link, so it never lands
+  // over the wrong screen.
+  const focused = screen?.focused === true ? screen : undefined;
+  if (resolvingClaim !== null && focused?.routeKey !== resolvingClaim.routeKey) {
+    resolvingClaim = null;
+  }
   if (pendingLink === null) return;
   const step = stepPendingPromptLink(pendingLink, {
-    // A screen pushed above New task (such as Add project) drops the link, so it never lands
-    // over the wrong screen.
-    screenOnStack: findStackRoute(state, NEW_TASK_ROUTE)?.focused === true,
+    screenOnStack: focused !== undefined,
     ready: appAtomRegistry.get(shellsSettledAtom),
   });
   if (step.pending === null) dropPendingLink();
   else pendingLink = step.pending;
-  if (step.resolve !== null) resolveLink(step.resolve);
-  else if (step.pending !== null) {
+  if (step.resolve !== null && focused !== undefined) {
+    resolvingClaim = { routeKey: focused.routeKey };
+    resolveLink(step.resolve, resolvingClaim);
+  } else if (step.pending !== null) {
     stopWaitingForShells ??= appAtomRegistry.subscribe(shellsSettledAtom, (settled) => {
       if (settled) resolvePendingNewTaskPromptLink(rootNavigationRef.getRootState());
     });
@@ -221,20 +234,20 @@ async function findServerPullRequestThread(
   return undefined;
 }
 
-async function openProjectDraft(project: EnvironmentProject, request: LinkedDraftRequest) {
+async function openProjectDraft(
+  project: EnvironmentProject,
+  request: LinkedDraftRequest,
+  claim: LinkClaim,
+) {
   try {
     await waitForComposerDraftsLoaded();
   } catch {
     Dialog.alert("Could not open link", "Drafts could not be loaded, so the prompt was not added.");
     return;
   }
-  const draftKey = createNewTaskDraft({
-    environmentId: project.environmentId,
-    projectId: project.id,
-  });
-  let pullRequestUnavailable: number | null = null;
-  if (request.pullRequest) {
-    const detail = await runQuery(
+  const detail =
+    request.pullRequest &&
+    (await runQuery(
       composerPullRequests.detail({
         environmentId: project.environmentId,
         input: {
@@ -243,20 +256,25 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
           number: request.pullRequest.number,
         },
       }),
-    );
-    if (detail._tag === "Success") {
-      updateComposerDraftSettings(draftKey, {
-        workspaceSelection: {
-          mode: "worktree",
-          branch: detail.value.headBranch,
-          worktreePath: null,
-          startFromOrigin: false,
-          pullRequestReference: detail.value.url,
-        },
-      });
-    } else {
-      pullRequestUnavailable = request.pullRequest.number;
-    }
+    ));
+  if (claim !== resolvingClaim) return;
+  const draftKey = createNewTaskDraft({
+    environmentId: project.environmentId,
+    projectId: project.id,
+  });
+  let pullRequestUnavailable: number | null = null;
+  if (detail?._tag === "Success") {
+    updateComposerDraftSettings(draftKey, {
+      workspaceSelection: {
+        mode: "worktree",
+        branch: detail.value.headBranch,
+        worktreePath: null,
+        startFromOrigin: false,
+        pullRequestReference: detail.value.url,
+      },
+    });
+  } else if (request.pullRequest) {
+    pullRequestUnavailable = request.pullRequest.number;
   }
   const modelUnavailable = writeDraft(draftKey, project.environmentId, request);
   dispatchFromNewTask(
@@ -278,7 +296,7 @@ async function openProjectDraft(project: EnvironmentProject, request: LinkedDraf
   }
 }
 
-async function openScratchDraft(request: LinkedDraftRequest) {
+async function openScratchDraft(request: LinkedDraftRequest, claim: LinkClaim) {
   const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
   const environmentId = promptLinkScratchEnvironmentId(
     latestThreadEnvironmentIds(appAtomRegistry.get(environmentThreadShells.threadShellsAtom)),
@@ -318,7 +336,7 @@ async function openScratchDraft(request: LinkedDraftRequest) {
     }
     return;
   }
-  await openProjectDraft(result.value, { ...request, pullRequest: null });
+  await openProjectDraft(result.value, { ...request, pullRequest: null }, claim);
 }
 
 function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftRequest) {
@@ -360,7 +378,7 @@ function cloneRepository(repository: PromptLinkRepository, request: LinkedDraftR
   );
 }
 
-function resolveLink(linkSearch: string) {
+function resolveLink(linkSearch: string, claim: LinkClaim) {
   const threads = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
   const parsed = parseNewThreadLink(linkSearch);
   if (!parsed.ok) {
@@ -383,7 +401,7 @@ function resolveLink(linkSearch: string) {
 
   const repository = link.kind === "new" ? link.repository : link.pullRequest;
   if (repository === null) {
-    void openScratchDraft(request);
+    void openScratchDraft(request, claim);
     return;
   }
   const lastActivity = new Map<string, string>();
@@ -404,15 +422,16 @@ function resolveLink(linkSearch: string) {
     const { pullRequest } = request;
     void (async () => {
       const thread = pullRequest && (await findServerPullRequestThread(projects, pullRequest));
+      if (claim !== resolvingClaim) return;
       if (thread) openThread(thread, request.prompt);
-      else await openProjectDraft(project, request);
+      else await openProjectDraft(project, request, claim);
     })();
     return;
   }
   Dialog.alert(`You don't have ${promptLinkRepositoryName(repository)}`, undefined, [
     { text: "Cancel", style: "cancel" },
     ...(request.prompt
-      ? [{ text: "Use without project", onPress: () => void openScratchDraft(request) }]
+      ? [{ text: "Use without project", onPress: () => void openScratchDraft(request, claim) }]
       : []),
     { text: "Clone", onPress: () => cloneRepository(repository, request) },
   ]);
