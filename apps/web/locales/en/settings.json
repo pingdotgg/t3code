@@ -734,5 +734,210 @@
     "providerBaseUrl": "{{provider}} base URL",
     "providerHeadersAria": "{{provider}} write-only headers JSON",
     "providerHeadersPlaceholder": "Write-only headers JSON, e.g. {\"Authorization\":\"Bearer …\"}"
+  },
+  "authClients": {
+    "scopeCount_one": "{{count}} scope",
+    "scopeCount_other": "{{count}} scopes",
+    "scopesShownAria": "Show {{count}}",
+    "grantedScopes": "Granted scopes",
+    "copySuccess": {
+      "hostedLink": "Hosted app link copied",
+      "link": "Pairing URL copied",
+      "code": "Pairing code copied",
+      "hostedLinkDescription": "Open it in the browser on the device you want to connect.",
+      "linkDescription": "Open it in the client you want to pair to this environment.",
+      "codeDescription": "Paste it into another client to finish pairing."
+    },
+    "copyError": {
+      "hostedLink": "Could not copy hosted app link",
+      "link": "Could not copy pairing URL",
+      "code": "Could not copy pairing code",
+      "clipboardUnavailable": "Clipboard copy unavailable",
+      "showFullValue": "Showing the full value instead."
+    },
+    "fallbackLinkLabel": "Pairing link",
+    "linkCreatedAt": "Link created at {{time}}",
+    "pairingScopesLabel": "Pairing link scopes",
+    "createLinkHint": "Create a new link to share from this client.",
+    "noCredentialHint": "Copy the token and pair from another client using this backend's reachable host.",
+    "share": "Share",
+    "copyCode": "Copy code",
+    "showLink": "Show link",
+    "showCode": "Show code",
+    "titles": {
+      "hostedLink": "Hosted app pairing link",
+      "link": "Pairing link",
+      "code": "Pairing code"
+    },
+    "revealDescriptions": {
+      "hostedLink": "Clipboard copy is unavailable here. Open or manually copy this hosted app link on the device you want to connect.",
+      "link": "Clipboard copy is unavailable here. Open or manually copy this full pairing URL on the device you want to connect.",
+      "code": "Clipboard copy is unavailable here. Manually copy this code into another client."
+    },
+    "qrTitle": "Pairing link. Scan to open on another device",
+    "done": "Done",
+    "revoking": "Revoking…",
+    "revoke": "Revoke",
+    "endpointRadioAria": "Endpoint the pairing QR code and URL use",
+    "reachMachineVia": "Reach this machine via",
+    "copyLink": "Copy link",
+    "copyCodeOnly": "Copy code only",
+    "noQrHint": "No QR for this endpoint. Another device scanning a loopback link would dial itself; copy the URL for use on this machine instead.",
+    "status": {
+      "connectedFor": "Connected for {{duration}}",
+      "connected": "Connected",
+      "lastConnectedAt": "Last connected at {{time}}",
+      "notConnectedYet": "Not connected yet."
+    },
+    "thisDevice": "This device",
+    "clientScopesLabel": "Client scopes",
+    "useInAnotherApp": "Use in another app (MCP)",
+    "revokeOthers": "Revoke others",
+    "createLink": "Create link",
+    "createTitle": "Create pairing link",
+    "createDescription": "Generate a one-time link that another device can use to pair with this backend as an authorized client.",
+    "clientLabel": "Client label (optional)",
+    "clientLabelPlaceholder": "e.g. Living room iPad",
+    "permissions": "Permissions",
+    "permissionsHint": "Limit what the paired client can do.",
+    "readOnly": "Read only",
+    "standard": "Standard",
+    "selectPermission": "Select at least one permission.",
+    "accessWriteWarning": "This client can create or revoke access for other devices.",
+    "cancel": "Cancel",
+    "creating": "Creating…",
+    "createFailedTitle": "Could not create pairing URL",
+    "createFailedDescription": "Failed to create pairing URL.",
+    "empty": "No pairing links or client sessions.",
+    "setupRequired": "Setup required",
+    "defaultBadge": "Default",
+    "restarting": "Restarting…",
+    "setup": "Setup",
+    "disable": "Disable",
+    "setAsDefault": "Set as default",
+    "hide": "Hide",
+    "reachableAt": "Reachable at",
+    "scopes": {
+      "orchestration:read": {
+        "title": "View environment",
+        "description": "Read threads, status, checkpoints, and configuration."
+      },
+      "orchestration:operate": {
+        "title": "Operate tasks",
+        "description": "Start, update, and stop tasks."
+      },
+      "settings:write": {
+        "title": "Change environment settings",
+        "description": "Edit environment preferences and keybindings."
+      },
+      "providers:manage": {
+        "title": "Manage providers",
+        "description": "Configure, install, sign in to, and update providers and usage sources."
+      },
+      "environment:maintain": {
+        "title": "Maintain environment",
+        "description": "Update the server and control environment processes."
+      },
+      "preview:operate": {
+        "title": "Control previews",
+        "description": "Open browser previews and host browser automation."
+      },
+      "diagnostics:read": {
+        "title": "View diagnostics and usage",
+        "description": "Read process diagnostics, resource history, and usage totals."
+      },
+      "terminal:read": {
+        "title": "View terminals",
+        "description": "Read existing terminal output and status."
+      },
+      "terminal:operate": {
+        "title": "Use terminals",
+        "description": "Create terminals and send input to running shells."
+      },
+      "source-control:write": {
+        "title": "Change source control",
+        "description": "Commit, push, manage branches and repositories, and change pull requests."
+      },
+      "access:read": {
+        "title": "View access",
+        "description": "Inspect pairing links and authorized clients."
+      },
+      "access:write": {
+        "title": "Manage access",
+        "description": "Issue and revoke credentials for other clients."
+      },
+      "relay:read": {
+        "title": "View relay",
+        "description": "Inspect managed relay connectivity."
+      },
+      "relay:write": {
+        "title": "Manage relay",
+        "description": "Change managed tunnel connectivity."
+      },
+      "filesystem:read": {
+        "title": "Read files",
+        "description": "Browse host files, search workspaces, and inspect local changes."
+      },
+      "filesystem:write": {
+        "title": "Write files",
+        "description": "Edit workspace files and save plans to disk."
+      }
+    }
+  },
+  "cliCommand": {
+    "failureInstall": "Could not install t3",
+    "failureUninstall": "Could not remove t3",
+    "failureAddToPath": "Could not add t3 to PATH",
+    "failureGeneric": "Something went wrong.",
+    "shadowed": "Another t3 at {{path}} runs first in a new terminal. Remove it to use T3 Code's.",
+    "notInstalled": "Run T3 Code's CLI as `t3` from any terminal.",
+    "installedOnPath": "Installed at {{path}}. Open a new terminal to use it.",
+    "installedPathAdded": "Installed at {{path}} and added to PATH in {{file}}. Open a new terminal to use it.",
+    "installedNotOnPath": "Installed at {{path}}, which is not on your PATH yet.{{hint}}",
+    "addFolderHint": " Add its folder to your PATH to run `t3`.",
+    "addToPath": "Add to PATH",
+    "remove": "Remove",
+    "install": "Install"
+  },
+  "cloudVoice": {
+    "openRouterModelAria": "OpenRouter model",
+    "searchModelsPlaceholder": "Search transcription models",
+    "noModelMatches": "No transcription model matches.",
+    "modelDelisted": "OpenRouter no longer lists {{model}}. Dictation stays off until you choose another model.",
+    "saveFailed": "Couldn’t save this change. Check your connection and try again.",
+    "replaceApiKey": "Replace API key",
+    "apiKey": "API key",
+    "companyApiKey": "{{company}} API key",
+    "companyApiKeyReference": "{{company}} API key reference",
+    "enterApiKey": "Enter API key",
+    "enterKeyNotUrl": "Enter an API key, not a URL or secret reference.",
+    "updatingKeepsEnabled": "Updating the key keeps dictation enabled.",
+    "leaveBlankToKeep": "Leave blank to keep the saved key.",
+    "canBillKey": "Anyone with dictation access to {{environment}} can bill this key.",
+    "removeKeyTitle": "Remove the {{company}} key?",
+    "manageOpenRouterTitle": "Manage OpenRouter dictation",
+    "manageCompanyKeyTitle": "Manage {{company}} key",
+    "useForDictationTitle": "Use {{name}} for dictation?",
+    "removeKeyDescription": "Everyone using {{name}} for dictation on {{environment}} will lose access.",
+    "canUseKey": "Anyone with dictation access to {{environment}} can use this API key.",
+    "disclosureOpenRouter": "After you stop, {{environment}} sends the recording to OpenRouter. OpenRouter chooses who runs your model. T3 requests zero data retention; your OpenRouter account may allow safety retention.",
+    "disclosureProvider": "After you stop, {{environment}} sends your recording and vocabulary hints, including project names, to {{provider}}.",
+    "connectToContinue": "Connect to {{environment}} with dictation access to continue.",
+    "retryLoadingKey": "Retry loading API key",
+    "updateToUseOpenRouter": "Update {{environment}} to use OpenRouter dictation.",
+    "checkingForKey": "Checking for an API key…",
+    "model": "Model",
+    "retryLoadingModels": "Retry loading models",
+    "loadingModels": "Loading transcription models…",
+    "askAdministrator": "Ask an administrator on {{environment}} to add an API key.",
+    "usesSavedKeyDeviceOnly": "Uses the API key saved on {{environment}}. This choice applies only to this device.",
+    "deviceOnlyChooseOff": "This choice applies only to this device. Choose Off to stop sharing.",
+    "removeKeyMenu": "Remove key…",
+    "cancel": "Cancel",
+    "removeKey": "Remove key",
+    "save": "Save",
+    "saveAndEnable": "Save and enable",
+    "saveKey": "Save key",
+    "useName": "Use {{name}}"
   }
 }

@@ -730,5 +730,209 @@
     "providerBaseUrl": "{{provider}} 基础 URL",
     "providerHeadersAria": "{{provider}} 只写 JSON 请求头",
     "providerHeadersPlaceholder": "只写 JSON 请求头，例如 {\"Authorization\":\"Bearer …\"}"
+  },
+  "authClients": {
+    "scopeCount_other": "{{count}} 个权限范围",
+    "scopesShownAria": "显示 {{count}} 个",
+    "grantedScopes": "已授予的权限范围",
+    "copySuccess": {
+      "hostedLink": "已复制云端应用链接",
+      "link": "已复制配对 URL",
+      "code": "已复制配对码",
+      "hostedLinkDescription": "在要连接的设备的浏览器中打开它。",
+      "linkDescription": "在要配对到此环境的客户端中打开它。",
+      "codeDescription": "将它粘贴到另一个客户端以完成配对。"
+    },
+    "copyError": {
+      "hostedLink": "无法复制云端应用链接",
+      "link": "无法复制配对 URL",
+      "code": "无法复制配对码",
+      "clipboardUnavailable": "剪贴板复制不可用",
+      "showFullValue": "已改为显示完整值。"
+    },
+    "fallbackLinkLabel": "配对链接",
+    "linkCreatedAt": "链接创建于 {{time}}",
+    "pairingScopesLabel": "配对链接权限范围",
+    "createLinkHint": "创建新链接以从此客户端分享。",
+    "noCredentialHint": "复制令牌，并使用此后端可达的主机从另一个客户端配对。",
+    "share": "分享",
+    "copyCode": "复制配对码",
+    "showLink": "显示链接",
+    "showCode": "显示配对码",
+    "titles": {
+      "hostedLink": "云端应用配对链接",
+      "link": "配对链接",
+      "code": "配对码"
+    },
+    "revealDescriptions": {
+      "hostedLink": "此处无法使用剪贴板复制。请在要连接的设备上打开或手动复制此云端应用链接。",
+      "link": "此处无法使用剪贴板复制。请在要连接的设备上打开或手动复制此完整配对 URL。",
+      "code": "此处无法使用剪贴板复制。请手动将此配对码复制到另一个客户端。"
+    },
+    "qrTitle": "配对链接。扫码即可在另一台设备上打开",
+    "done": "完成",
+    "revoking": "正在吊销…",
+    "revoke": "吊销",
+    "endpointRadioAria": "配对二维码和 URL 使用的入口地址",
+    "reachMachineVia": "通过以下地址访问此机器",
+    "copyLink": "复制链接",
+    "copyCodeOnly": "仅复制配对码",
+    "noQrHint": "此入口地址没有二维码。另一台设备扫描回环链接会拨通自己；请改为复制 URL 在本机使用。",
+    "status": {
+      "connectedFor": "已连接 {{duration}}",
+      "connected": "已连接",
+      "lastConnectedAt": "上次连接于 {{time}}",
+      "notConnectedYet": "尚未连接。"
+    },
+    "thisDevice": "此设备",
+    "clientScopesLabel": "客户端权限范围",
+    "useInAnotherApp": "在其他应用中使用（MCP）",
+    "revokeOthers": "吊销其他",
+    "createLink": "创建链接",
+    "createTitle": "创建配对链接",
+    "createDescription": "生成一条一次性链接，另一台设备可用它作为已授权客户端配对到此后端。",
+    "clientLabel": "客户端名称（可选）",
+    "clientLabelPlaceholder": "例如：客厅 iPad",
+    "permissions": "权限",
+    "permissionsHint": "限制已配对客户端能做的事。",
+    "readOnly": "只读",
+    "standard": "标准",
+    "selectPermission": "至少选择一个权限。",
+    "accessWriteWarning": "此客户端可以为其他设备创建或吊销访问权限。",
+    "cancel": "取消",
+    "creating": "正在创建…",
+    "createFailedTitle": "无法创建配对 URL",
+    "createFailedDescription": "创建配对 URL 失败。",
+    "empty": "暂无配对链接或客户端会话。",
+    "setupRequired": "需要设置",
+    "defaultBadge": "默认",
+    "restarting": "正在重启…",
+    "setup": "设置",
+    "disable": "停用",
+    "setAsDefault": "设为默认",
+    "hide": "收起",
+    "reachableAt": "可通过以下地址访问",
+    "scopes": {
+      "orchestration:read": {
+        "title": "查看环境",
+        "description": "读取线程、状态、检查点和配置。"
+      },
+      "orchestration:operate": {
+        "title": "操作任务",
+        "description": "启动、更新和停止任务。"
+      },
+      "settings:write": {
+        "title": "更改环境设置",
+        "description": "编辑环境偏好设置和快捷键。"
+      },
+      "providers:manage": {
+        "title": "管理提供方",
+        "description": "配置、安装、登录和更新提供方及用量来源。"
+      },
+      "environment:maintain": {
+        "title": "维护环境",
+        "description": "更新服务器并控制环境进程。"
+      },
+      "preview:operate": {
+        "title": "控制预览",
+        "description": "打开浏览器预览并承载浏览器自动化。"
+      },
+      "diagnostics:read": {
+        "title": "查看诊断和用量",
+        "description": "读取进程诊断、资源历史和用量统计。"
+      },
+      "terminal:read": {
+        "title": "查看终端",
+        "description": "读取现有终端输出和状态。"
+      },
+      "terminal:operate": {
+        "title": "使用终端",
+        "description": "创建终端并向运行中的 shell 发送输入。"
+      },
+      "source-control:write": {
+        "title": "更改源码管理",
+        "description": "提交、推送、管理分支和仓库，并更改拉取请求。"
+      },
+      "access:read": {
+        "title": "查看访问",
+        "description": "查看配对链接和已授权客户端。"
+      },
+      "access:write": {
+        "title": "管理访问",
+        "description": "为其他客户端签发和吊销凭据。"
+      },
+      "relay:read": {
+        "title": "查看中继",
+        "description": "查看托管中继的连接状态。"
+      },
+      "relay:write": {
+        "title": "管理中继",
+        "description": "更改托管隧道的连接。"
+      },
+      "filesystem:read": {
+        "title": "读取文件",
+        "description": "浏览主机文件、搜索工作区并查看本地更改。"
+      },
+      "filesystem:write": {
+        "title": "写入文件",
+        "description": "编辑工作区文件并将计划保存到磁盘。"
+      }
+    }
+  },
+  "cliCommand": {
+    "failureInstall": "无法安装 t3",
+    "failureUninstall": "无法移除 t3",
+    "failureAddToPath": "无法将 t3 加入 PATH",
+    "failureGeneric": "出了点问题。",
+    "shadowed": "另一个位于 {{path}} 的 t3 会在新终端中优先运行。移除它才能使用 T3 Code 的。",
+    "notInstalled": "可在任意终端用 `t3` 运行 T3 Code 的命令行。",
+    "installedOnPath": "已安装在 {{path}}。打开新终端即可使用。",
+    "installedPathAdded": "已安装在 {{path}}，并已将 PATH 写入 {{file}}。打开新终端即可使用。",
+    "installedNotOnPath": "已安装在 {{path}}，但尚未加入 PATH。{{hint}}",
+    "addFolderHint": " 请将其所在文件夹加入 PATH 以运行 `t3`。",
+    "addToPath": "加入 PATH",
+    "remove": "移除",
+    "install": "安装"
+  },
+  "cloudVoice": {
+    "openRouterModelAria": "OpenRouter 模型",
+    "searchModelsPlaceholder": "搜索转写模型",
+    "noModelMatches": "没有匹配的转写模型。",
+    "modelDelisted": "OpenRouter 已下架 {{model}}。在另选模型之前，语音输入将保持关闭。",
+    "saveFailed": "无法保存此更改。请检查连接后重试。",
+    "replaceApiKey": "替换 API 密钥",
+    "apiKey": "API 密钥",
+    "companyApiKey": "{{company}} API 密钥",
+    "companyApiKeyReference": "{{company}} API 密钥引用",
+    "enterApiKey": "输入 API 密钥",
+    "enterKeyNotUrl": "请输入 API 密钥，而不是 URL 或机密引用。",
+    "updatingKeepsEnabled": "更新密钥不会关闭语音输入。",
+    "leaveBlankToKeep": "留空则保留已保存的密钥。",
+    "canBillKey": "任何有权在 {{environment}} 使用语音输入的人都能用此密钥计费。",
+    "removeKeyTitle": "移除 {{company}} 密钥？",
+    "manageOpenRouterTitle": "管理 OpenRouter 语音输入",
+    "manageCompanyKeyTitle": "管理 {{company}} 密钥",
+    "useForDictationTitle": "使用 {{name}} 进行语音输入？",
+    "removeKeyDescription": "在 {{environment}} 上使用 {{name}} 进行语音输入的所有人都会失去访问权限。",
+    "canUseKey": "任何有权在 {{environment}} 使用语音输入的人都能使用此 API 密钥。",
+    "disclosureOpenRouter": "停止后，{{environment}} 会将录音发送给 OpenRouter，由 OpenRouter 选择谁来运行你的模型。T3 已请求零数据保留；你的 OpenRouter 账户可能允许安全保留。",
+    "disclosureProvider": "停止后，{{environment}} 会将你的录音和词汇提示（包括项目名）发送给 {{provider}}。",
+    "connectToContinue": "连接到 {{environment}} 并具备语音输入权限后才能继续。",
+    "retryLoadingKey": "重新加载 API 密钥",
+    "updateToUseOpenRouter": "将 {{environment}} 更新后才能使用 OpenRouter 语音输入。",
+    "checkingForKey": "正在检查 API 密钥…",
+    "model": "模型",
+    "retryLoadingModels": "重新加载模型",
+    "loadingModels": "正在加载转写模型…",
+    "askAdministrator": "请 {{environment}} 的管理员添加 API 密钥。",
+    "usesSavedKeyDeviceOnly": "使用保存在 {{environment}} 上的 API 密钥。此选择仅对本设备生效。",
+    "deviceOnlyChooseOff": "此选择仅对本设备生效。选择「关闭」可停止共享。",
+    "removeKeyMenu": "移除密钥…",
+    "cancel": "取消",
+    "removeKey": "移除密钥",
+    "save": "保存",
+    "saveAndEnable": "保存并启用",
+    "saveKey": "保存密钥",
+    "useName": "使用 {{name}}"
   }
 }
