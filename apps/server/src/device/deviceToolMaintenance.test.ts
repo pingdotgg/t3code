@@ -97,6 +97,33 @@ describe.each([false, true])("device tool cleanup, flat=%s", (flat) => {
   });
 });
 
+it("reads the Windows process scan as UTF-8", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-tool-scan-"));
+  try {
+    const { stdout } = await exec(process.execPath, [
+      "-e",
+      deviceToolMaintenanceScript +
+        `
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      require('node:child_process').spawnSync = (...call) => { console.log(JSON.stringify(call)); return { status: 1, stdout: '' }; };
+      pruneTools(${JSON.stringify(root)}, [], false).catch(() => process.exitCode = 1);
+    `,
+    ]);
+    expect(JSON.parse(stdout)).toEqual([
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
+      ],
+      { encoding: "utf8", timeout: 10000 },
+    ]);
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
 // regression: #12819 safely reclaim obsolete managed tool versions
 it.effect("maintenance failures retain safe context and the original process result", () =>
   Effect.gen(function* () {
