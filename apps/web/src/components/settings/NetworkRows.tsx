@@ -241,9 +241,11 @@ function machineDetails(
       ? [`Limited on ${hostLabel(group, host)} to ${accessConfig[device.localLimit].label}`]
       : [],
   );
-  const links = entry.links.map(
-    ({ host, link }) =>
-      `Linked to ${hostLabel(group, host)} with a pairing code: ${linkStatus(link, now)}`,
+  // A member's own links are how the network carries it, not something the user made.
+  const links = entry.links.flatMap(({ host, link }) =>
+    link.origin === "paired"
+      ? [`Linked to ${hostLabel(group, host)} with a pairing code: ${linkStatus(link, now)}`]
+      : [],
   );
   const localOnly = entry.views.flatMap(({ host, device }) =>
     machine.kind === "linked" && device.outgoing === "tailnet" && device.access !== null
@@ -663,11 +665,12 @@ function AddMachineDialog({
   const [failure, setFailure] = useState<string | null>(null);
   const [scope, setScope] = useState<"network" | "local">("network");
   const previous = entry.member?.access;
-  // Re-adding keeps the access it had before the update unless the user picks another.
+  // Re-adding keeps the access it had before the update unless the user picks another. A new
+  // machine starts like every other machine of the owner's: full access, which they can narrow.
   const [access, setAccess] = useState<AuthMcpClientAccess>(
     mode === "unbound" && previous !== undefined && previous !== "revoked"
       ? previous
-      : "approval-required",
+      : "full-access",
   );
   const [busy, setBusy] = useState(false);
   const here = hostLabel(group, authority);

@@ -539,7 +539,7 @@ describe("adding a machine to the network", () => {
     }),
   );
 
-  it.live("a machine added on one member is linked from every member after a scan", () =>
+  it.live("a machine added on one member is linked both ways with every member, unasked", () =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
@@ -550,16 +550,30 @@ describe("adding a machine to the network", () => {
       yield* tailnet.join(c.url);
       yield* admit(tailnet, a, b);
       yield* admit(tailnet, b, c);
-      expect(yield* a.links.get(box.environmentId)).toEqual(Option.none());
 
-      // The scan's probes find nothing new; only the studio knows the box.
-      yield* a.devices.scan;
+      // No scan: the laptop links as the roster reaches it. Only the studio ever found the box.
+      const linkedWith = (device: Device, other: ExecutionEnvironmentDescriptor) =>
+        until(device, (snapshot) =>
+          snapshot.devices.some(
+            (listed) =>
+              listed.environmentId === other.environmentId &&
+              listed.outgoing === "tailnet" &&
+              listed.incoming,
+          ),
+        );
+      yield* linkedWith(a, box);
+      yield* linkedWith(c, laptop);
 
       const linked = yield* a.links.get(box.environmentId);
-      expect(Option.map(linked, (link) => [link.origin, link.urls])).toEqual(
-        Option.some(["tailnet", [c.url]]),
-      );
-      expect(Option.isSome(yield* c.links.get(laptop.environmentId))).toBe(true);
+      expect(Option.map(linked, (link) => link.urls)).toEqual(Option.some([c.url]));
+      const rosterOf = (device: Device) =>
+        device.membership.members.pipe(
+          Effect.map((members) =>
+            members.map((member) => [member.environmentId, member.access]).toSorted(),
+          ),
+        );
+      expect(yield* rosterOf(c)).toEqual(yield* rosterOf(a));
+      expect(yield* rosterOf(c)).toHaveLength(3);
     }),
   );
 
@@ -1206,6 +1220,29 @@ describe("opening a device from the app", () => {
       const minted = (yield* b.pairingLinks).flatMap((link) => link.permissions ?? []);
       expect(minted.length).toBeGreaterThan(0);
       expect(minted.every((scope) => (narrow as ReadonlyArray<string>).includes(scope))).toBe(true);
+    }),
+  );
+
+  it.live("opens a member this machine holds no link to yet, in either direction", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+      const app = { scopes: AuthStandardClientScopes, subject: "browser-session" };
+
+      // Membership is the grant: the link is made when it is first needed.
+      for (const [from, to] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        yield* from.links.unlink(to.descriptor.environmentId);
+        const opened = yield* from.devices.openDevice(to.descriptor.environmentId, app);
+        expect(opened.environmentId).toBe(to.descriptor.environmentId);
+        expect(Option.isSome(yield* from.links.get(to.descriptor.environmentId))).toBe(true);
+      }
     }),
   );
 

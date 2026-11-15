@@ -285,7 +285,7 @@ describe("deviceNetworkView", () => {
     );
   });
 
-  it("shows old revoked installs under the live machine of their name", () => {
+  it("shows a live machine once, without the revoked installs of its name or node", () => {
     const named = (id: EnvironmentId, label: string, overrides: Partial<TailnetDevice> = {}) =>
       device(id, { label, nodeId: null, member: { ...member(id), label }, ...overrides });
     const [group] = view([
@@ -296,12 +296,18 @@ describe("deviceNetworkView", () => {
             status: "revoked",
             member: { ...revokedBy(studioOld, box), label: "Studio-01" },
           }),
+          // Revoked after its node was bound, so it groups with the live install by node.
+          named(laptop, "Studio-01", {
+            nodeId: "n-studio",
+            status: "revoked",
+            member: { ...revokedBy(laptop, box), label: "Studio-01", nodeId: "n-studio" },
+          }),
         ],
       }),
     ]);
     const studioRow = group?.machines.find((m) => m.entry.environmentId === studio);
     expect(group?.machines.map((m) => m.entry.environmentId)).toEqual([box, studio]);
-    expect(studioRow?.others.map((other) => other.environmentId)).toEqual([studioOld]);
+    expect(studioRow?.others).toEqual([]);
   });
 
   it("takes the newest roster entry when hosts disagree", () => {

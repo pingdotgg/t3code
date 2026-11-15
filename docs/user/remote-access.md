@@ -340,13 +340,15 @@ your other machines. Being on the same account is not permission: a machine
 joins only when you add it and pick what it may do. Adding the first one starts
 your network, with the machine you added from at full access. Tagged nodes and
 machines shared from someone else's tailnet never show up. A machine
-reinstalled on the same computer shows as one row, and you can **Forget** its
-old install from that row.
+reinstalled on the same computer shows as one row. An old install you revoked
+is not listed beside it; one still in the network is, with **Forget**.
 
 Changes go through a full-access machine this app is connected to, and every
 machine in the network picks them up.
 
-- **Add to network** gives a machine the access you pick on every machine. A
+- **Add to network** gives a machine the access you pick on every machine,
+  full access unless you choose less. Every machine in the network can then
+  reach it, and it can reach each of them, with nothing more to do. A
   limit one machine already set for it stays until you clear it. **Link to … only** links it to one machine, as a pairing code would.
   A machine linked that way, or with a pairing code, can be added to the
   network later.
