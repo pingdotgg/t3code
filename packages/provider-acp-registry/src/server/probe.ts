@@ -53,6 +53,39 @@ const boundedText = (value: string, maximumLength: number): string =>
 const boundedOpaqueValue = (value: string, maximumLength: number): string | undefined =>
   value.length > 0 && value === value.trim() && value.length <= maximumLength ? value : undefined;
 
+/**
+ * The session's reasoning option with the levels a model advertises in `_meta`, in the
+ * shape Grok uses. Null when the model has none, undefined when it says nothing.
+ */
+function advertisedReasoningEffort(
+  option: EffectAcpSchema.SessionConfigOption | undefined,
+  meta: Readonly<Record<string, unknown>> | null | undefined,
+): AcpRegistryProbeModel["reasoningEffort"] {
+  if (option?.type !== "select" || meta == null) return undefined;
+  if (meta.supportsReasoningEffort === false) return null;
+  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
+  const options = meta.reasoningEfforts.flatMap((level: unknown) =>
+    typeof level === "object" &&
+    level !== null &&
+    "value" in level &&
+    typeof level.value === "string"
+      ? [
+          {
+            value: level.value,
+            name: "label" in level && typeof level.label === "string" ? level.label : level.value,
+          },
+        ]
+      : [],
+  );
+  const currentValue = typeof meta.reasoningEffort === "string" ? meta.reasoningEffort : "";
+  return (
+    acpProviderOptionDescriptors({
+      configOptions: [{ ...option, options, currentValue }],
+      modeState: undefined,
+    })[0] ?? null
+  );
+}
+
 export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
   const url = new URL(value);
@@ -195,7 +228,14 @@ export function normalizeAcpRegistryLiveConfiguration(
     currentModelId === undefined
       ? null
       : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(candidates, boundedCurrentModelId);
+  const effortOption = configOptions.find((option) => option.category === "thought_level");
+  const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+    const reasoningEffort = advertisedReasoningEffort(
+      effortOption,
+      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
+    );
+    return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
+  });
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
   const modelOptionIds = new Set(
     configOptions

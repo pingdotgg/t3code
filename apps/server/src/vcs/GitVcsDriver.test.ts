@@ -400,6 +400,49 @@ it.effect.each(["failure", "interrupt"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each([
+  { stop: "before git restore spawns", gate: "restore", index: "staged", file: "later\n" },
+  { stop: "after git restore ran", gate: "clean", index: "head", file: "unstaged\n" },
+] as const)(
+  "checkpoint restore interrupted $stop leaves the $index index",
+  ({ gate, index, file }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-restore-interrupt-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fs.writeFileString(path.join(cwd, "file.txt"), "later\n");
+      yield* git(["add", "file.txt"]);
+      const stagedTree = (yield* git(["write-tree"])).stdout;
+      const entered = yield* Deferred.make<void>();
+      const gatedDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) =>
+            input.operation === "GitVcsDriver.checkpoints.restoreCheckpoint" &&
+            input.args.includes(gate)
+              ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+              : liveProcess.run(input),
+        }),
+      );
+      const fiber = yield* gatedDriver.checkpoints
+        .restoreCheckpoint({ cwd, checkpointRef })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(entered);
+      yield* Fiber.interrupt(fiber);
+      const result = yield* Fiber.await(fiber);
+      assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
+
+      assert.strictEqual(
+        (yield* git(["write-tree"])).stdout,
+        index === "head" ? (yield* git(["rev-parse", "HEAD^{tree}"])).stdout : stagedTree,
+      );
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, "file.txt")), file);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint publication falls back to rename where hardlinks are unavailable", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1519,6 +1562,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         "write-tree",
         "commit-tree",
         "update-ref",
+        // Without a parsed top level, capture cannot rule out submodules.
+        "submodule",
       ]);
       assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
       assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
@@ -1753,6 +1798,73 @@ it.effect("sparse restore rewrites manual skip-worktree files and keeps exclusio
       assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/s space")), "original\n");
       assert.strictEqual(yield* fs.readFileString(path.join(cwd, "in/normal")), "original\n");
       assert.isFalse(yield* fs.exists(path.join(cwd, "out")));
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("restores and deletes checkpoints inside populated submodules", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const git = (cwd: string, args: ReadonlyArray<string>) =>
+      driver.execute({ operation: "test", cwd, args });
+    const makeRepository = Effect.fn("makeRepository")(function* (prefix: string) {
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "original\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "initial"]);
+      return cwd;
+    });
+    const nested = yield* makeRepository("t3-submodule-nested-");
+    const library = yield* makeRepository("t3-submodule-library-");
+    const addSubmodule = (cwd: string, url: string, name: string) =>
+      git(cwd, ["-c", "protocol.file.allow=always", "submodule", "add", url, name]).pipe(
+        Effect.andThen(git(cwd, ["commit", "-m", `add ${name}`])),
+      );
+    yield* addSubmodule(library, nested, "nested");
+    const root = yield* makeRepository("t3-submodule-root-");
+    yield* addSubmodule(root, library, "library");
+    yield* git(root, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "update",
+      "--init",
+      "--recursive",
+    ]);
+    const files = ["file.txt", "library/file.txt", "library/nested/file.txt"].map((file) =>
+      path.join(root, file),
+    );
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/submodules");
+    yield* fileSystem.writeFileString(files[1]!, "captured\n");
+    yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef });
+
+    for (const file of files) {
+      yield* fileSystem.writeFileString(file, "changed\n");
+      yield* fileSystem.writeFileString(`${file}.added`, "new\n");
+    }
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd: root,
+        checkpointRef,
+        fallbackToHead: false,
+      }),
+    );
+
+    assert.deepStrictEqual(
+      yield* Effect.forEach(files, (file) => fileSystem.readFileString(file)),
+      ["original\n", "captured\n", "original\n"],
+    );
+    for (const file of files) assert.isFalse(yield* fileSystem.exists(`${file}.added`));
+
+    yield* driver.checkpoints.deleteCheckpointRefs({ cwd: root, checkpointRefs: [checkpointRef] });
+    for (const cwd of [root, path.join(root, "library"), path.join(root, "library", "nested")]) {
+      const ref = yield* git(cwd, ["for-each-ref", "refs/t3"]);
+      assert.strictEqual(ref.stdout, "");
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
