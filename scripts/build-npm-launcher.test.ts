@@ -74,9 +74,13 @@ exit 7
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
   let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
+  const failures: Array<number> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/SHA256SUMS`) {
+    const failure = failures.shift();
+    if (failure !== undefined) {
+      response.writeHead(failure).end("upstream timed out");
+    } else if (request.url === `/v${VERSION}/SHA256SUMS`) {
       response.end(`${checksum}  ${archiveName}\n`);
     } else if (request.url === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
@@ -100,6 +104,9 @@ exit 7
     requests,
     corruptChecksum: () => {
       checksum = "0".repeat(64);
+    },
+    failNextRequests: (...statuses: Array<number>) => {
+      failures.push(...statuses);
     },
   };
 });
@@ -137,6 +144,8 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const packageDir = path.join(installed, "package");
 
         const release = yield* serveFakeRelease(root);
+        // regression: #32897
+        release.failNextRequests(504, 524);
         const home = path.join(root, "home");
         const env = {
           PATH: (yield* HostProcess.Environment).PATH,
@@ -401,6 +410,82 @@ syncBuiltinESMExports();
             assert.include(failed.stderr, "musl");
           }
         }
+      }),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "kills a runtime that ignores the forwarded SIGTERM, and its providers, so the launcher exits",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-npm-launcher-test-" });
+        const output = yield* buildNpmLauncher({
+          version: VERSION,
+          outputDir: path.join(root, "out"),
+        });
+        const hostPath = (yield* HostProcess.Environment).PATH;
+        const installed = path.join(root, "installed");
+        yield* fs.makeDirectory(installed);
+        const unpack = yield* run("tar", ["-xzf", output.tarball, "-C", installed], {
+          cwd: root,
+          env: { PATH: hostPath },
+        });
+        assert.equal(unpack.exitCode, 0, unpack.stderr);
+
+        const home = path.join(root, "home");
+        const versionDir = path.join(home, "runtime/versions", VERSION);
+        yield* fs.makeDirectory(versionDir, { recursive: true });
+        yield* fs.writeFileString(path.join(versionDir, ".install-complete"), `${VERSION}\n`);
+        // Stands in for a runtime whose exit is stuck behind blocked filesystem calls, with a
+        // provider it never gets to stop. Both give up on their own well inside the project
+        // timeout so an unescalated stop fails descriptively.
+        const stuck = "runtime ignored SIGTERM and was still running 30s later";
+        const orphaned = "provider outlived the runtime by 30s";
+        const provider = `process.on("SIGTERM", () => {}); setTimeout(() => { console.log(${JSON.stringify(orphaned)}); process.exit(0); }, 30_000);`;
+        yield* fs.writeFileString(
+          path.join(versionDir, "t3"),
+          `#!${process.execPath}
+const provider = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(provider)}], { stdio: "inherit" });
+process.on("SIGTERM", () => setTimeout(() => { console.log(${JSON.stringify(stuck)}); process.exit(0); }, 30_000));
+setInterval(() => {}, 1 << 30);
+console.log(process.pid, provider.pid);
+`,
+        );
+        yield* fs.chmod(path.join(versionDir, "t3"), 0o755);
+
+        const launcher = NodeChildProcess.spawn(
+          process.execPath,
+          [path.join(installed, "package/bin/t3.mjs"), "serve"],
+          { cwd: root, env: { PATH: hostPath, T3CODE_HOME: home }, stdio: "pipe" },
+        );
+        let pids: Array<number> = [];
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            for (const pid of [...pids, launcher.pid]) {
+              try {
+                if (pid !== undefined) process.kill(pid, "SIGKILL");
+              } catch {}
+            }
+          }),
+        );
+        let stdout = "";
+        const started = Promise.withResolvers<void>();
+        launcher.stdout.setEncoding("utf8");
+        launcher.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+          if (stdout.includes("\n")) started.resolve();
+        });
+        // The runtime and provider inherit this pipe, so it closes only once all three are gone.
+        const closed = NodeEvents.EventEmitter.once(launcher.stdout, "close");
+        yield* Effect.promise(() => started.promise);
+        pids = stdout.trim().split(" ").map(Number);
+        assert.isTrue(pids.length === 2 && pids.every(Number.isInteger), stdout);
+
+        launcher.kill("SIGTERM");
+        yield* Effect.promise(() => closed);
+        assert.notInclude(stdout, stuck, "the launcher waited on a runtime that ignored SIGTERM");
+        assert.notInclude(stdout, orphaned, "the runtime's provider outlived the launcher");
       }),
   );
 });
