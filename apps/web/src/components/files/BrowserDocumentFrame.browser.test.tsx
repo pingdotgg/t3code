@@ -173,9 +173,7 @@ describe("BrowserDocumentFrame", () => {
         observer.disconnect();
         resolve({
           srcs: current.map((element) => element.src),
-          visible: current
-            .filter((element) => getComputedStyle(element).visibility !== "hidden")
-            .map((element) => element.src),
+          visible: current.filter((element) => !element.inert).map((element) => element.src),
         });
       });
       observer.observe(screen.container, { childList: true, subtree: true });
@@ -184,6 +182,7 @@ describe("BrowserDocumentFrame", () => {
     expect(await atInsertion).toEqual({ srcs: [first, second], visible: [first] });
 
     await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([second]));
+    expect(frames()[0]!.inert).toBe(false);
     expect(getComputedStyle(frames()[0]!).visibility).toBe("visible");
   });
 });

@@ -184,7 +184,7 @@ function withRevisionLoaded(
 const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
 
 /**
- * A new revision loads in a hidden frame over the current one and replaces it once it has
+ * A new revision loads beneath the current frame and replaces it once it has
  * loaded, so a workspace refresh never shows a blank (white) frame. URL renewals keep the
  * revision's first URL, so they do not discard form input or scroll.
  */
@@ -198,7 +198,7 @@ function FileDocument(props: {
   ]);
   const latest = revisions.at(-1);
   if (latest !== undefined && latest.key !== props.documentKey) {
-    // Keep only the page on screen beneath the incoming one: the newest loaded revision, or
+    // Keep only the page on screen above the incoming one: the newest loaded revision, or
     // the current one when a revision arrives before anything has loaded.
     const shown = revisions.findLast((revision) => revision.loaded) ?? revisions[0];
     setRevisions([
@@ -227,10 +227,19 @@ function FileDocument(props: {
           title={props.title}
           className={cn(
             "absolute inset-0 size-full border-0 bg-white",
-            revision.key !== visibleKey && "invisible",
+            revision.key === visibleKey && "z-10",
           )}
+          inert={revision.key !== visibleKey}
+          aria-hidden={revision.key !== visibleKey}
           sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-          onLoad={() => setRevisions((current) => withRevisionLoaded(current, revision.key))}
+          onLoad={() => {
+            // Chromium must paint the incoming document before the old frame is removed.
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() =>
+                setRevisions((current) => withRevisionLoaded(current, revision.key)),
+              );
+            });
+          }}
         />
       ))}
     </div>
