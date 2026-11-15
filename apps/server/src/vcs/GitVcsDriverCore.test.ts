@@ -562,7 +562,10 @@ it.effect.each([
         const metadataQueries = spawnedArgs.filter((args) => args.includes("--git-common-dir"));
         assert.deepStrictEqual(
           metadataQueries,
-          Array.from({ length: 2 }, () => ["rev-parse", "--git-common-dir"]),
+          Array.from({ length: hookExitCode === 0 ? 2 : 3 }, () => [
+            "rev-parse",
+            "--git-common-dir",
+          ]),
         );
         assert.isFalse(spawnedArgs.some((args) => args.includes("symbolic-ref")));
         invalidationFailure = "none";
