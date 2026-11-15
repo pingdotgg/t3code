@@ -2,9 +2,7 @@
   "aria": {
     "gitActions": "Git 操作",
     "actionOptions": "Git 操作选项",
-    "openInEditor": "在编辑器中打开 {{path}}",
-    "scriptActions": "脚本操作",
-    "chooseIcon": "选择图标"
+    "openInEditor": "在编辑器中打开 {{path}}"
   },
   "providerHintUnavailable": "无法获取提供方状态。请打开「设置 -> 源代码管理」重新扫描。",
   "providerNotAuthenticated": "{{label}} 尚未完成认证。请打开「设置 -> 源代码管理」查看配置指引。",
@@ -29,7 +27,6 @@
     "connection": "此连接无法更改源代码管理。",
     "actionUnavailable": "此操作当前不可用。",
     "cannotChangeBranch": "此连接无法更改线程的分支。",
-    "cannotChangeProjectActions": "此连接无法更改项目操作。",
     "cannotChangeShortcuts": "此连接无法更改键盘快捷键。"
   },
   "menu": {

@@ -2,9 +2,7 @@
   "aria": {
     "gitActions": "Git actions",
     "actionOptions": "Git action options",
-    "openInEditor": "Open {{path}} in editor",
-    "scriptActions": "Script actions",
-    "chooseIcon": "Choose icon"
+    "openInEditor": "Open {{path}} in editor"
   },
   "providerHintUnavailable": "Provider status unavailable. Open Settings -> Source control and rescan.",
   "providerNotAuthenticated": "{{label}} is not authenticated. Open Settings -> Source control for setup guidance.",
@@ -29,7 +27,6 @@
     "connection": "This connection cannot change source control.",
     "actionUnavailable": "This action is currently unavailable.",
     "cannotChangeBranch": "This connection cannot change the thread's branch.",
-    "cannotChangeProjectActions": "This connection cannot change project actions.",
     "cannotChangeShortcuts": "This connection cannot change keyboard shortcuts."
   },
   "menu": {
