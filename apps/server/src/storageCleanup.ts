@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   CheckpointScopeId,
   GitCommandError,
+  linkOriginIsFenced,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -55,6 +56,7 @@ import * as WorktreeBranchSync from "./orchestration-v2/WorktreeBranchSync.ts";
 import { forkParked } from "./serverActivation.ts";
 import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
@@ -329,10 +331,14 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
   const reconcileBranch = yield* WorktreeBranchSync.makeReconcile;
   const terminals = yield* TerminalManager.TerminalManager;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+  const serviceScope = yield* Effect.scope;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
+  // Worktree key to the activity its settle script last ran for, so a kept worktree is not torn down again.
+  const settleScriptRuns = new Map<string, number>();
   const noteTerminal = (terminal: TerminalSummary) => {
     const threadTerminals =
       liveTerminals.get(terminal.threadId) ?? new Map<string, TerminalSummary>();
@@ -1542,6 +1548,37 @@ const make = Effect.gen(function* () {
         const inspection = yield* measureWorktree(worktreePath, true);
         if (inspection.reason !== null) return keep(inspection.reason);
         const bytes = inspection.bytes;
+        // Settling already ran the script. A deleted project has none; other failures keep the worktree.
+        // The runner cannot read a deleted thread, so its link fence is checked here.
+        if (
+          thread.settledOverride !== "settled" &&
+          !(thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin)) &&
+          settleScriptRuns.get(worktreeKey) !== activityAt
+        ) {
+          const run = yield* projectScripts
+            .runForThread({
+              threadId: thread.id,
+              projectId: thread.projectId,
+              worktreePath,
+              trigger: "settle",
+              observeCompletion: {},
+            })
+            .pipe(
+              Effect.catchTags({
+                ProjectSetupScriptProjectNotFoundError: () =>
+                  Effect.succeed({ status: "no-script" } as const),
+              }),
+            );
+          settleScriptRuns.set(worktreeKey, activityAt);
+          if (run.status === "started") {
+            // Its terminal protects the worktree until the script ends; a later sweep removes it.
+            yield* (run.completion ?? Effect.void).pipe(
+              Effect.andThen(requestSweep),
+              Effect.forkIn(serviceScope),
+            );
+            return keep(waitForStop("settle script is running"));
+          }
+        }
         yield* withWorkspaceLease(
           worktreePath,
           Effect.gen(function* () {
@@ -1889,7 +1926,8 @@ const make = Effect.gen(function* () {
         ),
       ),
   );
-  const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
+  // Annotated because a worktree sweep requests the next one when its settle script ends.
+  const requestSweep: Effect.Effect<void> = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
   const runNow = Effect.gen(function* () {

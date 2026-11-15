@@ -703,7 +703,14 @@ export const make = Effect.gen(function* () {
       if (settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
-      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      if (worktreePath === null) return;
+      if (!(yield* fileSystem.exists(worktreePath))) {
+        yield* Effect.logInfo("settle script skipped: the thread's worktree is missing", {
+          threadId,
+          worktreePath,
+        });
+        return;
+      }
       // Recheck after closing and worktree I/O; re-engaged threads must not be cleaned up.
       const thread = yield* projections.getThread(threadId);
       if (thread.settledOverride !== "settled") return;
