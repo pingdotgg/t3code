@@ -24,6 +24,7 @@ import * as EntireUrls from "../shared/entireUrls.ts";
 import * as Json from "./entireTrailJson.ts";
 
 const KIND = SourceControlProviderKind.make("entire");
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const PAGE_SIZE = 100;
 const MAX_BRANCH_PAGES = 3;
 
@@ -508,7 +509,7 @@ export const make = Effect.gen(function* () {
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: branch }));
         }).pipe(
           Effect.mapError((cause) =>
-            Schema.is(SourceControlProviderError)(cause)
+            isSourceControlProviderError(cause)
               ? cause
               : error(
                   "checkoutChangeRequest",
