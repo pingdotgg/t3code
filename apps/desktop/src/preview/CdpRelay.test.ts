@@ -9,6 +9,7 @@ import {
 const makeTarget = (
   send: CdpRelayTarget["send"],
   setDownloadDirectory: CdpRelayTarget["setDownloadDirectory"] = () => {},
+  ackScreencastFrame: CdpRelayTarget["ackScreencastFrame"] = () => {},
 ): CdpRelayTarget => ({
   send,
   targetId: async () => "GUEST-TARGET",
@@ -16,6 +17,8 @@ const makeTarget = (
   title: () => "Fixture",
   userAgent: () => "Electron",
   setDownloadDirectory,
+  receivesScreencast: () => true,
+  ackScreencastFrame,
 });
 
 const makeRelay = (target: CdpRelayTarget, write: (raw: string) => void) =>
@@ -137,9 +140,13 @@ describe("CDP relay", () => {
 
 describe("CDP relay extra sessions", () => {
   it("gives a second page session the page's commands and events", async () => {
-    const send = vi.fn(async () => ({}));
+    const send = vi.fn<CdpRelayTarget["send"]>(async () => ({}));
     const written: Array<Record<string, unknown>> = [];
-    const relay = makeRelay(makeTarget(send), (raw) => written.push(JSON.parse(raw)));
+    const nativeAcks: Array<number> = [];
+    const relay = makeRelay(
+      makeTarget(send, undefined, (frameId) => nativeAcks.push(frameId)),
+      (raw) => written.push(JSON.parse(raw)),
+    );
     relay.receive(JSON.stringify({ id: 1, method: "Target.setAutoAttach", params: {} }));
     relay.receive(JSON.stringify({ id: 2, method: "Target.attachToBrowserTarget" }));
     await settle();
@@ -169,8 +176,63 @@ describe("CDP relay extra sessions", () => {
     await settle();
     expect(send).toHaveBeenLastCalledWith("Page.startScreencast", {}, undefined, extra);
     written.length = 0;
-    relay.event("Page.screencastFrame", { data: "x" }, undefined);
-    expect(written.map((m) => m["sessionId"])).toEqual(["t3-preview-page", extra]);
+    const frame = (frameId: number) =>
+      relay.event("Page.screencastFrame", { data: "x", sessionId: frameId }, undefined);
+    const ack = (sessionId: string, frameId: number) =>
+      relay.receive(
+        JSON.stringify({
+          id: 6,
+          method: "Page.screencastFrameAck",
+          params: { sessionId: frameId },
+          sessionId,
+        }),
+      );
+    const delivered = () => {
+      const frames = written
+        .filter((m) => m["method"])
+        .map((m) => [m["sessionId"], (m["params"] as { sessionId?: number }).sessionId]);
+      written.length = 0;
+      return frames;
+    };
+    frame(1);
+    expect(delivered()).toEqual([
+      ["t3-preview-page", 1],
+      [extra, 1],
+    ]);
+    // A session that has not acknowledged its frame gets only the newest one, on its ack.
+    for (let i = 2; i < 100; i++) frame(i);
+    expect(delivered()).toEqual([]);
+    // Frames every session is busy for stay unacknowledged, so Chromium pauses at its in-flight limit.
+    expect(nativeAcks).toEqual([1]);
+    ack(extra, 1);
+    await settle();
+    expect(delivered()).toEqual([[extra, 99]]);
+    // Each consumer ack lets Chromium send one more frame.
+    expect(nativeAcks).toEqual([1, 2]);
+    ack(extra, 99);
+    await settle();
+    expect(delivered()).toEqual([]);
+    expect(nativeAcks).toEqual([1, 2, 3]);
+    frame(100);
+    expect(delivered()).toEqual([[extra, 100]]);
+    ack(extra, 99);
+    await settle();
+    frame(101);
+    expect(delivered()).toEqual([]);
+    expect(send.mock.calls.some(([method]) => method === "Page.screencastFrameAck")).toBe(false);
+    // A restart keeps the unacknowledged frame's slot until its own acknowledgement.
+    relay.receive(JSON.stringify({ id: 7, method: "Page.stopScreencast", sessionId: extra }));
+    relay.receive(JSON.stringify({ id: 8, method: "Page.startScreencast", sessionId: extra }));
+    await settle();
+    delivered();
+    frame(102);
+    expect(delivered()).toEqual([]);
+    ack(extra, 100);
+    await settle();
+    expect(delivered()).toEqual([[extra, 102]]);
+    // Other events still reach a session while its frame is unacknowledged.
+    relay.event("Page.loadEventFired", { timestamp: 1 }, undefined);
+    expect(delivered().map(([session]) => session)).toEqual(["t3-preview-page", extra]);
   });
 });
 

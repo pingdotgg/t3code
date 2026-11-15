@@ -58,7 +58,7 @@ const DeviceOpenTool = Tool.make("device_open", {
     FileSystem.FileSystem,
     Path.Path,
     ServerConfig.ServerConfig,
-    // The thread's project can name the EAS project a cloud device runs under.
+    // The thread's project can name the Expo project a cloud device runs under.
     ProjectService.ProjectService,
   ],
 })

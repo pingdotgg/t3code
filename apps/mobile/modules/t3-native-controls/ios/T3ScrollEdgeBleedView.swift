@@ -19,6 +19,7 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+  private var indicatorObservations: [NSKeyValueObservation] = []
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -136,12 +137,29 @@ final class T3ScrollEdgeBleedView: ExpoView {
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
     }
+    applyIndicatorInset()
+    // React Native rewrites every indicator inset when its `scrollIndicatorInsets` prop changes,
+    // which the keyboard-aware list animates while a reply streams; put the inset back at once.
+    if bleeding, indicatorObservations.isEmpty {
+      let keyPaths = [\UIScrollView.verticalScrollIndicatorInsets, \.scrollIndicatorInsets]
+      indicatorObservations = keyPaths.map {
+        scrollView.observe($0) { [weak self] _, _ in
+          MainActor.assumeIsolated { self?.applyIndicatorInset() }
+        }
+      }
+    } else if !bleeding {
+      indicatorObservations = []
+    }
+    applied = bleeding
+  }
+
+  private func applyIndicatorInset() {
+    guard let scrollView else { return }
     var indicators = scrollView.verticalScrollIndicatorInsets
     if indicators.right != bleed.right {
       indicators.right = bleed.right
       scrollView.verticalScrollIndicatorInsets = indicators
     }
-    applied = bleeding
   }
 
   private func detach() {
