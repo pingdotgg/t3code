@@ -6381,6 +6381,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       ];
     });
 
+    const unshownRunAttachmentIds = Effect.fn("ProjectionStore.unshownRunAttachmentIds")(function* (
+      threadId: ThreadId,
+      from: number,
+      through: number,
+    ) {
+      const candidates = yield* runAttachmentIds(threadId, from, through);
+      if (from <= -1 || candidates.length === 0) return candidates;
+      const retained = new Set(yield* runAttachmentIds(threadId, -1, from - 1));
+      return candidates.filter((id) => !retained.has(id));
+    });
+
     // Deleting a fork also frees what its deleted sources kept only for it.
     const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = Effect.fn(
       "ProjectionStore.getThreadAttachmentIds",
@@ -6415,7 +6426,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               Effect.flatMap((shown) =>
                 shown.with_fork === null
                   ? Effect.succeed([])
-                  : runAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
+                  : unshownRunAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
               ),
             ),
         );
@@ -6430,7 +6441,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         `;
         return [
           ...new Set([
-            ...(yield* runAttachmentIds(
+            ...(yield* unshownRunAttachmentIds(
               threadId,
               options?.includeShownByLiveFork ? -1 : afterRun(own.with_fork),
               Number.MAX_SAFE_INTEGER,
