@@ -326,12 +326,12 @@ private final class ComposerTextView: UITextView {
         }
       }
       // Decoding a GIF to UIImage keeps only its first frame, so pass its bytes through.
-      guard provider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) else {
+      if provider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) {
+        _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.gif.identifier) { data, _ in
+          if let data { store((data, "gif")) } else { loadPNG() }
+        }
+      } else {
         loadPNG()
-        continue
-      }
-      _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.gif.identifier) { data, _ in
-        if let data { store((data, "gif")) } else { loadPNG() }
       }
     }
 
