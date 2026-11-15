@@ -1095,8 +1095,9 @@ export function EnvironmentProviderSettings({
             </SettingsEmptyState>
           </SettingsGroup>
         ) : (
-          // The list and the selected instance side by side; narrow panes stack them.
-          <div className="grid min-w-0 overflow-hidden rounded-card surface-card-settings @min-[44rem]/providers:grid-cols-[15rem_minmax(0,1fr)]">
+          // List and selected instance side by side on the page surface, not in a card, so the
+          // detail's groups are the same cards as other settings pages. Narrow panes stack them.
+          <div className="grid min-w-0 overflow-hidden @min-[44rem]/providers:grid-cols-[15rem_minmax(0,1fr)]">
             <nav
               aria-label="Provider instances"
               className="flex min-w-0 flex-col gap-0.5 border-divider p-1.5 @max-[44rem]/providers:border-b @min-[44rem]/providers:border-r"
@@ -1104,11 +1105,7 @@ export function EnvironmentProviderSettings({
               {rows.map((row) => renderProviderInstance(row, "list"))}
             </nav>
             {selectedRow ? (
-              // Groups inside the detail sink to the page color so they read against the split card.
-              <div
-                key={selectedRow.instanceId}
-                className="min-w-0 space-y-4 p-4 [--card-settings-fill:var(--background)]"
-              >
+              <div key={selectedRow.instanceId} className="min-w-0 space-y-4 p-4">
                 {renderProviderInstance(selectedRow, "editor")}
               </div>
             ) : null}
