@@ -83,7 +83,7 @@ export function ComposerEditor({
     props.onChangeText(text);
     if (draftKey) {
       setComposerDraftContext(draftKey, restored.context);
-      appendComposerDraftAttachments(draftKey, restored.attachments, { allowOverflow: true });
+      appendComposerDraftAttachments(draftKey, restored.attachments, { restore: true });
     }
   };
   const [selected, setSelected] = useState<{ source: string; start: number; end: number } | null>(
