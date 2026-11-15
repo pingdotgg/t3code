@@ -9,26 +9,35 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { readEnvironment } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
-  persistScopedSettingsPatch,
+  createScopedSettingsWriter,
+  pendingScopedWritesAtom,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  settlePendingScopedWrites,
   type ProjectOverrideEntry,
   type ScopedSettingsPatch,
 } from "./scopedSettings";
+
+const readSettings = (environmentId: EnvironmentId) =>
+  readEnvironment(environmentId)?.serverConfig?.settings ?? null;
+const writeScopedSettings = createScopedSettingsWriter(readSettings);
 
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
@@ -51,7 +60,12 @@ function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   // Optional: the plan also runs from controls rendered outside a settings page.
   const connectedEnvironments = useOptionalSettingsScope()?.connectedEnvironments;
-  return (plan: ReturnType<typeof planScopedSettingsPatch>, onFailed?: () => void) => {
+  return (
+    environments: Parameters<typeof writeScopedSettings>[0],
+    planner: Parameters<typeof writeScopedSettings>[1],
+    onFailed?: () => void,
+  ) => {
+    const plan = planner(environments);
     if (plan.unavailableReason) {
       toastManager.add({
         type: "warning",
@@ -61,8 +75,23 @@ function useRunScopedPlan() {
       onFailed?.();
       return;
     }
-    void persistScopedSettingsPatch(
-      plan,
+    const save = {};
+    const settle = (environmentId: EnvironmentId, saved?: ServerSettings) =>
+      appAtomRegistry.update(pendingScopedWritesAtom, (writes) =>
+        settlePendingScopedWrites(
+          writes,
+          { save, environmentId },
+          (id) => readSettings(id) ?? undefined,
+          saved,
+        ),
+      );
+    appAtomRegistry.update(pendingScopedWritesAtom, (writes) => [
+      ...writes,
+      ...plan.serverWrites.map(({ environmentId, patch }) => ({ save, environmentId, patch })),
+    ]);
+    void writeScopedSettings(
+      environments,
+      planner,
       async (request) => {
         const missing = requiredScopesForServerSettingsPatch(
           request.input.patch,
@@ -70,16 +99,21 @@ function useRunScopedPlan() {
             (environment) => environment.environmentId === request.environmentId,
           )?.serverConfig?.settings,
         ).find((scope) => !readEnvironmentScope(request.environmentId, scope));
-        if (missing)
-          return AsyncResult.failure(
-            Cause.fail(
-              new EnvironmentAuthorizationError({
-                requiredScope: missing,
-                message: "This connection lacks permission to change these settings.",
-              }),
-            ),
-          );
-        return persistServer(request);
+        const result = missing
+          ? AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  requiredScope: missing,
+                  message: "This connection lacks permission to change these settings.",
+                }),
+              ),
+            )
+          : await persistServer(request).catch((error: unknown) => {
+              settle(request.environmentId);
+              throw error;
+            });
+        settle(request.environmentId, result._tag === "Success" ? result.value : undefined);
+        return result;
       },
       persistClientSettingsPatch,
     ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
@@ -103,11 +137,15 @@ function useRunScopedPlan() {
 }
 
 export function useUpdateScopedSettings() {
-  const { scope, environments } = useSettingsScope();
+  const { scope, environments, deviceOnly } = useSettingsScope();
   const run = useRunScopedPlan();
   /** `onFailed` runs when any target rejects or drops the patch, so a draft can fall back. */
   return (patch: ScopedSettingsPatch, options?: { readonly onFailed?: () => void }) =>
-    run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
+    run(
+      environments,
+      (current) => planScopedSettingsPatch(scope, current, patch, { deviceOnly }),
+      options?.onFailed,
+    );
 }
 
 export function useClearScopedSettings() {
@@ -115,7 +153,7 @@ export function useClearScopedSettings() {
   const run = useRunScopedPlan();
   return (keys: readonly ProjectScopedServerSettingKey[]) => {
     if (context === null) return;
-    run(planScopedSettingsClear(context.scope, context.environments, keys));
+    run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
   };
 }
 
@@ -127,7 +165,7 @@ export function useClearProjectOverrides() {
     keys: readonly ProjectScopedServerSettingKey[],
   ) => {
     if (context === null) return;
-    run(planProjectOverridesClear(context.environments, entries, keys));
+    run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
   };
 }
 

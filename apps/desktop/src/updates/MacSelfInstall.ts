@@ -176,7 +176,10 @@ const make = Effect.gen(function* () {
   const isRequired = yield* Option.match(bundlePath, {
     onNone: () => Effect.succeed(false),
     onSome: (bundle) =>
-      Effect.tryPromise(() => runFile("/usr/bin/codesign", ["-dv", "--verbose=2", bundle])).pipe(
+      Effect.tryPromise({
+        try: () => runFile("/usr/bin/codesign", ["-dv", "--verbose=2", bundle]),
+        catch: (cause) => new MacSelfInstallError({ stage: "locate-bundle", cause }),
+      }).pipe(
         Effect.map(({ stderr }) => !hasTeamIdentifier(stderr)),
         Effect.orElseSucceed(() => false),
       ),
@@ -226,9 +229,10 @@ const make = Effect.gen(function* () {
     const stagedBundle = NodePath.join(extractDir, appName);
 
     // Missing quarantine makes xattr exit non-zero; either way the bundle is usable.
-    yield* Effect.tryPromise(() =>
-      runFile("/usr/bin/xattr", ["-dr", "com.apple.quarantine", stagedBundle]),
-    ).pipe(Effect.ignore);
+    yield* Effect.tryPromise({
+      try: () => runFile("/usr/bin/xattr", ["-dr", "com.apple.quarantine", stagedBundle]),
+      catch: fail("extract"),
+    }).pipe(Effect.ignore);
 
     const scriptPath = NodePath.join(stagingRoot, "swap.sh");
     yield* fileSystem

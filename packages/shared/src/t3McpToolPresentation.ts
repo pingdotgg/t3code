@@ -61,6 +61,8 @@ export type T3McpToolSummaryAction =
   | "skills-remove"
   | "skills-trash-list"
   | "skills-restore"
+  | "theme-read"
+  | "theme-set"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -78,7 +80,8 @@ export type T3McpToolSummaryAction =
   | "docs"
   | "docs-comments"
   | "ai-pm-ideas"
-  | "mcp-servers";
+  | "mcp-servers"
+  | "send-to-user";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -373,6 +376,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_skills_remove: tool(["Remove", "Removing", "Removed", "a skill"], "skills-remove"),
   t3_skills_trash_list: tool(["List", "Listing", "Listed", "the skill trash"], "skills-trash-list"),
   t3_skills_restore: tool(["Restore", "Restoring", "Restored", "a skill"], "skills-restore"),
+  t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
+  t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
@@ -430,6 +435,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Sign out", "Signing out", "Signed out", "of an MCP server"],
     "mcp-servers",
   ),
+  send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

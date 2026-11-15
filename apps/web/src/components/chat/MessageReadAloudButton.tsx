@@ -1,8 +1,6 @@
 import { memo, useEffect } from "react";
-import { Square, Volume2 } from "lucide";
+import { SquareIcon, Volume2Icon } from "lucide-react";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
-import { cn } from "~/lib/utils";
 import {
   readAloudSupported,
   stopReadAloud,
@@ -36,10 +34,11 @@ export const MessageReadAloudButton = memo(function MessageReadAloudButton({
           />
         }
       >
-        <MorphIcon
-          className={cn("size-3", isReading && "text-primary")}
-          icon={isReading ? Square : Volume2}
-        />
+        {isReading ? (
+          <SquareIcon className="size-3 text-primary" />
+        ) : (
+          <Volume2Icon className="size-3" />
+        )}
       </TooltipTrigger>
       <TooltipPopup>
         <p>{label}</p>
