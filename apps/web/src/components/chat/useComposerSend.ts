@@ -631,6 +631,18 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     if (queuedRunEdit.isEditing) {
+      // A queued message stays in its thread, so saving `/side` would send it to main.
+      if (!directAnnotation && parseSideChatCommand(promptAtSend)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Queued message not updated",
+            description:
+              "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+          }),
+        );
+        return;
+      }
       // Edit mode repurposes the composer: sending saves the queued message
       // in place instead of dispatching a new turn.
       await queuedRunEdit.saveEdit(

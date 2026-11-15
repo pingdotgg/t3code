@@ -397,8 +397,15 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
+// Agent-started sessions wrap the prompt in a `<wake reason=… current-time=…>`
+// envelope; title them after the prompt inside it.
+const WAKE_ENVELOPE = /^\s*<wake(?:\s[^>]*)?>([\s\S]*?)(?:<\/wake>|$)/;
+
 function deriveTitle(source: AgentSessionSource, text: string): string | undefined {
-  const request = source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text;
+  const request = (source === "codex" ? text.replace(CODEX_TITLE_PREAMBLE, "") : text).replace(
+    WAKE_ENVELOPE,
+    "$1",
+  );
   return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
 }
 
