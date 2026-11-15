@@ -42,6 +42,7 @@ import {
   parseVcsActionTargetKey,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
+  vcsActionFailureDescription,
   VcsActionTargetKeyParseError,
 } from "./vcsAction.ts";
 import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
@@ -299,11 +300,12 @@ describe("vcsActionState", () => {
     }),
   );
 
-  it.effect("retains structural remote failure context without copying the remote payload", () =>
+  it.effect("shows the remote failure to the user without putting it in logged fields", () =>
     Effect.gen(function* () {
       const target = { environmentId, cwd };
       const transportActionId = createVcsActionTransportId(target, actionId);
-      const remoteMessage = "The remote rejected the push with credential=do-not-log.";
+      const remoteMessage =
+        'GitHub rejected base branch "stack/parent" for github.com/acme/web. Push the intended base branch to that repository, or choose an existing base branch and retry.';
       const error = yield* consumeVcsActionProgress(
         Stream.fromIterable<GitActionProgressEvent>([
           {
@@ -332,11 +334,10 @@ describe("vcsActionState", () => {
         environmentId,
         cwd,
         phase: "push",
-        remoteMessageLength: remoteMessage.length,
       });
-      expect(error).not.toHaveProperty("detail");
       expect(error.message).toBe("Source control action 'commit_push' failed during push.");
-      expect(error.message).not.toContain(remoteMessage);
+      expect(JSON.stringify(error)).not.toContain("stack/parent");
+      expect(vcsActionFailureDescription(error, "fallback")).toBe(remoteMessage);
     }),
   );
 

@@ -110,6 +110,7 @@ import { sourceControlEnvironment } from "~/state/sourceControl";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
+import { vcsActionFailureDescription } from "@t3tools/client-runtime/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -1273,7 +1274,7 @@ export default function GitActionsControl({
         stackedThreadToast({
           type: "error",
           title: "Action failed",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          description: vcsActionFailureDescription(error, "An error occurred."),
           timeout: errorToastTiming.timeout,
           ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
         }),
