@@ -148,9 +148,13 @@ const layerSession = Layer.mergeAll(
 );
 
 describe("AntigravityAdapterV2 compaction", () => {
-  it.live.each([false, true])(
-    "negotiates native goals (%s) without enabling manual compaction",
-    (nativeGoals) =>
+  it.live.each([
+    { nativeGoals: false, advertisesCompact: false },
+    { nativeGoals: true, advertisesCompact: false },
+    { nativeGoals: false, advertisesCompact: true },
+  ])(
+    "negotiates native goals ($nativeGoals) with an advertised compact command ($advertisesCompact)",
+    ({ nativeGoals, advertisesCompact }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -173,7 +177,10 @@ describe("AntigravityAdapterV2 compaction", () => {
                 command: process.execPath,
                 args: [mockAgentPath],
                 cwd: input.cwd,
-                env: { T3_ACP_ANTIGRAVITY: "1" },
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  ...(advertisesCompact ? { T3_ACP_AVAILABLE_COMMANDS: "compact" } : {}),
+                },
               },
             }).pipe(
               Effect.provideService(SecureRandom.SecureRandom, crypto),
@@ -211,7 +218,8 @@ describe("AntigravityAdapterV2 compaction", () => {
         yield* Deferred.await(startupMilestone);
         yield* Deferred.succeed(consumeStartupCommands, undefined);
         const session = yield* Fiber.join(opening);
-        assert.isUndefined(session.compactThread);
+        // agy acp 1.5.9 advertises `compact` and compacts natively; 1.4.5 does not advertise it.
+        if (advertisesCompact) assert.isDefined(session.compactThread);
         assert.equal(session.providerSession.capabilities.turns.supportsNativeGoals, nativeGoals);
         assert.equal((yield* adapter.getCapabilities()).turns.supportsNativeGoals, nativeGoals);
       }).pipe(Effect.provide(layerSession)),
