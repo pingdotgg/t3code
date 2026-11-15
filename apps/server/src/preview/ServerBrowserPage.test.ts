@@ -1007,6 +1007,21 @@ describe("server browser press", () => {
       vi.useRealTimers();
     }
   });
+
+  it("fails when a key could not be released", async () => {
+    const page = {
+      keyboard: {
+        down: async () => {},
+        up: async (key: string) => {
+          if (key === "A") throw new Error("Target closed");
+        },
+      },
+    } as unknown as Page;
+
+    await expect(
+      ServerBrowserPage.press(page, { key: "A", modifiers: ["Control"] }),
+    ).rejects.toThrow("Target closed");
+  });
 });
 
 describe("server browser type", () => {

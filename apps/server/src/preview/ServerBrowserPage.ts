@@ -1110,18 +1110,22 @@ const chordKeys = (chord: string) => {
  */
 const pressChord = async (page: Page, chord: string, deadline: number) => {
   const held: Array<string> = [];
+  let pressed: { readonly failure: unknown } | undefined;
   try {
     for (const key of chordKeys(chord)) {
       held.push(key);
       await withinDeadline(deadline, () => page.keyboard.down(key));
     }
-  } finally {
-    // Sent together, in order: a key whose release stalls must not keep a modifier held.
-    const released = Promise.all(
-      held.reverse().map((key) => page.keyboard.up(key).catch(constVoid)),
-    );
-    await withinDeadline(deadline, () => released);
+  } catch (failure) {
+    pressed = { failure };
   }
+  // Sent together, in order: a key whose release stalls must not keep a modifier held.
+  const released = Promise.allSettled(held.reverse().map((key) => page.keyboard.up(key)));
+  if (pressed) throw pressed.failure;
+  const failed = (await withinDeadline(deadline, () => released)).find(
+    (release) => release.status === "rejected",
+  );
+  if (failed) throw failed.reason;
 };
 
 export const press = async (
