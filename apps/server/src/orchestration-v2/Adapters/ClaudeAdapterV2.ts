@@ -6390,6 +6390,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
 
+        // `claude --resume` shows the native title. A failed or timed-out rename forgets the
+        // applied title so the next turn, even after a restart, sends it again.
+        const applySessionTitle = Effect.fn("ClaudeAdapterV2.applySessionTitle")(function* (
+          query: ClaudeAgentSdkQuerySession,
+          nativeThreadId: string,
+          title: string,
+        ) {
+          if (appliedSessionTitles.get(nativeThreadId) === title) return;
+          const renamed = yield* query
+            .renameSession(title)
+            .pipe(Effect.timeout("10 seconds"), Effect.isSuccess);
+          if (renamed) {
+            appliedSessionTitles.set(nativeThreadId, title);
+          } else {
+            appliedSessionTitles.delete(nativeThreadId);
+          }
+          const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
+          if (remembered !== undefined) {
+            yield* rememberProviderThread(remembered);
+          }
+        });
+
         const rosterForNativeThread = (
           all: ReadonlyMap<string, Map<string, OrchestrationV2PendingBackgroundTask>>,
           nativeThreadId: string,
@@ -13029,24 +13051,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       Effect.provideService(Path.Path, path),
                     );
             const querySession = yield* openQuery(turnInput, nativeThreadId, queryPolicy);
-            // `claude --resume` shows the native title. A failed or timed-out rename forgets the
-            // applied title so the next turn, even after a restart, sends it again.
-            if (appliedSessionTitles.get(nativeThreadId) !== turnInput.appThread.title) {
-              const renamed = yield* querySession.query
-                .renameSession(turnInput.appThread.title)
-                .pipe(Effect.timeout("10 seconds"), Effect.isSuccess);
-              if (renamed) {
-                appliedSessionTitles.set(nativeThreadId, turnInput.appThread.title);
-              } else {
-                appliedSessionTitles.delete(nativeThreadId);
-              }
-              const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
-                nativeThreadId,
-              );
-              if (remembered !== undefined) {
-                yield* rememberProviderThread(remembered);
-              }
-            }
+            yield* applySessionTitle(querySession.query, nativeThreadId, turnInput.appThread.title);
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,
@@ -14028,6 +14033,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
               ),
             );
+          }),
+          applyThreadTitle: Effect.fn("ClaudeAdapterV2.applyThreadTitle")(function* ({
+            providerThread,
+            title,
+          }) {
+            const live = yield* Ref.get(queryContext);
+            if (
+              live === null ||
+              live.stopping ||
+              live.nativeThreadId !== providerThread.nativeThreadRef?.nativeId
+            ) {
+              return;
+            }
+            yield* applySessionTitle(live.query, live.nativeThreadId, title);
           }),
           stopTask: Effect.fn("ClaudeAdapterV2.stopTask")(function* ({ providerThread, taskId }) {
             const liveQuery = yield* Ref.get(queryContext);

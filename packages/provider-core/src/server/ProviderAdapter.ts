@@ -750,6 +750,11 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly modelSelection: ModelSelection;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Renames the provider's native session while its process is running; otherwise the next turn does. */
+  readonly applyThreadTitle?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly title: string;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly stopTask?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskId: string;
