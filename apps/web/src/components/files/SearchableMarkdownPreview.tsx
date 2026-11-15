@@ -1,4 +1,11 @@
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+  type KeyboardEventHandler,
+  type ReactNode,
+} from "react";
 
 import { FindBar } from "../FindBar";
 import { MarkdownFindContext } from "../chat/markdownFindContext";
@@ -6,7 +13,13 @@ import { ScrollArea } from "../ui/scroll-area";
 import { createMarkdownFind } from "./markdownFind";
 import { MARKDOWN_FIND_OPEN_EVENT } from "./markdownFindActionBus";
 
-export function SearchableMarkdownPreview({ children }: { readonly children: ReactNode }) {
+export function SearchableMarkdownPreview({
+  children,
+  onContentKeyDown,
+}: {
+  readonly children: ReactNode;
+  readonly onContentKeyDown?: KeyboardEventHandler<HTMLDivElement> | undefined;
+}) {
   const [preview, setPreview] = useState<HTMLDivElement | null>(null);
   const [content, setContent] = useState<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -104,7 +117,7 @@ export function SearchableMarkdownPreview({ children }: { readonly children: Rea
         onPrevious={() => find.current?.step(-1)}
         onClose={close}
       />
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" onKeyDown={onContentKeyDown}>
         <div ref={setContent}>
           <MarkdownFindContext value={open && query.trim().length > 0}>
             {children}

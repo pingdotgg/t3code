@@ -1,3 +1,4 @@
+import type { KeyboardEventHandler } from "react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -7,6 +8,7 @@ import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { SearchableMarkdownPreview } from "./SearchableMarkdownPreview";
 
 export function FileMarkdownPreview(props: {
+  readonly onContentKeyDown?: KeyboardEventHandler<HTMLDivElement> | undefined;
   readonly cwd: string;
   readonly relativePath: string;
   readonly text: string;
@@ -26,7 +28,7 @@ export function FileMarkdownPreview(props: {
       : props.cwd;
 
   return (
-    <SearchableMarkdownPreview>
+    <SearchableMarkdownPreview onContentKeyDown={props.onContentKeyDown}>
       <ChatMarkdown
         text={maskMarkdownFrontmatter(props.text)}
         cwd={props.cwd}
