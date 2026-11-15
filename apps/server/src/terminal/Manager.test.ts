@@ -1979,15 +1979,25 @@ it.layer(
 
   it.effect("starts a $SHELL whose path contains a space", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: "/Users/Jane Doe/.local/bin/fish" },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      for (const [shell, expected] of [
+        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
+        ["/Users/Jane -Doe/.local/bin/fish", "/Users/Jane -Doe/.local/bin/fish"],
+        ["/Users/Jane -Doe/.local/bin/fish -l", "/Users/Jane -Doe/.local/bin/fish"],
+        ["/bin/bash --rcfile=/etc/t3rc", "/bin/bash"],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { SHELL: shell },
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
 
-      yield* manager.open(openInput());
+        yield* manager.open(openInput());
 
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
-        "/Users/Jane Doe/.local/bin/fish",
-      ]);
+        expect
+          .soft(
+            ptyAdapter.spawnInputs.map((input) => input.shell),
+            shell,
+          )
+          .toEqual([expected]);
+      }
     }),
   );
 

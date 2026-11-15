@@ -539,10 +539,13 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped,
-  // and a quoted path is kept whole even when it contains " -".
+  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped.
+  // A dash word with a slash before any `=` (`/Jane -Doe/bash`) is a path segment, not a flag
+  // (`--rcfile=/etc/rc`), and a quoted path is kept whole.
   const quoted = /^(['"])(.*?)\1(?:\s|$)/.exec(trimmed);
-  const command = quoted ? quoted[2] : trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
+  const command = quoted
+    ? quoted[2]
+    : trimmed.split(/\s+(?=-[^\s/=]*(?:[\s=]|$))/)[0]?.replace(/^['"]|['"]$/g, "");
   return command || null;
 }
 
