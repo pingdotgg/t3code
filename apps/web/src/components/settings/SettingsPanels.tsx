@@ -939,8 +939,8 @@ export function GeneralSettingsPanel() {
           {...setting("local-machine-icon")}
           description={
             <T>
-              Also show the machine icon on threads from this device. Threads from other environments
-              always show theirs.
+              Also show the machine icon on threads from this device. Threads from other
+              environments always show theirs.
             </T>
           }
           resetAction={
