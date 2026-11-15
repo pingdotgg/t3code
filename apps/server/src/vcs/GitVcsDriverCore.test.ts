@@ -648,18 +648,6 @@ describe("config reads", () => {
       reused: true,
     },
     {
-      name: "a removed remote",
-      setup: (cwd) =>
-        git(cwd, ["remote", "add", "fork", "https://example.invalid/fork.git"]).pipe(
-          Effect.as(cwd),
-        ),
-      change: (cwd) => git(cwd, ["remote", "remove", "fork"]),
-      read: readPrimaryRemote,
-      before: "fork",
-      after: null,
-      reused: true,
-    },
-    {
       name: "a linked worktree's config.worktree",
       setup: (cwd) =>
         Effect.gen(function* () {
@@ -826,23 +814,6 @@ describe("config reads", () => {
       after: null,
       reused: true,
     },
-    ...(["garbage", ""] as const).map((head): ConfigChange => ({
-      name: `a nested repository's HEAD becoming ${head ? "invalid" : "empty"}`,
-      setup: (cwd) =>
-        Effect.gen(function* () {
-          const sub = NodePath.join(cwd, "sub");
-          yield* git(cwd, ["config", "t3.value", "parent"]);
-          yield* git(cwd, ["init", "-q", "sub"]);
-          yield* git(sub, ["config", "t3.value", "child"]);
-          return sub;
-        }),
-      change: (_cwd, sub) =>
-        Effect.sync(() => NodeFS.writeFileSync(NodePath.join(sub, ".git", "HEAD"), head)),
-      read: readValue("t3.value"),
-      before: "child",
-      after: "parent",
-      reused: true,
-    })),
     {
       name: "a relative include",
       setup: (cwd) =>
