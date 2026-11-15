@@ -446,7 +446,8 @@ export async function readTranscriptRecords<State>(
           // Replay only usage-bearing oversized lines; tool output can otherwise cost minutes of JSON tokenization.
           const replay = createTranscriptJsonReader(() => {}, selectPath, { maxDepth: Infinity });
           const replayDecoder = new NodeStringDecoder.StringDecoder("utf8");
-          const line = handle.createReadStream({
+          const line = NodeFS.createReadStream(filePath, {
+            fd: handle.fd,
             start: resumeOffset,
             end: end - 1,
             autoClose: false,
