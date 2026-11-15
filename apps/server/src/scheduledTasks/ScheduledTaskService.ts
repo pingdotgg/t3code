@@ -900,36 +900,39 @@ export const layer = Layer.effect(
         runs.find((run) => run.userMessageId === messageId) ??
         runs.find((run) => run.id === messageRunId);
       if (dispatched === undefined) return;
-      const { run } = yield* threadManagement.waitForThread({
-        ...thread,
-        runId: dispatched.id,
-        timeoutMs: RUN_OUTCOME_WAIT_MS,
-      });
-      if (
-        run === null ||
-        run.status === "completed" ||
-        !ThreadManagementService.isTerminalRunStatus(run.status)
-      )
+      let runId = dispatched.id;
+      while (true) {
+        const { run } = yield* threadManagement.waitForThread({
+          ...thread,
+          runId,
+          timeoutMs: RUN_OUTCOME_WAIT_MS,
+        });
+        if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+        const { messages } = yield* threadManagement.getProjectThreadRecords(thread, ["messages"], {
+          messageIds: [messageId],
+        });
+        const currentRunId = messages.find((message) => message.id === messageId)?.runId;
+        // A declined steer or a promoted queued message can move into another run.
+        if (currentRunId != null && currentRunId !== runId) {
+          runId = currentRunId;
+          continue;
+        }
+        if (run.status === "completed" || (run.status === "cancelled" && currentRunId == null))
+          return;
+        const { turnItems } = yield* threadManagement.getProjectThreadRecords(thread, [
+          "turnItems",
+        ]);
+        const error =
+          latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
+        const updated = yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed', last_run_error = ${error}
+          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso} AND last_run_status = 'succeeded'
+          RETURNING task_id
+        `;
+        if (updated.length > 0) yield* notifyChanged;
         return;
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(thread, [
-        "turnItems",
-        "messages",
-      ]);
-      // A queued message promoted to a steer cancels its run and joins the active one.
-      if (
-        run.status === "cancelled" &&
-        messages.find((message) => message.id === messageId)?.runId !== run.id
-      )
-        return;
-      const error =
-        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
-      const updated = yield* sql`
-        UPDATE scheduled_tasks
-        SET last_run_status = 'failed', last_run_error = ${error}
-        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso} AND last_run_status = 'succeeded'
-        RETURNING task_id
-      `;
-      if (updated.length > 0) yield* notifyChanged;
+      }
     });
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (

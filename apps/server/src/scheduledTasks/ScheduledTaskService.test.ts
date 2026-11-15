@@ -423,6 +423,7 @@ it.effect.each([
   { status: "failed", error: "Weekly usage limit reached", mode: "queue" },
   { status: "failed", error: "Weekly usage limit reached", mode: "steer" },
   { status: "failed", error: "Weekly usage limit reached", mode: "auto" },
+  { status: "interrupted", error: "The run was stopped.", mode: "auto", followUp: true },
   { status: "interrupted", error: "The run was stopped.", mode: "queue" },
   { status: "cancelled", error: "The run was cancelled.", mode: "queue" },
 ] as const)("a $mode run that ends $status after its message was accepted records it", (outcome) =>
@@ -430,6 +431,8 @@ it.effect.each([
     const projectId = ProjectId.make("project:test");
     const ended = yield* Deferred.make<void>();
     const sent = yield* Ref.make("");
+    const messageRun = yield* Ref.make("run:2");
+    const followUp = "followUp" in outcome;
     const run = { id: "run:2", status: outcome.status, rootNodeId: "node:root" };
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
@@ -441,8 +444,8 @@ it.effect.each([
             getThreadShell: () => Effect.succeed(threadShell(projectId)),
             getProjectThreadRecords: () =>
               Effect.map(
-                Ref.get(sent),
-                (userMessageId) =>
+                Effect.all([Ref.get(sent), Ref.get(messageRun)]),
+                ([userMessageId, runId]) =>
                   ({
                     runs: [
                       { id: "run:1", status: "completed", userMessageId: "message:earlier" },
@@ -451,7 +454,7 @@ it.effect.each([
                         userMessageId: outcome.mode === "queue" ? userMessageId : "message:active",
                       },
                     ],
-                    messages: [{ id: userMessageId, runId: "run:2" }],
+                    messages: [{ id: userMessageId, runId }],
                     turnItems: [
                       {
                         type: "error",
@@ -465,9 +468,15 @@ it.effect.each([
               ),
             waitForThread: (input) =>
               Deferred.await(ended).pipe(
+                Effect.andThen(Ref.set(messageRun, followUp ? "run:3" : "run:2")),
                 Effect.as({
                   threadId: input.threadId,
-                  run: { ...run, id: input.runId, userMessageId: "" },
+                  run: {
+                    ...run,
+                    id: input.runId,
+                    userMessageId: "",
+                    status: followUp && input.runId === "run:2" ? "completed" : outcome.status,
+                  },
                   timedOut: false,
                 } as never),
               ),
