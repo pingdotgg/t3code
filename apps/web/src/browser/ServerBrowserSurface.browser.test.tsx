@@ -236,17 +236,13 @@ it("keeps control and the focused input when the streamed panel grows", async ()
   const connections = mocks.createClient.mock.calls.length;
   panel.style.width = "700px";
   panel.style.height = "500px";
-  await vi.waitFor(() => {
-    const updated = mocks.frameSizes.mock.calls.some(
-      ([size]) => size.width === Math.round(700 * window.devicePixelRatio),
-    );
-    expect(updated || mocks.createClient.mock.calls.length > connections).toBe(true);
-  });
+  await vi.waitFor(() =>
+    expect(mocks.frameSizes).toHaveBeenCalledWith({
+      width: Math.round(700 * window.devicePixelRatio),
+      height: expect.any(Number),
+    }),
+  );
   expect(mocks.createClient).toHaveBeenCalledTimes(connections);
-  expect(mocks.frameSizes).toHaveBeenCalledWith({
-    width: Math.round(700 * window.devicePixelRatio),
-    height: expect.any(Number),
-  });
   expect(document.activeElement).toBe(input);
   await userEvent.keyboard("a");
   expect(keys()).toContainEqual(expect.objectContaining({ action: "down", key: "a" }));

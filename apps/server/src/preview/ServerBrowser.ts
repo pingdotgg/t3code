@@ -116,6 +116,8 @@ const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 // A viewer still is best-effort; a capture Chromium never answers must not hold the capture lock.
 const VIEWER_STILL_TIMEOUT_MS = 2_000;
 const VIEWER_OUTPUT_LIMIT = 64;
+export const VIEWER_MAX_FRAME_WIDTH = 7680;
+export const VIEWER_MAX_FRAME_HEIGHT = 4320;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const RECORDING_BINARY_EXPORT_MIN_BYTES = 8 * 1024 * 1024;
 const RECORDING_DOWNLOAD_TIMEOUT_MS = 5_000;
@@ -3354,8 +3356,8 @@ const make = Effect.gen(function* () {
               height < 1
             )
               return;
-            const nextWidth = Math.min(Math.round(width), 7680);
-            const nextHeight = Math.min(Math.round(height), 4320);
+            const nextWidth = Math.min(Math.round(width), VIEWER_MAX_FRAME_WIDTH);
+            const nextHeight = Math.min(Math.round(height), VIEWER_MAX_FRAME_HEIGHT);
             if (maxWidth === nextWidth && maxHeight === nextHeight) return;
             maxWidth = nextWidth;
             maxHeight = nextHeight;
