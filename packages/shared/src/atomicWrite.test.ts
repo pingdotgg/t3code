@@ -44,6 +44,22 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       }),
   );
 
+  it.effect("streams iterable contents across write batches", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+      const filePath = path.join(root, "cache.json");
+      yield* fs.writeFileString(filePath, "a much longer previous document");
+      const chunks = ["é".repeat(700_000), "🙂".repeat(400_000), "end"];
+
+      yield* writeFileStringAtomically({ filePath, contents: chunks.values() });
+
+      assert.strictEqual(yield* fs.readFileString(filePath), chunks.join(""));
+      assert.deepStrictEqual(yield* fs.readDirectory(root), ["cache.json"]);
+    }),
+  );
+
   it.effect("keeps a symlinked file linked and rewrites its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -61,6 +77,21 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       assert.strictEqual(yield* fs.readLink(link), destination);
       assert.strictEqual(yield* fs.readFileString(destination), "after");
     }),
+  );
+
+  it.effect.each(HostProcess.Platform.defaultValue() === "linux" ? [255] : [])(
+    "saves a file whose name is %i bytes long",
+    (length) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const filePath = path.join(root, `${"s".repeat(length - 5)}.json`);
+
+        yield* writeFileStringAtomically({ filePath, contents: "after" });
+
+        assert.strictEqual(yield* fs.readFileString(filePath), "after");
+      }),
   );
 
   it.effect("keeps a dangling symlink linked and creates its destination", () =>
