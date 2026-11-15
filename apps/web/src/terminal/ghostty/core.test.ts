@@ -130,28 +130,40 @@ describe("GhosttyTerminalCore snapshots", () => {
   });
 
   it.each([
+    { code: "Numpad1", key: "End", expected: "\x1b[F" },
+    { code: "Numpad5", key: "Clear", expected: "\x1b[E" },
+    { code: "Numpad8", key: "ArrowUp", expected: "\x1b[A" },
+    { code: "NumpadDecimal", key: "Delete", expected: "\x1b[3~" },
+    { mode: "\x1b[?1h", code: "Numpad8", key: "ArrowUp", expected: "\x1bOA" },
+    { mode: "\x1b[>1u", code: "Numpad8", key: "ArrowUp", expected: "\x1b[57419u" },
+    { mode: "\x1b=\x1b[?1035l", code: "Numpad8", key: "8", numLock: true, expected: "\x1bOx" },
+    { mode: "\x1b[>1u", code: "Numpad8", key: "8", numLock: true, expected: "8" },
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },
     { code: "Backspace", key: "Backspace", expected: "\x7f" },
     { code: "Delete", key: "Backspace", expected: "\x1b[3~" },
     { code: "", key: "a", expected: "a" },
     { code: "", key: "Unidentified", expected: "" },
-  ])("encodes key $key with physical code '$code'", async ({ code, key, expected }) => {
-    const core = await createCore();
-    const event = {
-      code,
-      key,
-      repeat: false,
-      shiftKey: false,
-      ctrlKey: false,
-      altKey: false,
-      metaKey: false,
-      isComposing: false,
-      getModifierState: () => false,
-    } as unknown as KeyboardEvent;
+  ])(
+    "encodes key $key with physical code '$code'",
+    async ({ mode = "", code, key, numLock = false, expected }) => {
+      const core = await createCore();
+      core.write(mode);
+      const event = {
+        code,
+        key,
+        repeat: false,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: (modifier: string) => modifier === "NumLock" && numLock,
+      } as unknown as KeyboardEvent;
 
-    expect(core.encodeKey(event)).toBe(expected);
-  });
+      expect(core.encodeKey(event)).toBe(expected);
+    },
+  );
 
   it.each(["", "\x1b[>1u"])("encodes macOS Option text with keyboard mode %j", async (mode) => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
