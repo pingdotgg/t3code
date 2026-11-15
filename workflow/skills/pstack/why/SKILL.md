@@ -27,7 +27,7 @@ Before spawning investigators, build the seed context inline: file paths and lin
 
 ### Discovery
 
-Before spawning investigators, list the MCP servers available in this session. Use the tool list in context, including deferred tools, and search it with ToolSearch when a category's server is not obvious.
+Before spawning investigators, list the MCP servers available in this session. Use the tool list in context, including deferred tools, and search it with your harness's tool search when a category's server is not obvious.
 
 Map each available MCP to one evidence category:
 
@@ -44,8 +44,8 @@ Source control is always available through git and `gh`. For the other six, clas
 Spawn one investigator per category that has a matching MCP, all in a single message so they run concurrently, each owning exactly one tool or MCP. Don't ask one agent to cover multiple MCPs.
 
 Subagent config (each):
-- `subagent_type`: `general-purpose` (investigators need MCP access; a read-only agent type strips it)
-- `model`: `sonnet`
+- A general subagent (in T3 Code: `delegate_task`), not a read-only one: investigators need MCP access
+- Model: mid-tier
 - Investigators still shouldn't write anything. That's a posture, not a sandbox.
 
 Each investigator's prompt is `references/investigator-prompt.md` filled in, plus:
@@ -76,11 +76,10 @@ If your scope assessment suggests a single-commit trivial target where the PR de
 
 ## Step 4. Synthesize
 
-Spawn one synthesizer subagent:
+Delegate to one synthesizer subagent (in T3 Code: `delegate_task`):
 
-- `subagent_type`: `general-purpose`
-- `model`: `opus`
-- The synthesizer's quality check spot-verifies citations, which can require MCP access, so do not use a read-only agent type here.
+- Model: your strongest
+- The synthesizer's quality check spot-verifies citations, which can require MCP access, so give it a general agent, not a read-only one.
 
 The synthesizer gets:
 1. The investigator findings, including any null results and any categories skipped with justification

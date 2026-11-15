@@ -7,7 +7,7 @@ description: "Use for \"how does X work\", code walkthroughs before changing som
 
 Explore the codebase to answer "how does X work?" questions. Produce architectural explanations at the level of a senior engineer onboarding onto a subsystem, enough to build a working mental model, not so much that it reads like annotated source code.
 
-Every spawn uses `subagent_type: Explore`. Explorers run on `haiku` for narrow slices and `sonnet` for broad ones. The explainer runs on `sonnet` for a simple question and `opus` when it synthesizes explorer findings.
+Every spawn is a read-only subagent (in T3 Code: `delegate_task`). Explorers run on a fast, cheap model for narrow slices and a mid-tier model for broad ones. The explainer runs on a mid-tier model for a simple question and your strongest model when it synthesizes explorer findings.
 
 ## 1. Assess complexity
 
@@ -20,7 +20,7 @@ When in doubt, take the simple path.
 
 ## 2. Explore (complex only)
 
-Decompose the question into 2 to 4 angles, each a distinct slice of the subsystem. Spawn all explorers in a single message, each with `references/explorer-prompt.md` and its angle filled in.
+Decompose the question into 2 to 4 angles, each a distinct slice of the subsystem. Spawn all explorers at once, each with `references/explorer-prompt.md` and its angle filled in.
 
 ## 3. Synthesize (complex only)
 

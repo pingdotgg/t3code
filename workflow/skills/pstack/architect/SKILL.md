@@ -27,10 +27,10 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 ## Phase B: Sketch
 
-Spawn three design runners in a single message, each with `references/runner-prompt.md` as its prompt plus the Phase A grounding artifacts. Each produces a design package shaped per `references/rationale-template.md`: the caller's usage written first, then the type sketch, function signatures, module map, and prose rationale derived from it.
+Delegate to three design runners at once (in T3 Code: `delegate_task`), each with `references/runner-prompt.md` as its prompt plus the Phase A grounding artifacts. Each produces a design package shaped per `references/rationale-template.md`: the caller's usage written first, then the type sketch, function signatures, module map, and prose rationale derived from it.
 
-- `subagent_type`: `Explore`
-- `model`: `opus`, or `fable` for one runner when you want a reader that argues differently
+- Runners are read-only on the codebase. Each writes only its own design package.
+- Model: your strongest, or another provider's strong model for one runner when you want a reader that argues differently
 - Each runner writes to its own path (`/tmp/architect-<slug>/candidate-<n>/`). Three runners writing to one path is shared mutable state and fails the **separate-before-serializing-shared-state** principle skill.
 
 Three is the number because divergence comes from the brief, not the count. Give each runner a different starting constraint so they cannot converge by accident: one optimizing for the smallest public surface, one for the data model first, one for the change that touches the fewest existing callers.

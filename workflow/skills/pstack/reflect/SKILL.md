@@ -11,29 +11,23 @@ Invoke when the user says "reflect" or "/reflect". Skip when the conversation is
 
 ## 1. Locate the active transcript
 
-The parent finds this session's own history before fanning out. It lives under `~/.claude/projects/<project-slug>/`, where the slug is the workspace path with the leading slash dropped and every remaining `/` turned into `-`. Use only that path. Do not glob across `~/.claude/projects/*/`. That crosses project boundaries and reads private chats from unrelated work.
-
-```bash
-ls -t ~/.claude/projects/<project-slug>/*.jsonl 2>/dev/null | head -10
-```
-
-That covers the legacy flat (`<id>.jsonl`), current nested (`<id>/<id>.jsonl`), and subagent (`<parent>/subagents/<child>.jsonl`) layouts. For each candidate, read the first JSONL line. Take the file whose `message.content[0].text` contains the conversation's opening user prompt. If none matches, pass a tight digest of the session instead.
+The parent finds this session's own thread before fanning out, through T3 Code's thread tools, which cover every provider. Search the active project with `t3_thread_search` for the conversation's opening user prompt, or list its newest threads with `t3_thread_list`. Read each candidate's first message with `t3_thread_read` (`afterPosition: -1`) and take the thread whose first message is the opening user prompt. Stay in the active project. Do not search across all projects. That crosses project boundaries and reads private chats from unrelated work. If no thread matches, pass a tight digest of the session instead.
 
 ## 2. Spawn three reviewers in parallel
 
-One message, three `Agent` calls, `subagent_type: general-purpose`, explicit `model:` on each. Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the history), so do not use a read-only agent type here. The prompt forbids file writes; the parent applies edits.
+Delegate to three subagents at once (in T3 Code: three `delegate_task` calls), each on the model the table names. Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the history), so give them a general agent, not a read-only one. The prompt forbids file writes; the parent applies edits.
 
-| Lens | `model` | Prompt template |
+| Lens | Model | Prompt template |
 |---|---|---|
-| Judgment | `opus` | `references/judgment-reviewer.md` |
-| Tooling | `opus` | `references/tooling-reviewer.md` |
-| Divergent | `fable` | `references/divergent-reviewer.md` |
+| Judgment | your strongest | `references/judgment-reviewer.md` |
+| Tooling | your strongest | `references/tooling-reviewer.md` |
+| Divergent | a different strong model, ideally another provider's | `references/divergent-reviewer.md` |
 
-Pass each template verbatim, substituting the transcript path or digest where marked. Reviewers return findings in the `Agent` response body.
+Pass each template verbatim, substituting the thread id or digest where marked. Reviewers return findings in their final reply.
 
 ## 3. Synthesize
 
-One `Agent` call, `subagent_type: general-purpose`, `model: opus`. It spot-verifies citations through MCP, so do not use a read-only agent type here. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list.
+Delegate to one subagent on your strongest model. It spot-verifies citations through MCP, so give it a general agent, not a read-only one. Pass `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. It returns an Accepted / Rejected / Backlog list.
 
 ## 4. Structural enforcement check
 
@@ -45,7 +39,7 @@ Present the synthesizer's full Accepted / Rejected / Backlog output and wait for
 
 File each Backlog item to your team's devex or backlog tracker without waiting. Only the Accepted list waits for approval.
 
-Never edit a skill under `plugins/cache/`. Before approval, show its destination, `.claude/skills/<skill>/` or `~/.claude/skills/<skill>/`. After approval, copy the skill folder there and edit the copy. Never open a PR or push.
+Never edit a skill through an installed copy: a provider's skill folder, a plugin cache, or a symlink. Edit the source in this repo. An existing workflow skill lives at `workflow/skills/<group>/<skill>/`, and a new skill goes in `workflow/skills/ak/<skill>/`, with a folder name no other group uses. An edit to a vendored group (`mattpocock`, `pstack`) also gets a line in that group's `ATTRIBUTION.md`. Before approval, show each destination. After applying the edits, run `vp run workflow:link` so every provider sees new or removed skills. Never open a PR or push.
 
 Follow each approved row's Routing exactly:
 

@@ -53,7 +53,7 @@ Commit it only when the work is ambitious enough that a reviewer needs the trail
 
 ## Audit the log against the transcript
 
-At the end of the run, before handing back, check the log told the truth. Reconstruct what actually happened from this session's own history. Stay inside the active project: transcripts live under `~/.claude/projects/<project-slug>/`, and globbing across `~/.claude/projects/*/` reads unrelated private chats from other work. Walk this run's rows against what actually happened. Each stretch of them begins at one of this run's `start` rows, or at the first row if this run created the log, and ends at the next `start` row of another run:
+At the end of the run, before handing back, check the log told the truth. Reconstruct what actually happened from this session's own history. Read it with `t3_thread_read`, whose `activity` view shows every tool call, and stay inside the active project: searching threads across all projects reads unrelated private chats from other work. Walk this run's rows against what actually happened. Each stretch of them begins at one of this run's `start` rows, or at the first row if this run created the log, and ends at the next `start` row of another run:
 
 - Check that every row maps to a real decision or action.
 - Check that each row's evidence resolves and shows what the row claims.
@@ -63,9 +63,9 @@ Correct the log, not the story. The audit never edits or removes a row, even an 
 
 ## Cross-model review of the trail
 
-Before handing back, spawn a reviewer subagent that did not do the work. Self-review is not a substitute; the point is fresh eyes you cannot bring yourself. Give it the audit trail and this session's history, and tell it to flag what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
+Before handing back, delegate to a reviewer subagent (in T3 Code: `delegate_task`) that did not do the work. Self-review is not a substitute; the point is fresh eyes you cannot bring yourself. Give it the audit trail and this thread's id so it can read the history, and tell it to flag what the user should pay attention to. Not a redo of the work, a scan for what's suboptimal or risky.
 
-Independence comes from the brief, not from the vendor. Assign the reviewer the skeptic's lens explicitly: its job is to find what the trail is quietly not saying. Run it on `opus`, or on `fable` when you want a reader that argues differently from the one that wrote the log.
+Independence comes from the brief, not from the vendor. Assign the reviewer the skeptic's lens explicitly: its job is to find what the trail is quietly not saying. Run it on your strongest model, or on another provider's model when you want a reader that argues differently from the one that wrote the log.
 
 - Decisions logged with weak or absent evidence.
 - Verification steps skipped or claimed without proof.

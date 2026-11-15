@@ -13,7 +13,7 @@ This skill orchestrates three others: an inline mining pass (see step 1), the **
 
 ### 0. Check for an existing skill
 
-Look recursively for `.claude/skills/**/*-mode/SKILL.md` and `~/.claude/skills/*-mode/SKILL.md` matching the user's handle, and check any installed plugin's `skills/` directory too. Mode skills can live in a personal category directory (`.claude/skills/<handle>/`), not only at the top level. If one exists, confirm intent with `AskUserQuestion` (unless they already said "update my skill" or similar):
+Look for `workflow/skills/ak/*-mode/SKILL.md` in this repo matching the user's handle, and check the project's own skill folders (such as `.agents/skills/` or `.claude/skills/`) recursively too. Mode skills can live in a personal category directory, not only at the top level. If one exists, confirm intent by asking the user, as a structured question if your harness offers one (unless they already said "update my skill" or similar):
 
 - Update the existing skill (default for repeat runs)
 - Start fresh (rare, ask why before doing it)
@@ -25,9 +25,9 @@ Update mode changes the rest of the flow:
 
 ### 1. Mine their history
 
-Locate this project's chat history before fanning out. It lives under `~/.claude/projects/<project-slug>/`, where the slug is the workspace path with the leading slash dropped and every remaining `/` turned into `-`. Use only that path. Don't glob across `~/.claude/projects/*/`. That crosses project boundaries and reads private chats from unrelated work.
+Read this project's chat history through T3 Code's thread tools, which cover every provider: `t3_thread_list` lists the active project's threads newest first, `t3_thread_search` finds threads by title, branch, PR, or message text, and `t3_thread_read` reads one. Stay in the active project. Don't search across all projects. That crosses project boundaries and reads private chats from unrelated work.
 
-Survey recent agent conversations within that scope for recurring patterns. Run three parallel `Explore` subagents on `haiku` across slices of history (last 2-4 weeks, split so each slice has enough material). Mining chat logs is grunt work and the raw transcripts should stay in the subagents; the main thread gets their findings, not the payloads, per the **guard-the-context-window** principle skill. Each slice miner reads transcripts from the project-scoped path the parent provides, looks for the signals below, and returns a short structured list of patterns it saw with evidence pointers. Default signals worth hunting:
+Survey recent agent conversations within that scope for recurring patterns. Delegate to three parallel read-only subagents (in T3 Code: `delegate_task`) on a fast, cheap model across slices of history (last 2-4 weeks, split so each slice has enough material). Mining chat logs is grunt work and the raw transcripts should stay in the subagents; the main thread gets their findings, not the payloads, per the **guard-the-context-window** principle skill. Each slice miner reads the threads the parent assigns it with `t3_thread_read`, looks for the signals below, and returns a short structured list of patterns it saw with evidence pointers. Default signals worth hunting:
 
 - Response preferences (length, tone, format, "dumb it down" corrections)
 - Delegation habits (subagents, models, specialized workflows, parallelism)
@@ -40,9 +40,9 @@ Cross-check across slices before elevating a signal. Patterns seen in 2+ slices 
 
 ### 2. Ask the user directly
 
-Mining misses intent that hasn't come up yet. Use the `AskUserQuestion` tool (structured multi-choice) rather than asking the user to type from scratch.
+Mining misses intent that hasn't come up yet. Ask the user as a structured multiple-choice question if your harness offers one, rather than asking the user to type from scratch.
 
-Shape: one or two questions with up to 4 options each, `multiSelect: true` for category questions. Start broad ("Which areas matter most?"), then follow up on selected areas with specific options. After the structured rounds, one free-form chat question catches anything the options missed.
+Shape: one or two questions with up to 4 options each, multi-select for category questions. Start broad ("Which areas matter most?"), then follow up on selected areas with specific options. After the structured rounds, one free-form chat question catches anything the options missed.
 
 Don't dump 20 questions.
 
@@ -59,13 +59,13 @@ Group the combined signals into sections. Common ones (use only what applies):
 - **Process**: git worktrees, commits, PRs, review/merge tooling.
 - **Skills**: skill-authoring habits, fix-the-skill-first, proposing new skills.
 
-The `caveman` skill in this plugin shows the shape at the small end: one opinionated register, a persistence rule, and an explicit scope section saying where it does not apply. Read it for granularity. Don't copy its content. The user's rules are not the same as caveman's.
+The `caveman` skill in `workflow/skills/ak/` shows the shape at the small end: one opinionated register, a persistence rule, and an explicit scope section saying where it does not apply. Read it for granularity. Don't copy its content. The user's rules are not the same as caveman's.
 
 ### 4. Draft the skill
 
 Use the **writing-for-agents** skill to author the skill. Placement:
 
-- Path: preserve an existing mode skill's category. For a new mode, use `.claude/skills/<handle>/<handle>-mode/SKILL.md` when the repo has an established personal category for that handle. Otherwise default to `.claude/skills/<handle>-mode/SKILL.md` in the project (or `~/.claude/skills/<handle>-mode/` if the user prefers a personal skill).
+- Path: preserve an existing mode skill's path. For a new mode, use `workflow/skills/ak/<handle>-mode/SKILL.md` in this repo. The folder name must not clash with a skill in any other group under `workflow/skills/`, because providers see one flat list.
 - Handle: the user's first name or chosen identifier.
 - Frontmatter `description`: trigger on their name + `/<handle>-mode` + "work in their style", not on generic keywords like "write code" or "review PR".
 - Frontmatter formatting: keep `description` as one YAML scalar. Quote it or use `description: >-` with indented continuation lines when punctuation or wrapping requires it.
@@ -79,7 +79,7 @@ Show the draft to the user and take feedback. Expect multiple iterations. Cut ru
 
 ### 6. Land it
 
-Work in a worktree off main. Commit and open a PR. Don't push to main directly.
+Work in a worktree off main. Commit and open a PR. Don't push to main directly. Once it lands in the main checkout, run `vp run workflow:link` so every provider picks up the skill.
 
 ## Guardrails
 
@@ -103,6 +103,6 @@ Run a description-optimization loop only if the skill's trigger accuracy turns o
 
 ## Reference files
 
-- The `caveman` skill in this plugin: example of the output shape.
+- The `caveman` skill in `workflow/skills/ak/`: example of the output shape.
 - The **unslop** skill: prose discipline for every line.
 - The **writing-for-agents** skill: skill authoring process and writing guidelines.

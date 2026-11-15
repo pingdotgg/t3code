@@ -19,15 +19,15 @@ Open a todolist with one entry per phase before launching anything.
 1. State the done predicate and the artifact or report the swarm must return.
 2. Choose the shape. Partition into slices, race N workers on identical briefs, or mix both. For a race or mixed shape, declare `first pass`, `rank all`, or `best-of` before spawning.
 3. Set N from the user or derive it from the shape. N is total workers.
-4. Pick the worker model. Default `sonnet`, or `haiku` for mechanical slices and `opus` for slices needing judgment. For a race, name each arm's model up front.
+4. Pick the worker model. Default to a mid-tier model, a fast, cheap one for mechanical slices, and your strongest for slices needing judgment. For a race, name each arm's model up front.
 5. Cap N. Twelve workers is the ceiling unless the user asks for more, and anything above that gets stated in the report along with what it costs. A swarm that silently spawns fifty agents is a bill, not a strategy.
 6. Give each worker its own writable output when it writes. Use a worktree, branch, or `/tmp/swarm-<slug>/worker-<n>/`. When workers verify or measure commits, each brief names the exact SHAs. A measurement brief also names the method (sample count, what one sample is, order). The worker records both in its result.
 
 ## Phase B: Fan out
 
-Spawn all N workers in one message with `subagent_type: general-purpose` and the chosen model. Use `subagent_type: Explore` when the slice is read-only, which is the common case for coverage and exploration shapes.
+Delegate to all N workers at once (in T3 Code: `delegate_task`) on the chosen model. Brief a worker as read-only when its slice is, which is the common case for coverage and exploration shapes.
 
-When a worker must start from a non-default branch, give it a worktree on that branch.
+When a worker must start from a non-default branch, give it a worktree on that branch (in T3 Code: `isolation: "worktree"`).
 
 Every brief stands alone. Include the goal, scope, exact slice or race arm, how to verify, and what to report. Reports use `PASS`, `ISSUES`, or `BLOCKED` with evidence. A worker that can prove a defect reports `ISSUES` and lists every issue it can prove, not only the first.
 

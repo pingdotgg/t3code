@@ -142,3 +142,41 @@ Any further script coming across from upstream gets the same treatment before it
 - `create-verification-skill` and `maintain-verification-skill` had their em dashes removed, the
   one rule from `unslop` that upstream does not apply to itself everywhere. No wording beyond the
   punctuation changed.
+
+### Move into T3 Code's `workflow/`
+
+These skills now run under every provider T3 Code drives, not only Claude Code, so the Claude Code
+ports above were replaced with provider-neutral wording:
+
+- `recall`, `reflect`, `automate-me`, and `show-me-your-work` read history through T3 Code's thread
+  tools (`t3_thread_list`, `t3_thread_search`, `t3_thread_read`) instead of
+  `~/.claude/projects/<slug>/*.jsonl`. They cite thread ids instead of transcript UUIDs, and the
+  project-scope guard now forbids searching across all projects instead of globbing across
+  `~/.claude/projects/*/`. The three `reflect` reviewer prompts take a thread id in place of a
+  transcript path, and count a skill as used when its `SKILL.md` was read or it was invoked by name.
+- `reflect` edits skill sources in `workflow/skills/<group>/<skill>/`, puts new skills in
+  `workflow/skills/ak/`, records vendored edits in the group's `ATTRIBUTION.md`, and runs
+  `vp run workflow:link` afterwards. It no longer copies skills into `.claude/skills/` or
+  `~/.claude/skills/`.
+- `automate-me` looks for and writes mode skills in `workflow/skills/ak/<handle>-mode/` and runs
+  `vp run workflow:link` once the skill lands in the main checkout. Its `AskUserQuestion` calls
+  became "ask the user, as a structured question if your harness offers one", and its `caveman`
+  pointer names `workflow/skills/ak/`.
+- `architect`, `arena`, `blast-radius`, `how`, `interrogate`, `ketchup`,
+  `maintain-verification-skill`, `reflect`, `show-me-your-work`, `swarm`, `why`,
+  `principle-build-the-lever`, and `principle-guard-the-context-window` dropped the Agent tool's
+  `subagent_type` (`Explore`, `general-purpose`) and `run_in_background` for "delegate to a
+  subagent (in T3 Code: `delegate_task`)", briefed read-only where `Explore` was used. Worktree
+  candidates and workers point at `delegate_task`'s `isolation: "worktree"`.
+- Claude model tiers became roles: `opus` is "your strongest model", `sonnet` "mid-tier", `haiku`
+  "a fast, cheap model". Where `fable` was the runner or reviewer that argues differently, it is
+  now "a different strong model, ideally another provider's", since T3 Code can delegate across
+  providers. That restores the vendor diversity upstream got from mixing models.
+- `no-comments` delegates to a subagent that follows the `comment-sicko` skill instead of spawning
+  the `ak:comment-sicko` agent, and names `how`, `why`, and `architect` as skills instead of slash
+  commands.
+- `why` searches the tool list with "your harness's tool search" instead of ToolSearch. Its
+  evidence-source discovery stays generic.
+- `create-verification-skill` and `maintain-verification-skill` write and find `verify-<app>/` in
+  whichever project skill folder the repo already uses (`.agents/skills/` or `.claude/skills/`)
+  instead of always `.claude/skills/`.
