@@ -1354,7 +1354,7 @@ describe("pooled account columns", () => {
         account("c", [weekly]),
         {
           ...account("capped", []),
-          limits: { checkedAt: new Date(now).toISOString(), windows: [], zeroSpendCap: true },
+          limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows: [], zeroSpendCap: true },
         },
         account("monthly", [{ ...window, kind: "monthly" }]),
       ],

@@ -693,7 +693,7 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       kind: first.kind,
       label: first.label,
       members,
-      columns: accounts.flatMap((account) => {
+      columns: accounts.flatMap<LimitPoolWindow["columns"][number]>((account) => {
         const member = memberByAccount.get(account.key);
         return member
           ? [member]
