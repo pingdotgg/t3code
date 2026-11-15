@@ -335,7 +335,7 @@ const layerRecordingTools = (calls: Array<unknown>) => {
         Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          namedProjectsRoot: process.cwd(),
+          resolveNamedProjectsRoot: () => process.cwd(),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(ServerSettings.ServerSettingsService)({}),

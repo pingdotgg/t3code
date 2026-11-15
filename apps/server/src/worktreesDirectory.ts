@@ -9,7 +9,7 @@ import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
 
 /** Null for filesystem roots or settings not absolute on this host, including synced foreign-platform paths. */
-export function resolveWorktreesDirectory(
+export function resolveDirectorySetting(
   setting: string,
   defaultDir: string,
   path: Path.Path,
@@ -38,7 +38,7 @@ export function managedWorktreesDirectories(
 ): ReadonlyArray<string> {
   const directories = new Set([defaultDir]);
   for (const setting of [settings.worktreesDirectory, ...settings.previousWorktreesDirectories]) {
-    const directory = resolveWorktreesDirectory(setting, defaultDir, path, home);
+    const directory = resolveDirectorySetting(setting, defaultDir, path, home);
     if (directory !== null) directories.add(directory);
   }
   return [...directories];

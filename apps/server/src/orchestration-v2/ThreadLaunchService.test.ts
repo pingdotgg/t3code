@@ -240,7 +240,7 @@ function makeHarness(options: HarnessOptions = {}) {
     ProviderRegistryMock.layer(options.providers),
     options.managedFolders ??
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
+        resolveNamedProjectsRoot: () => "/projects",
         isScratchProject: () => Effect.succeed(false),
         folderForThread: () => Effect.succeedNone,
       }),
@@ -973,7 +973,7 @@ function scratchHarness({ scratch = true }: { readonly scratch?: boolean } = {})
     });
   const harness = makeHarness({
     managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-      namedProjectsRoot: "/projects",
+      resolveNamedProjectsRoot: () => "/projects",
       isScratchProject: (id) => Effect.succeed(scratch && id === projectId),
       folderForThread: (input) =>
         Effect.sync(() => {
@@ -2116,7 +2116,7 @@ it.effect("reports one concurrent same-command launch as new and the rest as res
     const bothRead = yield* Deferred.make<void>();
     const harness = makeHarness({
       managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-        namedProjectsRoot: "/projects",
+        resolveNamedProjectsRoot: () => "/projects",
         isScratchProject: () => Effect.succeed(false),
         folderForThread: () =>
           Ref.updateAndGet(arrived, (count) => count + 1).pipe(

@@ -56,7 +56,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
-  Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
+  Layer.mock(ManagedProjectFolders)({ resolveNamedProjectsRoot: () => "" }),
   Layer.mock(McpProviderSessions)({}),
   Layer.mock(OrchestratorV2)({}),
   Layer.mock(PeerForwarding)({}),

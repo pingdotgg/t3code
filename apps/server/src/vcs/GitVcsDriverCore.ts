@@ -54,7 +54,7 @@ import {
 } from "./VcsProcess.ts";
 import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
-import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { resolveDirectorySetting } from "../worktreesDirectory.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -5012,7 +5012,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const repoName = path.basename(path.resolve(input.cwd));
     let worktreePath = input.path;
     if (worktreePath == null) {
-      const parentDir = resolveWorktreesDirectory(
+      const parentDir = resolveDirectorySetting(
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
