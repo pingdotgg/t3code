@@ -490,6 +490,9 @@ export function PullRequestDetailPanel({
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
   const condensed = condensedByTab[tab] ?? false;
+  const [scrolledByTab, setScrolledByTab] = useState<
+    Partial<Record<PullRequestDetailTab, boolean>>
+  >({});
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   const [scrollerRefs] = useState(() => ({
     summary: (node: HTMLElement | null) => {
@@ -1623,7 +1626,6 @@ export function PullRequestDetailPanel({
       <div
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
-          detail && "border-b border-(--detail-separator)",
           !detail && !onClose && "hidden",
         )}
       >
@@ -1911,7 +1913,7 @@ export function PullRequestDetailPanel({
         )}
       >
         <div className="min-h-0 overflow-hidden" inert={tab !== "code" || !detail}>
-          <div ref={setCodeToolbarContainer} className="flex px-4 pt-3 pb-2.5" />
+          <div ref={setCodeToolbarContainer} className="flex px-4 pt-1 pb-2.5" />
         </div>
       </div>
 
@@ -1923,11 +1925,17 @@ export function PullRequestDetailPanel({
         className="border-b border-(--detail-separator)"
       />
       <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden border-t",
+          detail && scrolledByTab[tab] ? "border-(--detail-separator)" : "border-transparent",
+        )}
         onScrollCapture={(event) => {
           const scroller = scrollerByTab.current[tab];
           if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
+          if (top > 0 !== (scrolledByTab[tab] ?? false)) {
+            setScrolledByTab({ ...scrolledByTab, [tab]: top > 0 });
+          }
           const previous = condensedByTab[tab] ?? false;
           const foldHeight = foldRef.current?.scrollHeight ?? 0;
           let next = previous;
