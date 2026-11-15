@@ -524,7 +524,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
   }
 
-  const target = expandHomePath(input.cwd, yield* HostProcess.HomeDirectory);
+  const target = input.cwd;
   if (input.reveal === true) {
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }

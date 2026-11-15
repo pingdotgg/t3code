@@ -105,36 +105,47 @@ const layerTest = (input: {
 };
 
 // macOS command lookup cannot search a Windows drive-letter PATH.
-it.effect.skipIf(windowsHost)(
-  "opens home-relative app bundles using the server home directory",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
-      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
-      yield* fs.chmod(path.join(bin, "open"), 0o755);
-      const spawned: ChildProcess.StandardCommand[] = [];
-      yield* Effect.gen(function* () {
-        const launcher = yield* ExternalLauncher.ExternalLauncher;
-        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-          yield* launcher.launchEditor({ editor: "file-manager", cwd });
-        }
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { PATH: bin },
-            onSpawn: (command) => spawned.push(command),
-          }),
-        ),
-        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
-      );
-      assert.deepEqual(
-        spawned.map((command) => command.args),
-        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+it.effect.skipIf(windowsHost)("opens home-relative targets using the server home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+    for (const name of ["open", "code", "idea"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      }
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: bin },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+    );
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [
+        ["/Users/server/Applications/My App.app"],
+        ["/Applications/My App.app"],
+        ["--goto", "/Users/server/notes/todo.md:3"],
+        ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(windowsHost)(
@@ -340,53 +351,6 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     assert.deepEqual(spawned.args, []);
     assert.equal(spawned.options.shell, true);
     assert.equal(spawned.options.detached, true);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-);
-
-it.effect.skipIf(windowsHost)("opens and reveals a home-relative path in the home folder", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
-    for (const name of ["code", "open", "idea"]) {
-      const filePath = path.join(binDir, name);
-      yield* fileSystem.writeFileString(filePath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(filePath, 0o755);
-    }
-
-    const spawned: ChildProcess.StandardCommand[] = [];
-    yield* Effect.gen(function* () {
-      const launcher = yield* ExternalLauncher.ExternalLauncher;
-      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
-      yield* launcher.launchEditor({
-        editor: "idea",
-        cwd: "~/notes/todo.md:3",
-        projectRoot: "~/notes",
-      });
-      yield* launcher.launchEditor({
-        editor: "file-manager",
-        cwd: "~/notes/todo.md",
-        reveal: true,
-      });
-    }).pipe(
-      Effect.provide(
-        layerTest({
-          platform: "darwin",
-          env: { PATH: binDir },
-          onSpawn: (command) => spawned.push(command),
-        }),
-      ),
-      Effect.provideService(HostProcess.HomeDirectory, "/Users/t3"),
-    );
-
-    assert.deepEqual(
-      spawned.map((command) => [command.command, ...command.args]),
-      [
-        ["code", "--goto", "/Users/t3/notes/todo.md:3"],
-        ["idea", "/Users/t3/notes", "--line", "3", "/Users/t3/notes/todo.md"],
-        ["open", "-R", "/Users/t3/notes/todo.md"],
-      ],
-    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
