@@ -1,6 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ManagedPolicyLimits } from "@t3tools/contracts";
+import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
+import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +27,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -35,6 +38,8 @@ import {
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
+  syncHtmlFullscreen,
+  toLocalBackendPath,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -184,6 +189,47 @@ describe("getLocalEnvironmentBootstraps", () => {
   });
 });
 
+describe("toLocalBackendPath", () => {
+  const { runningDistro: _, ...windowsConfig } = readyWslConfig;
+  it.effect("converts paths through wslpath only for backends running in WSL", () =>
+    Effect.gen(function* () {
+      const convert = (backendId: string, path = "C:\\Users\\me\\project") =>
+        toLocalBackendPath.handler({ backendId, path });
+      assert.strictEqual(yield* convert("primary"), "C:\\Users\\me\\project");
+      assert.strictEqual(yield* convert("wsl:default"), "/drives/c/Users/me/project");
+      assert.strictEqual(yield* convert("wsl:missing"), null);
+      assert.strictEqual(
+        yield* convert("wsl:default", "\\\\wsl.localhost\\ubuntu\\home\\me\\repo"),
+        "/home/me/repo",
+      );
+      assert.strictEqual(yield* convert("wsl:default", "\\\\wsl$\\Debian\\home\\me\\repo"), null);
+      assert.strictEqual(
+        yield* convert("primary", "\\\\wsl$\\Debian\\home\\me\\repo"),
+        "\\\\wsl$\\Debian\\home\\me\\repo",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([
+            {
+              ...defaultWslInstance,
+              id: DesktopBackendManager.BackendInstanceId("primary"),
+              currentConfig: Effect.succeedSome(windowsConfig),
+            },
+            defaultWslInstance,
+          ]),
+          DesktopWslEnvironment.layerTest({
+            windowsToWslPath: (distro, windowsPath) =>
+              distro === "Ubuntu" && windowsPath === "C:\\Users\\me\\project"
+                ? Option.some("/drives/c/Users/me/project")
+                : Option.none(),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 describe("installRelayTelemetryEnabled", () => {
   // The renderer reads this over sync IPC, so the answer must not wait on the filesystem.
   const relayTelemetryEnabled = (
@@ -201,7 +247,7 @@ describe("installRelayTelemetryEnabled", () => {
       yield* installRelayTelemetryEnabled().pipe(
         Effect.provideService(HostProcess.Environment, env),
         Effect.provide(
-          Layer.mergeAll(DesktopIpc.layer(ipcMain), DesktopManagedPolicy.layerTest(policy)),
+          Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
       );
       const event = { returnValue: undefined as unknown };
@@ -356,6 +402,93 @@ describe("pickProjectFavicon", () => {
   );
 });
 
+describe("syncHtmlFullscreen", () => {
+  const fullscreenWindow = (fullscreen: boolean, { animatedExit = false } = {}) => {
+    let current = fullscreen;
+    let exiting = false;
+    const queued: boolean[] = [];
+    const leaveListeners: Array<() => void> = [];
+    const leave = () => {
+      current = false;
+      for (const listener of leaveListeners) listener();
+    };
+    // Like macOS, an animated exit keeps reporting fullscreen and queues requests until it ends.
+    const setFullScreen = vi.fn((next: boolean) => {
+      if (exiting) queued.push(next);
+      else if (next) current = true;
+      else if (!current) return;
+      else if (animatedExit) exiting = true;
+      else leave();
+    });
+    const finishExit = () => {
+      exiting = false;
+      leave();
+      for (const next of queued.splice(0)) setFullScreen(next);
+    };
+    const window = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+      isFullScreen: () => current,
+      setFullScreen,
+      on: (event: string, listener: () => void) => {
+        if (event === "leave-full-screen") leaveListeners.push(listener);
+      },
+    } as unknown as Electron.BrowserWindow;
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    return { window, setFullScreen, finishExit, layer };
+  };
+  const fromMainRenderer = { sender: { id: 1 } };
+
+  it.effect("takes the screen for the app's own fullscreen element and gives it back", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a window the user had already made fullscreen", () => {
+    const { window, setFullScreen, layer } = fullscreenWindow(true);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
+      assert.strictEqual(setFullScreen.mock.calls.length, 0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("hands the window back once the user leaves OS fullscreen during playback", () => {
+    const { window, layer } = fullscreenWindow(false);
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      window.setFullScreen(false);
+      window.setFullScreen(true);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+
+      assert.isTrue(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("takes the screen again when the video returns during an animated exit", () => {
+    const { window, finishExit, layer } = fullscreenWindow(false, { animatedExit: true });
+    return Effect.gen(function* () {
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      yield* syncHtmlFullscreen.handler(true, fromMainRenderer);
+      finishExit();
+      assert.isTrue(window.isFullScreen());
+
+      yield* syncHtmlFullscreen.handler(false, fromMainRenderer);
+      finishExit();
+      assert.isFalse(window.isFullScreen());
+    }).pipe(Effect.provide(layer));
+  });
+});
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "finds remote editors installed without PATH launchers",
   () =>
@@ -386,3 +519,108 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("probeRemoteEditors PATH scan", () => {
+  const platform = HostProcess.Platform.defaultValue();
+  const launcherName = (command: string) => (platform === "win32" ? `${command}.cmd` : command);
+
+  const makeFakePath = Effect.fnUntraced(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-probe-path-" });
+    const dirs = ["a", "b", "c", "d"].map((name) => path.join(root, name));
+    for (const dir of dirs) yield* fs.makeDirectory(dir, { recursive: true });
+    // Launchers in different PATH directories, deliberately not in REMOTE_CAPABLE_EDITOR_IDS order.
+    for (const [dir, command] of [
+      [dirs[2]!, "webstorm"],
+      [dirs[0]!, "cursor"],
+      [dirs[3]!, "code"],
+      [dirs[1]!, "zeditor"],
+    ] as const) {
+      const file = path.join(dir, launcherName(command));
+      yield* fs.writeFileString(file, "#!/bin/sh\n");
+      if (platform !== "win32") yield* fs.chmod(file, 0o755);
+    }
+    return {
+      root,
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: dirs.join(platform === "win32" ? ";" : ":"),
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      },
+    };
+  });
+
+  const countingFileSystem = (counter: { stat: number; reads: Map<string, number> }) =>
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return FileSystem.FileSystem.of({
+          ...fs,
+          stat: (target) => {
+            counter.stat += 1;
+            return fs.stat(target);
+          },
+          readDirectory: (target, options) => {
+            counter.reads.set(target, (counter.reads.get(target) ?? 0) + 1);
+            return fs.readDirectory(target, options);
+          },
+        });
+      }),
+    ).pipe(Layer.provideMerge(NodeServices.layer));
+
+  const serialReference = (env: Record<string, string>) =>
+    Effect.gen(function* () {
+      const available: Array<string> = [];
+      for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
+        const editor = EDITORS.find((candidate) => candidate.id === editorId);
+        if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
+          available.push(editorId);
+        }
+      }
+      return available;
+    });
+
+  it.effect("reads each PATH directory once instead of stat-ing every candidate per editor", () =>
+    Effect.gen(function* () {
+      const { env: baseEnv } = yield* makeFakePath();
+      const delimiter = platform === "win32" ? ";" : ":";
+      const uncachedCounter = { stat: 0, reads: new Map<string, number>() };
+      const cachedCounter = { stat: 0, reads: new Map<string, number>() };
+      const uncachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
+      const cachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
+      const uncached = yield* serialReference(uncachedEnv).pipe(
+        Effect.provide(countingFileSystem(uncachedCounter)),
+      );
+      const cached = yield* probeRemoteEditors
+        .handler(undefined)
+        .pipe(
+          Effect.provideService(HostProcess.Environment, cachedEnv),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provide(countingFileSystem(cachedCounter)),
+        );
+      // The host can add editors from app folders the fixture can't redirect (e.g. /Applications).
+      const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
+      assert.deepStrictEqual(
+        uncached.filter((id) => fixtureEditors.includes(id)),
+        fixtureEditors,
+      );
+      assert.deepStrictEqual(cached, uncached);
+      assert.isAbove(uncachedCounter.stat, 0);
+      // On every platform the probe lists each PATH directory at most once. Only PATH entries count:
+      // resolveEditorCommand also reads app folders such as /Applications on macOS.
+      const pathReads = cachedEnv.PATH.split(delimiter)
+        .filter((entry) => entry.length > 0)
+        .map((entry) => cachedCounter.reads.get(entry) ?? 0);
+      assert.isAbove(Math.max(...pathReads), 0);
+      assert.isAtMost(Math.max(...pathReads), 1);
+      // Without the listings, Windows stats every PATH entry x PATHEXT candidate for each editor;
+      // elsewhere there is no PATHEXT, so the stat count is about the same either way.
+      if (platform === "win32") {
+        assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
+      }
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
