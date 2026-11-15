@@ -86,7 +86,10 @@ function swipeActionsWidth(hasSecondaryAction: boolean) {
 
 function fullActionStackHeight(labelLineHeight: number, fontScale: number) {
   const labelHeight = labelLineHeight * Math.min(fontScale, ACTION_LABEL_MAX_FONT_SCALE);
-  return ACTION_CIRCLE_SIZE + ACTION_LABEL_OFFSET + Math.max(ACTION_LABEL_MIN_HEIGHT, labelHeight);
+  // The offset shifts the label after centering, so it needs room on both sides.
+  return (
+    ACTION_CIRCLE_SIZE + ACTION_LABEL_OFFSET * 2 + Math.max(ACTION_LABEL_MIN_HEIGHT, labelHeight)
+  );
 }
 
 function resolveSecondaryAction(input: {
@@ -431,9 +434,10 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   }, [onSwipeableClose]);
   const { fontScale } = useWindowDimensions();
   const fullActionsHeight = fullActionStackHeight(useScaledTextRole("micro").lineHeight, fontScale);
-  // State flips only when a layout crosses the threshold, so height changes don't re-render rows.
-  const [rowTooShort, setRowTooShort] = useState(false);
-  const compactActions = props.compactActions === true || rowTooShort;
+  const [measuredRowHeight, setMeasuredRowHeight] = useState(0);
+  const compactActions =
+    props.compactActions === true ||
+    (measuredRowHeight > 0 && measuredRowHeight < fullActionsHeight);
   const { secondaryAction, threadTitle } = props;
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
@@ -450,6 +454,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       actionStyle,
       backgroundColor,
       compactActions,
+      measuredRowHeight,
       fullSwipeAction,
       fullSwipeThreshold,
       handleFullSwipeArmedChange,
@@ -473,6 +478,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
         <ThreadSwipeActions
           backgroundColor={backgroundColor}
           compact={compactActions}
+          rowHeight={measuredRowHeight}
           fullSwipeAction={fullSwipeAction}
           fullSwipeThreshold={fullSwipeThreshold}
           onFullSwipeArmedChange={handleFullSwipeArmedChange}
@@ -501,7 +507,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       <View
         onLayout={({ nativeEvent: { layout } }) => {
           rowHeight.set(layout.height);
-          setRowTooShort(layout.height < fullActionsHeight);
+          setMeasuredRowHeight(layout.height);
           rowWidth.set(layout.width);
         }}
       >
@@ -550,6 +556,7 @@ function SwipeActionButton(props: {
   readonly label: string;
   readonly menu?: ThreadSwipeAction["menu"];
   readonly onPress: () => void;
+  readonly rowHeight: number;
   readonly stretchesOnFullSwipe: boolean;
   readonly translation: SharedValue<number>;
 }) {
@@ -563,7 +570,13 @@ function SwipeActionButton(props: {
   const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE;
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
   const { fontScale } = useWindowDimensions();
-  const labelLineHeight = useScaledTextRole("micro").lineHeight;
+  // Even compact actions can outgrow a short row at large app text sizes; shrink the label's
+  // leading to the room left under the circle.
+  const labelRoom =
+    props.compact && props.rowHeight > 0
+      ? (props.rowHeight - circleSize) / Math.min(fontScale, ACTION_LABEL_MAX_FONT_SCALE)
+      : Infinity;
+  const labelLineHeight = Math.min(useScaledTextRole("micro").lineHeight, labelRoom);
   // Android scales lineHeight by the full font scale, past maxFontSizeMultiplier.
   const labelTextStyle = {
     lineHeight:
@@ -759,6 +772,7 @@ function ThreadSwipeActions(props: {
   readonly fullSwipeThreshold: number;
   readonly onFullSwipeArmedChange: (armed: boolean) => void;
   readonly primaryAction: ThreadSwipeAction;
+  readonly rowHeight: number;
   readonly secondaryAction: ThreadSwipeSecondaryAction | null;
   readonly translation: SharedValue<number>;
 }) {
@@ -798,6 +812,7 @@ function ThreadSwipeActions(props: {
         icon={props.primaryAction.icon}
         label={props.primaryAction.label}
         onPress={props.primaryAction.onPress}
+        rowHeight={props.rowHeight}
         stretchesOnFullSwipe={fullSwipeIsPrimary}
         translation={props.translation}
       />
@@ -813,6 +828,7 @@ function ThreadSwipeActions(props: {
           label={secondaryAction.label}
           menu={secondaryAction.menu}
           onPress={secondaryAction.onPress}
+          rowHeight={props.rowHeight}
           stretchesOnFullSwipe={!fullSwipeIsPrimary}
           translation={props.translation}
         />
