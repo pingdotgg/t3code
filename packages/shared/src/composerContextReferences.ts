@@ -450,18 +450,20 @@ export function composerContextProviderDataRanges(text: string) {
     const body = text.slice(bodyStart, close);
     const entries = [...body.matchAll(PROVIDER_ENTRY)];
     if (entries.length === 0 || entries.map(([entry]) => entry).join("\n") !== body) continue;
-    const markers = [...text.slice(0, start).matchAll(PROVIDER_MARKER)];
-    const matchingMarkers = markers.filter((marker) =>
-      entries.some((entry) => escapeAttribute(marker[3]!) === entry[2]),
-    );
-    if (
-      !entries.every((entry) =>
-        matchingMarkers.some(
-          (marker) =>
-            marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2],
-        ),
-      )
-    )
+    const matchesEntry = (marker: RegExpExecArray, entry: RegExpExecArray) =>
+      marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2];
+    // A duplicate ref projects one entry for markers of several kinds; all are generated.
+    const markersByEnd = new Map<number, RegExpExecArray>();
+    for (const marker of providerMarkerCandidates(text.slice(0, start))) {
+      if (!entries.some((entry) => escapeAttribute(marker[3]!) === entry[2])) continue;
+      const end = marker.index + marker[0].length;
+      const current = markersByEnd.get(end);
+      const kindMatches = (candidate: RegExpExecArray) =>
+        entries.some((entry) => matchesEntry(candidate, entry));
+      if (!current || kindMatches(marker) || !kindMatches(current)) markersByEnd.set(end, marker);
+    }
+    const matchingMarkers = [...markersByEnd.values()];
+    if (!entries.every((entry) => matchingMarkers.some((marker) => matchesEntry(marker, entry))))
       continue;
     ranges.push(
       ...matchingMarkers.map((marker) => ({
@@ -472,6 +474,17 @@ export function composerContextProviderDataRanges(text: string) {
     );
   }
   return ranges;
+}
+
+// Labels may contain "[", so a marker-like prefix can swallow a real marker; try every start.
+function providerMarkerCandidates(text: string) {
+  const pattern = new RegExp(PROVIDER_MARKER.source, "g");
+  const candidates: RegExpExecArray[] = [];
+  for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+    candidates.push(match);
+    pattern.lastIndex = match.index + 1;
+  }
+  return candidates;
 }
 
 const MARKER_ENVELOPE_PREFIX = `${ENVELOPE_OPEN}<${CONTEXT_ENTRY_TAG} kind="`;

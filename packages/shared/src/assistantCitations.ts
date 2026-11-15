@@ -187,8 +187,9 @@ const decodeProviderCitations = Schema.decodeUnknownOption(
 /** Only a generated citation block with matching inline references is provider data. */
 export function assistantCitationProviderDataRanges(text: string) {
   const ranges: { start: number; end: number }[] = [];
+  // Generated data is indented JSON, so a typed example cannot run into a later real block.
   for (const match of text.matchAll(
-    /\n\n<assistant_citations>\n([^\n]+)\n(\[[\s\S]*?\])\n<\/assistant_citations>/g,
+    /\n\n<assistant_citations>\n([^\n]+)\n(\[\n(?: [^\n]*\n)*\])\n<\/assistant_citations>/g,
   )) {
     if (match[1] !== CITATION_DESCRIPTION && match[1] !== CITATION_DESCRIPTION_WITH_COMMENT)
       continue;

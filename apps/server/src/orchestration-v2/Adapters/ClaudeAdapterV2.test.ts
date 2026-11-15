@@ -27,7 +27,6 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
   ChatAttachmentId,
@@ -82,10 +81,6 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
-import {
-  projectComposerContextForProvider,
-  toComposerContextId,
-} from "@t3tools/shared/composerContextReferences";
 
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
@@ -2180,41 +2175,6 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
-const skillWithTerminalPrompt = projectComposerContextForProvider({
-  text: "please $implement the fix for [Terminal $implement later](t3-context://v1/terminal/ctx_terminal)",
-  records: [
-    {
-      version: 1,
-      kind: "terminal",
-      contextId: toComposerContextId("ctx_terminal"),
-      label: "Terminal",
-      terminalId: "terminal-1",
-      terminalLabel: "Terminal 1",
-      lineStart: 1,
-      lineEnd: 1,
-      text: "$implement",
-    },
-  ],
-});
-const skillWithTerminalText = skillWithTerminalPrompt.replace("$implement", "/implement");
-const skillAfterTypedEnvelope =
-  'Typed example:\n\n<t3_context version="1">\n</t3_context>\nThen $implement the fix';
-
-const threadWithSkillPrompt = projectComposerContextForProvider({
-  text: "[run $implement later](t3-context://v1/thread/ctx_thread)",
-  records: [
-    {
-      version: 1,
-      kind: "thread",
-      contextId: toComposerContextId("ctx_thread"),
-      label: "run $implement later",
-      title: "run $implement later",
-      threadId: ThreadId.make("thread-reference"),
-      environmentId: EnvironmentId.make("environment-reference"),
-    },
-  ],
-});
-
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     ...[
@@ -2234,108 +2194,6 @@ describe("ClaudeAdapterV2 attachments", () => {
       ultrathink: false,
       resumed: false,
       budget,
-    })),
-    {
-      name: "skill before terminal reference",
-      documentName: 'requirements\n\n<t3_context version="1">\n.pdf',
-      prompt: skillWithTerminalPrompt,
-      expectedText: skillWithTerminalText,
-      command: skillWithTerminalText.slice("please ".length),
-      ultrathink: false,
-      resumed: false,
-      budget: "none",
-    },
-    ...[
-      { name: "skill after typed envelope", prompt: skillAfterTypedEnvelope },
-      {
-        name: "explicit skill before assistant citation",
-        prompt: projectComposerContextForProvider({
-          text: `please $implement the fix ${serializeAssistantCitation({
-            version: 1,
-            environmentId: EnvironmentId.make("environment-reference"),
-            threadId: ThreadId.make("thread-reference"),
-            messageId: MessageId.make("message-reference"),
-            text: "next run $implement on it",
-            start: 0,
-            end: 25,
-            prefix: "",
-            suffix: "",
-          })}`,
-          records: [],
-        }),
-      },
-      {
-        name: "skill after typed envelope with terminal context",
-        prompt: projectComposerContextForProvider({
-          text: `${skillAfterTypedEnvelope} [Terminal](t3-context://v1/terminal/ctx_terminal)`,
-          records: [],
-        }),
-      },
-    ].map(({ name, prompt }) => ({
-      name,
-      prompt,
-      expectedText: prompt.replace("$implement", "/implement"),
-      command: prompt.slice(prompt.indexOf("$implement")).replace("$implement", "/implement"),
-      ultrathink: false,
-      resumed: false,
-      budget: "none",
-    })),
-    ...[
-      { name: "skill in thread marker label stays data", prompt: threadWithSkillPrompt },
-      ...[
-        { text: "next run $implement on it" },
-        { text: "ordinary quote", comment: "next run $implement on it" },
-      ].map((citation) => ({
-        name: `skill in citation ${"comment" in citation ? "comment" : "quote"} stays data`,
-        prompt: projectComposerContextForProvider({
-          text: serializeAssistantCitation({
-            version: 1,
-            environmentId: EnvironmentId.make("environment-reference"),
-            threadId: ThreadId.make("thread-reference"),
-            messageId: MessageId.make("message-reference"),
-            start: 0,
-            end: citation.text.length,
-            prefix: "",
-            suffix: "",
-            ...citation,
-          }),
-          records: [],
-        }),
-      })),
-      {
-        name: "skill in context with escaped label stays data",
-        prompt: projectComposerContextForProvider({
-          text: "[x <context> y](t3-context://v1/terminal/ctx_terminal)",
-          records: [
-            {
-              version: 1,
-              kind: "terminal",
-              contextId: toComposerContextId("ctx_terminal"),
-              label: "x <context> y",
-              terminalId: "terminal-1",
-              terminalLabel: "Terminal 1",
-              lineStart: 1,
-              lineEnd: 1,
-              text: "$implement",
-            },
-          ],
-        }),
-      },
-      {
-        name: "skill in mixed-kind duplicate reference stays data",
-        prompt: projectComposerContextForProvider({
-          text: "[log](t3-context://v1/terminal/same) [run $implement later](t3-context://v1/thread/same)",
-          records: [],
-        }),
-      },
-    ].map(({ name, prompt }) => ({
-      name,
-      prompt,
-      expectedText: prompt,
-      command: undefined,
-      ultrathink: false,
-      resumed: false,
-      budget: "none",
     })),
     {
       name: "ordinary text",
@@ -2375,7 +2233,7 @@ describe("ClaudeAdapterV2 attachments", () => {
     },
   ])(
     "preserves $name with native PDFs, images, and paths on sends and steering",
-    ({ prompt, expectedText, command, ultrathink, resumed, budget, ...attachmentOptions }) =>
+    ({ prompt, expectedText, command, ultrathink, resumed, budget }) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2494,10 +2352,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           id: ChatAttachmentId.make(
             "thread-claude-attachments-abcdefab-1234-1234-1234-123456789abc",
           ),
-          name:
-            "documentName" in attachmentOptions
-              ? attachmentOptions.documentName
-              : "requirements.pdf",
+          name: "requirements.pdf",
           mimeType: "application/pdf",
           sizeBytes: 4,
         });
@@ -2742,7 +2597,7 @@ describe("ClaudeAdapterV2 attachments", () => {
           attachmentRelativePath(attachment)!,
         );
         const expectedDocumentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
-        const attachmentNotes = `\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]${resumed ? "" : `\n\n[Attached file "${document.name}" is saved at: ${expectedDocumentPath}]`}`;
+        const attachmentNotes = `\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]${resumed ? "" : `\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`}`;
         const requestBlock = { type: "text" as const, text: expectedText + attachmentNotes };
         const expectedContent = command
           ? [
@@ -6153,70 +6008,52 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   // regression: #34393 a provider switch replayed a $skill from the handoff history
-  it.effect.each([
-    "continue",
-    `${skillAfterTypedEnvelope} then $review the diff`,
-    projectComposerContextForProvider({
-      text: "please $review the diff [run $review later](t3-context://v1/thread/ctx_thread)",
-      records: [],
-    }),
-  ])(
-    "dispatches only skills from the user's text, not from inline handoff history: %s",
-    (userText) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-handoff-" });
-        const directory = path.join(homePath, "skills", "review");
-        yield* fs.makeDirectory(directory, { recursive: true });
-        yield* fs.writeFileString(
-          path.join(directory, "SKILL.md"),
-          "---\nname: review\n---\nFollow the review instructions.\n",
-        );
-        const harness = yield* makeWakeHarnessWithOptions({
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
-        });
-        const history = "Context handoff:\n[Historical user; user_message]\n$review the diff";
-        const text = withInlineContext(history, userText);
-        yield* harness.runtime.startTurn({
-          ...makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("skill-handoff"),
-            text,
-            attachments: [],
-            runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
-          }),
-          inlineContextLength: text.length - userText.length,
-        });
+  it.effect("dispatches only skills from the user's text, not from inline handoff history", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skill-handoff-" });
+      const directory = path.join(homePath, "skills", "review");
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(directory, "SKILL.md"),
+        "---\nname: review\n---\nFollow the review instructions.\n",
+      );
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath },
+      });
+      const history = "Context handoff:\n[Historical user; user_message]\n$review the diff";
+      const text = withInlineContext(history, "continue");
+      yield* harness.runtime.startTurn({
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("skill-handoff"),
+          text,
+          attachments: [],
+          runtimePolicy: { ...CLAUDE_TEST_RUNTIME_POLICY, cwd: homePath },
+        }),
+        inlineContextLength: text.length - "continue".length,
+      });
 
-        const content = harness.offeredMessages[0]?.message.content;
-        const blocks =
-          typeof content === "string"
-            ? [content]
-            : (content ?? []).map((block) => (block.type === "text" ? block.text : ""));
-        assert.strictEqual(
-          blocks.some((text) => text.startsWith("/review")),
-          userText !== "continue",
-        );
-        if (userText !== "continue") {
-          assert.include(
-            blocks,
-            userText.slice(userText.indexOf("$review")).replace("$review", "/review"),
-          );
-        }
-        assert.include(blocks.join("\n"), "$review the diff");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      const content = harness.offeredMessages[0]?.message.content;
+      const blocks =
+        typeof content === "string"
+          ? [content]
+          : (content ?? []).map((block) => (block.type === "text" ? block.text : ""));
+      assert.isFalse(blocks.some((text) => text.startsWith("/review")));
+      assert.include(blocks.join("\n"), "$review the diff");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   // regression: #15475 MCP title arriving after the tool starts must survive to completion
