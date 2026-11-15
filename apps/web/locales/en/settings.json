@@ -1474,5 +1474,136 @@
     "default": "default",
     "searchPlaceholder": "Search fonts…",
     "noFonts": "No fonts found."
+  },
+  "integrations": {
+    "appearance": {
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark"
+    },
+    "viewport": {
+      "description": "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.",
+      "resetLabel": "default browser viewport",
+      "aria": "Default browser viewport",
+      "fillPanel": "Fill panel",
+      "responsive": "Responsive",
+      "standard": "Standard",
+      "widthAria": "Default viewport width",
+      "heightAria": "Default viewport height",
+      "landscape": "landscape",
+      "portrait": "portrait",
+      "rotateTo": "Rotate to {{orientation}}",
+      "rotate": "Rotate"
+    },
+    "zoom": {
+      "description": "Page zoom applied to new browser tabs.",
+      "resetLabel": "default browser zoom",
+      "aria": "Default browser zoom"
+    },
+    "pageAppearance": {
+      "description": "The color scheme pages are told to prefer. System follows your OS setting.",
+      "resetLabel": "default browser appearance",
+      "aria": "Default browser appearance"
+    },
+    "recordings": {
+      "keysDescription": "Show pressed keys and shortcuts in new recordings. Password fields are excluded.",
+      "keysAria": "Show key presses in recordings",
+      "mouseDescription": "Highlight mouse presses and held buttons in new recordings.",
+      "mouseAria": "Show mouse presses in recordings",
+      "frameRateDescription": "Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother.",
+      "frameRateResetLabel": "browser recording frame rate",
+      "frameRateAria": "Browser recording frame rate",
+      "fps": "{{rate}} fps"
+    },
+    "linkTarget": {
+      "yourBrowser": "Your default browser",
+      "app": "T3 Code",
+      "description": "Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way.",
+      "resetLabel": "link target",
+      "aria": "Open links in"
+    },
+    "searchEngine": {
+      "duckduckgo": "DuckDuckGo",
+      "google": "Google",
+      "bing": "Bing",
+      "brave": "Brave Search",
+      "kagi": "Kagi",
+      "ecosia": "Ecosia",
+      "custom": "Custom",
+      "description": "What the address bar searches when you type something that isn't a URL.",
+      "resetLabel": "search engine",
+      "aria": "Search engine",
+      "customUrlTitle": "Custom search URL",
+      "customUrlDescription": "Use %s where the search terms go.",
+      "customUrlStatus": "Enter an http or https URL containing %s. Searches use DuckDuckGo until then.",
+      "customUrlAria": "Custom search URL"
+    },
+    "prLinks": {
+      "description": "Clicking a pull request link opens it in T3 Code. Turn off to open pull request links like any other link, on your git host.",
+      "resetLabel": "open pull requests in T3 Code",
+      "aria": "Open pull requests in T3 Code"
+    },
+    "devices": {
+      "section": "Devices",
+      "notSavedTitle": "Device settings not saved on all environments",
+      "notSavedDescription": "Could not update {{list}}.",
+      "updating": "Updating…",
+      "update": "Update",
+      "checking": "Checking…",
+      "checkVersions": "Check versions",
+      "hubDescription": "Open simulators and emulators in the Device panel. Hub:",
+      "hubAria": "Device hub",
+      "agentDescription": "New agent sessions can open and drive these devices. agent-device:",
+      "agentAria": "Agent device access"
+    },
+    "browserAccess": {
+      "projectDescription": "Allow agents in this project to use the shared browser. Applies when the agent session next starts.",
+      "description": "Allow agents to use the shared browser. Projects can override it.",
+      "resetLabel": "default browser access",
+      "aria": "Agent browser access",
+      "floatingPreviewDescription": "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.",
+      "floatingPreviewResetLabel": "auto-show floating preview",
+      "floatingPreviewAria": "Auto-show floating preview"
+    },
+    "profiles": {
+      "description": "Profiles separate cookies and logins. Incognito data is cleared when the app closes.",
+      "addProfile": "Add profile",
+      "newProfile": "New profile",
+      "blankProfile": "Blank profile",
+      "limitReached": "You've reached the profile limit",
+      "importFrom": "Import from",
+      "lookingForBrowsers": "Looking for browsers…",
+      "noSupportedBrowsers": "No supported browsers found",
+      "connectToImport": "Connect to an environment to import cookies",
+      "renameAria": "Rename {{name}}",
+      "defaultBadge": "Default",
+      "optionsAria": "{{name}} options",
+      "setAsDefault": "Set as default",
+      "clearCookies": "Clear cookies and cache",
+      "removeAndData": "Remove profile and data",
+      "connectToClear": "Connect to an environment to clear profile data",
+      "removeTitle": "Remove “{{name}}”?",
+      "removeDescription": "Its cookies and logins are deleted. Desktop tabs already open in this profile stay open until you close them; server browser tabs close now.",
+      "removeNeedConnection": "Connect to an environment to remove this profile and its data.",
+      "cancel": "Cancel",
+      "removing": "Removing…",
+      "removeProfile": "Remove profile",
+      "clearTitle": "Clear “{{name}}”’s cookies and cache?",
+      "clearDescription": "You are signed out of its sites. Server browser tabs open in this profile close now.",
+      "clearData": "Clear data",
+      "clearFailedTitle": "Could not clear {{name}}'s data",
+      "notConnected": "You're not connected to a server yet.",
+      "clearedTitle": "Cleared {{name}}'s cookies and cache",
+      "removeBeforeConnection": "Connect to an environment before removing this profile.",
+      "removeFailed": "Profile data could not be deleted. Try again."
+    },
+    "misc": {
+      "desktopOnly": "Only available in the desktop app.",
+      "sectionAgentAccess": "Agent access",
+      "sectionBrowsing": "Browsing",
+      "sectionRecordings": "Recordings",
+      "openSystemSettingsTitle": "Could not open System Settings",
+      "openSystemSettingsDescription": "Open Privacy & Security → Full Disk Access manually."
+    }
   }
 }
