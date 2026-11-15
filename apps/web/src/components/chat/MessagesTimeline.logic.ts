@@ -3232,13 +3232,6 @@ export function applyBackgroundActivityGroups(
       const ids = notifications.get(runId) ?? new Map<string, OrchestrationV2Notification>();
       ids.set(item.id, item);
       notifications.set(runId, ids);
-      if (
-        item.source.kind !== "monitor" &&
-        item.source.kind !== "background_task" &&
-        item.source.kind !== "system"
-      ) {
-        excluded.add(runId);
-      }
     }
     if (
       (entry.kind === "message" && entry.message.role === "user") ||
