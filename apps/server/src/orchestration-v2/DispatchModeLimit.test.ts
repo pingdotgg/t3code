@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -154,7 +155,7 @@ const layerWithCeiling = Layer.mergeAll(
       managedPolicy: {
         schemaVersion: 1,
         organization: "Example Corp",
-        limits: { maxRuntimeMode: "auto-accept-edits" },
+        limits: { maxRuntimeMode: "auto-accept-edits", scheduledTasks: false },
       },
     },
   ),
@@ -354,6 +355,104 @@ it.layer(layerWithCeiling)("runtime mode ceiling", (it) => {
         (run) => run.id === waiting!.id,
       );
       assert.notEqual(started?.status, "queued");
+    }),
+  );
+
+  it.effect("refuses a persisted scheduled run without blocking the next user message", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("thread:scheduled-policy-queue");
+      yield* createThread(threadId);
+      yield* orchestrator.dispatch(sendMessage(threadId, "active"));
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "scheduled"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        ...sendMessage(threadId, "ordinary"),
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const { runs, messages } = yield* orchestrator.getThreadRecords(threadId, [
+        "runs",
+        "messages",
+      ]);
+      const active = runs.find((run) => run.userMessageId === MessageId.make("message:active"))!;
+      const scheduledRun = runs.find(
+        (run) => run.userMessageId === MessageId.make("message:scheduled"),
+      )!;
+      const scheduled = messages.find(
+        (message) => message.id === MessageId.make("message:scheduled"),
+      )!;
+      const occurredAt = yield* DateTime.now;
+      // Persisted before the administrator disabled scheduled tasks.
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:scheduled-policy-queue:message"),
+            type: "message.updated",
+            threadId,
+            occurredAt,
+            payload: {
+              ...scheduled,
+              scheduledTaskId: ScheduledTaskId.make("scheduled-task:before-policy"),
+            },
+          },
+        ],
+      });
+      const promoted = yield* orchestrator
+        .dispatch({
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("promote:scheduled-policy-queue"),
+          threadId,
+          queuedRunId: scheduledRun.id,
+          targetRunId: active.id,
+        })
+        .pipe(Effect.flip);
+      assert.equal(promoted._tag, "OrchestratorDispatchError");
+      assert.equal(
+        "cause" in promoted ? promoted.cause : undefined,
+        "Example Corp's policy does not allow scheduled tasks.",
+      );
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("event:scheduled-policy-queue:complete"),
+            type: "run.updated",
+            threadId,
+            runId: active.id,
+            providerInstanceId: active.providerInstanceId,
+            occurredAt,
+            payload: { ...active, status: "completed" },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume:scheduled-policy-queue"),
+        threadId,
+      });
+      const refused = yield* orchestrator.getThreadRecords(threadId, ["runs", "turnItems"]);
+      assert.equal(
+        refused.runs.find((run) => run.userMessageId === scheduled.id)?.status,
+        "failed",
+      );
+      assert.ok(
+        refused.turnItems.some(
+          (item) =>
+            item.type === "error" &&
+            item.failure.message === "Example Corp's policy does not allow scheduled tasks.",
+        ),
+      );
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume:ordinary-policy-queue"),
+        threadId,
+      });
+      const ordinary = (yield* orchestrator.getThreadRecords(threadId, ["runs"])).runs.find(
+        (run) => run.userMessageId === MessageId.make("message:ordinary"),
+      );
+      assert.equal(ordinary?.status, "starting");
     }),
   );
 });
