@@ -15736,6 +15736,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   const parentTaskSyncRetries = yield* FiberSet.make();
+  const syncDelegatedParentTask = Effect.fn("Orchestrator.syncDelegatedParentTask")(function* (
+    childThreadId: ThreadId,
+    options: { readonly syncRunId: RunId | undefined; readonly retry: boolean },
+  ) {
+    const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+    if (parentThreadId === undefined) return;
+    const finalize = finalizeAppOwnedSubagent(
+      childThreadId,
+      options.syncRunId === undefined ? undefined : { syncRunId: options.syncRunId },
+    );
+    yield* threadDispatch.withLock(
+      parentThreadId,
+      // A failed attempt may have committed the result before offering its wake.
+      options.retry
+        ? offerDelegatedCompletionDeliveries(parentThreadId).pipe(Effect.andThen(finalize))
+        : finalize,
+    );
+  });
+  // Only these reactions tell a parent about its child before a restart; a dropped one leaves its task running.
+  const updateDelegatedParentTask = Effect.fn("Orchestrator.updateDelegatedParentTask")(function* (
+    childThreadId: ThreadId,
+    syncRunId?: RunId,
+  ) {
+    const context = {
+      threadId: childThreadId,
+      ...(syncRunId === undefined ? {} : { runId: syncRunId }),
+    };
+    yield* syncDelegatedParentTask(childThreadId, { syncRunId, retry: false }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Retrying a delegated task update for its parent", {
+          ...context,
+          cause,
+        }).pipe(
+          Effect.andThen(
+            syncDelegatedParentTask(childThreadId, { syncRunId, retry: true }).pipe(
+              Effect.retry({ schedule: parentTaskSyncRetry }),
+              Effect.delay("1 second"),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to update a delegated task for its parent", {
+                  ...context,
+                  cause,
+                }),
+              ),
+              FiberSet.run(parentTaskSyncRetries),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
   const handleRunUpdate = Effect.fn("Orchestrator.handleRunUpdate")(
     function* (stored: OrchestrationV2StoredEvent) {
       if (stored.event.type !== "run.updated") return;
@@ -15782,45 +15832,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
       }
-      const syncParentTask = Effect.fn("Orchestrator.syncDelegatedParentTask")(function* (
-        retry: boolean,
-      ) {
-        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
-        if (parentThreadId === undefined) return;
-        const finalize = finalizeAppOwnedSubagent(threadId, { syncRunId: run.id });
-        yield* threadDispatch.withLock(
-          parentThreadId,
-          // A failed attempt may have committed the result before offering its wake.
-          retry
-            ? offerDelegatedCompletionDeliveries(parentThreadId).pipe(Effect.andThen(finalize))
-            : finalize,
-        );
-      });
-      yield* syncParentTask(false).pipe(
-        // Only this reaction tells the parent before a restart; a dropped one leaves its task running.
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Retrying a delegated task update for its parent", {
-            threadId,
-            runId: run.id,
-            cause,
-          }).pipe(
-            Effect.andThen(
-              syncParentTask(true).pipe(
-                Effect.retry({ schedule: parentTaskSyncRetry }),
-                Effect.delay("1 second"),
-                Effect.catchCause((cause) =>
-                  Effect.logWarning("Failed to update a delegated task for its parent", {
-                    threadId,
-                    runId: run.id,
-                    cause,
-                  }),
-                ),
-                FiberSet.run(parentTaskSyncRetries),
-              ),
-            ),
-          ),
-        ),
-      );
+      yield* updateDelegatedParentTask(threadId, run.id);
     },
     (effect, stored) =>
       effect.pipe(
@@ -15942,22 +15954,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
   ).pipe(
     Stream.filter(settlesChildWork),
-    Stream.runForEach((stored) =>
-      Effect.gen(function* () {
-        const childThreadId = stored.event.threadId;
-        const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
-        if (parentThreadId === undefined) return;
-        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("Failed to finalize a delegated child after its work settled", {
-            threadId: stored.event.threadId,
-            sequence: stored.sequence,
-            cause,
-          }),
-        ),
-      ),
-    ),
+    Stream.runForEach((stored) => updateDelegatedParentTask(stored.event.threadId)),
     Effect.forkScoped,
   );
 
