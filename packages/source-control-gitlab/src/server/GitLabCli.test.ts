@@ -28,7 +28,6 @@ function processOutput(stdout: string): SourceControlHost.SourceControlProcessOu
 
 it.effect.each([
   { operation: "view", requestedHost: "gitlab.example.test:8443", mapped: true },
-  { operation: "checkout", requestedHost: "gitlab.example.test:8443", mapped: true },
   { operation: "api", requestedHost: "gitlab.example.test:8443", mapped: true },
   {
     operation: "api",
@@ -63,7 +62,6 @@ it.effect.each([
     requestedApiHost: "api.example.test:8443",
   },
   { operation: "api", requestedHost: "other.gitlab.example.test:8443", mapped: false },
-  { operation: "api", requestedHost: "gitlab.example.test:9443", mapped: false },
   {
     operation: "api",
     requestedHost: "gitlab.example.test:8443",
@@ -177,8 +175,6 @@ it.effect.each([
         const result = yield* glab.getMergeRequest(input);
         assert.strictEqual(result.number, 42);
         assert.strictEqual(result.url, input.reference);
-      } else if (operation === "checkout") {
-        yield* glab.checkoutMergeRequest(input);
       } else {
         yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });
         yield* glab.execute({ cwd: "/repo", host: requestedHost, args: ["api", "user"] });

@@ -2,7 +2,6 @@ import * as Context from "effect/Context";
 import * as Cache from "effect/Cache";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
-import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
