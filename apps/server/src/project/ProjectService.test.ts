@@ -963,14 +963,25 @@ it.layer(
         const service = yield* ProjectService.ProjectService;
         const projectId = ProjectId.make("explicit-grouping");
         const identity = "39c61a1b-8a64-43a6-9da5-65c15da93d52";
-        const created = yield* service.register({
+        const registration = {
           commandId: CommandId.make("group-create"),
           projectId,
           title: "sdk",
           workspaceRoot: "/groups/sdk",
+        };
+        const created = yield* service.register(registration);
+        assert.deepEqual(yield* service.register(registration), created);
+        const sameIdDuplicate = yield* service
+          .register({ ...registration, commandId: CommandId.make("group-create-distinct") })
+          .pipe(Effect.flip);
+        assert.instanceOf(sameIdDuplicate, ProjectService.ProjectConflictError);
+        const grouped = yield* service.grouping({
+          commandId: CommandId.make("group-initial-identity"),
+          identifier: projectId,
+          cwd: "/",
           groupingIdentity: identity,
         });
-        assert.equal(created.groupingIdentity, identity);
+        assert.equal(grouped.groupingIdentity, identity);
         const sql = yield* SqlClient.SqlClient;
         yield* sql`
           INSERT INTO orchestration_v2_projection_threads

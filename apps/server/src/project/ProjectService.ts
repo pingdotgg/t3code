@@ -513,11 +513,23 @@ export const make = Effect.gen(function* () {
           });
         }
         if (input.groupingIdentity === undefined) {
-          return yield* new ProjectConflictError({
+          yield* commit({
+            type: "project.create",
+            commandId: input.commandId,
             projectId: input.projectId,
+            title: existing.value.title,
             workspaceRoot,
-            conflictingProjectId: existing.value.id,
-          });
+          }).pipe(
+            Effect.catchTags({
+              ProjectInvalidError: () =>
+                new ProjectConflictError({
+                  projectId: input.projectId,
+                  workspaceRoot,
+                  conflictingProjectId: existing.value.id,
+                }),
+            }),
+          );
+          return yield* readCommitted(input.projectId);
         }
         if (existing.value.groupingIdentity === input.groupingIdentity) return existing.value;
         return yield* update({
