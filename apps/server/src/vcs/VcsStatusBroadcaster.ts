@@ -25,7 +25,6 @@ import type {
   VcsStatusSubscriptionInput,
 } from "@t3tools/contracts";
 import { DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL } from "@t3tools/contracts";
-import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -34,6 +33,7 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
@@ -143,8 +143,12 @@ interface CachedRemoteStatus extends CachedValue<VcsStatusRemoteResult | null> {
   readonly branch: string | null;
 }
 
+interface CachedLocalStatus extends CachedValue<VcsStatusLocalResult> {
+  readonly includesBranchChanges: boolean;
+}
+
 interface CachedVcsStatus {
-  readonly local: CachedValue<VcsStatusLocalResult> | null;
+  readonly local: CachedLocalStatus | null;
   readonly remote: CachedRemoteStatus | null;
 }
 
@@ -159,24 +163,6 @@ interface ActiveRemotePoller {
   readonly subscriberCount: number;
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
-
-export class VcsAutomaticFetchInterval extends Context.Reference<Effect.Effect<Duration.Duration>>(
-  "t3/vcs/VcsAutomaticFetchInterval",
-  { defaultValue: () => Effect.succeed(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL) },
-) {}
-
-export const layerAutomaticFetchInterval = Layer.effect(
-  VcsAutomaticFetchInterval,
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettings.ServerSettingsService;
-    return serverSettings.getSettings.pipe(
-      Effect.map(
-        (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
-      ),
-      Effect.orElseSucceed(() => DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL),
-    );
-  }),
-);
 
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
@@ -236,6 +222,11 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+    /**
+     * For a checkout someone is waiting on. Returns once the new branch is published, so the
+     * caller's reply does not outrun it, and finishes the slower remote read in the background.
+     */
+    readonly refreshAfterCheckout: (cwd: string) => Effect.Effect<void>;
     readonly refreshStatus: (
       cwd: string,
       options?: { readonly localOnly?: boolean },
@@ -328,14 +319,51 @@ export const make = Effect.gen(function* () {
     return yield* Ref.get(cacheRef).pipe(Effect.map((cache) => cache.get(cwd) ?? null));
   });
 
+  // Only full subscribers and direct reads show Changes totals. Command palette rows subscribe
+  // without remote status and skip them, which halves the git processes a burst of rows spawns.
+  const branchChangesDemand = new Map<string, number>();
+  const wantsBranchChanges = (cwd: string) => branchChangesDemand.has(cwd);
+  const acquireBranchChangesDemand = (cwd: string) =>
+    Effect.acquireRelease(
+      Effect.sync(() => {
+        branchChangesDemand.set(cwd, (branchChangesDemand.get(cwd) ?? 0) + 1);
+      }),
+      () =>
+        Effect.sync(() => {
+          const count = (branchChangesDemand.get(cwd) ?? 1) - 1;
+          if (count > 0) branchChangesDemand.set(cwd, count);
+          else branchChangesDemand.delete(cwd);
+        }),
+    );
+
+  const readLocalStatus = Effect.fn("VcsStatusBroadcaster.readLocalStatus")(function* (
+    cwd: string,
+  ) {
+    const includeBranchChanges = wantsBranchChanges(cwd);
+    const local = yield* workflow.localStatus({ cwd }, { includeBranchChanges });
+    // A subscriber that shows totals arrived during the read and must not receive it without them.
+    if (!includeBranchChanges && wantsBranchChanges(cwd)) {
+      return {
+        local: yield* workflow.localStatus({ cwd }, { includeBranchChanges: true }),
+        includesBranchChanges: true,
+      };
+    }
+    return { local, includesBranchChanges: includeBranchChanges };
+  });
+
   const updateCachedLocalStatus = Effect.fn("VcsStatusBroadcaster.updateCachedLocalStatus")(
     function* (
       cwd: string,
-      local: VcsStatusLocalResult,
+      read: { readonly local: VcsStatusLocalResult; readonly includesBranchChanges: boolean },
       observation: number,
       options?: { publish?: boolean },
     ) {
-      const nextLocal = { fingerprint: fingerprintStatusPart(local), value: local };
+      const { local, includesBranchChanges } = read;
+      const nextLocal = {
+        fingerprint: fingerprintStatusPart(local),
+        value: local,
+        includesBranchChanges,
+      };
       const [localChanged, remoteCleared] = yield* Ref.modify(cacheRef, (cache) => {
         const previous = cache.get(cwd) ?? { local: null, remote: null };
         const remote = previous.remote?.branch === local.refName ? previous.remote : null;
@@ -386,16 +414,17 @@ export const make = Effect.gen(function* () {
     options?: { publish?: boolean },
   ) {
     const observation = ++branchObservation;
-    const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local, observation, options);
+    return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), observation, options);
   });
 
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string) {
       const cached = yield* getCachedStatus(cwd);
       if (cached?.local) {
-        const branch = yield* workflow.currentBranch(cwd);
-        if (branch === cached.local.value.refName) return cached.local.value;
+        if (cached.local.includesBranchChanges || !wantsBranchChanges(cwd)) {
+          const branch = yield* workflow.currentBranch(cwd);
+          if (branch === cached.local.value.refName) return cached.local.value;
+        }
         yield* workflow.invalidateLocalStatus(cwd);
         return yield* loadLocalStatus(cwd, { publish: true });
       }
@@ -420,6 +449,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.getStatus",
   )(function* (input) {
     const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
+    yield* acquireBranchChangesDemand(cwd);
     yield* getOrLoadLocalStatus(cwd);
     const cached = yield* getCachedStatus(cwd);
     if (cached?.local && cached.remote) {
@@ -436,14 +466,18 @@ export const make = Effect.gen(function* () {
         return mergeGitStatusParts(parts.local, parts.remote);
       }),
     );
-  });
+  }, Effect.scoped);
 
   // A refresh that started after a request saw every change that request could mean, so queued
   // callers share it instead of each running git status again.
   const localRefreshRequests = new Map<string, number>();
   const localRefreshResults = new Map<
     string,
-    { readonly startedAt: number; readonly local: VcsStatusLocalResult }
+    {
+      readonly startedAt: number;
+      readonly local: VcsStatusLocalResult;
+      readonly includesBranchChanges: boolean;
+    }
   >();
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
@@ -453,13 +487,19 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const shared = localRefreshResults.get(cwd);
-          if (shared !== undefined && shared.startedAt >= requestedAt) return shared.local;
+          if (
+            shared !== undefined &&
+            shared.startedAt >= requestedAt &&
+            (shared.includesBranchChanges || !wantsBranchChanges(cwd))
+          ) {
+            return shared.local;
+          }
           const startedAt = localRefreshRequests.get(cwd) ?? requestedAt;
           yield* workflow.invalidateLocalStatus(cwd);
           const observation = ++branchObservation;
-          const local = yield* workflow.localStatus({ cwd });
-          localRefreshResults.set(cwd, { startedAt, local });
-          return yield* updateCachedLocalStatus(cwd, local, observation, { publish: true });
+          const read = yield* readLocalStatus(cwd);
+          localRefreshResults.set(cwd, { startedAt, ...read });
+          return yield* updateCachedLocalStatus(cwd, read, observation, { publish: true });
         }),
       );
     },
@@ -603,33 +643,63 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const refreshRemoteAndLocalTotals = Effect.fn("VcsStatusBroadcaster.refreshRemoteAndLocalTotals")(
+    function* (cwd: string, policyCwd: string, refsBeforeLocalRead: string | null) {
+      return yield* withRemoteWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
+          // Bump the PR lookup epoch after earlier remote writers have finished.
+          yield* workflow.invalidateStatus(cwd);
+          const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
+          // Without a fetch, the cached behind count cannot justify an automatic pull.
+          const pulled = refreshUpstream
+            ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
+            : null;
+          if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
+          yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
+          // A fetch, ours or not, can move the base used for local Changes totals.
+          if (
+            refsBeforeLocalRead === null ||
+            (yield* workflow.readRefSnapshot(cwd)) !== refsBeforeLocalRead
+          ) {
+            yield* refreshLocalStatusCore(cwd);
+          }
+          const parts = yield* getStatusParts(cwd);
+          return mergeGitStatusParts(parts.local, parts.remote);
+        }),
+      );
+    },
+  );
+
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    yield* acquireBranchChangesDemand(cwd);
+    const refsBeforeLocalRead = options?.localOnly ? null : yield* workflow.readRefSnapshot(cwd);
     yield* refreshLocalStatusCore(cwd);
     if (options?.localOnly) {
       // Never cache a remote here: readers take `value: null` as "read and found no PR".
       const parts = yield* getStatusParts(cwd);
       return mergeGitStatusParts(parts.local, parts.remote);
     }
-    return yield* withRemoteWriteLock(
-      cwd,
-      Effect.gen(function* () {
-        const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
-        // Bump the PR lookup epoch after earlier remote writers have finished.
-        yield* workflow.invalidateStatus(cwd);
-        const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
-        // Fetch can move the base used for local Changes totals.
-        yield* refreshLocalStatusCore(cwd);
-        // Without a fetch, the cached behind count cannot justify an automatic pull.
-        const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remoteRead, [rawCwd]) : null;
-        if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
-        yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
-        const parts = yield* getStatusParts(cwd);
-        return mergeGitStatusParts(parts.local, parts.remote);
-      }),
+    return yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
+  }, Effect.scoped);
+
+  const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshAfterCheckout",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const localDone = yield* Deferred.make<void>();
+    // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
+    yield* refreshLocalStatusCore(cwd).pipe(
+      Effect.ensuring(Deferred.succeed(localDone, undefined)),
+      Effect.andThen(refreshRemoteAndLocalTotals(cwd, rawCwd, null)),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(broadcasterScope),
     );
+    yield* Deferred.await(localDone);
   });
 
   const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =
@@ -1039,6 +1109,7 @@ export const make = Effect.gen(function* () {
               else detailedSubscribers.set(cwd, remaining);
             }),
         );
+        if (input.includeRemote !== false) yield* acquireBranchChangesDemand(cwd);
         const subscription = yield* PubSub.subscribe(changesPubSub);
         // Watch before reading so a checkout in between still publishes.
         yield* Effect.acquireRelease(retainHeadWatcher(cwd), () => releaseHeadWatcher(cwd));
@@ -1122,6 +1193,7 @@ export const make = Effect.gen(function* () {
     ),
     getStatus,
     refreshLocalStatus,
+    refreshAfterCheckout,
     refreshStatus: shareQueuedRefreshStatus,
     refreshPullRequestStatus,
     streamStatus,
