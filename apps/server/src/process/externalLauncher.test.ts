@@ -105,36 +105,47 @@ const layerTest = (input: {
 };
 
 // macOS command lookup cannot search a Windows drive-letter PATH.
-it.effect.skipIf(windowsHost)(
-  "opens home-relative app bundles using the server home directory",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
-      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
-      yield* fs.chmod(path.join(bin, "open"), 0o755);
-      const spawned: ChildProcess.StandardCommand[] = [];
-      yield* Effect.gen(function* () {
-        const launcher = yield* ExternalLauncher.ExternalLauncher;
-        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-          yield* launcher.launchEditor({ editor: "file-manager", cwd });
-        }
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { PATH: bin },
-            onSpawn: (command) => spawned.push(command),
-          }),
-        ),
-        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
-      );
-      assert.deepEqual(
-        spawned.map((command) => command.args),
-        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+it.effect.skipIf(windowsHost)("opens home-relative targets using the server home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+    for (const name of ["open", "code", "idea"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      }
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: bin },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+    );
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [
+        ["/Users/server/Applications/My App.app"],
+        ["/Applications/My App.app"],
+        ["--goto", "/Users/server/notes/todo.md:3"],
+        ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(windowsHost)(
@@ -796,17 +807,32 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
-      Effect.provideService(HostProcess.Platform, "linux"),
-      Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
-    );
-    assert.deepEqual(yield* resolve, Option.none());
+    const laterBin = path.join(home, "later-bin");
+    const resolveOn = (platform: NodeJS.Platform) =>
+      resolveEditorCommand(editor, { HOME: home, PATH: `${binDir}:${laterBin}` }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(Path.Path, withSystemBin(path, systemBin)),
+      );
+    assert.deepEqual(yield* resolveOn("linux"), Option.none());
+    assert.deepEqual(yield* resolveOn("darwin"), Option.none());
 
     const zedEditor = path.join(home, ".local/bin/zed");
     yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
     yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
     yield* fs.chmod(zedEditor, 0o755);
-    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
+    assert.deepEqual(yield* resolveOn("linux"), Option.some({ command: zedEditor, baseArgs: [] }));
+
+    yield* fs.remove(zedEditor);
+    const laterZed = path.join(laterBin, "zed");
+    yield* fs.makeDirectory(laterBin, { recursive: true });
+    yield* fs.writeFileString(laterZed, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(laterZed, 0o755);
+    for (const platform of ["linux", "darwin"] as const) {
+      assert.deepEqual(
+        yield* resolveOn(platform),
+        Option.some({ command: laterZed, baseArgs: [] }),
+      );
+    }
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
