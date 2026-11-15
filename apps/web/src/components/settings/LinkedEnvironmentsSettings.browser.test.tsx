@@ -1,52 +1,82 @@
-import { RegistryContext } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { EnvironmentId, type PeerLinkSummary } from "@t3tools/contracts";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { peerLinkEnvironment } from "~/state/peerLinks";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 
 type RenewalResult = AtomCommandResult<{ label: string }, Error>;
 const state = vi.hoisted(() => ({
+  realQuery: false,
   links: [] as PeerLinkSummary[],
   renew: vi.fn<(input: unknown) => Promise<RenewalResult>>(),
   unlink: vi.fn(),
 }));
 
-vi.mock(import("~/state/peerLinks"), async () => {
-  const { Atom } = await import("effect/reactivity");
-  const allowed = Atom.make(true);
+vi.mock(import("~/state/peerLinks"), async (original) => {
+  const actual = await original();
+  const { Atom: AtomModule } = await import("effect/reactivity");
+  const EffectModule = await import("effect/Effect");
+  // The real list query's options: stale-while-revalidate, revalidating only when it is built.
+  const list = AtomModule.make(
+    EffectModule.gen(function* () {
+      server.started += 1;
+      yield* EffectModule.promise(() => server.answer);
+      return { links: [...server.links] };
+    }).pipe(
+      EffectModule.onInterrupt(() =>
+        EffectModule.sync(() => {
+          server.interrupted += 1;
+        }),
+      ),
+    ),
+  ).pipe(AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }));
+  const allowed = AtomModule.make(true);
   return {
-    peerLinkEnvironment: {
-      list: () => ({}),
-      link: { kind: "link", permissionAtom: () => allowed },
-      unlink: { kind: "unlink", permissionAtom: () => allowed },
-    } as never,
+    ...actual,
     useLinkableMachines: () => [],
+    peerLinkEnvironment: {
+      ...actual.peerLinkEnvironment,
+      list: (() => list) as never,
+      link: { ...actual.peerLinkEnvironment.link, kind: "link", permissionAtom: () => allowed },
+      unlink: {
+        ...actual.peerLinkEnvironment.unlink,
+        kind: "unlink",
+        permissionAtom: () => allowed,
+      },
+    },
   };
 });
 vi.mock(import("~/state/use-atom-command"), () => ({
   useAtomCommand: ((command: { kind: string }) =>
     command.kind === "link" ? state.renew : state.unlink) as never,
 }));
-vi.mock(import("~/state/query"), async (original) => ({
-  ...(await original()),
-  useEnvironmentQuery: ((atom: unknown) => ({
-    data: atom === null ? null : { links: state.links },
-    dataUpdatedAt: 1,
-    isPending: false,
-    isSuccess: atom !== null,
-    error: null,
-    refresh: () => {},
-  })) as never,
-}));
+vi.mock(import("~/state/query"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useEnvironmentQuery: ((atom: never) =>
+      state.realQuery
+        ? actual.useEnvironmentQuery(atom)
+        : {
+            data: atom === null ? null : { links: state.links },
+            dataUpdatedAt: 1,
+            isPending: false,
+            isSuccess: atom !== null,
+            error: null,
+            refresh: () => {},
+          }) as never,
+  };
+});
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   usePreparedConnection: () => Option.none(),
@@ -73,6 +103,7 @@ const destination: PeerLinkSummary = {
 };
 function setup() {
   vi.clearAllMocks();
+  state.realQuery = false;
   state.links = [destination];
 }
 function deferred<T>() {
@@ -160,4 +191,92 @@ it("follows refreshed permissions while pristine and retains edits and codes thr
   await expect
     .element(screen.getByRole("textbox", { name: /^Pairing code/ }))
     .toHaveValue("test-code");
+});
+
+const hostId = EnvironmentId.make("mac");
+const vmLink: PeerLinkSummary = {
+  environmentId: EnvironmentId.make("vm"),
+  label: "boat-task",
+  urls: ["http://boat-task.example.ts.net:3773"],
+  access: "full-access",
+  linkedAt: DateTime.makeUnsafe("2026-11-01T00:00:00.000Z"),
+  expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+  lastReachedAt: null,
+  lastError: null,
+  status: "reachable",
+};
+
+// What the host's `peerLinks.list` answers. The CLI and agents link machines without this client.
+const server = vi.hoisted(() => ({
+  links: [] as Array<PeerLinkSummary>,
+  started: 0,
+  interrupted: 0,
+  answer: Promise.resolve(),
+}));
+
+function setupServer() {
+  setup();
+  state.realQuery = true;
+  server.links = [];
+  server.started = 0;
+  server.interrupted = 0;
+  server.answer = Promise.resolve();
+}
+
+/** Stands in for the chat composer, which reads the same list while a thread is open. */
+function ComposerReader() {
+  const result = useAtomValue(peerLinkEnvironment.list({ environmentId: hostId, input: {} }));
+  return AsyncResult.isSuccess(result) ? <p>Composer loaded</p> : null;
+}
+
+describe("LinkedEnvironmentsSettings", () => {
+  it("shows a link made elsewhere while the composer keeps the list loaded", async () => {
+    setupServer();
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using composer = await render(
+      <RegistryContext.Provider value={registry}>
+        <ComposerReader />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(composer.getByText("Composer loaded")).toBeVisible();
+
+    server.links = [vmLink];
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings
+          environments={[{ environmentId: hostId, label: "Mac" } as EnvironmentPresentation]}
+          primaryEnvironmentId={hostId}
+        />
+      </RegistryContext.Provider>,
+    );
+
+    await expect.element(screen.getByRole("button", { name: /^boat-task/ })).toBeVisible();
+  });
+
+  it("leaves a list that is still loading to answer", async () => {
+    setupServer();
+    // useLiveRefresh remembers each view's last read across mounts, so this view gets its own host.
+    const loadingHostId = EnvironmentId.make("mac-loading");
+    let answer = () => {};
+    server.answer = new Promise((resolve) => {
+      answer = resolve;
+    });
+    server.links = [vmLink];
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings
+          environments={[{ environmentId: loadingHostId, label: "Mac" } as EnvironmentPresentation]}
+          primaryEnvironmentId={loadingHostId}
+        />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByRole("status")).toBeVisible();
+
+    answer();
+    await expect.element(screen.getByRole("button", { name: /^boat-task/ })).toBeVisible();
+    expect(server).toMatchObject({ started: 1, interrupted: 0 });
+  });
 });

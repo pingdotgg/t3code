@@ -18,6 +18,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Button } from "../ui/button";
@@ -84,6 +85,19 @@ function SourceLinks({
 }) {
   const environmentId = source.environmentId;
   const links = useEnvironmentQuery(peerLinkEnvironment.list({ environmentId, input: {} }));
+  // Links made outside this client bump nothing the shared list reads, so showing the panel
+  // asks again. Listing probes every linked environment, too costly for a timer nobody asked for.
+  // A list still loading counts as read now, so the next return to the window asks again.
+  useLiveRefresh(
+    () => {
+      if (!links.isPending) links.refresh();
+    },
+    {
+      key: `linked-environments:${environmentId}`,
+      intervalMs: null,
+      refreshOnShow: true,
+    },
+  );
   const canLink = useAtomValue(peerLinkEnvironment.link.permissionAtom(environmentId));
   const [expandedId, setExpandedId] = useState<EnvironmentId | null>(null);
   const [search, setSearch] = useState("");
