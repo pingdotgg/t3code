@@ -258,6 +258,18 @@ it.effect("registers loopback and https clients and never redirects for an unver
       );
       expect(fiveLongCallbacks.status).toBe(201);
 
+      for (const malformed of [
+        { client_name: 42, redirect_uris: [REDIRECT] },
+        { redirect_uris: REDIRECT },
+      ]) {
+        const response = yield* handler(postJson("/oauth/mcp/register", malformed));
+        expect(response.status).toBe(400);
+        expect(response.headers.get("content-type")).toMatch(/^application\/json/);
+        expect(yield* json<{ error: string }>(response)).toMatchObject({
+          error: expect.stringMatching(/^invalid_(client_metadata|redirect_uri)$/),
+        });
+      }
+
       const registered = yield* register(handler);
       expect(registered.status).toBe(201);
       const { client_id: clientId } = (yield* json<unknown>(registered)) as { client_id: string };
