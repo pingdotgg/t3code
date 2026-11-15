@@ -1311,6 +1311,10 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
       (event) => event.type === "turn-item.updated" && event.payload.type === "error",
     );
     assert.isUndefined(errorItem);
+    const notices = events.filter(
+      (event) => event.type === "turn-item.updated" && event.payload.type === "system_notice",
+    );
+    assert.equal(notices.length, 1);
   }),
 );
 
