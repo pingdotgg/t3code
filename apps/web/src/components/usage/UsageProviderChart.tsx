@@ -206,14 +206,13 @@ function buildChart(
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
   const paths = providers.map((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
-    const line = curvePath(
-      smoothCurve(
-        columns.map((column, periodIndex) => ({
-          x: periodIndex * stepX,
-          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
-        })),
-      ),
-    );
+    const points = columns.map((column, periodIndex) => ({
+      x: periodIndex * stepX,
+      y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
+    }));
+    const first = points[0];
+    if (points.length === 1 && first !== undefined) points.push({ ...first, x: VIEW_WIDTH });
+    const line = curvePath(smoothCurve(points));
     return {
       provider,
       loading: loadingProviders.has(provider),
