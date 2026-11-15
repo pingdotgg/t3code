@@ -68,22 +68,22 @@ function composerImageSignature(
   return `${image.mimeType}\u0000${image.sizeBytes}\u0000${image.name}`;
 }
 
-// A file whose bytes were never read only matches itself.
+// Byte hashes by file; a file whose bytes were never read gets a key that matches only itself.
 const composerImageFingerprints = new WeakMap<File, string>();
-const unreadComposerImageKeys = new WeakMap<File, string>();
 let unreadComposerImageCount = 0;
 
 function composerImageFingerprint(file: File): string {
-  const fingerprint = composerImageFingerprints.get(file) ?? unreadComposerImageKeys.get(file);
-  if (fingerprint !== undefined) return fingerprint;
-  const unreadKey = `unread:${unreadComposerImageCount++}`;
-  unreadComposerImageKeys.set(file, unreadKey);
-  return unreadKey;
+  let fingerprint = composerImageFingerprints.get(file);
+  if (fingerprint === undefined) {
+    fingerprint = `unread:${unreadComposerImageCount++}`;
+    composerImageFingerprints.set(file, fingerprint);
+  }
+  return fingerprint;
 }
 
 /** Records the bytes behind an image file, so a draft drops it only as a byte-for-byte repeat. */
 export function rememberComposerImageBytes(file: File, bytes: Uint8Array): void {
-  // cyrb53: two 32-bit FNV-style lanes, fast enough to run over every byte of an image.
+  // cyrb53, synchronous: crypto.subtle is missing on plain-http remote origins.
   let first = 0xdeadbeef;
   let second = 0x41c6ce57;
   for (let index = 0; index < bytes.length; index++) {
@@ -99,7 +99,6 @@ export function rememberComposerImageBytes(file: File, bytes: Uint8Array): void 
 }
 
 export async function readComposerImageBytes(file: File): Promise<void> {
-  if (composerImageFingerprints.has(file)) return;
   // An unreadable file keeps matching only itself.
   const bytes = await file.arrayBuffer().catch(() => null);
   if (bytes) rememberComposerImageBytes(file, new Uint8Array(bytes));
@@ -115,10 +114,7 @@ export function composerImageDedupKey(
 // Compression changes an image's bytes, so a compressed image answers for the file it came from.
 const composerImageSourceKeys = new WeakMap<File, string>();
 
-/**
- * A pasted image's name, type and size, known before its bytes are read, to guess that the draft
- * already has it. Only the draft store's dedupe key decides.
- */
+/** A pasted image's name, type and size: a guess, before its bytes are read, that the draft has it. */
 export function composerImageSourceKey(file: File): string {
   return (
     composerImageSourceKeys.get(file) ??

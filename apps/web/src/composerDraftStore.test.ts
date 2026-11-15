@@ -262,32 +262,7 @@ describe("composerDraftStore addImages", () => {
     expect(revokeSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps distinct pasted PNG bytes with matching name type and size", () => {
-    const pngs = [
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVR4AQEEAPv/AP8AAAMBAQCNHeWCAAAAAElFTkSuQmCC",
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAD0lEQVR4AQEEAPv/AAAA/wEDAQB8wnTbAAAAAElFTkSuQmCC",
-    ].map((value) => Uint8Array.from(atob(value), (char) => char.charCodeAt(0)));
-    expect(pngs[0]).not.toEqual(pngs[1]);
-    expect(pngs[0]!.length).toBe(pngs[1]!.length);
-    const store = useComposerDraftStore.getState();
-    for (const [index, bytes] of pngs.entries()) {
-      const file = new File([bytes], "image.png", { type: "image/png" });
-      store.addImages(threadRef, [
-        {
-          type: "image",
-          id: `paste-${index}`,
-          name: file.name,
-          mimeType: file.type,
-          sizeBytes: file.size,
-          file,
-          previewUrl: `blob:paste-${index}`,
-        },
-      ]);
-    }
-    expect(store.getComposerDraft(threadRef)?.images).toHaveLength(2);
-  });
-
-  it("deduplicates byte-identical images across calls", () => {
+  it("deduplicates byte-identical images across calls and keeps distinct bytes", () => {
     // Hydrated copies get fresh lastModified values, like a restored stash or draft.
     const persisted = (id: string, fill: number) => ({
       id,
