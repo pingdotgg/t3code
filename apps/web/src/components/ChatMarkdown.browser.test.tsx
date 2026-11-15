@@ -682,8 +682,8 @@ describe("ChatMarkdown inline code selection", () => {
 describe("ChatMarkdown copy", () => {
   it("copies a code block without the newline that rendering adds to it", async () => {
     setup();
-    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     await using screen = await renderText("");
+    using writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
     for (const [text, copied] of [
       ["```bash\nnpm install\n```", "npm install"],
       ["~~~\nnpm install\n~~~", "npm install"],
@@ -710,7 +710,6 @@ describe("ChatMarkdown copy", () => {
       await act(async () => copyButtons()[0]!.click());
       await expect.poll(() => writeText.mock.calls[0]?.[0], { message: text }).toBe(copied);
     }
-    writeText.mockRestore();
   });
 
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
