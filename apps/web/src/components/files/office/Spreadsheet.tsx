@@ -15,6 +15,11 @@ import {
 } from "@betteroffice/xlsx/headless";
 import { FileSurfaceLoading, FileSurfaceNotice } from "../fileSurfaceChrome";
 import { createWorkerClient, SupersededError } from "./worker-rpc";
+
+import { translateDynamic } from "../../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
 import type { SheetLayout, SheetMethods, SheetFrameRequest, SheetTab } from "./sheet-protocol";
 import {
   coverMerges,
@@ -111,7 +116,7 @@ export default function Spreadsheet(props: {
       />
       <div
         role="tablist"
-        aria-label="Sheets"
+        aria-label={td("sheets")}
         className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border px-2"
         onKeyDown={(event) => {
           const current = opened.tabs.findIndex(

@@ -6,6 +6,11 @@ import { FileSurfaceFailure, FileSurfaceLoading, FileSurfaceNotice } from "./fil
 import { PREVIEW_PAGE_ROWS, type TextPreviewResult } from "./largeTextProtocol";
 import VirtualTablePreview from "./VirtualTablePreview";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
+
 const FIRST_SCREEN_BYTES = 16 * 1024;
 
 function firstScreen(text: string, delimiter: "," | "\t" | null, complete: boolean) {
@@ -252,7 +257,7 @@ export default function LargeTextViewer(props: {
         />
       ) : (
         <div className="flex flex-1 items-center justify-center p-6 text-xs text-muted-foreground">
-          This file is empty.
+          {td("emptyFile")}
         </div>
       )}
     </div>

@@ -9,6 +9,11 @@ import DocumentPages from "./DocumentPages";
 import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
+
 // Saved notebooks must not load URLs or turn authored links into app actions.
 function inertNotebookMarkdown() {
   function clean(nodes: RootContent[]): RootContent[] {
@@ -98,7 +103,10 @@ export default function NotebookPreview(props: {
         className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.notebook.cells.length.toLocaleString()} cells · {props.notebook.language}
+        {td("cellsStatus", {
+          count: props.notebook.cells.length.toLocaleString(),
+          language: props.notebook.language,
+        })}
         {props.sizeBytes !== undefined
           ? ` · ${props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}`
           : ""}
@@ -168,11 +176,11 @@ export default function NotebookPreview(props: {
             </section>
           ))}
           {props.notebook.cells.length === 0 ? (
-            <p className="text-sm text-muted-foreground">This notebook is empty.</p>
+            <p className="text-sm text-muted-foreground">{td("emptyNotebook")}</p>
           ) : null}
           {visible < props.notebook.cells.length ? (
             <Button variant="outline" size="sm" onClick={() => setVisible((count) => count + 20)}>
-              Show more cells ({props.notebook.cells.length - visible} remaining)
+              {td("showMoreCells", { remaining: props.notebook.cells.length - visible })}
             </Button>
           ) : null}
         </div>

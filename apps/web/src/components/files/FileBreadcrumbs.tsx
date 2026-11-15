@@ -30,6 +30,11 @@ import {
 } from "./filePath";
 import { useProjectEntriesQuery } from "./projectFilesQueryState";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
+
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
@@ -118,7 +123,9 @@ function BreadcrumbMenuContent(props: {
         <>
           <MenuItem closeOnClick={false} onClick={() => props.onDirectoryChange(parentPath)}>
             <ArrowLeftIcon />
-            <span className="truncate">Back to {pathLabel(parentPath, props.projectName)}</span>
+            <span className="truncate">
+              {td("backToFolder", { name: pathLabel(parentPath, props.projectName) })}
+            </span>
           </MenuItem>
           <MenuSeparator />
         </>
@@ -132,7 +139,7 @@ function BreadcrumbMenuContent(props: {
         ) : entriesQuery.error && entriesQuery.data === null ? (
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
             <RefreshIcon refreshing={entriesQuery.isPending} />
-            <span className="min-w-0 flex-1 truncate">Retry loading folder</span>
+            <span className="min-w-0 flex-1 truncate">{td("retryFolder")}</span>
           </MenuItem>
         ) : !directoryAvailable && !entriesTruncated ? (
           <MenuItem disabled>This folder is no longer available.</MenuItem>
@@ -299,7 +306,7 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const currentIndex = breadcrumbs.findIndex((crumb) => crumb.path === currentPath);
 
   return (
-    <nav aria-label="File path" className="flex h-full">
+    <nav aria-label={td("filePath")} className="flex h-full">
       <ol className="flex items-center">
         {breadcrumbs.map((crumb, index) => {
           const current = index === currentIndex;

@@ -16,6 +16,11 @@ import {
 } from "./ProjectFilePicker.logic";
 import { useProjectFilePickerQuery } from "./projectFilesQueryState";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
+
 interface ProjectFilePickerProps {
   readonly setOpen: (open: boolean) => void;
 }
@@ -62,7 +67,7 @@ function EmptyProjectFilePicker() {
       value=""
     >
       <div className="py-10 text-center text-sm text-muted-foreground">
-        Open a project to search its files.
+        {td("openProjectToSearch")}
       </div>
     </CommandPaletteContent>
   );

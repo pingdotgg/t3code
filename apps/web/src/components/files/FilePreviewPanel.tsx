@@ -128,6 +128,11 @@ import {
   useProjectFileQuery,
 } from "./projectFilesQueryState";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`files:${key}`, options);
+
 const NO_FILE_REVISION_ATOM = Atom.make(null);
 
 interface FilePreviewPanelProps {
@@ -204,7 +209,7 @@ function WorkspaceImagePreview(props: {
     return (
       <MediaActions source={actionsSource}>
         <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-          Unable to load workspace image.
+          {td("loadImageFailed")}
         </div>
       </MediaActions>
     );
@@ -255,7 +260,7 @@ export function WorkspaceBrowserPreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
+        {td("loadPreviewFailed")}
       </div>
     );
   }
@@ -1246,7 +1251,7 @@ export default function FilePreviewPanel({
       return (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <Spinner className="size-4" />
-          Checking file access...
+          {td("checkingAccess")}
         </div>
       );
     }
@@ -1347,7 +1352,7 @@ export default function FilePreviewPanel({
       ) : null}
       {relativePath && !attachment && !isHostFile && !canWriteFiles && !fileAccess.isPending ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-2xs text-muted-foreground">
-          Read-only connection. Unsaved edits are kept until write access returns.
+          {td("readOnlyNotice")}
         </div>
       ) : null}
       {previewPath &&
@@ -1357,7 +1362,7 @@ export default function FilePreviewPanel({
       file.data?.truncated &&
       (draft || isMarkdown || isMermaid || isHtml) ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
-          Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
+          {td("previewLimit1Mb", { size: file.data.byteLength.toLocaleString() })}
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1471,7 +1476,7 @@ export default function FilePreviewPanel({
                 </p>
                 {attemptedPath ? (
                   <p className="text-muted-foreground">
-                    Attempted path
+                    {td("attemptedPath")}
                     <code className="block break-all font-mono text-foreground select-all">
                       {attemptedPath}
                     </code>
@@ -1479,11 +1484,11 @@ export default function FilePreviewPanel({
                 ) : null}
                 {!isHostFile ? (
                   <p className="text-muted-foreground">
-                    Workspace folder:{" "}
+                    {td("workspaceFolder")}{" "}
                     <code className="break-all font-mono select-all">
                       {file.readError?.cwd ?? cwd}
                     </code>
-                    . Check the link's path or locate the file in Files.
+                    {td("checkLinkPath")}
                   </p>
                 ) : null}
               </div>
@@ -1633,12 +1638,12 @@ export function WorkspaceLargeTextPreview(props: {
       />
     );
   if (assetUrl._tag !== "Success" || loaded === null)
-    return <div className="p-6 text-xs text-muted-foreground">Loading…</div>;
+    return <div className="p-6 text-xs text-muted-foreground">{td("loading")}</div>;
   const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
   return (
     <>
       <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">Full file</span>
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">{td("fullFile")}</span>
         <FileSurfaceAction
           label={isCopied ? "Copied" : "Copy contents"}
           onPress={() => {
@@ -1675,7 +1680,7 @@ export function WorkspaceLargeTextPreview(props: {
           <DownloadIcon className="size-3.5" />
         </FileSurfaceAction>
       </div>
-      <Suspense fallback={<div className="p-6 text-xs text-muted-foreground">Loading…</div>}>
+      <Suspense fallback={<div className="p-6 text-xs text-muted-foreground">{td("loading")}</div>}>
         <LargeTextViewer
           key={`${src}:${revision}`}
           name={props.name}
