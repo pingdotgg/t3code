@@ -84,7 +84,7 @@ import { beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
-import { setWheelScroller, wheelDeltaPx } from "../motion/gesture";
+import { scrollTabStripFromRow, setWheelScroller, wheelDeltaPx } from "../motion/gesture";
 import { useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
@@ -217,6 +217,11 @@ function createPaneStrip(): PaneStrip {
 
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
+  const row = strip.closest("[data-pane-header]");
+  const overflow = strip.scrollWidth > strip.clientWidth;
+  if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
+    row.toggleAttribute("data-tab-row-overflow", overflow);
+  }
   const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
   strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
@@ -325,6 +330,7 @@ function moveJoin(
     entry.slide = null;
     entry.joinedId = to.tabId;
     markJoinedLabel(entry);
+    markStripOverflow(entry.strip);
   };
   // Under black chrome and on phones the notch draws the tab and no shape shows.
   if (!was || motionMs <= 0 || join.getClientRects().length === 0) {
@@ -479,6 +485,14 @@ export function LayoutPaneTabStrip({
       placePaneJoin(entry, tabId, motion);
     };
     holdPaneStrip(entry, place, motionMs);
+    const row = strip.closest<HTMLElement>("[data-pane-header]");
+    const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
+    row?.addEventListener("wheel", wheel, { passive: false });
+    markStripOverflow(strip);
+    return () => {
+      row?.removeEventListener("wheel", wheel);
+      row?.removeAttribute("data-tab-row-overflow");
+    };
   }, [entry, holds, layer, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
   useLayoutEffect(

@@ -60,6 +60,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { scrollTabStripFromRow } from "../motion/gesture";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { useTheme } from "~/hooks/useTheme";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
@@ -934,7 +935,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const viewport = tabScrollViewport(root);
     if (!viewport) return;
 
-    const update = () => updateTabScrollState(viewport);
+    const row = root?.closest<HTMLElement>("[data-right-panel-tabbar]");
+    const update = () => {
+      updateTabScrollState(viewport);
+      const overflow = viewport.scrollWidth > viewport.clientWidth;
+      if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
+        row.toggleAttribute("data-tab-row-overflow", overflow);
+      }
+    };
+    const rowWheel = (event: WheelEvent) => scrollTabStripFromRow(event, viewport);
     // Only a vertical mouse wheel is translated. Horizontal input scrolls natively, since
     // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
@@ -954,6 +963,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const stopObserving = observeResize(content ? [viewport, content] : viewport, update);
     viewport.addEventListener("scroll", update, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: false });
+    row?.addEventListener("wheel", rowWheel, { passive: false });
     update();
 
     return () => {
@@ -961,6 +971,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       stopObserving();
       viewport.removeEventListener("scroll", update);
       viewport.removeEventListener("wheel", handleWheel);
+      row?.removeEventListener("wheel", rowWheel);
+      row?.removeAttribute("data-tab-row-overflow");
     };
   };
 

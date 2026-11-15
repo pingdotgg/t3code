@@ -118,6 +118,13 @@ describe("RightPanelTabs", () => {
         '[data-layout-tab-strip], [data-right-panel-tab-list] [data-slot="scroll-area-viewport"]',
       )!;
       expect(viewport.scrollWidth - viewport.clientWidth).toBeGreaterThan(120);
+      if (mode === "inline") {
+        viewport.scrollLeft = 120;
+        await userEvent.wheel(screen.getByRole("button", { name: "Scroll tabs right" }), {
+          delta: { x: 40 },
+        });
+        await vi.waitFor(() => expect(viewport.scrollLeft).toBe(160));
+      }
       viewport.scrollLeft = 120;
 
       const momentum = Array.from({ length: 24 }, (_, index) => -60 * 0.85 ** index);
