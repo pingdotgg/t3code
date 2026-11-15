@@ -44,6 +44,7 @@ const stopEarlierBackgroundWork = ({
   backgroundWorkAfterStop,
   stalledRun,
   workflowMember = false,
+  nativeAlreadyInterrupted = false,
 }: {
   readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
@@ -51,6 +52,7 @@ const stopEarlierBackgroundWork = ({
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
+  readonly nativeAlreadyInterrupted?: boolean | "item-only";
   readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
 }) =>
   Effect.gen(function* () {
@@ -59,6 +61,7 @@ const stopEarlierBackgroundWork = ({
     const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
     const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
     const interruptCalls = yield* Queue.unbounded<void>();
+    let beforeInterrupt = Effect.void;
     const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
       instanceId,
       driver,
@@ -146,7 +149,16 @@ const stopEarlierBackgroundWork = ({
             interruptTurn: (interrupt) =>
               Effect.sync(() => {
                 interrupts.push(interrupt);
-              }).pipe(Effect.andThen(Queue.offer(interruptCalls, undefined))),
+              }).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    const pending = beforeInterrupt;
+                    beforeInterrupt = Effect.void;
+                    return pending;
+                  }),
+                ),
+                Effect.andThen(Queue.offer(interruptCalls, undefined)),
+              ),
             respondToRuntimeRequest: () => Effect.die("unused"),
             readThreadSnapshot: () => Effect.die("unused"),
             rollbackThread: () => Effect.die("unused"),
@@ -531,8 +543,14 @@ const stopEarlierBackgroundWork = ({
       const childRoot = (yield* orchestrator.getThreadProjection(reviewerThreadId)).nodes.find(
         (node) => node.id === reviewerRootId,
       )!;
-      for (const userRun of [false, true]) {
-        const suffix = userRun ? ":user" : "";
+      for (const suffix of ["", ":user", ":parent", ":unrelated"] as const) {
+        const onParent = suffix === ":parent" || suffix === ":unrelated";
+        const requestThreadId = onParent ? threadId : reviewerThreadId;
+        const requestRunId = onParent
+          ? RunId.make("run:3")
+          : suffix === ":user"
+            ? RunId.make("run:user-question")
+            : null;
         const questionNodeId = NodeId.make(`node:child-question${suffix}`);
         const questionRequestId = RuntimeRequestId.make(`request:child-question${suffix}`);
         const questionItemId = TurnItemId.make(`item:child-question${suffix}`);
@@ -541,14 +559,17 @@ const stopEarlierBackgroundWork = ({
             {
               id: EventId.make(`child-question-node${suffix}`),
               type: "node.updated",
-              threadId: reviewerThreadId,
+              threadId: requestThreadId,
               occurredAt: now,
               payload: {
                 ...childRoot,
                 id: questionNodeId,
-                runId: userRun ? RunId.make("run:user-question") : null,
-                parentNodeId: reviewerRootId,
-                kind: "user_input_request",
+                threadId: requestThreadId,
+                runId: requestRunId,
+                parentNodeId: onParent
+                  ? NodeId.make(suffix === ":parent" ? "subagent:3" : "node:3")
+                  : reviewerRootId,
+                kind: onParent ? "approval_request" : "user_input_request",
                 status: "waiting",
                 runtimeRequestId: questionRequestId,
               },
@@ -556,14 +577,14 @@ const stopEarlierBackgroundWork = ({
             {
               id: EventId.make(`child-question-request${suffix}`),
               type: "runtime-request.updated",
-              threadId: reviewerThreadId,
+              threadId: requestThreadId,
               occurredAt: now,
               payload: {
                 id: questionRequestId,
                 nodeId: questionNodeId,
                 providerTurnId: null,
                 nativeRequestRef: { driver, nativeId: "child-question", strength: "strong" },
-                kind: "user_input",
+                kind: onParent ? "command" : "user_input",
                 status: "pending",
                 responseCapability: {
                   type: "live",
@@ -576,12 +597,12 @@ const stopEarlierBackgroundWork = ({
             {
               id: EventId.make(`child-question-item${suffix}`),
               type: "turn-item.updated",
-              threadId: reviewerThreadId,
+              threadId: requestThreadId,
               occurredAt: now,
               payload: {
                 id: questionItemId,
-                threadId: reviewerThreadId,
-                runId: userRun ? RunId.make("run:user-question") : null,
+                threadId: requestThreadId,
+                runId: requestRunId,
                 nodeId: questionNodeId,
                 providerThreadId: null,
                 providerTurnId: null,
@@ -593,11 +614,19 @@ const stopEarlierBackgroundWork = ({
                 startedAt: now,
                 completedAt: null,
                 updatedAt: now,
-                type: "user_input_request",
                 requestId: questionRequestId,
-                questions: [
-                  { id: "choice", header: "Choice", question: "Which option?", options: [] },
-                ],
+                ...(onParent
+                  ? {
+                      type: "approval_request" as const,
+                      requestKind: "command" as const,
+                      prompt: "Allow network access?",
+                    }
+                  : {
+                      type: "user_input_request" as const,
+                      questions: [
+                        { id: "choice", header: "Choice", question: "Which option?", options: [] },
+                      ],
+                    }),
               },
             },
           ],
@@ -1018,6 +1047,37 @@ const stopEarlierBackgroundWork = ({
         });
       }
 
+      if (nativeAlreadyInterrupted) {
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const task = before.subagents.find((candidate) => candidate.id === "subagent:3")!;
+        const item = before.turnItems.find((candidate) => candidate.id === reviewerId)!;
+        beforeInterrupt = sink
+          .write({
+            events: [
+              {
+                id: EventId.make("native-interrupted-before-settle"),
+                type: "subagent.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...task,
+                  ...(nativeAlreadyInterrupted === "item-only"
+                    ? {}
+                    : { status: "interrupted" as const, completedAt: now }),
+                },
+              },
+              {
+                id: EventId.make("native-item-interrupted-before-settle"),
+                type: "turn-item.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...item, status: "interrupted", completedAt: now },
+              },
+            ],
+          })
+          .pipe(Effect.asVoid, Effect.orDie);
+      }
+
       yield* orchestrator.dispatch(
         stopWithQueue === "thread.stop"
           ? {
@@ -1071,13 +1131,17 @@ const stopEarlierBackgroundWork = ({
       for (const [suffix, statuses] of [
         ["", ["cancelled", "interrupted", "interrupted"]],
         [":user", ["pending", "waiting", "waiting"]],
+        [":parent", ["cancelled", "interrupted", "interrupted"]],
+        [":unrelated", ["pending", "waiting", "waiting"]],
       ] as const) {
+        const requestThread =
+          suffix === ":parent" || suffix === ":unrelated" ? after : reviewerThread;
         const actual = [
-          reviewerThread.runtimeRequests.find(
+          requestThread.runtimeRequests.find(
             (request) => request.id === `request:child-question${suffix}`,
           )?.status,
-          reviewerThread.nodes.find((node) => node.id === `node:child-question${suffix}`)?.status,
-          reviewerThread.turnItems.find((item) => item.id === `item:child-question${suffix}`)
+          requestThread.nodes.find((node) => node.id === `node:child-question${suffix}`)?.status,
+          requestThread.turnItems.find((item) => item.id === `item:child-question${suffix}`)
             ?.status,
         ];
         assert.deepEqual(actual, [...statuses]);
@@ -1119,8 +1183,9 @@ const stopEarlierBackgroundWork = ({
     );
   });
 
-it.effect("Stop reaches background work an earlier provider thread still runs", () =>
-  stopEarlierBackgroundWork({}),
+it.effect.each([false, true, "item-only"] as const)(
+  "Stop reaches background work with native already interrupted=%s",
+  (nativeAlreadyInterrupted) => stopEarlierBackgroundWork({ nativeAlreadyInterrupted }),
 );
 
 it.effect("Stop settles workflow members without subagent turn items", () =>
