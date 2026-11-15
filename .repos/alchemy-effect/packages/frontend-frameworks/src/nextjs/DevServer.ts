@@ -1,3 +1,8 @@
+import * as NodeFs from "node:fs";
+import * as NodeHttp from "node:http";
+import { createRequire } from "node:module";
+import type * as NodeNet from "node:net";
+import type * as NodeVm from "node:vm";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 /**
@@ -29,23 +34,17 @@
 import type {
   BindingHooks,
   WorkerdLogging,
+  WorkerdOptions,
 } from "@alchemy.run/cloudflare-runtime/core";
 import * as PlatformProxy from "@alchemy.run/cloudflare-runtime/core/platform-proxy/PlatformProxy";
 import type * as Runtime from "@alchemy.run/cloudflare-runtime/core/Runtime";
-import * as FrameworkCore from "../core/index.ts";
 import * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
-import * as NodeFs from "node:fs";
-import * as NodeHttp from "node:http";
-import { createRequire } from "node:module";
-import type * as NodeNet from "node:net";
-import type * as NodeVm from "node:vm";
+import * as FrameworkCore from "../core/index.ts";
 
 /** The symbol OpenNext uses to store/read the Cloudflare context. Must stay
  * in sync with `@opennextjs/cloudflare`'s `cloudflareContextSymbol`. */
-export const CLOUDFLARE_CONTEXT_SYMBOL: unique symbol = Symbol.for(
-  "__cloudflare-context__",
-);
+export const CLOUDFLARE_CONTEXT_SYMBOL: unique symbol = Symbol.for("__cloudflare-context__");
 
 /** The shape `getCloudflareContext()` expects (upstream `CloudflareContext`). */
 export interface CloudflareContextShape {
@@ -73,6 +72,8 @@ export interface DevServerOptions {
   /** Name of the binding-proxy workerd service. @default "nextjs-dev-platform-proxy" */
   readonly proxyName?: string | undefined;
   readonly logging?: WorkerdLogging | undefined;
+  /** Overrides for the binding proxy's `workerd` process. */
+  readonly workerd?: WorkerdOptions | undefined;
 }
 
 export interface DevServerInstance {
@@ -115,11 +116,7 @@ const patchVmRunInContext = (): void => {
   // CJS exports object — the one Next's sandbox `require`s.
   const vm = createRequire(import.meta.url)("vm") as typeof NodeVm;
   const original = vm.runInContext.bind(vm);
-  const patched: typeof vm.runInContext = (
-    code,
-    contextifiedObject,
-    options,
-  ) => {
+  const patched: typeof vm.runInContext = (code, contextifiedObject, options) => {
     if (currentContext !== undefined) {
       const runtimeContext = contextifiedObject as GlobalWithContext;
       runtimeContext[CLOUDFLARE_CONTEXT_SYMBOL] ??= currentContext;
@@ -182,13 +179,9 @@ type CreateNextServer = (options: {
  * The entry is CJS; unwrap the ESM-interop `default` nesting to the
  * `createServer` function.
  */
-const loadNext = (
-  root: string,
-): Effect.Effect<CreateNextServer, FrameworkCore.FrameworkError> =>
+const loadNext = (root: string): Effect.Effect<CreateNextServer, FrameworkCore.FrameworkError> =>
   FrameworkCore.loadProjectModule<Record<string, unknown>>(root, "next").pipe(
-    Effect.mapError((error) =>
-      fail(`Failed to load "next" from ${root}`)(error.cause),
-    ),
+    Effect.mapError((error) => fail(`Failed to load "next" from ${root}`)(error.cause)),
     Effect.flatMap((module_) => {
       let candidate: unknown = module_;
       for (let i = 0; i < 3 && typeof candidate !== "function"; i++) {
@@ -197,9 +190,9 @@ const loadNext = (
       return typeof candidate === "function"
         ? Effect.succeed(candidate as CreateNextServer)
         : Effect.fail(
-            fail(
-              `The "next" package resolved from ${root} has no callable default export`,
-            )(undefined),
+            fail(`The "next" package resolved from ${root} has no callable default export`)(
+              undefined,
+            ),
           );
     }),
   );
@@ -231,10 +224,7 @@ const acquireHttpServer = (
       FrameworkCore.FrameworkError
     >((resume) => {
       let handler:
-        | ((
-            req: NodeHttp.IncomingMessage,
-            res: NodeHttp.ServerResponse,
-          ) => Promise<void>)
+        | ((req: NodeHttp.IncomingMessage, res: NodeHttp.ServerResponse) => Promise<void>)
         | undefined;
       const sockets = new Set<NodeNet.Socket>();
       const server = NodeHttp.createServer((req, res) => {
@@ -250,18 +240,12 @@ const acquireHttpServer = (
         socket.on("close", () => sockets.delete(socket));
       });
       server.once("error", (cause) =>
-        resume(
-          Effect.fail(
-            fail(`Failed to listen on ${hostname}:${port ?? 0}`)(cause),
-          ),
-        ),
+        resume(Effect.fail(fail(`Failed to listen on ${hostname}:${port ?? 0}`)(cause))),
       );
       server.listen(port ?? 0, hostname, () => {
         const address = server.address();
         if (address === null || typeof address === "string") {
-          resume(
-            Effect.fail(fail("The dev server has no TCP address")(address)),
-          );
+          resume(Effect.fail(fail("The dev server has no TCP address")(address)));
           return;
         }
         resume(
@@ -297,9 +281,7 @@ const acquireHttpServer = (
  * Requires `Runtime.Runtime` (from `RuntimeServices.layerRuntime`) for the
  * binding-proxy workerd instance.
  */
-export const start = Effect.fn("Nextjs.DevServer.start")(function* (
-  options: DevServerOptions,
-) {
+export const start = Effect.fn("Nextjs.DevServer.start")(function* (options: DevServerOptions) {
   const hostname = options.hostname ?? "localhost";
   // Resolve symlinks in the project root (macOS /tmp, /var/folders):
   // Turbopack's watcher reports events under the real path, so a symlinked
@@ -323,9 +305,8 @@ export const start = Effect.fn("Nextjs.DevServer.start")(function* (
       : {}),
     bindings: options.bindings ?? [],
     ...(options.logging !== undefined ? { logging: options.logging } : {}),
-  }).pipe(
-    Effect.mapError(fail("Failed to start the binding proxy for next dev")),
-  );
+    ...(options.workerd !== undefined ? { workerd: options.workerd } : {}),
+  }).pipe(Effect.mapError(fail("Failed to start the binding proxy for next dev")));
 
   // 2. Plant the OpenNext cloudflare-context contract before any app code
   //    (next.config, instrumentation, routes) can call getCloudflareContext.
@@ -358,15 +339,10 @@ export const start = Effect.fn("Nextjs.DevServer.start")(function* (
   );
   http.setHandler(app.getRequestHandler());
 
-  const urlHost =
-    hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname;
+  const urlHost = hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname;
   return {
     url: new URL(`http://${urlHost}:${http.port}`),
   } satisfies DevServerInstance;
 }) as (
   options: DevServerOptions,
-) => Effect.Effect<
-  DevServerInstance,
-  FrameworkCore.FrameworkError,
-  Runtime.Runtime | Scope.Scope
->;
+) => Effect.Effect<DevServerInstance, FrameworkCore.FrameworkError, Runtime.Runtime | Scope.Scope>;

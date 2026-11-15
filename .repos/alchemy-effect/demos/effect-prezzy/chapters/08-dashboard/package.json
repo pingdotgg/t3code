@@ -1,0 +1,16 @@
+{
+  "name": "shorty",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "destroy": "alchemy destroy",
+    "test": "bun test --timeout 90000"
+  },
+  "devDependencies": {
+    "@alchemy.run/neon": "workspace:*",
+    "@alchemy.run/sql": "workspace:*",
+    "@alchemy.run/test": "workspace:*"
+  }
+}
