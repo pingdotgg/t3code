@@ -4,8 +4,8 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
-import Plist from "plist";
 import { assert, it } from "@effect/vitest";
+import Plist from "plist";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -68,7 +68,7 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
-import afterPackMacos from "./after-pack-macos.ts";
+import { copyUsageDescriptionsToHelper } from "./after-pack-macos.ts";
 import {
   ReleasePackageManifestError,
   releasePackageFiles,
@@ -1530,35 +1530,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const appOutDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-after-pack-" });
-        const contents = path.join(appOutDir, "T3 Code (Nightly).app/Contents");
-        const helperPlistPath = path.join(
-          contents,
-          "Frameworks/T3 Code (Nightly) Helper.app/Contents/Info.plist",
-        );
-        yield* fs.makeDirectory(path.dirname(helperPlistPath), { recursive: true });
+        const app = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-after-pack-" });
+        const helperPlist = path.join(app, "Contents/Frameworks/T3 Helper.app/Contents/Info.plist");
+        yield* fs.makeDirectory(path.dirname(helperPlist), { recursive: true });
         yield* fs.writeFileString(
-          path.join(contents, "Info.plist"),
-          Plist.build({
-            CFBundleExecutable: "T3 Code (Nightly)",
-            CFBundleIdentifier: "com.t3tools.t3code",
-            NSCameraUsageDescription: "camera",
-            NSLocalNetworkUsageDescription: "network",
-          }),
+          path.join(app, "Contents/Info.plist"),
+          Plist.build({ CFBundleIdentifier: "com.t3tools.t3code", NSCameraUsageDescription: "c" }),
         );
-        yield* fs.writeFileString(
-          helperPlistPath,
-          Plist.build({ CFBundleIdentifier: "com.t3tools.t3code.helper", LSUIElement: true }),
-        );
-        // ia32 never matches the host, so the shared server-cache hook takes its skip path.
-        yield* Effect.promise(() =>
-          afterPackMacos({ appOutDir, electronPlatformName: "darwin", arch: 0, packager: {} }),
-        );
-        assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlistPath)), {
-          CFBundleIdentifier: "com.t3tools.t3code.helper",
+        yield* fs.writeFileString(helperPlist, Plist.build({ LSUIElement: true }));
+        copyUsageDescriptionsToHelper(app, "T3");
+        assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlist)), {
           LSUIElement: true,
-          NSCameraUsageDescription: "camera",
-          NSLocalNetworkUsageDescription: "network",
+          NSCameraUsageDescription: "c",
         });
       }),
     ),

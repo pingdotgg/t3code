@@ -4,6 +4,7 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { copyUsageDescriptionsToHelper } from "../../../scripts/after-pack-macos.ts";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -320,26 +321,7 @@ function patchHelperBundleInfoPlists(appBundlePath) {
       "CFBundleIdentifier",
       `${APP_BUNDLE_ID}.${bundleIdentifierSuffix}`,
     );
-    if (bundleIdentifierSuffix === "helper") {
-      // The backend runs as this Helper, which macOS asks for privacy prompts its commands trigger.
-      const mainInfoPlist = readPlistJson(NodePath.join(appBundlePath, "Contents", "Info.plist"));
-      for (const [key, value] of Object.entries(mainInfoPlist)) {
-        if (/^NS\w+UsageDescription$/.test(key) && typeof value === "string") {
-          setPlistString(infoPlistPath, key, value);
-        }
-      }
-    }
   }
-}
-
-function readPlistJson(plistPath) {
-  const result = NodeChildProcess.spawnSync("plutil", ["-convert", "json", "-o", "-", plistPath], {
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(`Failed to read plist at ${plistPath}: ${result.stderr}`.trim());
-  }
-  return JSON.parse(result.stdout);
 }
 
 function readJson(path) {
@@ -413,6 +395,7 @@ function buildMacLauncher(electronBinaryPath) {
     isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
   );
   patchHelperBundleInfoPlists(targetAppBundlePath);
+  copyUsageDescriptionsToHelper(targetAppBundlePath, "Electron");
   if (isDevelopment) {
     // Electron.app's executable name keeps default-app mode active without making app.isPackaged true.
     writeDevelopmentEnvironmentScript();

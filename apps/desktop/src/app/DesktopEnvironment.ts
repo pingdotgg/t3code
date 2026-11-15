@@ -60,6 +60,7 @@ export class DesktopEnvironment extends Context.Service<
     readonly backendCwd: string;
     readonly preloadPath: string;
     readonly compileCachePath: string;
+    readonly disclaimResponsibilityPath: string;
     readonly appUpdateYmlPath: string;
     readonly devServerUrl: Option.Option<URL>;
     readonly devRemoteT3ServerEntryPath: Option.Option<string>;
@@ -212,6 +213,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     compileCachePath: path.join(input.dirname, "compileCache.cjs"),
+    disclaimResponsibilityPath: path.join(input.dirname, "disclaimResponsibility.cjs"),
     appUpdateYmlPath: input.isPackaged
       ? path.join(resourcesPath, "app-update.yml")
       : path.join(input.appPath, "dev-app-update.yml"),

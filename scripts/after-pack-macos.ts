@@ -1,67 +1,39 @@
-// electron-builder loads the shared CommonJS hook through Node's module loader.
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import Plist, { type PlistObject } from "plist";
 
 interface AfterPackContext {
   readonly appOutDir: string;
-  readonly electronPlatformName: string;
-  readonly arch: number;
-  readonly packager: unknown;
+  readonly packager: { readonly appInfo: { readonly productFilename: string } };
 }
 
 const prepareServerCompileCache: (context: AfterPackContext) => Promise<void> =
   NodeModule.createRequire(import.meta.url)("./prepare-server-compile-cache.cjs");
 
-// The backend runs as the generic Helper, so macOS shows that bundle's usage strings in privacy
-// prompts that agent commands trigger. electron-builder only extends the main Info.plist.
-const copyUsageDescriptionsToHelper = Effect.fn("afterPackMacos.copyUsageDescriptionsToHelper")(
-  function* (appOutDir: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const apps = (yield* fs.readDirectory(appOutDir)).filter((name) => name.endsWith(".app"));
-    if (apps.length !== 1) {
-      return yield* Effect.die(
-        new Error(`Expected one app bundle in ${appOutDir}, found ${apps.length}.`),
-      );
-    }
-    const contents = path.join(appOutDir, apps[0]!, "Contents");
-    const main = Plist.parse(
-      yield* fs.readFileString(path.join(contents, "Info.plist")),
-    ) as PlistObject;
-    const executable = main.CFBundleExecutable;
-    if (typeof executable !== "string") {
-      return yield* Effect.die(new Error(`${apps[0]} has no CFBundleExecutable.`));
-    }
-    const helperPlistPath = path.join(
-      contents,
-      "Frameworks",
-      `${executable} Helper.app`,
-      "Contents",
-      "Info.plist",
-    );
-    const helper = Plist.parse(yield* fs.readFileString(helperPlistPath)) as PlistObject;
-    const usageDescriptions = Object.entries(main).filter(([key]) =>
-      /^NS\w+UsageDescription$/.test(key),
-    );
-    yield* fs.writeFileString(
-      helperPlistPath,
-      Plist.build({ ...helper, ...Object.fromEntries(usageDescriptions) }),
-    );
-  },
-);
-
 // electron-builder takes one afterPack hook, so the macOS hook also runs the shared one.
 export default async function afterPack(context: AfterPackContext): Promise<void> {
-  if (context.electronPlatformName === "darwin") {
-    await Effect.runPromise(
-      copyUsageDescriptionsToHelper(context.appOutDir).pipe(Effect.provide(NodeServices.layer)),
-    );
-  }
+  const product = context.packager.appInfo.productFilename;
+  copyUsageDescriptionsToHelper(NodePath.join(context.appOutDir, `${product}.app`), product);
   await prepareServerCompileCache(context);
+}
+
+// macOS takes privacy prompt text from the responsible app, which for agent commands is the
+// Helper the backend runs as. Electron and electron-builder give the Helper none.
+export function copyUsageDescriptionsToHelper(appBundlePath: string, executable: string): void {
+  const contents = NodePath.join(appBundlePath, "Contents");
+  const helperPath = NodePath.join(
+    contents,
+    `Frameworks/${executable} Helper.app/Contents/Info.plist`,
+  );
+  const read = (path: string) => Plist.parse(NodeFS.readFileSync(path, "utf8")) as PlistObject;
+  const usageDescriptions = Object.entries(read(NodePath.join(contents, "Info.plist"))).filter(
+    ([key]) => /^NS\w+UsageDescription$/.test(key),
+  );
+  NodeFS.writeFileSync(
+    helperPath,
+    Plist.build({ ...read(helperPath), ...Object.fromEntries(usageDescriptions) }),
+  );
 }
