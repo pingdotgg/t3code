@@ -385,6 +385,21 @@ it.live("answers content searches with git grep while a slow content index build
         (match) => match.matchRanges,
       ),
     ).toEqual([[{ start: 6, end: 12 }], [{ start: 0, end: 7 }]]);
+    expect(
+      (yield* search({ query: "[a-z]e", useRegex: true })).matches.map(
+        (match) => match.matchRanges,
+      ),
+    ).toEqual([
+      [
+        { start: 6, end: 8 },
+        { start: 10, end: 12 },
+      ],
+      [
+        { start: 0, end: 2 },
+        { start: 4, end: 6 },
+      ],
+      [{ start: 2, end: 4 }],
+    ]);
     const invalid = yield* search({ query: "a.b(", useRegex: true });
     expect(invalid.matches).toEqual([]);
     expect(invalid.regexFallbackError).toBeDefined();

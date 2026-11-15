@@ -302,6 +302,25 @@ function escapeRegExp(input: string): string {
   return input.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
 }
 
+// Git before 2.55 reports wrong `--column` values for every match after a line's first, so
+// later matches are found by their text, searching on from the end of the previous one.
+function locateRegexMatches(
+  line: string,
+  matches: { readonly column: number; readonly texts: ReadonlyArray<string> } | undefined,
+): Array<readonly [number, number]> {
+  if (!matches) return [];
+  const lineBytes = Buffer.from(line);
+  const ranges: Array<readonly [number, number]> = [];
+  let start = matches.column - 1;
+  for (const text of matches.texts) {
+    const textBytes = Buffer.from(text);
+    if (ranges.length > 0) start = lineBytes.indexOf(textBytes, ranges.at(-1)![1]);
+    if (start < 0) break;
+    ranges.push([start, start + textBytes.length]);
+  }
+  return ranges;
+}
+
 // `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
 function parseGitGrepRecords(
   stdout: string,
@@ -737,7 +756,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     if (Option.isNone(result) || result.value.exitCode > 1) return Option.none();
 
-    const regexRanges = new Map<string, Array<readonly [number, number]>>();
+    // Per line: the first match's byte column and every match's text, in order.
+    const regexMatches = new Map<string, { readonly column: number; readonly texts: string[] }>();
     let rangesTruncated = false;
     if (regexMode) {
       // Ranges come from git too: running the user's pattern in JS could backtrack without bound.
@@ -757,11 +777,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
             string,
             string,
           ];
-          const start = Number(column) - 1;
           const key = `${relativePath}\0${lineNumber}`;
-          const lineRanges = regexRanges.get(key) ?? [];
-          lineRanges.push([start, start + Buffer.byteLength(text)]);
-          regexRanges.set(key, lineRanges);
+          const lineMatches = regexMatches.get(key);
+          if (lineMatches) lineMatches.texts.push(text);
+          else regexMatches.set(key, { column: Number(column), texts: [text] });
         }
       }
     }
@@ -782,7 +801,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       if (!indexedFiles.value.has(relativePath)) continue;
       const key = `${relativePath}\0${lineNumber}`;
       // Lines past the cut-off of a truncated ranges run have no ranges; stop there instead.
-      if (rangesTruncated && !regexRanges.has(key)) {
+      if (rangesTruncated && !regexMatches.has(key)) {
         rangesCutOff = true;
         break;
       }
@@ -796,7 +815,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
               start: match.index,
               end: match.index + match[0].length,
             }))
-          : mapContentMatchRanges(lineContent, regexRanges.get(key) ?? [])
+          : mapContentMatchRanges(
+              lineContent,
+              locateRegexMatches(lineContent, regexMatches.get(key)),
+            )
       ).filter(
         (range) =>
           range.end <= lineContent.length &&
