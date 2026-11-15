@@ -87,10 +87,21 @@ describe("parseFileUrlHref", () => {
       "D:/Programme/t3code/OpenInPicker.tsx",
       "#L69",
     ],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
+    [
+      "file://server/share/workspace-image.svg",
+      "\\\\server\\share\\workspace-image.svg",
+      "",
+      "box-node",
+    ],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
-  ])("parses %s", (href, path, hash) => {
-    expect(parseFileUrlHref(href)).toEqual({ path, hash });
+    // GNU `ls --hyperlink` names the machine's own hostname.
+    ["file://box-node/var/tmp/report.txt", "/var/tmp/report.txt", "", "Box-Node"],
+    ["file://1234/var/tmp/report.txt", "/var/tmp/report.txt", "", "1234"],
+    ["file://böx/var/tmp/report.txt", "/var/tmp/report.txt", "", "böx"],
+    ["file://server/share/report.txt", "\\\\server\\share\\report.txt", "", "09"],
+    ["file://a/share/report.txt", "\\\\a\\share\\report.txt", "", "a#b"],
+  ])("parses %s", (href, path, hash, localHostname?: string) => {
+    expect(parseFileUrlHref(href, localHostname)).toEqual({ path, hash });
   });
 
   it("keeps percent-encoding so the caller decodes once", () => {

@@ -126,6 +126,37 @@ describe("decodeMergeRequestListJson", () => {
 });
 
 describe("decodeMergeRequestDetailJson", () => {
+  it("preserves a required rebase while CI is running or successful", () => {
+    for (const status of ["running", "success"]) {
+      const detail = expectSuccess(
+        decodeMergeRequestDetailJson(
+          detailJson({
+            merge_status: "can_be_merged",
+            detailed_merge_status: "need_rebase",
+            has_conflicts: false,
+            head_pipeline: { status },
+          }),
+        ),
+      );
+      expect(detail.rebaseRequired).toBe(true);
+      expect(detail.mergeability).toBe("mergeable");
+    }
+  });
+
+  it("distinguishes a cleared rebase blocker from an inconclusive merge check", () => {
+    expect(
+      expectSuccess(
+        decodeMergeRequestDetailJson(detailJson({ detailed_merge_status: "mergeable" })),
+      ).rebaseRequired,
+    ).toBe(false);
+    for (const detailed_merge_status of [undefined, "checking", "ci_still_running"]) {
+      expect(
+        expectSuccess(decodeMergeRequestDetailJson(detailJson({ detailed_merge_status })))
+          .rebaseRequired,
+      ).toBeUndefined();
+    }
+  });
+
   it("reads the description, file count and pipeline", () => {
     const detail = expectSuccess(
       decodeMergeRequestDetailJson(
@@ -828,7 +859,7 @@ describe("decodeOwnAwardIdJson", () => {
   it("finds the reader's own award of that name, which is the one a removal deletes", () => {
     expect(
       expectSuccess(decodeOwnAwardIdJson(awards, { content: "thumbs-up", viewer: "bilal" })),
-    ).toBe(102);
+    ).toEqual({ id: 102, empty: false });
   });
 });
 
@@ -1266,6 +1297,7 @@ describe("decodeMergeRequestWatchFingerprintJson", () => {
               mergeRequest: {
                 state: "opened",
                 mergeStatusEnum: "CAN_BE_MERGED",
+                detailedMergeStatus: "MERGEABLE",
                 conflicts: false,
                 diffHeadSha: "a".repeat(40),
                 userPermissions: { updateMergeRequest: true },
@@ -1307,6 +1339,8 @@ describe("decodeMergeRequestWatchFingerprintJson", () => {
     expect(edited?.remarks).not.toBe(base?.remarks);
     expect(resolved?.remarks).toBe(base?.remarks);
     expect(read({ userNotesCount: 3 })?.remarks).not.toBe(base?.remarks);
+    // A target branch moving on leaves merge_status at can_be_merged on fast-forward projects.
+    expect(read({ detailedMergeStatus: "NEED_REBASE" })?.status).not.toBe(base?.status);
   });
 
   // Only the REST read asks GitLab to recheck mergeability, and only for viewers who can update.
