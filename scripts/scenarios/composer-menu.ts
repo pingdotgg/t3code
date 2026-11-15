@@ -68,16 +68,21 @@ export async function wheelSuggestions(browser: Browser, direction: "up" | "down
 }
 
 /**
- * The first or last suggestion row, and a point inside the window where `elementFromPoint`
+ * The first suggestion or last file row, and a point where `elementFromPoint`
  * lands on that row, or `null` when no part of it can be hit.
  */
-export const findHittableRow = (browser: Browser, which: "first" | "last") =>
+export const findHittableRow = (browser: Browser, which: "first" | "last-file") =>
   browser.evaluate(
     ({ which, names }) => {
       const options = [
         ...document.querySelectorAll<HTMLElement>('[data-composer-command-drawer] [role="option"]'),
       ];
-      const row = which === "first" ? options[0] : options.at(-1);
+      const row =
+        which === "first"
+          ? options[0]
+          : options.findLast((option) =>
+              names.some((name) => option.textContent?.startsWith(name)),
+            );
       if (!row) return { label: null, point: null };
       const text = row.textContent ?? "";
       const label = names.find((name) => text.startsWith(name)) ?? text;
@@ -91,7 +96,7 @@ export const findHittableRow = (browser: Browser, which: "first" | "last") =>
       }
       return { label, point: null };
     },
-    { which, names: [...FILE_NAMES, "README.md", "src"] },
+    { which, names: [...FILE_NAMES, "README.md"] },
   );
 
 export async function clickAt(browser: Browser, point: { readonly x: number; readonly y: number }) {

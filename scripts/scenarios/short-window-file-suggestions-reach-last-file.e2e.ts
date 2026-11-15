@@ -19,10 +19,11 @@ test(
 
     await wheelSuggestions(browser, "down");
     await app.screenshot("scrolled-to-bottom");
-    const last = await findHittableRow(browser, "last");
+    const last = await findHittableRow(browser, "last-file");
+    expect(last.label).toBe("README.md");
     expect(last.point).not.toBeNull();
 
     await clickAt(browser, last.point!);
-    await expect(screen.getByRole("textbox")).toContainText(last.label!);
+    await expect(screen.getByRole("textbox")).toContainText("README.md");
   },
 );
