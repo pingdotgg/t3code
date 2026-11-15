@@ -104,8 +104,13 @@ const required = <A>(value: A | undefined, name: string) =>
     : Effect.succeed(value);
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
-  options?: Parameters<typeof McpToolAccess.writesThreads>[2],
-) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle, options);
+) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+const writesOwnChildThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) =>
+  McpToolAccess.writesThreads((params: P) => [params.threadId], handle, {
+    ownChildren: "at-their-runtime-mode",
+  });
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
@@ -230,26 +235,19 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         };
       }),
     ),
-    writesThread(
-      (input) =>
-        Effect.gen(function* () {
-          const modelSelection = yield* required(input.modelSelection, "modelSelection");
-          const {
-            threads,
-            projection: { thread },
-          } = yield* readThread(input.threadId);
-          const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
-          const result = yield* threads
-            .dispatch({
-              type,
-              threadId: thread.id,
-              commandId: yield* newCommandId(),
-              modelSelection,
-            })
-            .pipe(Effect.mapError(dispatchFailure));
-          return { sequence: result.sequence };
-        }),
-      { ownChildren: "at-their-runtime-mode" },
+    writesOwnChildThread((input) =>
+      Effect.gen(function* () {
+        const modelSelection = yield* required(input.modelSelection, "modelSelection");
+        const {
+          threads,
+          projection: { thread },
+        } = yield* readThread(input.threadId);
+        const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
+        const result = yield* threads
+          .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }),
     ),
   ),
   t3_pending_request: McpToolAccess.either(

@@ -132,7 +132,12 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import {
+  assertTargetWithinLimits,
+  isLiveCallerShell,
+  limitsForOwnChild,
+  threadNotFound,
+} from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -3387,19 +3392,12 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
-      const {
-        parent,
-        limits: callerLimits,
-        target,
-      } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
+      const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
-      // The declaration lifts only the runtime limit, and only to its own child's preflight mode.
-      const ownChildRuntimeMode = (yield* DispatchModeLimit)?.ownChildRuntimeMode;
-      const limits =
-        ownChildRuntimeMode === undefined
-          ? callerLimits
-          : { ...callerLimits, runtimeMode: ownChildRuntimeMode };
-      yield* assertTargetWithinLimits(limits, target.thread);
+      yield* assertTargetWithinLimits(
+        yield* limitsForOwnChild(threadManagement, parent?.thread.id, limits, target.thread),
+        target.thread,
+      );
 
       const mode = input.mode ?? "auto";
       const key = yield* requestKey(input.clientRequestId);
