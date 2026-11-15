@@ -538,7 +538,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
         hidden={
-          !workspacePage &&
           projection.detail.length > 0 &&
           !primaryVisible &&
           !layout.usesSplitView &&
