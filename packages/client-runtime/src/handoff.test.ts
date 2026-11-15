@@ -8,7 +8,6 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   resolveHandoffEndpoints,
-  resolveHandoffLabel,
   resolveModelSwitchChange,
   resolvePendingHandoff,
   type HandoffTimelineRun,
@@ -73,22 +72,15 @@ describe("handoff endpoints shared by web and mobile", () => {
     });
   });
 
-  it("names a same-model fork by its title instead of a handoff to itself", () => {
+  it("shows no source for a same-model fork", () => {
     const sameModel = { instanceId: from, model: "gpt-6.1-sol" };
     const fork = {
       ...item,
-      title: "Fork context",
       fromModelSelections: [sameModel],
       toProviderInstanceId: from,
       toModel: "gpt-6.1-sol",
     };
-    const endpoints = resolveHandoffEndpoints(fork, []);
-    expect(endpoints).toEqual({ from: [], to: sameModel });
-    expect(resolveHandoffLabel(fork, endpoints)).toBe("Fork context");
-    const providerSwitch = { ...item, title: "Provider handoff" };
-    expect(resolveHandoffLabel(providerSwitch, resolveHandoffEndpoints(providerSwitch, []))).toBe(
-      "Context handoff",
-    );
+    expect(resolveHandoffEndpoints(fork, [])).toEqual({ from: [], to: sameModel });
   });
 
   it("does not borrow a target model from another provider", () => {

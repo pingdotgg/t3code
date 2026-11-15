@@ -16,7 +16,6 @@ import * as DateTime from "effect/DateTime";
 import { WorkLogRow } from "./WorkLog";
 import {
   resolveHandoffEndpoints,
-  resolveHandoffLabel,
   type HandoffEndpoints,
   type HandoffTimelineRun,
   resolveModelSwitchChange,
@@ -90,12 +89,10 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "handoff") {
-    const endpoints = resolveHandoffEndpoints(item, props.runs);
     return (
       <EnvironmentHandoffRow
         environmentId={props.environmentId}
-        endpoints={endpoints}
-        label={resolveHandoffLabel(item, endpoints)}
+        endpoints={resolveHandoffEndpoints(item, props.runs)}
         failed={item.status === "failed"}
       />
     );
@@ -585,7 +582,6 @@ function EnvironmentHandoffRow({
 }: {
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
-  readonly label: string;
   readonly failed: boolean;
 }) {
   const providers =
@@ -626,7 +622,6 @@ export function HandoffRow(props: {
   readonly environmentId: EnvironmentId;
   readonly endpoints: HandoffEndpoints;
   readonly providers: ReadonlyArray<ServerProvider>;
-  readonly label?: string;
   readonly pending?: boolean;
   readonly failed?: boolean;
 }) {
@@ -636,7 +631,7 @@ export function HandoffRow(props: {
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
     <TimelineSystemDivider
-      label={props.pending ? "Context handoff pending" : (props.label ?? "Context handoff")}
+      label={props.pending ? "Context handoff pending" : "Context handoff"}
       icon={ArrowRightLeftIcon}
       showDetailSeparator={false}
       tone={props.failed ? "danger" : "neutral"}

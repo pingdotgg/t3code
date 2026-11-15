@@ -82,14 +82,6 @@ export function resolveHandoffEndpoints(
   return { from: sameModel ? [] : fromEndpoints, to };
 }
 
-/** The server's title ("Fork context") names a transfer that switched no model. */
-export function resolveHandoffLabel(
-  item: Pick<Extract<OrchestrationV2TurnItem, { type: "handoff" }>, "title">,
-  endpoints: HandoffEndpoints,
-) {
-  return endpoints.from.length === 0 && item.title ? item.title : "Context handoff";
-}
-
 function latestRunModelBefore(
   runs: ReadonlyArray<HandoffTimelineRun>,
   instanceId: ProviderInstanceId,
