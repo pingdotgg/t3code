@@ -1853,6 +1853,34 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             snapshotSucceeded: Result.isSuccess(fallback.snapshot),
           })),
         );
+  // Linux reads tpgid from procfs; macOS asks ps for just this terminal.
+  const readForegroundGroup = (terminalPid: number, timeout: Duration.Input) =>
+    platform === "linux"
+      ? fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
+          Effect.mapError(
+            (cause) => new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
+          ),
+          Effect.map(parseProcStatForegroundGroup),
+        )
+      : processRunner
+          .run({
+            command: posixPsCommand ?? "ps",
+            args: ["-o", "tpgid=", "-p", String(terminalPid)],
+            timeout,
+            timeoutBehavior: "timedOutResult",
+          })
+          .pipe(
+            Effect.mapError((cause) => new TerminalSubprocessCheckError({ cause, command: "ps" })),
+            Effect.map((result) => {
+              const tpgid = Number(result.stdout.trim());
+              return result.code === 0 &&
+                !result.timedOut &&
+                result.stdout.trim() !== "" &&
+                Number.isInteger(tpgid)
+                ? tpgid
+                : undefined;
+            }),
+          );
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector = (
     fallbackTimeout: Duration.Input,
@@ -1883,28 +1911,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                       platform,
                     );
                   const result = inspect(table.foregroundGroupById?.get(terminalPid));
-                  // Linux tables omit the foreground group, so a shell whose children all
-                  // look like prompt helpers reads it from procfs; other platforms keep the table's answer.
+                  // Linux and native tables omit the foreground group, so a shell whose children
+                  // all look like prompt helpers asks the OS for it; Windows keeps the table's answer.
                   if (
                     result.hasRunningSubprocess ||
                     table.foregroundGroupById !== undefined ||
-                    platform !== "linux" ||
+                    (platform !== "linux" && platform !== "darwin") ||
                     !table.childrenByParent.has(terminalPid)
                   ) {
                     return Effect.succeed(result);
                   }
-                  return fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
-                    ),
-                    Effect.flatMap((stat) => {
-                      const foregroundGroup = parseProcStatForegroundGroup(stat);
+                  return readForegroundGroup(terminalPid, fallbackTimeout).pipe(
+                    Effect.flatMap((foregroundGroup) => {
                       return foregroundGroup === undefined
                         ? Effect.fail(
                             new TerminalSubprocessCheckError({
                               command: "resource-monitor",
-                              cause: "Invalid foreground process group in proc stat",
+                              cause: "Invalid foreground process group",
                             }),
                           )
                         : Effect.succeed(inspect(foregroundGroup));

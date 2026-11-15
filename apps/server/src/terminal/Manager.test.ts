@@ -970,6 +970,39 @@ it.layer(
     }),
   );
 
+  it.effect.each([
+    { label: "foreground job", tpgid: "100", killed: false },
+    { label: "idle prompt", tpgid: "9000", killed: true },
+  ])("settles a macOS native table by its foreground group: $label", ({ tpgid, killed }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([
+          { pid: 9000, ppid: 1, name: "bash" },
+          { pid: 100, ppid: 9000, name: "bash" },
+        ]),
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("darwin")),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.succeed({
+              stdout: input.args?.join(" ") === "-o tpgid= -p 9000" ? `${tpgid}\n` : "",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        }),
+      );
+      yield* manager.open(openInput());
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+      expect(ptyAdapter.processes[0]?.killed).toBe(killed);
+    }),
+  );
+
   it.effect("settles idle terminals when ps does not support tpgid", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
