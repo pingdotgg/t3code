@@ -167,10 +167,22 @@ export const layer = Layer.effect(
     // One wait at a time: each run's shutdown or readiness ends the previous run's wait.
     const updateMarkerWait = yield* FiberHandle.make<void>();
 
+    // The main window loads during startup and reads the primary endpoint once; a Windows fallback
+    // before the first readiness replaces the WSL endpoint it read.
+    let primaryWasReady = false;
+    let reloadMainOnReady = false;
+    const reloadStaleMain = Effect.suspend(() => {
+      primaryWasReady = true;
+      if (!reloadMainOnReady) return Effect.void;
+      reloadMainOnReady = false;
+      return desktopWindow.runMainContentsCommand("reload");
+    });
+
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
       function* (failure: DesktopBackendManager.PreflightFailure) {
         const { reason, fatal } = failure;
+        if (!primaryWasReady) reloadMainOnReady = true;
         if (!fatal) {
           yield* logBackendPoolWarning(
             "primary WSL preflight retry window exhausted; using Windows for this launch",
@@ -215,6 +227,7 @@ export const layer = Layer.effect(
       // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl, pid) =>
         FiberHandle.run(updateMarkerWait, releaseUpdateMarker(httpBaseUrl, pid)).pipe(
+          Effect.andThen(reloadStaleMain),
           Effect.andThen(desktopWindow.handleBackendReady(httpBaseUrl)),
           // Only once the main window exists, so the recovery window never closes into nothing.
           Effect.andThen(SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" })),
