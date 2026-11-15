@@ -56,7 +56,8 @@ const WorktreeReleaseTool = Tool.make("t3_worktree_release", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
