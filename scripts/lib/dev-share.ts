@@ -6,6 +6,7 @@ import {
   ensureTailscaleServe,
   readTailscaleStatus,
   type TailscaleCommandError,
+  type TailscaleServeHttpsDisabledError,
   type TailscaleStderrDiagnostic,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -18,13 +19,18 @@ const DIAGNOSTIC_EXPLANATIONS: Record<TailscaleStderrDiagnostic, string | undefi
   "not-logged-in": "this machine is not logged into a tailnet — run `tailscale up`",
   "not-running": "Tailscale is not running; start it and try again",
   "permission-denied": "permission denied — `tailscale serve` may need elevated privileges",
+  "unsupported-target": "this Tailscale install can only proxy to localhost",
   unknown: undefined,
 };
 
-const explainCommandFailure = (error: TailscaleCommandError): string | undefined =>
-  error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
-    ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
-    : undefined;
+const explainCommandFailure = (
+  error: TailscaleCommandError | TailscaleServeHttpsDisabledError,
+): string | undefined =>
+  error._tag === "TailscaleServeHttpsDisabledError"
+    ? "HTTPS is not enabled on this tailnet — enable HTTPS certificates at https://login.tailscale.com/admin/dns"
+    : error._tag === "TailscaleCommandExitError" && error.stderrDiagnostic !== undefined
+      ? (DIAGNOSTIC_EXPLANATIONS[error.stderrDiagnostic] ?? "run the command by hand to see why")
+      : undefined;
 
 export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
   "TailscaleUnavailableError",
