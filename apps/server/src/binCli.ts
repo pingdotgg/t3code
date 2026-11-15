@@ -17,7 +17,11 @@ import { appCommand } from "./cli/app.ts";
 import { browserCommand } from "./cli/browser.ts";
 import { pairCommand } from "./cli/pair.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
-import { extendConnectionAttemptTimeout, keepOutboundFetchOnHttp1 } from "./outboundHttp.ts";
+import {
+  extendConnectionAttemptTimeout,
+  keepOutboundFetchOnHttp1,
+  trustSystemCertificates,
+} from "./outboundHttp.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { projectCommand } from "./cli/project.ts";
 import { threadCommand } from "./cli/thread.ts";
@@ -122,6 +126,7 @@ export const cli = makeCli();
 export function runCli() {
   extendConnectionAttemptTimeout();
   keepOutboundFetchOnHttp1();
+  trustSystemCertificates();
   offerCliInstall({
     args: process.argv.slice(2),
     // A child started over IPC (a service launcher) has no one to answer.
