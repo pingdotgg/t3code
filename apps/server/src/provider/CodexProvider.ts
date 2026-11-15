@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -58,7 +59,6 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import packageJson from "../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
-const RATE_LIMITS_PROBE_TIMEOUT_MS = 3_000;
 
 type CodexRateLimitsProbe =
   | {
@@ -84,23 +84,48 @@ const CodexRoutingConfig = Schema.Struct({
 });
 const decodeCodexRoutingConfig = Schema.decodeUnknownOption(CodexRoutingConfig);
 
-function routesToNativeOpenai(config: unknown): boolean {
+const CodexCyberAccessConfig = Schema.Struct({
+  daybreak: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+  features: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        api_key_cyber_access_programs: Schema.optionalKey(Schema.NullOr(Schema.Boolean)),
+      }),
+    ),
+  ),
+});
+const decodeCodexCyberAccessConfig = Schema.decodeUnknownOption(CodexCyberAccessConfig);
+
+// Null is Codex's auth-dependent OpenAI default; undefined is a route that cannot be read.
+function codexRouteBaseUrl(config: unknown): string | null | undefined {
   const decoded = decodeCodexRoutingConfig(config);
-  if (Option.isNone(decoded)) return false;
+  if (Option.isNone(decoded)) return undefined;
   const routing = decoded.value;
   const providerId = routing.model_provider ?? "openai";
+  if (providerId === "openai") return routing.openai_base_url || null;
   const provider = routing.model_providers?.[providerId];
-  if (providerId !== "openai" && !provider) return false;
-  const baseUrl =
-    providerId === "openai" ? routing.openai_base_url || undefined : provider?.base_url;
-  // A provider without an override uses Codex's auth-dependent OpenAI default.
-  if (baseUrl == null) return true;
+  return provider ? (provider.base_url ?? null) : undefined;
+}
+
+function routesToNativeOpenai(config: unknown): boolean {
+  const baseUrl = codexRouteBaseUrl(config);
+  if (baseUrl === undefined) return false;
+  if (baseUrl === null) return true;
   if (!URL.canParse(baseUrl)) return false;
   const url = new URL(baseUrl);
   return (
     url.protocol === "https:" &&
     (url.hostname === "api.openai.com" || url.hostname === "chatgpt.com")
   );
+}
+
+/** The origin of the custom endpoint Codex sends model requests to, if it uses one. */
+export function codexCustomEndpoint(config: unknown): string | undefined {
+  const baseUrl = codexRouteBaseUrl(config);
+  const url = baseUrl ? URL.parse(baseUrl) : null;
+  return url && /^https?:$/.test(url.protocol) && !routesToNativeOpenai(config)
+    ? url.origin
+    : undefined;
 }
 
 // A stored login does not mean this provider's traffic spends that login's quota.
@@ -130,12 +155,16 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly endpoint?: string | undefined;
   readonly nativeUsage?: boolean;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
   readonly serviceTier?: string | undefined;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
+  /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
+  readonly daybreakEnabled?: boolean | undefined;
+  readonly cyberAccessProgramsUnavailable?: boolean | undefined;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
@@ -154,6 +183,12 @@ const DEFAULT_SERVICE_TIER_ID = "default";
 
 const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
   ultrafast: "Even faster, more expensive",
+};
+
+const CYBER_ACCESS_PROGRAM_LABELS: Readonly<Record<string, string>> = {
+  standard: "Standard",
+  daybreakBlue: "Daybreak Blue",
+  daybreakRed: "Daybreak Red",
 };
 
 function reasoningEffortLabel(reasoningEffort: string): string {
@@ -284,6 +319,25 @@ export function mapCodexModelCapabilities(
       currentValue: defaultServiceTier,
     });
   }
+  const cyberAccessPrograms = model.availableAccessPrograms?.cyber ?? [];
+  if (cyberAccessPrograms.length > 0) {
+    const hasStandard = cyberAccessPrograms.includes("standard");
+    const defaultProgram = hasStandard ? "standard" : cyberAccessPrograms[0];
+    optionDescriptors.push({
+      id: "cyberAccessProgram",
+      label: "Cyber Access",
+      type: "select",
+      // Standard stays selectable as an opt-out; Codex rejects it visibly when the login cannot use it.
+      options: (hasStandard ? cyberAccessPrograms : ["standard", ...cyberAccessPrograms]).map(
+        (program) => ({
+          id: program,
+          label: CYBER_ACCESS_PROGRAM_LABELS[program] ?? program,
+          ...(program === defaultProgram ? { isDefault: true } : {}),
+        }),
+      ),
+      ...(defaultProgram === undefined ? {} : { currentValue: defaultProgram }),
+    });
+  }
 
   return createModelCapabilities({
     optionDescriptors,
@@ -323,35 +377,93 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
-function applyConfiguredCodexServiceTier(
+function mapCodexOptionDescriptors(
   models: ReadonlyArray<ServerProviderModel>,
-  serviceTier: string | undefined,
+  update: (
+    descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+    model: ServerProviderModel,
+  ) => ReadonlyArray<ProviderOptionDescriptor>,
 ): ReadonlyArray<ServerProviderModel> {
-  if (!serviceTier) return models;
   return models.map((model) => {
     if (!model.capabilities?.optionDescriptors) return model;
     return {
       ...model,
       capabilities: {
         ...model.capabilities,
-        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
-          if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
-          const value = descriptor.options.find(
-            (option) =>
-              option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-          )?.id;
-          if (!value) return descriptor;
-          return {
-            ...descriptor,
-            currentValue: value,
-            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
-              option.id === value ? { ...option, isDefault: true } : option,
-            ),
-          };
-        }),
+        optionDescriptors: update(model.capabilities.optionDescriptors, model),
       },
     };
   });
+}
+
+function withConfiguredSelectDefault(
+  models: ReadonlyArray<ServerProviderModel>,
+  descriptorId: string,
+  pick: (options: ReadonlyArray<{ readonly id: string }>) => string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  return mapCodexOptionDescriptors(models, (descriptors) =>
+    descriptors.map((descriptor) => {
+      if (descriptor.id !== descriptorId || descriptor.type !== "select") return descriptor;
+      const value = pick(descriptor.options);
+      if (!value) return descriptor;
+      return {
+        ...descriptor,
+        currentValue: value,
+        options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
+          option.id === value ? { ...option, isDefault: true } : option,
+        ),
+      };
+    }),
+  );
+}
+
+function applyConfiguredCodexServiceTier(
+  models: ReadonlyArray<ServerProviderModel>,
+  serviceTier: string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (!serviceTier) return models;
+  return withConfiguredSelectDefault(
+    models,
+    "serviceTier",
+    (options) =>
+      options.find(
+        (option) =>
+          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
+      )?.id,
+  );
+}
+
+/** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
+function applyConfiguredCodexCyberAccess(
+  models: ReadonlyArray<ServerProviderModel>,
+  snapshot: Pick<
+    CodexAppServerProviderSnapshot,
+    "daybreakEnabled" | "cyberAccessProgramsUnavailable"
+  >,
+): ReadonlyArray<ServerProviderModel> {
+  // Without a descriptor no turn sends a program; without a default only an explicit choice goes.
+  const offered = mapCodexOptionDescriptors(models, (descriptors, model) =>
+    descriptors.flatMap((descriptor): ReadonlyArray<ProviderOptionDescriptor> => {
+      if (descriptor.id !== "cyberAccessProgram" || descriptor.type !== "select") {
+        return [descriptor];
+      }
+      if (model.isCustom || snapshot.cyberAccessProgramsUnavailable === true) return [];
+      if (snapshot.daybreakEnabled !== undefined) return [descriptor];
+      const { currentValue: _currentValue, ...withoutDefault } = descriptor;
+      return [
+        {
+          ...withoutDefault,
+          options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+        },
+      ];
+    }),
+  );
+  if (snapshot.daybreakEnabled !== true) return offered;
+  return withConfiguredSelectDefault(offered, "cyberAccessProgram", (options) =>
+    ["daybreakBlue", "daybreakRed"].find((program) =>
+      options.some((option) => option.id === program),
+    ),
+  );
 }
 
 /**
@@ -574,11 +686,7 @@ const readCodexRateLimits = (
   client: CodexClient.CodexAppServerClient["Service"],
   deadlineMs: number,
 ) =>
-  withCodexDiscoveryDeadline(
-    client.request("account/rateLimits/read", null),
-    deadlineMs,
-    RATE_LIMITS_PROBE_TIMEOUT_MS,
-  ).pipe(
+  withCodexDiscoveryDeadline(client.request("account/rateLimits/read", null), deadlineMs).pipe(
     Effect.map((response): CodexRateLimitsProbe =>
       response
         ? {
@@ -597,6 +705,7 @@ const readCodexRateLimits = (
   );
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly probeTimeoutMs: number;
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
@@ -621,68 +730,80 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   }
 
   // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, configProbe, runtimeModes] = yield* Effect.all(
-    [
-      withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
-      accountResponse.account?.type === "chatgpt"
-        ? requestCodexChatGptModels({
-            client,
-            codexHome: initialize.codexHome,
-            spawnedAtMs,
-            deadlineMs,
-          })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
-      // The shared catalog must exclude config from the server's launch project.
-      withCodexDiscoveryDeadline(
-        client.request("config/read", { includeLayers: false }),
-        deadlineMs,
-        CODEX_CONFIG_PROBE_TIMEOUT_MS,
-      ).pipe(
-        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
-        Effect.flatMap((config) => {
-          // Only a confirmed native route may probe or publish the login's quota.
-          const nativeUsage =
-            !input.skipNativeUsage &&
-            config !== undefined &&
-            codexRoutesSpendNativeQuota(accountResponse, config.config);
-          const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
-            ? readCodexRateLimits(client, deadlineMs)
-            : Effect.undefined;
-          return readUsage.pipe(
-            Effect.map((rateLimits) => ({
-              serviceTier: config?.config.service_tier ?? undefined,
-              nativeUsage,
-              rateLimits,
-            })),
-          );
-        }),
-      ),
-      // Managed requirements can forbid a sandbox mode, and Codex then refuses
-      // to start the turn, so delegation has to know which modes are allowed.
-      withCodexDiscoveryDeadline(
-        client.request("configRequirements/read", undefined),
-        deadlineMs,
-        CODEX_CONFIG_PROBE_TIMEOUT_MS,
-      ).pipe(
-        Effect.map((response) => codexRuntimeModesAllowedByRequirements(response?.requirements)),
-        Effect.catch(() =>
-          Effect.logDebug("Codex config requirements read failed.").pipe(Effect.as(undefined)),
+  const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
+  const [skillsResponse, models, { config, nativeUsage, rateLimits }, supportedRuntimeModes] =
+    yield* Effect.all(
+      [
+        withCodexDiscoveryDeadline(
+          client.request("skills/list", { cwds: [input.cwd] }),
+          deadlineMs,
         ),
-      ),
-    ],
-    { concurrency: "unbounded" },
-  );
-  const { serviceTier, nativeUsage, rateLimits } = configProbe;
+        accountResponse.account?.type === "chatgpt"
+          ? requestCodexChatGptModels({
+              client,
+              codexHome: initialize.codexHome,
+              spawnedAtMs,
+              deadlineMs,
+            })
+          : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+        // The shared catalog must exclude config from the server's launch project.
+        withCodexDiscoveryDeadline(
+          client.request("config/read", { includeLayers: false }),
+          deadlineMs,
+          CODEX_CONFIG_PROBE_TIMEOUT_MS,
+        ).pipe(
+          Effect.catch(() =>
+            Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
+          ),
+          Effect.flatMap((config) => {
+            // Only a confirmed native route may probe or publish the login's quota.
+            const nativeUsage =
+              !input.skipNativeUsage &&
+              config !== undefined &&
+              codexRoutesSpendNativeQuota(accountResponse, config.config);
+            const readUsage: Effect.Effect<CodexRateLimitsProbe | undefined> = nativeUsage
+              ? readCodexRateLimits(client, deadlineMs)
+              : Effect.undefined;
+            return readUsage.pipe(
+              Effect.map((rateLimits) => ({
+                config: config?.config,
+                nativeUsage,
+                rateLimits,
+              })),
+            );
+          }),
+        ),
+        // Managed requirements can forbid a sandbox mode, and Codex then refuses
+        // to start the turn, so delegation has to know which modes are allowed.
+        withCodexDiscoveryDeadline(
+          client.request("configRequirements/read", undefined),
+          deadlineMs,
+          CODEX_CONFIG_PROBE_TIMEOUT_MS,
+        ).pipe(
+          Effect.map((response) => codexRuntimeModesAllowedByRequirements(response?.requirements)),
+          Effect.catch(() =>
+            Effect.logDebug("Codex config requirements read failed.").pipe(Effect.as(undefined)),
+          ),
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
 
+  const cyberAccess = Option.getOrUndefined(decodeCodexCyberAccessConfig(config));
   return {
     account: accountResponse,
+    endpoint: config ? codexCustomEndpoint(config) : undefined,
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models,
-    serviceTier,
-    supportedRuntimeModes: runtimeModes,
+    serviceTier: config?.service_tier ?? undefined,
+    supportedRuntimeModes,
+    daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
+    // An unread config cannot rule out an API key with the programs turned off.
+    cyberAccessProgramsUnavailable:
+      accountResponse.account?.type === "apiKey" &&
+      (config === undefined || cyberAccess?.features?.api_key_cyber_access_programs === false),
     skills: skillsResponse ? parseCodexSkillsListResponse(skillsResponse, input.cwd) : [],
   } satisfies CodexAppServerProviderSnapshot;
 });
@@ -713,7 +834,12 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
     if (result.code !== 0) return null;
     return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
   },
-  Effect.timeoutOption(Duration.millis(DEFAULT_TIMEOUT_MS)),
+  (effect, input) =>
+    effect.pipe(
+      Effect.timeoutOption(
+        resolveProviderProbeTimeoutMs("codex", DEFAULT_TIMEOUT_MS, input.environment),
+      ),
+    ),
   Effect.map(Option.getOrNull),
   Effect.catch((cause) =>
     Effect.logDebug("Codex --version fallback failed.", { cause }).pipe(Effect.as(null)),
@@ -777,7 +903,12 @@ const makePendingCodexProvider = Effect.fn("CodexProvider.makePendingCodexProvid
   });
 });
 
-function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
+const quotePath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
+function accountProbeStatus(
+  { account, rateLimits }: CodexAppServerProviderSnapshot,
+  codexHome: string | undefined,
+): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -805,7 +936,9 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
     return {
       status: "error",
       auth: { status: "unauthenticated" },
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message: codexHome
+        ? `Codex CLI is not authenticated. Run \`codex login\` with CODEX_HOME set to ${quotePath(codexHome)} and try again.`
+        : "Codex CLI is not authenticated. Run `codex login` and try again.",
     };
   }
 
@@ -815,6 +948,7 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
+    readonly probeTimeoutMs: number;
     readonly binaryPath: string;
     readonly homePath?: string;
     readonly launchArgs?: string;
@@ -854,7 +988,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+    "codex",
+    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
   const probeResult = yield* probe({
+    probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
@@ -863,7 +1003,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
     Effect.scoped,
     Effect.result,
   );
@@ -920,7 +1060,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const snapshot = probeResult.success.value;
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
-    : accountProbeStatus(snapshot);
+    : accountProbeStatus(
+        snapshot,
+        codexSettings.homePath
+          ? expandHomePath(codexSettings.homePath, yield* HostProcess.HomeDirectory)
+          : undefined,
+      );
   // Sign-in guidance still applies when Codex itself says it needs an OpenAI login.
   const usageLimits =
     !snapshot.nativeUsage && !accountStatus.message
@@ -952,6 +1097,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
       (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
+      (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,
     slashCommands: [
@@ -971,7 +1117,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       installed: true,
       version: snapshot.version ?? null,
       status: snapshot.models === undefined ? "warning" : accountStatus.status,
-      auth: accountStatus.auth,
+      auth: snapshot.endpoint
+        ? { ...accountStatus.auth, endpoint: snapshot.endpoint }
+        : accountStatus.auth,
       ...(accountStatus.message
         ? { message: accountStatus.message }
         : snapshot.models === undefined
