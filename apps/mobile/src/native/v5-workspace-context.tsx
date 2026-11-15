@@ -28,6 +28,11 @@ export function slotScreenOptions<Options extends object>(
 export const NativeWorkspaceTabActivityContext = createContext<{
   readonly active: boolean;
   readonly isActive: () => boolean;
+  /**
+   * A tab not shown yet mounts only its header, so UIKit can put it in the window once before
+   * the first visit; it writes header options while inactive and loads nothing.
+   */
+  readonly headerOnly?: boolean;
 } | null>(null);
 export const NativePrimaryColumnContext = createContext<{
   readonly presented: boolean;
