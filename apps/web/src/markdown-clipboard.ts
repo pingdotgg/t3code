@@ -152,17 +152,24 @@ function serializeListItem(
   ].join("\n");
 }
 
-function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+/** A list's items with the numbers an ordered list shows: from `start`, reset by each `value`. */
+function numberedListItems(list: Element): { item: Element; number: number }[] {
   const start = Number.parseInt(list.getAttribute("start") ?? "1", 10);
-  const items = [...list.children].filter((child) => child.tagName === "LI");
-  if (items.length === 0) return "";
   let next = Number.isNaN(start) ? 1 : start;
-  return `${items
+  return [...list.children]
+    .filter((child) => child.tagName === "LI")
     .map((item) => {
       const value = Number.parseInt(item.getAttribute("value") ?? "", 10);
-      if (ordered && !Number.isNaN(value)) next = value;
-      return serializeListItem(item, ordered, next++, inTableCell);
-    })
+      if (!Number.isNaN(value)) next = value;
+      return { item, number: next++ };
+    });
+}
+
+function serializeList(list: Element, ordered: boolean, inTableCell: boolean): string {
+  const items = numberedListItems(list);
+  if (items.length === 0) return "";
+  return `${items
+    .map(({ item, number }) => serializeListItem(item, ordered, number, inTableCell))
     .join("\n")}\n\n`;
 }
 
@@ -497,6 +504,36 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
+/** A list cloned from a later item would renumber from its start; restart it at the shown number. */
+function keepStartListNumbers(range: Range, container: Element): void {
+  // The start's ancestors below the common ancestor clone as the fragment's first-child chain.
+  const chain: Node[] = [];
+  for (
+    let node: Node | null = range.startContainer;
+    node && node !== range.commonAncestorContainer;
+    node = node.parentNode
+  ) {
+    chain.unshift(node);
+  }
+  let clone: Node | null = container;
+  for (const [depth, source] of chain.entries()) {
+    clone = clone?.firstChild ?? null;
+    if (!(clone instanceof Element) || !(source instanceof Element) || source.tagName !== "OL")
+      continue;
+    const firstCopied = chain[depth + 1] ?? source.childNodes[range.startOffset];
+    if (!firstCopied) continue;
+    const shown = numberedListItems(source).find(
+      ({ item }) =>
+        item === firstCopied ||
+        firstCopied.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    const cloned = numberedListItems(clone)[0];
+    if (shown && cloned && shown.number !== cloned.number) {
+      clone.setAttribute("start", String(shown.number));
+    }
+  }
+}
+
 export function chatMarkdownClipboardPayload(
   selection: Selection,
 ): MarkdownClipboardPayload | null {
@@ -507,6 +544,7 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
+    keepStartListNumbers(range, container);
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
