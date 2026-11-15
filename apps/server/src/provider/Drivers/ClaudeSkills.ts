@@ -700,7 +700,7 @@ export const readClaudeConnectionSettings = Effect.fn("readClaudeConnectionSetti
       ),
     );
     for (const [name, value] of Object.entries(parsed?.env ?? {})) {
-      if (typeof value === "string") env[name] = value;
+      env[name] = String(value);
     }
     if (typeof parsed?.apiKeyHelper === "string") apiKeyHelper = parsed.apiKeyHelper;
   }
