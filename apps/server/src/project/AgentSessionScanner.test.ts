@@ -1104,6 +1104,70 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }),
     );
 
+    it.effect("imports a checkout's sessions from the linked worktrees the scan counts", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        yield* fileSystem.makeDirectory(path.join(repo, ".git"));
+        yield* fileSystem.writeFileString(path.join(repo, ".git", "config"), "[core]\n");
+        const worktreeGitDir = path.join(repo, ".git", "worktrees", "feature");
+        yield* fileSystem.makeDirectory(worktreeGitDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(worktreeGitDir, "commondir"), "../..\n");
+        yield* fileSystem.writeFileString(
+          path.join(worktreeGitDir, "HEAD"),
+          "ref: refs/heads/feature\n",
+        );
+        const worktree = path.join(repo, ".claude", "worktrees", "feature");
+        yield* fileSystem.makeDirectory(worktree, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(worktree, ".git"),
+          `gitdir: ${worktreeGitDir}\n`,
+        );
+
+        for (const [index, [cwd, sessionId]] of [
+          [repo, "at-root"],
+          [worktree, "in-worktree"],
+        ].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-slug-${index}`, `${sessionId}.jsonl`),
+            contents: `${JSON.stringify({
+              type: "user",
+              cwd,
+              sessionId,
+              message: { role: "user", content: "Fix the project" },
+            })}\n${JSON.stringify({
+              type: "assistant",
+              sessionId,
+              message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+            })}\n`,
+            mtimeMs: nowMs - (index + 1) * 60 * 60 * 1000,
+          });
+        }
+
+        const input = { claudeHomePath, codexHomePath };
+        const { candidates } = yield* runScan(input);
+        expect(candidates.map(({ path, threadCount }) => ({ path, threadCount }))).toEqual([
+          { path: repo, threadCount: 2 },
+        ]);
+        const outcomes = yield* runRecentThreadOutcomes({ ...input, workspaceRoot: repo });
+        expect(
+          outcomes.flatMap((outcome) =>
+            outcome._tag === "Importable"
+              ? [{ sessionId: outcome.thread.providerSessionId, worktree: outcome.worktree }]
+              : [],
+          ),
+        ).toEqual([
+          { sessionId: "at-root", worktree: null },
+          { sessionId: "in-worktree", worktree: { path: worktree, branch: "feature" } },
+        ]);
+      }),
+    );
+
     it.effect("excludes sandboxes under the configured worktrees dir without .t3 in the path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -3411,6 +3475,7 @@ describe("parseAgentSessionTranscript", () => {
       "<recommended_plugins>\nGitHub\n</recommended_plugins>",
       "# AGENTS.md instructions for /tmp/project\n\n<INSTRUCTIONS>\nRules\n</INSTRUCTIONS>",
       '<in-app-browser-context source="ambient-ui-state">\nTab\n</in-app-browser-context>',
+      '<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>',
       "Fix the import titles",
     ].join("\n");
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -3429,6 +3494,27 @@ describe("parseAgentSessionTranscript", () => {
 
     expect(thread?.title).toBe("Fix the import titles");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+  });
+
+  it.each([
+    "Explain <external_codex_apps_open_page> in this transcript",
+    "<external_codex_apps_open_page>Keep this incomplete example",
+  ])("keeps Codex page markup that is not a complete leading block: %s", (prompt) => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "event_msg",
+          payload: { type: "user_message", message: prompt },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe(prompt);
   });
 
   it("skips sessions without a visible user message", () => {

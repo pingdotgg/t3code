@@ -2,12 +2,12 @@ import * as Schema from "effect/Schema";
 
 import {
   effectiveSnoozed,
+  hasUnseenRunFailure,
   type ThreadSnoozeShell,
 } from "@t3tools/client-runtime/state/thread-settled";
 
 import type { SidebarThreadSummary } from "../../types";
 import {
-  hasUnseenFailure,
   isSidebarHiddenThread,
   resolveSidebarThreadStatus,
   type SidebarThreadStatus,
@@ -67,7 +67,7 @@ function resolveBoardPanel(thread: BoardThread, now: string): BoardPanelId {
   if (effectiveSnoozed(thread, { now })) return "snoozed";
   const status = resolveSidebarThreadStatus(thread);
   // The card's label reads an unopened failed run as Failed after its runtime is gone.
-  if (status === "ready" && hasUnseenFailure(thread)) return "failed";
+  if (status === "ready" && hasUnseenRunFailure(thread)) return "failed";
   return PANEL_BY_STATUS[status];
 }
 

@@ -5,6 +5,7 @@ import {
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -15,7 +16,9 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Clock from "effect/Clock";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
@@ -360,6 +363,66 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("explicit retry connects while the network still reports offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        networkStatus: "offline",
+        prepare: () => Effect.sleep("1 second").pipe(Effect.as(PREPARED_CONNECTION)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      // The loop wakes on the earlier signal and takes the retry's flag while
+      // RetryRequested is still queued, so that signal must not cancel the attempt.
+      yield* supervisor.connect;
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("1 second");
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled.phase).toBe("connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+    }),
+  );
+
+  it.effect.each([
+    { label: "cancels connection setup", retry: false, phase: "offline", sessions: 0 },
+    { label: "does not cancel an explicit retry", retry: true, phase: "connected", sessions: 1 },
+  ])("an offline report during setup $label", ({ retry, phase, sessions }) =>
+    Effect.gen(function* () {
+      const firstAttemptStarted = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: () =>
+          Deferred.succeed(firstAttemptStarted, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 second")),
+            Effect.as(PREPARED_CONNECTION),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(firstAttemptStarted);
+      if (retry) {
+        yield* supervisor.retryNow;
+      }
+      yield* harness.setNetworkStatus("offline");
+      yield* TestClock.adjust("1 second");
+      const settled = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "offline",
+      );
+
+      expect(settled.phase).toBe(phase);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(sessions);
+    }),
+  );
+
   it.effect("connects to the primary environment while the device reports offline", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ networkStatus: "offline" });
@@ -439,6 +502,65 @@ describe("EnvironmentSupervisor", () => {
           message: "Relay connection timed out.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("checks back on a pending approval every few seconds instead of backing off", () =>
+    Effect.gen(function* () {
+      const pending = new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      });
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.fail(attempt <= 8 ? pending : transient("Relay connection timed out.")),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      for (let attempt = 1; attempt <= 8; attempt++) {
+        const waiting = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        expect((waiting.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBe(4_000);
+        yield* TestClock.adjust("4 seconds");
+      }
+      // The waits do not count toward backoff, so an outage right after starts at the bottom.
+      const failed = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 9,
+      );
+      expect((failed.retryAt ?? 0) - (yield* Clock.currentTimeMillis)).toBeLessThanOrEqual(2_000);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("backs off a device nobody approved once its request has expired", () =>
+    Effect.gen(function* () {
+      const pending = new ConnectionTransientError({
+        reason: "approval-pending",
+        detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+      });
+      const harness = yield* makeHarness({ prepare: () => Effect.fail(pending) });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const delays: number[] = [];
+      for (let attempt = 1; attempt <= 156; attempt++) {
+        const waiting = yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === attempt,
+        );
+        const delay = (waiting.retryAt ?? 0) - (yield* Clock.currentTimeMillis);
+        delays.push(delay);
+        yield* TestClock.adjust(delay);
+      }
+      // Ten minutes of 4 s checks, then backoff that never polls faster than that.
+      expect(delays.slice(0, 150).every((delay) => delay === 4_000)).toBe(true);
+      expect(delays.slice(150).every((delay) => delay >= 4_000)).toBe(true);
+      expect(delays.at(-1)).toBeGreaterThanOrEqual(32_000);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1441,12 +1563,23 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("releases and reconnects a relay session when credentials change", () =>
     Effect.gen(function* () {
+      const relaySpans: Array<Tracer.NativeSpan> = [];
+      const relayTracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          relaySpans.push(span);
+          return span;
+        },
+      });
       const harness = yield* makeHarness({
         prepare: () => Effect.succeed(preparedFor(RELAY_TARGET)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+      }).pipe(
+        Effect.provide(harness.dependencies),
+        Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
+      );
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("credentials-changed");
@@ -1457,6 +1590,13 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
       expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      const attempts = relaySpans.filter((span) => span.name === "relay.connection.attempt");
+      expect(attempts).toHaveLength(2);
+      for (const span of attempts) {
+        expect(span.attributes.get("environment.id")).toBe(RELAY_TARGET.environmentId);
+        expect(span.attributes.get("environment.target.kind")).toBe(RELAY_TARGET._tag);
+        expect(span.attributes.has("environment.label")).toBe(false);
+      }
     }),
   );
 
