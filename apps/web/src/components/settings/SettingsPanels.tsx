@@ -28,7 +28,7 @@ import {
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
 import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, pickModelSelection } from "@t3tools/shared/model";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
@@ -2052,7 +2052,11 @@ export function ThreadsSettingsPanel() {
                       textGenerationModelSelection: resolveAppModelSelectionState(
                         {
                           ...settings,
-                          textGenerationModelSelection: createModelSelection(instanceId, model),
+                          textGenerationModelSelection: pickModelSelection(
+                            textGenerationModelSelection,
+                            instanceId,
+                            model,
+                          ),
                         },
                         textGenerationProviders,
                       ),
