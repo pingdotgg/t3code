@@ -2843,19 +2843,8 @@ it.effect.each(
           } else {
             yield* switchWorktree;
             yield* sendNext;
-            // The session the selector stopped ends the turn.
+            // The session the selector stopped ends the turn; the switch hands the run off to complete.
             const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
-            const stopped = yield* orchestrator.streamDomainEvents.pipe(
-              Stream.filter(
-                (event) =>
-                  event.type === "run.updated" &&
-                  event.payload.id === first.runId &&
-                  event.payload.status === "interrupted",
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
             yield* Queue.offer(events, {
               type: "provider_turn.updated",
               driver,
@@ -2871,7 +2860,17 @@ it.effect.each(
               failure: null,
               threadDisposition: "reusable",
             });
-            yield* Fiber.join(stopped);
+            yield* orchestrator.streamStoredEvents.pipe(
+              Stream.filter(
+                ({ event }) =>
+                  event.type === "run.updated" &&
+                  event.payload.id === first.runId &&
+                  event.payload.status !== "running" &&
+                  event.payload.status !== "queued" &&
+                  event.payload.status !== "starting",
+              ),
+              Stream.runHead,
+            );
             yield* worker.drain();
             yield* orchestrator.resumeQueuedRuns;
             yield* worker.drain();
