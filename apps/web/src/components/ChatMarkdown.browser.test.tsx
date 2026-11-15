@@ -704,9 +704,9 @@ describe("ChatMarkdown copy", () => {
       // A new key remounts the block: a clicked button reads "Copied" for a while.
       await screen.rerender(<ChatMarkdown key={text} cwd="/tmp/project" text={text} />);
       const copyButtons = () => buttonsLabelled(screen.container, "Copy code");
-      await expect.poll(() => copyButtons().length, { message: text }).toBe(1);
+      await vi.waitFor(() => expect(copyButtons().length, text).toBe(1));
       await act(async () => copyButtons()[0]!.click());
-      await expect.poll(() => writeText.mock.calls[0]?.[0], { message: text }).toBe(copied);
+      await vi.waitFor(() => expect(writeText.mock.calls[0]?.[0], text).toBe(copied));
     }
   });
 
