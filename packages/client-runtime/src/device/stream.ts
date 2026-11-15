@@ -318,7 +318,7 @@ export interface DeviceStreamClient {
   readonly setMjpegImage: (image: HTMLImageElement | null) => void;
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
-  /** iOS only: `usLayout: false` sends the key places, for a simulator keyboard that is not US. */
+  /** iOS only: `usLayout: true` types the character through US keys; otherwise sends the key place. */
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up", usLayout?: boolean) => void;
   /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
   readonly sendText: (text: string) => void;
@@ -1456,7 +1456,7 @@ export function createDeviceStreamClient(
       const action = phase === "begin" ? "down" : phase === "move" ? "move" : "up";
       send(JSON.stringify({ type: "touch", action, x, y }));
     },
-    sendKey: (event, phase, usLayout = true) => {
+    sendKey: (event, phase, usLayout = false) => {
       if (avcc) {
         if (phase === "down") pressIosKey(event, usLayout);
         else releaseIosKey(event);

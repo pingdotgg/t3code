@@ -184,7 +184,7 @@ describe("native device stream transport", () => {
     client.stop();
   });
 
-  const connectIosKeys = async (usLayout = true) => {
+  const connectIosKeys = async (usLayout?: boolean) => {
     const { client, opened } = setup("ios");
     client.start();
     const socket = await opened;
@@ -221,7 +221,7 @@ describe("native device stream transport", () => {
 
   it("types the character from the user's layout with the simulator's US keys", async () => {
     vi.stubGlobal("navigator", { platform: "Win32" });
-    const { client, take, keyEvent, press } = await connectIosKeys();
+    const { client, take, keyEvent, press } = await connectIosKeys(true);
     const ctrlAlt = { ctrlKey: true, altKey: true };
     const shifted = (usage: string) => ["down e1", `down ${usage}`, `up ${usage}`, "up e1"];
 
@@ -248,24 +248,24 @@ describe("native device stream transport", () => {
     expect(take()).toEqual(["down 35", "up 35"]);
 
     // Shortcuts keep their modifiers and use the letter on the key. Ctrl is Command on iOS.
-    client.sendKey(keyEvent("ShiftLeft", "Shift", { shiftKey: true }), "down");
+    client.sendKey(keyEvent("ShiftLeft", "Shift", { shiftKey: true }), "down", true);
     press("ArrowLeft", "ArrowLeft", { shiftKey: true });
     expect(take()).toEqual(["down e1", "down 50", "up 50"]);
     press("KeyQ", "a", { ctrlKey: true, shiftKey: true });
     expect(take()).toEqual(["down e3", "down 4", "up 4"]);
-    client.sendKey(keyEvent("ShiftLeft", "Shift", { ctrlKey: true }), "up");
+    client.sendKey(keyEvent("ShiftLeft", "Shift", { ctrlKey: true }), "up", true);
     expect(take()).toEqual(["up e1"]);
-    client.sendKey(keyEvent("ControlLeft", "Control"), "up");
+    client.sendKey(keyEvent("ControlLeft", "Control"), "up", true);
     expect(take()).toEqual(["up e3"]);
     press("KeyH", "h", ctrlAlt);
-    client.sendKey(keyEvent("AltLeft", "Alt"), "up");
+    client.sendKey(keyEvent("AltLeft", "Alt"), "up", true);
     expect(take()).toEqual(["down e3", "down e2", "down b", "up b", "up e3", "up e2"]);
 
     // Mac Option characters and Ctrl+Option shortcuts.
     vi.stubGlobal("navigator", { platform: "MacIntel" });
     press("KeyP", "π", { altKey: true });
     press("KeyH", "˙", ctrlAlt);
-    client.sendKey(keyEvent("AltLeft", "Alt"), "up");
+    client.sendKey(keyEvent("AltLeft", "Alt"), "up", true);
     expect(take()).toEqual([
       "down e2",
       "down 13",
@@ -277,15 +277,15 @@ describe("native device stream transport", () => {
       "up e2",
     ]);
     // A Mac browser sends no keyup for the letter.
-    client.sendKey(keyEvent("KeyQ", "a", { metaKey: true }), "down");
-    client.sendKey(keyEvent("MetaLeft", "Meta"), "up");
+    client.sendKey(keyEvent("KeyQ", "a", { metaKey: true }), "down", true);
+    client.sendKey(keyEvent("MetaLeft", "Meta"), "up", true);
     expect(take()).toEqual(["down e3", "down 4", "up 4", "up e3"]);
     client.stop();
   });
 
-  it("sends the key places to a simulator keyboard that is not US", async () => {
+  it("sends the key places when the simulator layout is not known to be US", async () => {
     vi.stubGlobal("navigator", { platform: "Win32" });
-    const { client, take, press } = await connectIosKeys(false);
+    const { client, take, press } = await connectIosKeys();
     const ctrlAlt = { ctrlKey: true, altKey: true };
 
     // Windows Russian keys.
