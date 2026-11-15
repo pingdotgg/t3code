@@ -528,6 +528,8 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.catchDecoding(() => Effect.succeedSome(DEFAULT_SURFACE_STYLE)),
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SURFACE_STYLE)),
   ),
+  // An icon id or "default". Open string so an icon a newer version added still decodes.
+  appIcon: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed("default"))),
   // Zero avoids per-frame layout work from width/height transitions.
   panelAnimationDurationMs: PanelAnimationDurationMs.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PANEL_ANIMATION_DURATION_MS)),
@@ -2162,6 +2164,7 @@ export const ClientSettingsPatch = Schema.Struct({
   loadBalancingWeights: Schema.optionalKey(LoadBalancingWeights),
   appearanceContrast: Schema.optionalKey(AppearanceContrast),
   surfaceStyle: Schema.optionalKey(SurfaceStyle),
+  appIcon: Schema.optionalKey(Schema.String),
   panelAnimationDurationMs: Schema.optionalKey(PanelAnimationDurationMs),
   browserDefaultViewport: Schema.optionalKey(PreviewViewportSetting),
   browserDefaultZoomFactor: Schema.optionalKey(PreviewZoomFactor),
