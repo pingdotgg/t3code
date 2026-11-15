@@ -530,6 +530,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onData: (data: string) => void;
   /** Input bytes that are not UTF-8, one UTF-16 code unit per byte. */
   readonly onBinary: (data: string) => void;
+  /** The terminal's own answers to queries from the PTY (DA, DSR, DECRQM), never typed input. */
+  readonly onReply: (data: string) => void;
   readonly onResize: (cols: number, rows: number) => void;
   readonly onSelectionChange: () => void;
   readonly beforeKey: (event: KeyboardEvent) => boolean;
@@ -738,7 +740,7 @@ export class GhosttyTerminalSurface {
       metrics.width,
       metrics.height,
       options.theme,
-      options.onData,
+      options.onReply,
     );
     const surface = new GhosttyTerminalSurface(
       mount,
