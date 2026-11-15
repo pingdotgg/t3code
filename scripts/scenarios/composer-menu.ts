@@ -102,3 +102,18 @@ export async function clickAt(browser: Browser, point: { readonly x: number; rea
   await browser.mouse.down();
   await browser.mouse.up();
 }
+
+/** A point inside the window where `elementFromPoint` lands in the element, or `null`. */
+export const findHitPoint = (browser: Browser, selector: string) =>
+  browser.evaluate((selector) => {
+    const element = document.querySelector(selector);
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    for (let y = Math.ceil(rect.top) + 1; y < rect.bottom - 1; y += 2) {
+      if (y < 0 || y >= window.innerHeight) continue;
+      const hit = document.elementFromPoint(x, y);
+      if (hit && element.contains(hit)) return { x, y };
+    }
+    return null;
+  }, selector);
