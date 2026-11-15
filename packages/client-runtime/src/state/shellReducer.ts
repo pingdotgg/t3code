@@ -22,6 +22,19 @@ export function sameThreadPullRequests(
   return left === right || sameLinks(left, right);
 }
 
+// A streaming thread resends its whole shell on each tick. Keeping the prior links array when it
+// has not changed lets later comparisons stop at identity and keeps per-link caches warm.
+function retainUnchangedLinks(
+  previous: OrchestrationV2ThreadShell | undefined,
+  next: OrchestrationV2ThreadShell,
+): OrchestrationV2ThreadShell {
+  if (previous?.pullRequests === undefined || next.pullRequests === undefined) return next;
+  if (previous.pullRequests === next.pullRequests) return next;
+  return sameLinks(previous.pullRequests, next.pullRequests)
+    ? { ...next, pullRequests: previous.pullRequests }
+    : next;
+}
+
 /**
  * Links are compared apart from the rest of the row because a deferred snapshot arrives without
  * them; such a row keeps its links until they fill in.
@@ -39,7 +52,7 @@ export function reuseUnchangedThreadShells(
     const candidate =
       thread.pullRequests === undefined && prior.pullRequests !== undefined
         ? { ...thread, pullRequests: prior.pullRequests }
-        : thread;
+        : retainUnchangedLinks(prior, thread);
     const retained = sameThreadShell(prior, candidate) ? prior : candidate;
     if (retained !== thread) changed = true;
     return retained;
@@ -160,7 +173,8 @@ export function applyShellStreamEvent(
         event.location === "active"
           ? snapshot.threads.find((thread) => thread.id === event.thread.id)
           : undefined;
-      if (existing !== undefined && sameThreadShell(existing, event.thread)) {
+      const thread = retainUnchangedLinks(existing, event.thread);
+      if (existing !== undefined && sameThreadShell(existing, thread)) {
         return { ...snapshot, snapshotSequence: event.sequence };
       }
       const withoutThread = (threads: OrchestrationV2ShellSnapshot["threads"]) =>
@@ -169,7 +183,7 @@ export function applyShellStreamEvent(
         ...snapshot,
         threads:
           event.location === "active"
-            ? upsertById(snapshot.threads, event.thread)
+            ? upsertById(snapshot.threads, thread)
             : withoutThread(snapshot.threads),
         // The archive has its own bounded query/subscription. Older servers may
         // still send archive-located deltas here; remove them from the normal
@@ -243,8 +257,9 @@ export function applyShellStreamEvents(
         const id = event.thread.id;
         if (event.location === "active") {
           const previous = threads.get(id);
-          if (previous !== undefined && sameThreadShell(previous, event.thread)) break;
-          threads.set(event.thread);
+          const thread = retainUnchangedLinks(previous, event.thread);
+          if (previous !== undefined && sameThreadShell(previous, thread)) break;
+          threads.set(thread);
         } else {
           threads.remove(id);
         }
