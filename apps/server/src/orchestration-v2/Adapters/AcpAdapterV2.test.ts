@@ -229,6 +229,25 @@ describe("acpPerTurnPromptUsage", () => {
     );
   });
 
+  it("subtracts cumulative prompt usage and rejects missing or reset baselines", () => {
+    const usage = { inputTokens: 22046, outputTokens: 14, totalTokens: 22060 };
+    const baseline = { inputTokens: 10854, outputTokens: 7, totalTokens: 10861 };
+    assert.deepEqual(acpPerTurnPromptUsage(usage, false, "completed", false, baseline), {
+      usageScope: "main_agent",
+      usageStatus: "complete",
+      hasSubagents: false,
+      inputTokens: 11192,
+      outputTokens: 7,
+    });
+    for (const before of [null, usage]) {
+      assert.deepEqual(acpPerTurnPromptUsage(baseline, false, "completed", false, before), {
+        usageScope: "main_agent",
+        usageStatus: "unavailable",
+        hasSubagents: false,
+      });
+    }
+  });
+
   it("clamps subsets that exceed their parents and drops unset counters", () => {
     assert.deepEqual(
       acpPerTurnPromptUsage(

@@ -296,18 +296,40 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
 }
 
 /**
- * Maps one per-turn usage sample (flavors with reportsPerTurnPromptUsage)
- * directly onto TurnTokenUsage: the response's counters already cover exactly
- * this prompt.
+ * Cumulative agents require a known pre-prompt baseline; null leaves usage unavailable.
  */
 export function acpPerTurnPromptUsage(
   usage: EffectAcpSchema.Usage | null | undefined,
   hasSubagents: boolean,
   terminalStatus: OrchestrationV2ProviderTurn["status"],
   geminiUsage = false,
+  baseline?: EffectAcpSchema.Usage | null,
 ): TurnTokenUsage {
-  if (usage == null) {
+  if (usage == null || baseline === null) {
     return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
+  }
+  if (baseline !== undefined) {
+    const cumulativeUsage = usage;
+    const delta = (key: keyof EffectAcpSchema.Usage) => {
+      const current = cumulativeUsage[key];
+      const before = baseline[key];
+      return typeof current === "number" && typeof before === "number" && current >= before
+        ? current - before
+        : undefined;
+    };
+    const inputTokens = delta("inputTokens");
+    const outputTokens = delta("outputTokens");
+    if (inputTokens === undefined || outputTokens === undefined) {
+      return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
+    }
+    usage = {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      cachedReadTokens: delta("cachedReadTokens") ?? null,
+      cachedWriteTokens: delta("cachedWriteTokens") ?? null,
+      thoughtTokens: delta("thoughtTokens") ?? null,
+    };
   }
   const inputTokens = geminiUsage
     ? usage.inputTokens + (usage.cachedReadTokens ?? 0)
@@ -602,6 +624,10 @@ export interface AcpAdapterV2Flavor {
    * leaves usage semantics open, so this stays unset until proven live.
    */
   readonly reportsPerTurnPromptUsage?: boolean;
+  /** Reads cumulative counters emitted before a prompt, including on session load. */
+  readonly readSessionPromptUsage?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => EffectAcpSchema.Usage | undefined;
   /** Gemini-style usage: inputTokens leaves out cachedReadTokens, outputTokens leaves out thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
   /**
@@ -1537,6 +1563,7 @@ interface ActiveAcpTurn {
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
+  promptUsageBaseline: EffectAcpSchema.Usage | null | undefined;
   backgroundFinalizeGeneration: number;
   /** The agent's own id for this turn's prompt, from `forkFromTurn.nativeTurnId`. */
   nativePromptId: string | undefined;
@@ -2073,6 +2100,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
         );
+        const sessionPromptUsage = new Map<string, EffectAcpSchema.Usage>();
         const nativeMetadataBySessionId = yield* Ref.make(
           new Map<string, OrchestrationV2ProviderThreadNativeMetadata>(),
         );
@@ -5317,6 +5345,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const context = yield* Ref.get(activeTurn);
           const update = notification.update;
           if (
+            flavor.readSessionPromptUsage !== undefined &&
+            update.sessionUpdate === "usage_update"
+          ) {
+            const usage = flavor.readSessionPromptUsage(notification);
+            if (usage === undefined) sessionPromptUsage.delete(notification.sessionId);
+            else sessionPromptUsage.set(notification.sessionId, usage);
+          }
+          if (
             followsAgentWorkState &&
             flavor.extractSubagentSessionEvent !== undefined &&
             notification.sessionId !== (yield* Ref.get(activeSessionId)) &&
@@ -7291,6 +7327,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           threadId: ThreadId | null,
           resumeSessionId?: string,
         ) {
+          sessionPromptUsage.clear();
           if (runtimeScope !== undefined) {
             yield* Scope.close(runtimeScope, Exit.void);
           }
@@ -7599,6 +7636,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpContext = yield* readMcpContext(threadId);
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
+          sessionPromptUsage.delete(sessionId);
           yield* Ref.set(loadingSessionId, sessionId);
           const activated = yield* Effect.gen(function* () {
             return canLoadSession
@@ -7956,13 +7994,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ...(status === "running" || status === "pending"
             ? {}
             : {
-                // The prompt tap only captures usage for flavors that declared
-                // per-turn counters, so undeclared agents stay unavailable here.
                 turnTokenUsage: acpPerTurnPromptUsage(
                   context.promptUsage,
                   context.subagents.size > 0,
                   status,
                   flavor.geminiPromptUsage,
+                  context.promptUsageBaseline,
                 ),
               }),
         });
@@ -8713,6 +8750,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
+              promptUsageBaseline: undefined,
               backgroundFinalizeGeneration: 0,
               nativePromptId: undefined,
               lastProgressAt: 0,
@@ -8867,6 +8905,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
+            context.promptUsageBaseline =
+              flavor.readSessionPromptUsage === undefined
+                ? undefined
+                : (sessionPromptUsage.get(requestedSessionId) ?? null);
             const promptOptions = {
               dispatched: context.promptDispatched,
               released: context.foregroundIdle,
@@ -8897,7 +8939,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // response must not flip a settled turn.
               Effect.tap((result) =>
                 Effect.sync(() => {
-                  if (flavor.reportsPerTurnPromptUsage === true && !context.finalized) {
+                  if (
+                    (flavor.reportsPerTurnPromptUsage === true ||
+                      flavor.readSessionPromptUsage !== undefined) &&
+                    !context.finalized
+                  ) {
                     context.promptUsage = result.usage ?? undefined;
                   }
                 }).pipe(
@@ -9810,6 +9856,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       snapshotInput.providerThread.appThreadId,
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
+                    sessionPromptUsage.delete(sessionId);
                     yield* Ref.set(loadingSessionId, sessionId);
                     const activated = yield* runtime
                       .loadSession(sessionId, acpMcpActivation(mcpContext))
