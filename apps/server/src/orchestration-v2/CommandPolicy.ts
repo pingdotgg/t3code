@@ -94,7 +94,6 @@ export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
   deliveryIntent?: "auto" | "steer" | "restart",
-  hasAttachments = false,
 ): MessageDispatchMode {
   const mode = resolveDeliveryIntent(projection, requestedMode, deliveryIntent);
   if (mode.type !== "steer_active") return mode;
@@ -109,12 +108,10 @@ export function resolveMessageDispatchIntent(
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
-  const canRestart = turns?.supportsInterrupt === true && turns.supportsSteeringByInterruptRestart;
-  // Attachments a native steer cannot carry need a restart; without one they wait for the turn.
-  const canSteer =
-    turns?.supportsActiveSteering === true &&
-    !(hasAttachments && turns.activeSteeringAcceptsAttachments === false);
-  return turns !== undefined && !canSteer && !canRestart && turns.supportsQueuedMessages
+  return turns !== undefined &&
+    !turns.supportsActiveSteering &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
+    turns.supportsQueuedMessages
     ? { type: "queue_after_active" }
     : mode;
 }

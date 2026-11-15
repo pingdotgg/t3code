@@ -249,18 +249,6 @@ it("steers a Grok follow-up into its running turn without restarting it", () => 
   );
   assert.strictEqual(mode.type, "steer_active");
   assert.isTrue(grok.turns.supportsActiveSteering);
-  // Grok's interjection is text-only and it cannot restart, so an image waits for the turn.
-  for (const deliveryIntent of ["auto", "steer"] as const) {
-    assert.deepEqual(
-      CommandPolicy.resolveMessageDispatchIntent(
-        dispatchProjection(grok),
-        { type: "start_immediately" },
-        deliveryIntent,
-        true,
-      ),
-      { type: "queue_after_active" },
-    );
-  }
 });
 
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {

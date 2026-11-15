@@ -122,7 +122,6 @@ const GrokProviderCapabilitiesV2 = {
     // `_x.ai/interject` lets the running tool finish; the model reads the message at its next step.
     supportsActiveSteering: true,
     activeSteeringInterruptsTools: false,
-    activeSteeringAcceptsAttachments: false,
     // Cancelling a Grok prompt kills its running foreground tool.
     supportsSteeringByInterruptRestart: false,
   },
@@ -135,21 +134,27 @@ const isXAiInterjectQueued = Schema.is(
 
 /** A queued interjection joins the running prompt, so its acceptance is the delivery. */
 const grokSteering: NonNullable<AcpAdapterV2Flavor["steering"]> = {
-  send: (runtime, sessionId, text) =>
-    runtime.request(XAI_INTERJECT_METHOD, { sessionId, text }).pipe(
-      Effect.flatMap((result) =>
-        isXAiInterjectQueued(result)
-          ? Effect.undefined
-          : Effect.fail(
-              new EffectAcpErrors.AcpRequestError({
-                code: -32603,
-                errorMessage: "Grok did not queue the interjection.",
-                method: XAI_INTERJECT_METHOD,
-                data: result,
-              }),
-            ),
+  send: (runtime, sessionId, text, images) =>
+    runtime
+      .request(XAI_INTERJECT_METHOD, {
+        sessionId,
+        text,
+        ...(images.length === 0 ? {} : { content: images }),
+      })
+      .pipe(
+        Effect.flatMap((result) =>
+          isXAiInterjectQueued(result)
+            ? Effect.undefined
+            : Effect.fail(
+                new EffectAcpErrors.AcpRequestError({
+                  code: -32603,
+                  errorMessage: "Grok did not queue the interjection.",
+                  method: XAI_INTERJECT_METHOD,
+                  data: result,
+                }),
+              ),
+        ),
       ),
-    ),
 };
 
 export interface GrokAdapterV2Options {
