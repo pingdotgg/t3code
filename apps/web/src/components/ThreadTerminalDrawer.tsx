@@ -57,8 +57,7 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { isTerminalUrl } from "../terminal-links";
+import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -526,7 +525,7 @@ function TerminalSessionViewport({
     linkPath !== null && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
-          resolvePathLinkTarget(linkPath, cwd),
+          resolveTerminalLinkTarget(linkPath, cwd),
           cwd,
           metadataThreadRef,
         )
@@ -547,7 +546,7 @@ function TerminalSessionViewport({
       return false;
     const query = getFileMetadataQueryAtom(
       environmentId,
-      resolvePathLinkTarget(text, cwd),
+      resolveTerminalLinkTarget(text, cwd),
       cwd,
       metadataThreadRef,
     );
@@ -917,7 +916,10 @@ function TerminalSessionViewport({
       };
 
       const sendTerminalInput = async (data: string, fallbackError: string) => {
-        if (!hasTerminalWriteAccess()) return;
+        // The server rejects input until the shell runs, and each rejection would print an error.
+        if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
+          return;
+        }
         const activeTerminal = terminalRef.current;
         if (!activeTerminal) return;
         const result = await writeTerminal(data);
@@ -1011,7 +1013,7 @@ function TerminalSessionViewport({
           );
           return;
         }
-        const target = resolvePathLinkTarget(text, cwd);
+        const target = resolveTerminalLinkTarget(text, cwd);
         void (async () => {
           const result = await openTerminalPath(target);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1026,16 +1028,7 @@ function TerminalSessionViewport({
       }
 
       function handleData(data: string): void {
-        if (!hasTerminalWriteAccess()) return;
-        void (async () => {
-          const result = await writeTerminal(data);
-          if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            terminal,
-            error instanceof Error ? error.message : "Terminal write failed",
-          );
-        })();
+        void sendTerminalInput(data, "Terminal write failed");
       }
 
       const themeObserver = new MutationObserver(() => {
