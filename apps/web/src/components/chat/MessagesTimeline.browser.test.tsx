@@ -21,6 +21,8 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
   createRef,
@@ -222,6 +224,12 @@ function renderTimeline(entries: ReadonlyArray<Entry>, props: Partial<TimelinePr
 
 async function click(element: HTMLElement) {
   await act(async () => element.click());
+}
+
+/** The redesign's turn fold is a Labs option; these cases switch it on. */
+function withTurnWorkFold() {
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, turnWorkFoldEnabled: true });
+  return { [Symbol.dispose]: () => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS) };
 }
 
 function setup({ scheduledTasks = [] as ReadonlyArray<{ id: string; title: string }> } = {}) {
@@ -525,6 +533,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("keeps live assistant text citable and expands the work window below a fixed bar", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("history-run");
     const navigations: TimelineNavigation[] = [];
     await using screen = await renderTimeline(
@@ -637,6 +646,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("hides Jump to latest once a collapsed work row leaves nothing below", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("thought-run");
     const thought = (id: string, detail: string) =>
       work(id, {
@@ -679,6 +689,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("keeps following the end while the work history opens and collapses", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("collapse-run");
     const navigations: TimelineNavigation[] = [];
     const props = {
@@ -2867,6 +2878,7 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
 
 describe("MessagesTimeline work rows", () => {
   it("keeps working through an async question and pauses only when it blocks", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const runId = RunId.make("async-question-run");
     const pendingRequest = {
       kind: "question" as const,
@@ -2901,6 +2913,7 @@ describe("MessagesTimeline work rows", () => {
   it.each(["run-backed", "runless"] as const)(
     "folds the %s working history once it outgrows the collapsed window and keeps it open as the turn fold",
     async (kind) => {
+      using _turnWorkFold = withTurnWorkFold();
       const runId = kind === "runless" ? null : RunId.make("growing-run");
       const entries = (count: number) => [
         message("Build it", { runId }),
@@ -2957,6 +2970,7 @@ describe("MessagesTimeline work rows", () => {
   );
 
   it("updates reset labels across midnight and expires snooze at the deadline", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const now = new Date(2026, 9, 18, 23, 59, 30);
     const resetAt = new Date(2026, 9, 19, 0, 0, 15).toISOString();
     const runId = RunId.make("limited-run");
@@ -2994,6 +3008,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("expands every background group for a replied-to run and allows collapsing them again", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const fixture = makeStreamingTimelineFixture("Cited response after the second update.");
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: fixture.visibleTurnItems
@@ -3099,6 +3114,7 @@ describe("MessagesTimeline work rows", () => {
   });
 
   it("reveals the wake-up header when its rail collapses below the viewport", async () => {
+    using _turnWorkFold = withTurnWorkFold();
     const fixture = makeStreamingTimelineFixture("Latest result stays outside the fold.");
     const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: fixture.visibleTurnItems.map((row): OrchestrationV2ProjectedTurnItem => ({
