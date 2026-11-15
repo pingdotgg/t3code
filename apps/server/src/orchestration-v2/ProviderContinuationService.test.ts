@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
+  CommandId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -22,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderContinuationService from "./ProviderContinuationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
@@ -248,12 +250,12 @@ describe("ProviderContinuationService", () => {
   });
 
   it.effect(
-    "a project-disabled instance refuses a delegated-completion wake exactly once, acknowledges it, and never retries",
+    "a project-disabled instance refuses a delegated-completion wake exactly once, disposes it, and never retries",
     () => {
       return Effect.gen(function* () {
         const attempts = yield* Ref.make(0);
         const cleared = yield* Ref.make(false);
-        const acknowledged = yield* Queue.unbounded<unknown>();
+        const disposed = yield* Queue.unbounded<unknown>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
           dispatch: (command) => {
@@ -271,7 +273,7 @@ describe("ProviderContinuationService", () => {
                 ),
               );
             }
-            return Queue.offer(acknowledged, command).pipe(Effect.as({} as never));
+            return Queue.offer(disposed, command).pipe(Effect.as({} as never));
           },
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
@@ -299,24 +301,22 @@ describe("ProviderContinuationService", () => {
           assert.equal(yield* Ref.get(attempts), 1);
           assert.isTrue(yield* Ref.get(cleared));
 
-          const acknowledgements = (yield* Queue.takeAll(acknowledged)) as ReadonlyArray<{
+          const dispositions = (yield* Queue.takeAll(disposed)) as ReadonlyArray<{
             type: string;
             taskId: string;
-            observedByRunId: string | null;
           }>;
           assert.deepEqual(
-            acknowledgements.map((command) => command.taskId),
+            dispositions.map((command) => command.taskId),
             ["node-provider-continuation-first", "node-provider-continuation-second"],
           );
-          for (const command of acknowledgements) {
-            assert.equal(command.type, "delegated_task.completion-delivery.acknowledge");
-            assert.isNull(command.observedByRunId);
+          for (const command of dispositions) {
+            assert.equal(command.type, "delegated_task.completion-delivery.dispose");
           }
 
           yield* TestClock.adjust("1 hour");
           yield* Effect.yieldNow;
           assert.equal(yield* Ref.get(attempts), 1);
-          assert.equal(yield* Queue.size(acknowledged), 0);
+          assert.equal(yield* Queue.size(disposed), 0);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,
@@ -412,6 +412,43 @@ describe("ProviderContinuationService", () => {
             "a disabled instance must clear the offer via the explicit callback " +
               "when the adapter itself does not clear on dispatch failure",
           );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "clears a sticky continuation offer when a non-delegated wake dispatch fails generically",
+    () => {
+      return Effect.gen(function* () {
+        const cleared = yield* Deferred.make<void>();
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: (command) =>
+            Effect.fail(
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: CommandId.make(String(command.commandId)),
+                commandType: command.type,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(),
+            clearIfCurrent: () => Deferred.succeed(cleared, undefined),
+          });
+          yield* Deferred.await(cleared);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,
