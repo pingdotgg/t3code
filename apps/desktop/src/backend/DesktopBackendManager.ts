@@ -25,8 +25,12 @@ import {
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   DesktopTelemetryControlMessage,
   type DesktopTelemetryControlMessage as DesktopTelemetryControlMessageValue,
+  type DatabaseMigrationProgress,
 } from "@t3tools/contracts";
-import { isRunningDatabaseMigrations } from "@t3tools/shared/databaseMigrationLog";
+import {
+  databaseMigrationProgress,
+  isRunningDatabaseMigrations,
+} from "@t3tools/shared/databaseMigrationLog";
 import { waitForHttpReady as waitForHttpReadyShared } from "@t3tools/shared/httpReadiness";
 
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -260,6 +264,9 @@ export interface BackendInstanceSpec {
   readonly onStateDirOwned?: () => Effect.Effect<void>;
   /** Fires on each repeated crash or readiness timeout until the backend becomes ready. */
   readonly onStartupFailure?: (failure: BackendStartupFailure) => Effect.Effect<void>;
+  readonly onMigrationProgress?: (
+    progress: DatabaseMigrationProgress | null,
+  ) => Effect.Effect<void>;
 }
 
 interface ActiveBackendRun {
@@ -893,6 +900,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                 );
 
               if (isCurrentRun) {
+                yield* spec.onMigrationProgress?.(null) ?? Effect.void;
                 yield* desktopTelemetryPublisher.removeControlSource(spec.id);
                 if (Option.isSome(pid)) {
                   if (exitObserved && !stopRequested) {
@@ -936,6 +944,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               pid: Option.some(pid),
             }));
             yield* Ref.set(outputTail, "");
+            yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             outputDecoders = makeOutputDecoders();
             yield* backendOutputLog.beginSession({
               details: `pid=${pid} port=${config.value.bootstrap.port} cwd=${config.value.cwd}`,
@@ -966,6 +975,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
+            yield* spec.onMigrationProgress?.(null) ?? Effect.void;
             yield* spec.onReady?.(config.value.httpBaseUrl, pid) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
@@ -995,12 +1005,28 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             },
           ),
           onOutput: (streamName, chunk) =>
-            Ref.update(outputTail, (tail) =>
+            Ref.updateAndGet(outputTail, (tail) =>
               // A cut through a surrogate pair would make encodeURIComponent throw when rendering.
               (tail + outputDecoders[streamName].decode(chunk, { stream: true }))
                 .slice(-STARTUP_FAILURE_OUTPUT_CHARS)
                 .toWellFormed(),
-            ).pipe(Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk))),
+            ).pipe(
+              Effect.flatMap((tail) =>
+                Effect.gen(function* () {
+                  const latest = yield* SubscriptionRef.get(state);
+                  if (
+                    !latest.ready &&
+                    Option.isSome(latest.active) &&
+                    latest.active.value.id === runId
+                  ) {
+                    yield* (
+                      spec.onMigrationProgress?.(databaseMigrationProgress(tail)) ?? Effect.void
+                    );
+                  }
+                }),
+              ),
+              Effect.andThen(backendOutputLog.writeOutputChunk(streamName, chunk)),
+            ),
         }).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(HttpClient.HttpClient, httpClient),

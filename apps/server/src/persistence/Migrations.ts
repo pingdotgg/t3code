@@ -1,6 +1,9 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as DatabaseMigrationProgress from "./DatabaseMigrationProgress.ts";
 import {
   DATABASE_MIGRATION_PROGRESS_MESSAGE,
   DATABASE_MIGRATIONS_FINISHED_MESSAGE,
@@ -278,69 +281,87 @@ export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
 
-export const runMigrations = Effect.fn("runMigrations")(function* ({
-  toMigrationInclusive,
-}: RunMigrationsOptions = {}) {
-  // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
-  const includesV2 =
-    toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
-  if (includesV2) {
-    yield* assertV2MigrationsCanRun(toMigrationInclusive);
-  }
-  const sql = yield* SqlClient.SqlClient;
-  const ledger = yield* sql`
+export const runMigrations = Effect.fn("runMigrations")(
+  function* ({ toMigrationInclusive }: RunMigrationsOptions = {}) {
+    const progress = yield* Effect.serviceOption(
+      DatabaseMigrationProgress.DatabaseMigrationProgress,
+    );
+    // The desktop waits past its readiness budget until the finished line follows this one.
+    if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+    const includesV2 =
+      toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
+    const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+    if (includesV2) {
+      yield* assertV2MigrationsCanRun(toMigrationInclusive);
+    }
+    const sql = yield* SqlClient.SqlClient;
+    const ledger = yield* sql`
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
-  const [latest] =
-    ledger.length === 0
-      ? []
-      : yield* sql<{
-          readonly id: number | null;
-        }>`SELECT MAX(migration_id) AS id FROM effect_sql_migrations`;
-  const latestRecordedId = latest?.id ?? 0;
-  const pending = migrationEntries.filter(
-    ([id]) =>
-      id > latestRecordedId && (toMigrationInclusive === undefined || id <= toMigrationInclusive),
-  );
-  // One transaction per migration: an index build on a large database can take minutes, and a
-  // restart then resumes after the last finished migration instead of rolling all of them back.
-  const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
-  for (const [index, [id, name]] of pending.entries()) {
-    if (latestRecordedId > 0) {
-      yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
-        Effect.annotateLogs({
-          migration: `${id}_${name}`,
-          progress: `${index + 1} of ${pending.length}`,
-        }),
-      );
+    const [latest] =
+      ledger.length === 0
+        ? []
+        : yield* sql<{
+            readonly id: number | null;
+          }>`SELECT MAX(migration_id) AS id FROM effect_sql_migrations`;
+    const latestRecordedId = latest?.id ?? 0;
+    const pending = migrationEntries.filter(
+      ([id]) =>
+        id > latestRecordedId && (toMigrationInclusive === undefined || id <= toMigrationInclusive),
+    );
+    // One transaction per migration: an index build on a large database can take minutes, and a
+    // restart then resumes after the last finished migration instead of rolling all of them back.
+    const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
+    for (const [index, [id, name]] of pending.entries()) {
+      if (Option.isSome(progress)) {
+        yield* Ref.set(progress.value.current, { current: index + 1, total: pending.length });
+      }
+      if (latestRecordedId > 0) {
+        yield* Effect.log(
+          `${DATABASE_MIGRATION_PROGRESS_MESSAGE} (${index + 1} of ${pending.length})`,
+        ).pipe(
+          Effect.annotateLogs({
+            migration: `${id}_${name}`,
+            progress: `${index + 1} of ${pending.length}`,
+          }),
+        );
+      }
+      executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
     }
-    executedMigrations.push(...(yield* run({ loader: makeMigrationLoader(id) })));
-  }
-  const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
-  yield* migrations.length === 0
-    ? Effect.logDebug("Database schema is current")
-    : Effect.log(DATABASE_MIGRATIONS_FINISHED_MESSAGE).pipe(Effect.annotateLogs({ migrations }));
+    const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
+    yield* migrations.length === 0
+      ? Effect.logDebug("Database schema is current")
+      : Effect.log(DATABASE_MIGRATIONS_FINISHED_MESSAGE).pipe(Effect.annotateLogs({ migrations }));
 
-  const recorded = yield* sql<{
-    readonly migration_id: number;
-    readonly name: string;
-  }>`SELECT migration_id, name FROM effect_sql_migrations`;
-  const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
-  const divergent = recorded.flatMap((row) => {
-    const expected = manifestNames.get(row.migration_id);
-    if (expected === undefined) {
-      return [`${row.migration_id}:${row.name} (unknown to this build)`];
+    const recorded = yield* sql<{
+      readonly migration_id: number;
+      readonly name: string;
+    }>`SELECT migration_id, name FROM effect_sql_migrations`;
+    const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
+    const divergent = recorded.flatMap((row) => {
+      const expected = manifestNames.get(row.migration_id);
+      if (expected === undefined) {
+        return [`${row.migration_id}:${row.name} (unknown to this build)`];
+      }
+      return expected === row.name
+        ? []
+        : [`${row.migration_id}:${row.name} (this build: ${expected})`];
+    });
+    if (divergent.length > 0) {
+      yield* Effect.logWarning(
+        "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
+      ).pipe(Effect.annotateLogs({ divergent }));
     }
-    return expected === row.name
-      ? []
-      : [`${row.migration_id}:${row.name} (this build: ${expected})`];
-  });
-  if (divergent.length > 0) {
-    yield* Effect.logWarning(
-      "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
-    ).pipe(Effect.annotateLogs({ divergent }));
-  }
-  return executedMigrations;
-});
+    return executedMigrations;
+  },
+  (effect, _options: RunMigrationsOptions = {}) =>
+    Effect.ensuring(
+      effect,
+      Effect.gen(function* () {
+        const progress = yield* Effect.serviceOption(
+          DatabaseMigrationProgress.DatabaseMigrationProgress,
+        );
+        if (Option.isSome(progress)) yield* Ref.set(progress.value.current, null);
+      }),
+    ),
+);
