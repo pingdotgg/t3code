@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { VcsProcessExitError } from "@t3tools/contracts";
@@ -44,13 +45,16 @@ function setup(input: {
       Effect.map((stdout) => TestSourceControlHost.processOutput(stdout)),
     ),
   );
-  const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
-    Effect.suspend(() => {
-      const response = input.respond(request);
-      return (Effect.isEffect(response) ? response : Effect.succeed(response)).pipe(
-        Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
-      );
-    }),
+  const signals: Array<AbortSignal> = [];
+  const execute = vi.fn(
+    (request: HttpClientRequest.HttpClientRequest, _url: URL, signal: AbortSignal) =>
+      Effect.suspend(() => {
+        signals.push(signal);
+        const response = input.respond(request);
+        return (Effect.isEffect(response) ? response : Effect.succeed(response)).pipe(
+          Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
+        );
+      }),
   );
   const layer = AzureDevOpsRest.layer.pipe(
     Layer.provide(TestSourceControlHost.layer({ process: { run } })),
@@ -61,7 +65,7 @@ function setup(input: {
     AzureDevOpsRest.AzureDevOpsRest.use((rest) =>
       rest.getJson({ cwd: "/w", url, maxOutputBytes: 1_000_000 }),
     );
-  return { run, execute, layer, read };
+  return { run, execute, signals, layer, read };
 }
 
 const ok = (body: unknown) =>
@@ -115,12 +119,17 @@ it.effect("takes a sign-in page in place of JSON as a refusal", () => {
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("hands any other failed response to az without giving up on the organization", () => {
-  const { execute, layer, read } = setup({ respond: () => new Response(null, { status: 404 }) });
+it.effect.each([403, 404])("falls back on HTTP %s without suppressing other reads", (status) => {
+  const { execute, signals, layer, read } = setup({
+    respond: (request) =>
+      request.url.includes("/r1/") ? new Response("unread", { status }) : ok({ allowed: true }),
+  });
   return Effect.gen(function* () {
     assert.isTrue(Option.isNone(yield* read(ACME)));
     assert.isTrue(Option.isNone(yield* read(ACME)));
-    expect(execute).toHaveBeenCalledTimes(2);
+    assert.isTrue(Option.isSome(yield* read(ACME.replace("/r1/", "/r2/"))));
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
   }).pipe(Effect.provide(layer));
 });
 
@@ -147,11 +156,14 @@ it.effect("does not ask az for a token again soon after it could not issue one",
 });
 
 it.effect("hands a response past the output budget to az", () => {
-  const { layer } = setup({ respond: () => ok({ content: "x".repeat(64) }) });
+  const { layer, signals } = setup({ respond: () => ok({ content: "x".repeat(64) }) });
   return AzureDevOpsRest.AzureDevOpsRest.use((rest) =>
     rest.getJson({ cwd: "/w", url: ACME, maxOutputBytes: 16 }),
   ).pipe(
-    Effect.map((body) => assert.isTrue(Option.isNone(body))),
+    Effect.map((body) => {
+      assert.isTrue(Option.isNone(body));
+      expect(signals[0]?.aborted).toBe(true);
+    }),
     Effect.provide(layer),
   );
 });
@@ -212,33 +224,61 @@ it.effect("asks az for a token again after the az login account changes", () => 
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("ignores a delayed refusal from the previous az login account", () =>
-  Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<Response>();
-    const profile = { mtime: SIGNED_IN };
-    const { run, execute, layer, read } = setup({
-      profile,
-      issue: () => Effect.sync(() => tokenJson(profile.mtime === SIGNED_IN ? "old" : "new", 3600)),
-      respond: (request) =>
-        request.headers.authorization === "Bearer old"
-          ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
-          : ok({ value: [] }),
-    });
-    yield* Effect.gen(function* () {
-      const previousAccount = yield* Effect.forkChild(read(ACME));
-      yield* Deferred.await(started);
-      profile.mtime = SWITCHED;
-      assert.isTrue(Option.isSome(yield* read(GLOBEX)));
-      yield* Deferred.succeed(release, new Response(null, { status: 401 }));
-      assert.isTrue(Option.isNone(yield* Fiber.join(previousAccount)));
-      assert.isTrue(Option.isSome(yield* read(ACME)));
-      expect(run).toHaveBeenCalledTimes(2);
-      expect(execute.mock.calls.map(([request]) => request.headers.authorization)).toEqual([
-        "Bearer old",
-        "Bearer new",
-        "Bearer new",
-      ]);
-    }).pipe(Effect.provide(layer));
-  }),
+it.effect.each([
+  { status: 401, concurrentRead: true },
+  { status: 200, concurrentRead: true },
+  { status: 200, concurrentRead: false },
+])(
+  "ignores a delayed HTTP $status from the previous account, concurrent read: $concurrentRead",
+  ({ status, concurrentRead }) =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<Response>();
+      const profile = { mtime: SIGNED_IN };
+      const { run, execute, layer, read } = setup({
+        profile,
+        issue: () =>
+          Effect.sync(() => tokenJson(profile.mtime === SIGNED_IN ? "old" : "new", 3600)),
+        respond: (request) =>
+          request.headers.authorization === "Bearer old"
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : ok({ value: [] }),
+      });
+      yield* Effect.gen(function* () {
+        const previousAccount = yield* Effect.forkChild(read(ACME));
+        yield* Deferred.await(started);
+        profile.mtime = SWITCHED;
+        if (concurrentRead) assert.isTrue(Option.isSome(yield* read(GLOBEX)));
+        yield* Deferred.succeed(
+          release,
+          status === 200 ? ok({ account: "old" }) : new Response(null, { status }),
+        );
+        assert.isTrue(Option.isNone(yield* Fiber.join(previousAccount)));
+        assert.isTrue(Option.isSome(yield* read(ACME)));
+        expect(run).toHaveBeenCalledTimes(2);
+        expect(execute.mock.calls.map(([request]) => request.headers.authorization)).toEqual([
+          "Bearer old",
+          ...(concurrentRead ? ["Bearer new"] : []),
+          "Bearer new",
+        ]);
+      }).pipe(Effect.provide(layer));
+    }),
 );
+
+it.effect("keeps repository paths out of HTTP tracing", () => {
+  const spans: Array<Tracer.Span> = [];
+  const tracer = Tracer.make({
+    span(options) {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      return span;
+    },
+  });
+  const { layer, read } = setup({ respond: () => ok({}) });
+  return Effect.gen(function* () {
+    assert.isTrue(Option.isSome(yield* read(`${ACME}?path=%2Fprivate%2Ffile.ts`)));
+    expect(spans.flatMap((span) => [...span.attributes.values()]).join(" ")).not.toContain(
+      "private",
+    );
+  }).pipe(Effect.provide(layer), Effect.provideService(Tracer.Tracer, tracer));
+});
