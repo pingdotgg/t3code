@@ -3070,10 +3070,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
-      const sessions = yield* modifyManagerState(
+      const [sessions, pendingKills] = yield* modifyManagerState(
         (state) =>
           [
-            [...state.sessions.values()],
+            [[...state.sessions.values()], [...state.killFibers.values()]],
             {
               ...state,
               sessions: new Map(),
@@ -3090,10 +3090,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* runKillEscalation(session.process, session.threadId, session.terminalId);
       });
 
-      yield* Effect.forEach(sessions, cleanupSession, {
-        concurrency: "unbounded",
-        discard: true,
-      });
+      // Closing workerScope next would interrupt escalations of already stopped terminals.
+      yield* Effect.all(
+        [
+          Effect.forEach(sessions, cleanupSession, { concurrency: "unbounded", discard: true }),
+          Fiber.awaitAll(pendingKills),
+        ],
+        { concurrency: "unbounded", discard: true },
+      );
     }).pipe(Effect.ignoreCause({ log: true })),
   );
 

@@ -2583,6 +2583,30 @@ it.layer(
     }),
   );
 
+  it.effect("force-kills a closed terminal that ignores SIGTERM when the manager shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 1_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
+
+      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(process.exitListenerCount).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex_work");
