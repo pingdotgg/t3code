@@ -1977,29 +1977,56 @@ it.layer(
     }),
   );
 
-  it.effect("starts a $SHELL whose path contains a space", () =>
+  it.effect("starts an existing $SHELL whose path contains spaces before a dash", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-path-" });
+      const bin = join(root, "Jane -Doe Smith", ".local", "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      yield* fs.writeFileString(join(bin, "fish"), "");
+      // Temp dirs are not POSIX-absolute on Windows, so stat maps a fixed POSIX prefix onto them.
+      const fixtureFs = FileSystem.FileSystem.of({
+        ...fs,
+        stat: (filePath) =>
+          fs.stat(
+            filePath.startsWith("/shell-fixture/")
+              ? join(root, filePath.slice("/shell-fixture/".length))
+              : filePath,
+          ),
+      });
       const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: "/Users/Jane Doe/.local/bin/fish" },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        env: { SHELL: "/shell-fixture/Jane -Doe Smith/.local/bin/fish -l" },
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("darwin")),
+        Effect.provideService(FileSystem.FileSystem, fixtureFs),
+      );
 
       yield* manager.open(openInput());
 
       expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
-        "/Users/Jane Doe/.local/bin/fish",
+        "/shell-fixture/Jane -Doe Smith/.local/bin/fish",
       ]);
     }),
   );
 
-  it.effect("starts a quoted $SHELL whose path contains a space and a dash", () =>
+  it.effect("keeps missing or quoted $SHELL paths that contain spaces", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: '"/opt/my -shell/fish" -l' },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      for (const [shell, expected] of [
+        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
+        ['"/opt/my -shell/fish" -l', "/opt/my -shell/fish"],
+      ]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { SHELL: shell },
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
 
-      yield* manager.open(openInput());
+        yield* manager.open(openInput());
 
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/opt/my -shell/fish"]);
+        expect(
+          ptyAdapter.spawnInputs.map((input) => input.shell),
+          shell,
+        ).toEqual([expected]);
+      }
     }),
   );
 
