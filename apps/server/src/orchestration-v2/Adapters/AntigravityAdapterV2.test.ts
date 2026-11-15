@@ -36,6 +36,10 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  makeAcpAdapterV2,
+  type AcpAdapterV2RuntimeInput,
+} from "@t3tools/provider-acp/server/adapter";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -876,7 +880,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
 /** The agent reports one tool, answers end_turn, and the user optionally presses Stop after. */
 const endTurnAfterTool = (
   tool: Extract<EffectAcpSchema.SessionNotification["update"], { sessionUpdate: "tool_call" }>,
-  options: { readonly stopAfterReply: boolean; readonly detachedCommand?: boolean },
+  options: {
+    readonly stopAfterReply: boolean;
+    readonly detachedCommand?: boolean;
+    readonly terminateAfterReply?: "wire-settled" | "deferred";
+  },
 ) =>
   Effect.gen(function* () {
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -948,12 +956,19 @@ const endTurnAfterTool = (
     );
     type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
     let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
-    const promptReturned = yield* Deferred.make<void>();
+    const promptSettled = yield* Deferred.make<void>();
+    const promptCallback = yield* Deferred.make<void>();
+    const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
     const instanceId = ProviderInstanceId.make("antigravity-running-command-test");
     const threadId = ThreadId.make("thread-antigravity-running-command");
-    const adapter = yield* makeAntigravityAdapterV2({
+    const selfInvocation = yield* resolveSelfInvocation();
+    const adapterFlavor = makeAntigravityAcpAdapterFlavor({
+      random: crypto,
+      fileSystem: fs,
+      path,
+      host: yield* ProviderHost.ProviderHost,
       instanceId,
-      selfInvocation: yield* resolveSelfInvocation(),
+      selfInvocation,
       makeRuntime: (input) =>
         makeAntigravityAcpRuntime({
           ...input,
@@ -978,7 +993,7 @@ const endTurnAfterTool = (
                 sessionUpdate = handler;
               }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
             prompt: (payload, promptOptions) =>
-              (options.detachedCommand
+              options.detachedCommand
                 ? runtime.prompt(payload, promptOptions)
                 : Effect.gen(function* () {
                     if (sessionUpdate === undefined) {
@@ -991,12 +1006,36 @@ const endTurnAfterTool = (
                       }),
                     );
                     return { stopReason: "end_turn" as const };
-                  })
-              ).pipe(Effect.ensuring(Deferred.succeed(promptReturned, undefined))),
+                  }),
           })),
         ),
       withProcess: (_stop, task) => task,
       defaultModel: Effect.undefined,
+    });
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation,
+      flavor: {
+        ...adapterFlavor,
+        makeRuntime: (input) => {
+          runtimeInputs.push(input);
+          return adapterFlavor.makeRuntime(input);
+        },
+      },
+      testHooks: {
+        afterPromptWireSettled: () =>
+          options.terminateAfterReply === "wire-settled"
+            ? runtimeInputs[0]!.onTermination(
+                new EffectAcpErrors.AcpTransportError({
+                  detail: "Injected runtime death",
+                  cause: "test",
+                }),
+              )
+            : Effect.void,
+        afterPromptCallback: () => Deferred.succeed(promptCallback, undefined).pipe(Effect.asVoid),
+        afterPromptSettledWithBackgroundWork: () =>
+          Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
+      },
     });
     const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
       runtimeMode: "full-access",
@@ -1076,7 +1115,11 @@ const endTurnAfterTool = (
         itemStatus = event.turnItem.status;
       }
     }
-    yield* Deferred.await(promptReturned);
+    if (options.terminateAfterReply === "wire-settled") {
+      yield* Deferred.await(promptCallback);
+    } else if (options.stopAfterReply || options.terminateAfterReply) {
+      yield* Deferred.await(promptSettled);
+    }
     const processes = options.detachedCommand ? yield* readReceipt() : [];
     if (options.detachedCommand) {
       assert.equal(processes.length, 3);
@@ -1090,6 +1133,27 @@ const endTurnAfterTool = (
     if (options.stopAfterReply) {
       yield* session.interruptTurn({ providerThread, providerTurnId, requestRuntimeRestart: true });
     }
+    if (options.terminateAfterReply) {
+      if (options.terminateAfterReply === "deferred") {
+        yield* runtimeInputs[0]!.onTermination(
+          new EffectAcpErrors.AcpTransportError({
+            detail: "Injected runtime death",
+            cause: "test",
+          }),
+        );
+      }
+      const snapshot = yield* session.readThreadSnapshot({ providerThread });
+      assert.equal(
+        snapshot.providerTurns.find((turn) => turn.id === providerTurnId)?.status,
+        "failed",
+      );
+      assert.lengthOf(runtimeInputs, 2, "runtime death must require a replacement runtime");
+      yield* runtimeInputs[0]!.onTermination(
+        new EffectAcpErrors.AcpTransportError({ detail: "Stale runtime death", cause: "test" }),
+      );
+      yield* session.readThreadSnapshot({ providerThread });
+      assert.lengthOf(runtimeInputs, 2, "a stale death must not poison the replacement runtime");
+    }
 
     let terminalStatus: string | null = null;
     while (terminalStatus === null) {
@@ -1100,7 +1164,10 @@ const endTurnAfterTool = (
       ) {
         itemStatus = event.turnItem.status;
       }
-      if (event.type === "turn.terminal") terminalStatus = event.status;
+      if (event.type === "turn.terminal") {
+        terminalStatus = event.status;
+        if (options.terminateAfterReply) assert.equal(event.failure?.class, "transport_error");
+      }
     }
     if (options.detachedCommand) {
       const survivors = processes.filter(executing);
@@ -1125,9 +1192,29 @@ describe("AntigravityAdapterV2 running commands", () => {
         },
         { stopAfterReply: true, detachedCommand: (yield* HostProcess.Platform) === "linux" },
       );
-      // It never reported finishing, so it must not be shown as completed.
-      assert.notEqual(result.itemStatus, "completed");
+      assert.equal(result.itemStatus, "interrupted");
+      assert.equal(result.terminalStatus, "interrupted");
     }),
+  );
+
+  it.live.each(["wire-settled", "deferred"] as const)(
+    "fails a command and turn when its runtime dies after %s",
+    (terminateAfterReply) =>
+      Effect.gen(function* () {
+        const result = yield* endTurnAfterTool(
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "watcher",
+            title: "Running run_command",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { CommandLine: "tail -f app.log" },
+          },
+          { stopAfterReply: false, terminateAfterReply },
+        );
+        assert.equal(result.itemStatus, "failed");
+        assert.equal(result.terminalStatus, "failed");
+      }),
   );
 
   it.effect("completes the turn at end_turn while a launched subagent batch runs", () =>

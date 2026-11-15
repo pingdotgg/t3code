@@ -1513,6 +1513,7 @@ interface ActiveAcpTurn {
   finalized: boolean;
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   promptSettled: boolean;
+  runtimeTerminated: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   workAccepted: boolean;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
@@ -2514,12 +2515,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? notePromptProgress()
               : Effect.void,
           );
+        const failTurnOnRuntimeTermination = Effect.fn("AcpAdapterV2.failTurnOnRuntimeTermination")(
+          function* (context: ActiveAcpTurn, runtimeGeneration: number) {
+            yield* quarantineNativeTransportAtGeneration(runtimeGeneration);
+            yield* advanceRuntimeCallbackGeneration;
+            yield* cancelPendingRuntimeRequests();
+            for (const tool of context.tools.values()) {
+              const status = toolStatus(tool.status);
+              if (status === "pending" || status === "running" || status === "waiting") {
+                yield* emitTool(context, tool, context.interrupted ? "interrupted" : "failed");
+              }
+            }
+            yield* finalizeTurn(
+              context,
+              "failed",
+              makeProviderFailure({ class: "transport_error" }),
+            );
+          },
+        );
         const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              if (!followsAgentWorkState) return;
+              if (!followsAgentWorkState) {
+                const context = yield* Ref.get(activeTurn);
+                if (context === null || context.finalized) return;
+                context.runtimeTerminated = true;
+                if (context.promptSettled) {
+                  yield* failTurnOnRuntimeTermination(context, runtimeGeneration);
+                }
+                return;
+              }
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -8629,6 +8656,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               finalized: false,
               finalizedStatus: null,
               promptSettled: false,
+              runtimeTerminated: false,
               promptSettledStatus: null,
               workAccepted: false,
               promptWireSettled,
@@ -8860,6 +8888,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       });
                     }
                     if (context.finalized || followsAgentWorkState) return;
+                    if (
+                      context.runtimeTerminated &&
+                      flavor.deferFinalizeForBackgroundWork === true
+                    ) {
+                      yield* failTurnOnRuntimeTermination(context, promptGeneration);
+                      return;
+                    }
                     // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
                     const hiddenFailure =
                       checkPromptOutcome === undefined ||
