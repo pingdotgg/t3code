@@ -10,7 +10,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 import * as EntireSourceControlProvider from "./EntireSourceControlProvider.ts";
 import * as Fixtures from "./entireFixtures.ts";
-import { realGit } from "./entireGitFixture.ts";
+import { realGit, makeTrailRepository, run, commit } from "./entireGitFixture.ts";
 import { fakeEntire, PROJECT_ID, PROJECT_TRAILS, REMOTE_URL, REPO_ID } from "./entireTestServer.ts";
 
 const NoFiles = FileSystem.layerNoop({});
@@ -73,27 +73,33 @@ describe("EntireSourceControlProvider", () => {
     ),
   );
 
-  it.effect("names a trail's repository by its clone URL and only Entire remotes", () => {
-    const server = fakeEntire({ "GET /trails/7": Fixtures.detail });
-    return Effect.gen(function* () {
-      const provider = yield* EntireSourceControlProvider.make;
-      assert.strictEqual(provider.repositoryNameFromRemoteUrl?.(REMOTE_URL), "gh/acme/web");
-      assert.isNull(provider.repositoryNameFromRemoteUrl?.("git@github.com:acme/web.git") ?? null);
-      const trail = yield* provider.getChangeRequest({
-        cwd: "/repo",
-        reference: "https://entire.io/gh/acme/web/trails/7",
-      });
-      assert.deepInclude(trail, {
-        provider: SourceControlProviderKind.make("entire"),
-        number: 7,
-        headRefName: "feature",
-        baseRefName: "main",
-        headSha: Fixtures.HEAD_SHA,
-        state: "open",
-      });
-      assert.isTrue(Option.isSome(trail.updatedAt));
-    }).pipe(Effect.provide(withFiles(server)));
-  });
+  it.effect.each([Fixtures.detail, Fixtures.approvalsDisabled])(
+    "names a trail's repository by its clone URL and only Entire remotes",
+    (fixture) => {
+      const server = fakeEntire({ "GET /trails/7": fixture });
+      return Effect.gen(function* () {
+        const provider = yield* EntireSourceControlProvider.make;
+        assert.strictEqual(provider.repositoryNameFromRemoteUrl?.(REMOTE_URL), "gh/acme/web");
+        assert.isNull(
+          provider.repositoryNameFromRemoteUrl?.("git@github.com:acme/web.git") ?? null,
+        );
+        const trail = yield* provider.getChangeRequest({
+          cwd: "/repo",
+          reference: "https://entire.io/gh/acme/web/trails/7",
+        });
+        assert.deepInclude(trail, {
+          provider: SourceControlProviderKind.make("entire"),
+          number: 7,
+          headRefName: "feature",
+          baseRefName: "main",
+          headSha: Fixtures.HEAD_SHA,
+          state: "open",
+        });
+        assert.isTrue(Option.isSome(trail.updatedAt));
+        assert.notStrictEqual(trail.isDraft, true);
+      }).pipe(Effect.provide(withFiles(server)));
+    },
+  );
 
   it.effect("reads a named trail by path, and says why it found no remote, when git fails", () => {
     const gitFailure = new GitCommandError({
@@ -128,28 +134,43 @@ describe("EntireSourceControlProvider", () => {
     }).pipe(Effect.provide(withFiles(server)));
   });
 
-  it.effect("finds a branch's trails by reading the trail list", () => {
-    const server = fakeEntire({
-      "GET /trails": {
-        items: [Fixtures.trail, { ...Fixtures.trail, number: 8, branch: "other" }],
-        next_cursor: null,
-      },
-    });
-    return Effect.gen(function* () {
-      const provider = yield* EntireSourceControlProvider.make;
-      const trails = yield* provider.listChangeRequests({
-        cwd: "/repo",
-        headSelector: "feature",
-        state: "open",
+  it.effect.each([true, false])(
+    "finds a branch's trails by reading the trail list",
+    (approvals) => {
+      const server = fakeEntire({
+        "GET /trails/gates": {
+          gates: [
+            { gateKey: "approvals", gateType: "approvals", scopeType: "repo", enabled: approvals },
+          ],
+        },
+        "GET /trails": {
+          items: [
+            { ...Fixtures.trail, ready_for_review: false },
+            { ...Fixtures.trail, number: 8, branch: "other" },
+          ],
+          next_cursor: null,
+        },
       });
-      assert.deepStrictEqual(
-        trails.map((trail) => trail.number),
-        [7],
-      );
-      // Entire narrows the list to trails whose title or branch contains the branch's name.
-      assert.strictEqual(server.sent[0]?.query.get("q"), "feature");
-    }).pipe(Effect.provide(withFiles(server)));
-  });
+      return Effect.gen(function* () {
+        const provider = yield* EntireSourceControlProvider.make;
+        const trails = yield* provider.listChangeRequests({
+          cwd: "/repo",
+          headSelector: "feature",
+          state: "open",
+        });
+        assert.deepStrictEqual(
+          trails.map((trail) => trail.number),
+          [7],
+        );
+        assert.strictEqual(trails[0]?.isDraft === true, approvals);
+        // Entire narrows the list to trails whose title or branch contains the branch's name.
+        assert.strictEqual(
+          server.sent.find((request) => request.path === "/trails")?.query.get("q"),
+          "feature",
+        );
+      }).pipe(Effect.provide(withFiles(server)));
+    },
+  );
 
   it.effect("says it could not finish a branch's search rather than finding no trail", () => {
     let page = 0;
@@ -360,6 +381,44 @@ describe("EntireSourceControlProvider", () => {
         assert.deepStrictEqual(fetched, ["origin/feature->feature"]);
         assert.deepStrictEqual(switched, ["feature"]);
       }).pipe(Effect.provide(withFiles(server)));
+    });
+
+    it.effect("fast-forwards an existing trail branch and preserves divergent commits", () => {
+      const repository = makeTrailRepository();
+      run(repository.work, "branch", "--force", "feature", repository.base);
+      const server = fakeEntire(
+        { "GET /trails/7": Fixtures.detail },
+        {
+          git: {
+            ...realGit,
+            listLocalBranchNames: () => Effect.succeed(["main", "feature"]),
+            setBranchUpstream: ({ cwd, branch, remoteName, remoteBranch }) =>
+              Effect.sync(() => {
+                run(cwd, "branch", "--set-upstream-to", remoteName + "/" + remoteBranch, branch);
+              }),
+            switchRef: ({ cwd, refName }) =>
+              Effect.sync(() => {
+                run(cwd, "checkout", refName);
+                return { refName };
+              }),
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const provider = yield* EntireSourceControlProvider.make;
+        const input = { cwd: repository.work, reference: "7" };
+        yield* provider.checkoutChangeRequest(input);
+        assert.strictEqual(run(repository.work, "rev-parse", "HEAD"), repository.head);
+        const local = commit(repository.work, { "local.txt": "local" }, "local change");
+        run(repository.work, "checkout", "-B", "remote-change", repository.head);
+        commit(repository.work, { "remote.txt": "remote" }, "remote change");
+        run(repository.work, "push", "origin", "HEAD:feature");
+        run(repository.work, "checkout", "feature");
+        const failure = yield* provider.checkoutChangeRequest(input).pipe(Effect.flip);
+        assert.include(failure.detail, "fast-forwarded");
+        assert.strictEqual(run(repository.work, "rev-parse", "feature"), local);
+        assert.strictEqual(run(repository.work, "rev-parse", "HEAD"), local);
+      }).pipe(Effect.provide(withFiles(server)), Effect.ensuring(repository.cleanup));
     });
 
     it.effect("refuses a branch name git would read as a refspec or pattern", () => {

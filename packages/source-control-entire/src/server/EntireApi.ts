@@ -232,7 +232,8 @@ export const make = Effect.gen(function* () {
       return yield* fail({
         status: null,
         reason: "failed",
-        detail: `The Entire CLI named ${apiUrl} as the API, which is not an Entire API host.`,
+        detail: "The Entire CLI named an unsupported API host.",
+        cause: apiUrl,
       });
     yield* Effect.annotateCurrentSpan({
       "entire.operation": input.operation,
@@ -319,9 +320,8 @@ export const make = Effect.gen(function* () {
       reason: reasonForStatus(status),
       detail: trailsOff
         ? "Trails aren't turned on for this repository on Entire, or you can't see it."
-        : (EntireCli.boundedDetail(
-            problem?.detail ?? problem?.error?.replaceAll("_", " ") ?? problem?.title,
-          ) ?? `Entire answered HTTP ${status}.`),
+        : `Entire answered HTTP ${status}.`,
+      cause: problem,
     });
   });
 

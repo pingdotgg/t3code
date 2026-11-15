@@ -2369,6 +2369,7 @@ export const make = Effect.gen(function* () {
           );
         }
         return rewrite({
+          expectedBody: input.expectedBody,
           cwd: project.project.workspaceRoot,
           repository: project.repository,
           host: project.host,

@@ -270,6 +270,7 @@ describe("entireTrailJson", () => {
         checks.map((check) => [check.name, check.status, check.description]),
         [
           ["Entire: findings", "failure", "Unresolved findings: 1 without a severity"],
+          ["Entire: checks", "failure", "lint is failing"],
           ["build", "success", "Buildkite"],
           ["lint", "pending", null],
           ["Entire: up_to_date", "success", null],
@@ -281,6 +282,21 @@ describe("entireTrailJson", () => {
         "https://entire.com/gh/acme/web/trails/7/add-the-thing",
       );
       assert.strictEqual(Json.toChecksState(checks), "failing");
+      const gateOnly = decodeDetail({
+        ...Fixtures.blocked,
+        mergeability: {
+          ...Fixtures.blocked.mergeability,
+          gates: Fixtures.blocked.mergeability.gates.filter((gate) => gate.gate_type === "checks"),
+          checks: {
+            availability: "available",
+            runs: Fixtures.detail.mergeability.checks.runs.filter(
+              (run) => run.status === "success",
+            ),
+          },
+        },
+      });
+      assert.strictEqual(Json.toChecksState(Json.toChecks(gateOnly, repo)), "failing");
+      assert.strictEqual(Json.toSummaryChecksState(gateOnly, repo), "failing");
     });
 
     it("says a failing gate fails even when the CI runs could not be read", () => {

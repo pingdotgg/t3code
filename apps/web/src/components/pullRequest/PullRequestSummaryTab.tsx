@@ -573,6 +573,7 @@ export function PullRequestSummaryTab({
   const [bodyScope, setBodyScope] = useState<{
     readonly url: string;
     readonly body: string;
+    readonly expectedBody: string;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
   const descriptionDraftKept = descriptionDraftInForce(
@@ -651,7 +652,14 @@ export function PullRequestSummaryTab({
     const key = detail.url;
     setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
     descriptionSavesRunning.current += 1;
-    const result = await update({ environmentId, input: { ...reference, body } });
+    const result = await update({
+      environmentId,
+      input: {
+        ...reference,
+        body,
+        expectedBody: bodyScope?.url === detail.url ? bodyScope.expectedBody : description,
+      },
+    });
     descriptionSavesRunning.current -= 1;
     const saved = result._tag === "Success";
     setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
@@ -987,7 +995,9 @@ export function PullRequestSummaryTab({
               {canEditDescription ? (
                 <PullRequestEditButton
                   aria-label="Edit description"
-                  onClick={() => setBodyScope({ url: detail.url, body: description })}
+                  onClick={() =>
+                    setBodyScope({ url: detail.url, body: description, expectedBody: description })
+                  }
                 />
               ) : null}
             </div>

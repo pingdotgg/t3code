@@ -16,7 +16,7 @@ interface ProseMirrorNode {
 
 /** Entire's self-link at the top of a trail body is noise inside the trail itself. */
 const TRAIL_LINK =
-  /<!--\s*entire-trail-link-start\s*-->[\s\S]*?<!--\s*entire-trail-link-end\s*-->/gu;
+  /^\s*<!--\s*entire-trail-link-start\s*-->[\s\S]*?<!--\s*entire-trail-link-end\s*-->/u;
 
 const isNode = (value: unknown): value is ProseMirrorNode =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -40,10 +40,16 @@ const longestBacktickRun = (text: string) =>
 
 /**
  * Typed characters markdown would read as formatting. A delimiter needs a partner, so a lone one
- * stays as typed, as does `_` inside a word; a partner in a neighbouring node is not looked for.
+ * stays as typed, as does `_` inside a word.
  */
-function escapeText(text: string): string {
-  const paired = (char: string) => text.split(char).length > 2;
+function delimiterCounts(text: string): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const char of text) if ("`*~_".includes(char)) counts.set(char, (counts.get(char) ?? 0) + 1);
+  return counts;
+}
+
+function escapeText(text: string, counts = delimiterCounts(text)): string {
+  const paired = (char: string) => (counts.get(char) ?? 0) > 1;
   return text
     .replace(/\\(?=[!-/:-@[-`{-~])/gu, "\\\\")
     .replace(/[`*~]/gu, (char) => (paired(char) ? `\\${char}` : char))
@@ -51,7 +57,11 @@ function escapeText(text: string): string {
     .replace(/\[(?=[^\]]*\]\()/gu, "\\[");
 }
 
-function renderText(node: ProseMirrorNode, lose: Lose): string {
+function renderText(
+  node: ProseMirrorNode,
+  lose: Lose,
+  counts?: ReadonlyMap<string, number>,
+): string {
   const raw = typeof node.text === "string" ? node.text : "";
   if (raw === "") return "";
   const marks = Array.isArray(node.marks) ? node.marks : [];
@@ -64,7 +74,7 @@ function renderText(node: ProseMirrorNode, lose: Lose): string {
     const pad = raw.startsWith("`") || raw.endsWith("`") ? " " : "";
     return `${delimiter}${pad}${raw}${pad}${delimiter}`;
   }
-  let text = escapeText(raw);
+  let text = escapeText(raw, counts);
   if (has("bold")) text = `**${text}**`;
   // `*`, not `_`: Entire's markdown converter reads only `*` emphasis back.
   if (has("italic")) text = `*${text}*`;
@@ -72,13 +82,20 @@ function renderText(node: ProseMirrorNode, lose: Lose): string {
   const link = marks.find((mark) => mark?.type === "link");
   const href = link ? safeHref(link.attrs?.href) : null;
   if (link && href === null) lose("links that aren't web or mail links");
-  return href ? `[${text}](${href})` : text;
+  if (href && /[()\\<>\s]/u.test(href)) lose("link destinations containing markdown delimiters");
+  return href ? `[${text}](${href.replace(/[()\\<>\s]/gu, (char) => `\\${char}`)})` : text;
 }
 
 function renderInline(node: ProseMirrorNode, lose: Lose): string {
+  const counts = delimiterCounts(
+    children(node)
+      .filter((child) => !child.marks?.some((mark) => mark.type === "code"))
+      .map((child) => (typeof child.text === "string" ? child.text : ""))
+      .join(""),
+  );
   return children(node)
     .map((child) => {
-      if (child.type === "text") return renderText(child, lose);
+      if (child.type === "text") return renderText(child, lose, counts);
       // A trailing backslash is a hard break Entire's converter keeps; a bare newline joins.
       if (child.type === "hardBreak") return "\\\n";
       lose(unsupported(child));
@@ -211,7 +228,7 @@ const BLANK_QUOTE = /^\s{0,3}>\s*$/u;
 const LIST_ITEM = /^(\s*)(?:[-*+]|(\d+)[.)])\s+/u;
 const UNDERSCORE_EMPHASIS = /(^|[^\w\\])(__?)(?=\S).*?(?<=\S)\2(?!\w)/u;
 const STRIKE = /~~(?=\S).*?~~/u;
-const ESCAPE = /\\[\\`*_~[\]#>+.)-]/u;
+const ESCAPE = /\\[\\`*_~[\]#>+.()-]/u;
 /** `***x***` reads back as bold `*x` and a stray `*`. */
 const BOLD_ITALIC = /\*\*\*/u;
 

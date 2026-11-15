@@ -211,6 +211,7 @@ export const make = Effect.gen(function* () {
   const toChangeRequest = (
     trail: Json.EntireTrail & { readonly head_sha?: string | null | undefined },
     target: Target,
+    isDraft = Json.isDraftTrail(trail),
   ): ChangeRequest => {
     const head = trail.head_sha?.trim();
     const branch = Json.trailHeadBranch(trail).trim();
@@ -223,7 +224,7 @@ export const make = Effect.gen(function* () {
       headRefName: branch || `trail-${trail.number}`,
       ...(head ? { headSha: head } : {}),
       state: Json.trailState(trail.status),
-      ...(Json.isDraftTrail(trail) ? { isDraft: true } : {}),
+      ...(isDraft ? { isDraft: true } : {}),
       mergedAt: trail.merged_at ?? null,
       updatedAt: DateTime.make(trail.updated_at),
       isCrossRepository: false,
@@ -235,11 +236,25 @@ export const make = Effect.gen(function* () {
     kind: KIND,
     repositoryNameFromRemoteUrl: (url) => EntireUrls.parseEntireRemote(url)?.repository ?? null,
     getChangeRequest: Effect.fn("EntireSourceControlProvider.getChangeRequest")((input) =>
-      getTrail(input).pipe(Effect.map(({ trail, target }) => toChangeRequest(trail, target))),
+      getTrail(input).pipe(
+        Effect.map(({ trail, target }) =>
+          toChangeRequest(trail, target, Json.isDraftDetail(trail)),
+        ),
+      ),
     ),
     listChangeRequests: Effect.fn("EntireSourceControlProvider.listChangeRequests")(
       function* (input) {
         const target = yield* resolveTarget("listChangeRequests", input);
+        const readinessCounts = yield* read(
+          "listChangeRequests",
+          input.cwd,
+          target,
+          { path: "/trails/gates" },
+          Json.EntireGateSettings,
+        ).pipe(
+          Effect.map(Json.approvalsGateOn),
+          Effect.orElseSucceed(() => true),
+        );
         const branch = SourceControlProvider.sourceBranch(input);
         const limit = input.limit ?? 20;
         const items: Array<ChangeRequest> = [];
@@ -266,7 +281,9 @@ export const make = Effect.gen(function* () {
           );
           for (const trail of batch.items)
             if (Json.trailHeadBranch(trail) === branch && items.length < limit)
-              items.push(toChangeRequest(trail, target));
+              items.push(
+                toChangeRequest(trail, target, readinessCounts && Json.isDraftTrail(trail)),
+              );
           const previous: string | null = cursor;
           cursor = batch.next_cursor ?? null;
           if (cursor === null || cursor === previous) break;
@@ -385,7 +402,12 @@ export const make = Effect.gen(function* () {
           target.remote?.url ??
           (yield* cli.repository(`/${target.repository}`).pipe(
             Effect.mapError((cause) =>
-              error("getRepositoryCloneUrls", input.cwd, cause.message, cause),
+              error(
+                "getRepositoryCloneUrls",
+                input.cwd,
+                "Could not locate the Entire repository.",
+                cause,
+              ),
             ),
             Effect.map(({ cluster }) =>
               cluster !== null && EntireUrls.isEntireCluster(cluster)
@@ -463,16 +485,37 @@ export const make = Effect.gen(function* () {
               cwd: input.cwd,
               args: ["checkout", "-B", branch, `refs/remotes/${remoteName}/${branch}`, "--"],
             });
+          if (input.force !== true && branches.includes(branch)) {
+            yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: branch }));
+            yield* git
+              .execute({
+                operation: "EntireSourceControlProvider.checkoutChangeRequest",
+                cwd: input.cwd,
+                args: ["merge", "--ff-only", `refs/remotes/${remoteName}/${branch}`],
+              })
+              .pipe(
+                Effect.mapError((cause) =>
+                  error(
+                    "checkoutChangeRequest",
+                    input.cwd,
+                    "The local branch could not be fast-forwarded to the Entire trail. Resolve divergent commits or local changes first.",
+                    cause,
+                  ),
+                ),
+              );
+          }
           yield* git.setBranchUpstream({ ...remoteBranch, branch });
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: branch }));
         }).pipe(
           Effect.mapError((cause) =>
-            error(
-              "checkoutChangeRequest",
-              input.cwd,
-              "Could not check out the Entire trail.",
-              cause,
-            ),
+            cause instanceof SourceControlProviderError
+              ? cause
+              : error(
+                  "checkoutChangeRequest",
+                  input.cwd,
+                  "Could not check out the Entire trail.",
+                  cause,
+                ),
           ),
         );
       },

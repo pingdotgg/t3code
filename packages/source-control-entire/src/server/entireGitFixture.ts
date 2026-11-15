@@ -26,7 +26,11 @@ const REPOSITORY_SELECTORS = new Set([
 // The developer's own git config must not shape the fixture or the patch.
 const GIT_ENV = {
   ...Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !REPOSITORY_SELECTORS.has(name)),
+    Object.entries(process.env).filter(
+      ([name]) =>
+        !REPOSITORY_SELECTORS.has(name) &&
+        !/^GIT_CONFIG_(?:PARAMETERS|COUNT|KEY_\d+|VALUE_\d+)$/u.test(name),
+    ),
   ),
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_NOSYSTEM: "1",

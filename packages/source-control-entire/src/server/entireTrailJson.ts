@@ -278,7 +278,7 @@ function approvalsDisabled(detail: EntireTrailDetail): boolean {
   return detail.actions?.approve.reason === "approvals_disabled";
 }
 
-function isDraftDetail(detail: EntireTrailDetail): boolean {
+export function isDraftDetail(detail: EntireTrailDetail): boolean {
   return !approvalsDisabled(detail) && isDraftTrail(detail);
 }
 
@@ -426,7 +426,8 @@ function gateChecks(
   return blockingGates(detail)
     .filter(
       (gate) =>
-        gate.gate_type !== "approvals" && (gate.gate_type !== "checks" || !runsRead(detail)),
+        gate.gate_type !== "approvals" &&
+        (gate.gate_type !== "checks" || !runsRead(detail) || gate.status !== "passed"),
     )
     .map((gate) => ({
       name: `Entire: ${gate.gate_key}`,

@@ -28,6 +28,8 @@ it.each([
   ["https://github.com/T3Tools/t3code.git", "T3Tools/t3code"],
   ["https://github.com/T3Tools/t3code.git?view=compact", "T3Tools/t3code"],
   ["https://github.com/T3Tools/t3code.git#section", "T3Tools/t3code"],
+  ["entire://aws-us-east-2.entire.io/gh/Acme/Web.git?view=compact", "gh/Acme/Web"],
+  ["entire://aws-us-east-2.entire.io/gh/Acme/Web.git#section", "gh/Acme/Web"],
   ["C:/repos/t3code", null],
 ])("reads the repository path of %s", (remoteUrl, expected) => {
   assert.strictEqual(repositoryPathFromRemoteUrl(remoteUrl), expected);

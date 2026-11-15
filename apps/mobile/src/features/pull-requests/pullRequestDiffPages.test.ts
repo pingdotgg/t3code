@@ -155,5 +155,8 @@ describe("paged mobile pull request diffs", () => {
     const refreshed = retainPullRequestDiffPage(pages, null, diff("changed.ts"));
     expect(refreshed).toHaveLength(1);
     expect(refreshed[0]?.result.patch).toContain("changed.ts");
+    const revision = retainPullRequestDiffPage(pages, null, { ...first, headSha: "new-head" });
+    expect(revision).toHaveLength(1);
+    expect(revision[0]?.result.headSha).toBe("new-head");
   });
 });

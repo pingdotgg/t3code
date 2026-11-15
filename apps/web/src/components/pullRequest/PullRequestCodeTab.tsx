@@ -337,6 +337,7 @@ interface MutableAnnotationGroup {
 }
 
 interface DraftAnchor {
+  readonly headSha?: string;
   readonly fileKey: string;
   readonly path: string;
   readonly oldPath: string | null;
@@ -925,6 +926,7 @@ function PullRequestCodeTab({
       resolveDiffReviewAnchor(file, range, rangeComments);
     if (anchor === null) return;
     setDraft({
+      ...(data?.headSha === undefined ? {} : { headSha: data.headSha }),
       fileKey: item.id,
       path,
       oldPath: previousPath === path ? null : previousPath,
@@ -1191,6 +1193,7 @@ function PullRequestCodeTab({
             }
             addComment(reviewKey, {
               id: nextPendingReviewCommentId(),
+              ...(draft.headSha === undefined ? {} : { headSha: draft.headSha }),
               path: draft.path,
               ...(draft.oldPath === null ? {} : { oldPath: draft.oldPath }),
               ...(draft.startPosition === undefined ? {} : { startPosition: draft.startPosition }),

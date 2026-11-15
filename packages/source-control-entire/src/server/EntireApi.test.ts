@@ -138,7 +138,8 @@ describe("EntireApi", () => {
         .requestJson({ ...request, path: "/trails/7" }, Schema.Unknown)
         .pipe(Effect.flip);
       assert.strictEqual(error.reason, reason);
-      assert.strictEqual(error.detail, "Nope");
+      assert.strictEqual(error.detail, `Entire answered HTTP ${status}.`);
+      assert.notInclude(error.message, "Nope");
       // A refused token is dropped, since the CLI may hold a refreshed one.
       assert.strictEqual(server.invalidations(), invalidations);
     }).pipe(Effect.provide(server.layer));
@@ -158,7 +159,7 @@ describe("EntireApi", () => {
         )
         .pipe(Effect.flip);
       assert.strictEqual(error.reason, "failed");
-      assert.strictEqual(error.detail, "merge gates failed");
+      assert.strictEqual(error.detail, "Entire answered HTTP 422.");
     }).pipe(Effect.provide(server.layer));
   });
 

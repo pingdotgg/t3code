@@ -244,6 +244,7 @@ export interface ProviderChangeRequestActivity {
 }
 
 export interface ProviderDiffSlice {
+  readonly headSha?: string;
   readonly patch: string;
   /** Content was omitted within this slice. */
   readonly truncated: boolean;
@@ -521,6 +522,7 @@ export interface PullRequestProviderApi {
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
     input: ProviderRepositoryRef & {
+      readonly expectedBody?: string | undefined;
       readonly maintainerCanModify?: boolean | undefined;
       readonly number: number;
       readonly title?: string | undefined;

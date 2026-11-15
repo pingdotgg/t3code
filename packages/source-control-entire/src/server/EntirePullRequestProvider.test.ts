@@ -147,7 +147,7 @@ describe("EntirePullRequestProvider", () => {
         yield* update;
         assert.deepStrictEqual(server.sent.at(-1)?.body, undefined);
         assert.include((yield* Effect.flip(update)).detail, "resolved");
-        assert.include((yield* Effect.flip(update)).detail, "storage unavailable");
+        assert.include((yield* Effect.flip(update)).detail, "HTTP 502");
         const rebase = yield* provider
           .runAction({ ...target, action: "update-branch", updateMethod: "rebase" })
           .pipe(Effect.flip);
@@ -240,7 +240,11 @@ describe("EntirePullRequestProvider", () => {
       return Effect.gen(function* () {
         const provider = yield* EntirePullRequestProvider.make;
         yield* provider.getChangeRequest(target);
-        yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+        yield* provider.updateChangeRequest!({
+          ...target,
+          expectedBody: `${link}\n\nOld intent`,
+          body: `${link}\n\nNew intent`,
+        });
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
         const write = server.sent.at(-1);
         assert.deepStrictEqual(write?.body, { body: "New intent" });
@@ -266,7 +270,11 @@ describe("EntirePullRequestProvider", () => {
             (yield* provider.getChangeRequest(target)).body,
             `${link}\n\nOld intent`,
           );
-          yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+          yield* provider.updateChangeRequest!({
+            ...target,
+            expectedBody: `${link}\n\nOld intent`,
+            body: `${link}\n\nNew intent`,
+          });
           assert.deepStrictEqual(
             server.sent
               .filter((request) => request.path === trailPath)
@@ -311,7 +319,12 @@ describe("EntirePullRequestProvider", () => {
       );
       return Effect.gen(function* () {
         const provider = yield* EntirePullRequestProvider.make;
-        yield* provider.updateChangeRequest!({ ...target, body: `${link}\n\nNew intent` });
+        const detail = yield* provider.getChangeRequest(target);
+        yield* provider.updateChangeRequest!({
+          ...target,
+          expectedBody: detail.body,
+          body: `${link}\n\nNew intent`,
+        });
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
       }).pipe(Effect.provide(server.layer));
     });
@@ -383,6 +396,7 @@ describe("EntirePullRequestProvider", () => {
         const error = yield* provider.updateChangeRequest!({
           ...target,
           title: "Renamed",
+          expectedBody: `${link}\n\nOld intent`,
           body: "New intent",
         }).pipe(Effect.flip);
         assert.strictEqual(
@@ -409,9 +423,11 @@ describe("EntirePullRequestProvider", () => {
         const provider = yield* EntirePullRequestProvider.make;
         yield* provider.getChangeRequest(target);
         descriptions.shift();
+        yield* provider.getChangeRequest(target);
         const save = provider.updateChangeRequest!({
           ...target,
           title: "Renamed",
+          expectedBody: `${link}\n\nOld intent`,
           body: `${link}\n\nNew intent`,
         });
         const error = yield* Effect.flip(save);
@@ -422,7 +438,15 @@ describe("EntirePullRequestProvider", () => {
         assert.deepStrictEqual(server.writes(), []);
 
         assert.include((yield* provider.getChangeRequest(target)).body, "Edited elsewhere");
-        yield* save;
+        const stale = yield* Effect.flip(save);
+        assert.include(stale.detail, "changed elsewhere");
+        assert.deepStrictEqual(server.writes(), []);
+        yield* provider.updateChangeRequest!({
+          ...target,
+          title: "Renamed",
+          expectedBody: `${link}\n\nEdited elsewhere`,
+          body: `${link}\n\nNew intent`,
+        });
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`, "PATCH /trails/7"]);
       }).pipe(Effect.provide(server.layer));
     });

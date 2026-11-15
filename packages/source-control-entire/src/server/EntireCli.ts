@@ -8,17 +8,13 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  firstNonEmptyLine,
-  isMissingExecutable,
-} from "@t3tools/source-control-core/server/discovery";
+import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
 const REPOSITORY_TTL = Duration.minutes(30);
 const TIMEOUT_MS = 15_000;
-const MAX_DETAIL = 300;
 
 /** Every `entire` run: no telemetry for a program the user did not type. */
 export const ENTIRE_CLI_ENV: NodeJS.ProcessEnv = { ENTIRE_TELEMETRY_OPTOUT: "1" };
@@ -125,12 +121,6 @@ function viewerLogin(user: string | undefined): string | null {
   return handle ? handle : null;
 }
 
-export function boundedDetail(text: string | undefined): string | undefined {
-  const line = text?.replace(/\s+/gu, " ").trim();
-  if (!line) return undefined;
-  return line.length > MAX_DETAIL ? `${line.slice(0, MAX_DETAIL)}…` : line;
-}
-
 // `repo view --json` exits 0 without `repoId` and `apiUrl` when it cannot place the repository.
 function parseRepositoryView(stdout: string): EntireRepositoryCoordinates | null {
   const view = Option.getOrUndefined(decodeRepositoryView(stdout.trim()));
@@ -184,9 +174,8 @@ export const make = Effect.gen(function* () {
     if (output.exitCode !== 0)
       return yield* new EntireCliFailedError({
         operation: "find the repository",
-        detail:
-          boundedDetail(Option.getOrUndefined(firstNonEmptyLine(output.stderr))) ??
-          `\`entire repo view\` exited ${output.exitCode}.`,
+        detail: `Entire repository lookup exited ${output.exitCode}.`,
+        cause: output.stderr,
       });
     const coordinates = parseRepositoryView(output.stdout);
     if (coordinates === null)
@@ -220,9 +209,8 @@ export const make = Effect.gen(function* () {
     if (Option.isNone(cells))
       return yield* new EntireCliFailedError({
         operation: "list Entire's cells",
-        detail:
-          boundedDetail(Option.getOrUndefined(firstNonEmptyLine(output.stderr))) ??
-          `\`entire cluster list\` exited ${output.exitCode}.`,
+        detail: `Entire cell lookup exited ${output.exitCode}.`,
+        cause: output.stderr,
       });
     return cells.value;
   });

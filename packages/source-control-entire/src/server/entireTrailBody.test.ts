@@ -84,6 +84,15 @@ describe("trailBodyMarkdown", () => {
   });
 
   it("keeps code blocks' blank lines", () => {
+    const marker = "<!-- entire-trail-link-start --> literal <!-- entire-trail-link-end -->";
+    for (const node of [
+      { type: "codeBlock", content: [text(marker)] },
+      paragraph(text(marker, [{ type: "code" }])),
+    ]) {
+      const document = { text_snapshot: "", content_json: { type: "doc", content: [node] } };
+      expect(trailBodyMarkdown(document)).toContain(marker);
+      expect(unrenderedContent(document)).toBeNull();
+    }
     const content_json = {
       type: "doc",
       content: [{ type: "codeBlock", content: [text("a\n\n\nb")] }, paragraph(text("after"))],
@@ -137,6 +146,15 @@ describe("trailBodyMarkdown", () => {
       expect(unpreservedMarkdown(value)).toBe("escaped markdown characters");
     }
     expect(unpreservedMarkdown("2 * 3 = 6, user_id, [WIP]")).toBeNull();
+    const split = trailBodyMarkdown({
+      text_snapshot: "",
+      content_json: {
+        type: "doc",
+        content: [paragraph(text("use *"), text("value", [{ type: "code" }]), text("* here"))],
+      },
+    });
+    expect(split).toBe("use \\*`value`\\* here");
+    expect(unpreservedMarkdown(split)).toBe("escaped markdown characters");
   });
 
   it("delimits code by more backticks than it holds, which Entire can't read back", () => {
@@ -156,6 +174,18 @@ describe("trailBodyMarkdown", () => {
   });
 
   it("keeps link text but drops links that aren't web or mail links", () => {
+    const document = {
+      text_snapshot: "",
+      content_json: {
+        type: "doc",
+        content: [
+          paragraph(text("docs", [{ type: "link", attrs: { href: "https://example.com/a)b" } }])),
+        ],
+      },
+    };
+    expect(trailBodyMarkdown(document)).toBe("[docs](https://example.com/a\\)b)");
+    expect(unrenderedContent(document)).not.toBeNull();
+    expect(unpreservedMarkdown(trailBodyMarkdown(document))).not.toBeNull();
     const content_json = {
       type: "doc",
       content: [

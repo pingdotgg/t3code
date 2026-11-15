@@ -38,14 +38,30 @@ describe("Entire line comments", () => {
     const server = fakeEntire(routes(repository.head), { git: realGit });
     return Effect.gen(function* () {
       const provider = yield* EntirePullRequestProvider.make;
+      for (const headSha of [undefined, "f".repeat(40)]) {
+        const rejected = yield* provider
+          .submitReview({
+            ...target,
+            cwd: repository.work,
+            verdict: "comment",
+            body: "",
+            comments: [
+              { ...added("a.txt", 2, "Stale"), ...(headSha === undefined ? {} : { headSha }) },
+            ],
+          })
+          .pipe(Effect.flip);
+        assert.include(rejected.detail, "Refresh the diff");
+        assert.deepStrictEqual(server.writes(), []);
+      }
       yield* provider.submitReview({
         ...target,
         cwd: repository.work,
         verdict: "approve",
         body: "Nearly there",
         comments: [
-          added("a.txt", 2, "Why three?"),
+          { ...added("a.txt", 2, "Why three?"), headSha: repository.head },
           {
+            headSha: repository.head,
             path: "a.txt",
             position: { kind: "context", oldLine: 1, newLine: 1, side: "right" },
             body: "And two",
@@ -118,7 +134,7 @@ describe("Entire line comments", () => {
             cwd: repository.work,
             verdict: "comment",
             body: "",
-            comments: [comment],
+            comments: [{ ...comment, headSha: repository.head }],
           })
           .pipe(Effect.flip);
       const deleted = yield* submit({
@@ -161,15 +177,15 @@ describe("Entire line comments", () => {
         .submitReview({
           ...target,
           cwd: repository.work,
-          verdict: "comment",
+          verdict: "approve",
           body: "",
-          comments: [added("a.txt", 1, "Hm")],
+          comments: [{ ...added("a.txt", 1, "Hm"), headSha: repository.head }],
         })
         .pipe(Effect.flip);
     });
     return Effect.gen(function* () {
       const denied = yield* submit.pipe(Effect.provide(forbidden.layer));
-      assert.include(denied.detail, "no publish access");
+      assert.include(denied.detail, "HTTP 403");
       const failed = yield* submit.pipe(Effect.provide(conflict.layer));
       assert.include(failed.detail, "empty review");
       assert.notInclude(conflict.writes(), "POST /trails/7/approvals");
@@ -191,7 +207,7 @@ describe("Entire line comments", () => {
         cwd: repository.work,
         verdict: "comment",
         body: "Two things",
-        comments: [added("a.txt", 1, "Hm")],
+        comments: [{ ...added("a.txt", 1, "Hm"), headSha: repository.head }],
       });
       assert.deepStrictEqual(server.writes(), [
         "POST /trails/7/reviews",

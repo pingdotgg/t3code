@@ -81,14 +81,15 @@ describe("EntireCli", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("reports the CLI's own reason when `repo view` refuses, without its colours", () => {
+  it.effect("keeps CLI diagnostics in the cause when `repo view` refuses", () => {
     const { layer } = harness(() =>
       Effect.succeed(failed("\n\u001b[31mError: no repo matching /gh/a/b\u001b[0m\n")),
     );
     return Effect.gen(function* () {
       const cli = yield* EntireCli.EntireCli;
       const error = yield* cli.repository("/gh/a/b").pipe(Effect.flip);
-      assert.include(error.message, ": Error: no repo matching /gh/a/b");
+      assert.notInclude(error.message, "no repo matching");
+      assert.include(String(error.cause), "no repo matching");
       assert.notInclude(error.message, "\u001b");
     }).pipe(Effect.provide(layer));
   });

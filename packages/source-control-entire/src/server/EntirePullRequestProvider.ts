@@ -168,12 +168,6 @@ export const make = Effect.gen(function* () {
     number: input.number,
   });
 
-  /** The description each change was last shown with, so a save cannot overwrite a newer one. */
-  const shownDescriptions = yield* Cache.make({
-    capacity: 64,
-    lookup: (_: TrailRef) => Effect.succeed(""),
-  });
-
   /** The change's description, which is its project trail's wherever that can be read. */
   const description = Effect.fn("EntirePullRequestProvider.description")(function* (
     input: TrailRef,
@@ -192,7 +186,6 @@ export const make = Effect.gen(function* () {
               }).pipe(Effect.as(Json.changeBody(trail))),
             ),
           );
-    yield* Cache.set(shownDescriptions, trailKey(input), shown);
     return shown;
   });
 
@@ -558,6 +551,15 @@ export const make = Effect.gen(function* () {
         `Entire publishes at most ${MAX_REVIEW_COMMENTS} comments in one review.`,
       );
     const { base, head } = yield* trailRevisions(input);
+    const current = yield* readTrail("submitReview", input);
+    if (
+      Json.headSha(current) !== head ||
+      input.comments.some((comment) => comment.headSha !== head)
+    )
+      return yield* failure(
+        "submitReview",
+        "The trail changed. Refresh the diff before submitting these comments.",
+      );
     const comments = yield* lineComments(input, head, input.comments);
     const body = input.body.trim();
     const key = `t3code-${hashText(
@@ -674,7 +676,7 @@ export const make = Effect.gen(function* () {
   // The description lives on the change's project trail, as on entire.com; a change without
   // one keeps its own. Either write is conditional on the version just read.
   const bodyRewrite = Effect.fn("EntirePullRequestProvider.bodyRewrite")(function* (
-    input: TrailRef,
+    input: TrailRef & { readonly expectedBody?: string | undefined },
     body: string,
   ) {
     const trail = yield* readTrail("updateChangeRequest", input);
@@ -697,10 +699,7 @@ export const make = Effect.gen(function* () {
         `This description has formatting T3 Code can't preserve; edit it on ${ENTIRE_WEB_HOST} (${lost}).`,
       );
     if (route && projectTrail) {
-      // If-Match carries the version just read, which would miss an edit made since T3 Code
-      // showed the description being edited.
-      const shown = yield* Cache.getOption(shownDescriptions, trailKey(input));
-      if (Option.isSome(shown) && shown.value !== current)
+      if (input.expectedBody === undefined || input.expectedBody !== current)
         return yield* failure("updateChangeRequest", refreshSentences[412]);
       if (projectTrail.etag === null)
         return yield* failure(
@@ -719,10 +718,7 @@ export const make = Effect.gen(function* () {
           body: { body: markdown },
         },
         Ignored,
-      ).pipe(
-        Effect.mapError(explained(refreshSentences)),
-        Effect.andThen(Cache.invalidate(shownDescriptions, trailKey(input))),
-      );
+      ).pipe(Effect.mapError(explained(refreshSentences)));
     }
     // Entire keeps a change's description only on its project trail.
     return yield* failure(
@@ -989,7 +985,12 @@ export const make = Effect.gen(function* () {
         ["diff", ...PATCH_OPTIONS, from, to],
         "Could not diff the trail.",
       );
-      return { patch: result.stdout, truncated: result.stdoutTruncated, nextCursor: null };
+      return {
+        headSha: to,
+        patch: result.stdout,
+        truncated: result.stdoutTruncated,
+        nextCursor: null,
+      };
     }),
     getDiffFileContents: Effect.fn("EntirePullRequestProvider.getDiffFileContents")(
       function* (input) {
