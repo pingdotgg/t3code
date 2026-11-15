@@ -1,4 +1,5 @@
 import { type ServerProvider, ServerProviderModel } from "@t3tools/contracts";
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -9,7 +10,11 @@ import * as ChildProcess from "effect/process/ChildProcess";
 
 import { createMuseSdkHost, makeMuseEnvironment } from "./sdk.ts";
 import { parseMuseVersion } from "./maintenance.ts";
-import { museModelCapabilities, probeMuseHost } from "./modelCatalog.ts";
+import {
+  museModelCapabilities,
+  probeMuseHost,
+  resolveMuseStartupTimeoutMs,
+} from "./modelCatalog.ts";
 import type { MuseAccountState } from "./protocol.ts";
 import {
   buildServerProvider,
@@ -114,7 +119,12 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ...(cwd ? { cwd } : {}),
       }),
     );
-  }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  }).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, museEnvironment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
@@ -145,13 +155,18 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version,
       status: "error",
       auth: { status: "unknown" },
-      message: "Muse Code CLI is installed but failed to run.",
+      // T3 runs Muse with MUSE_NO_AUTO_UPDATE=1, so a launcher whose runtime was never fetched
+      // (common after a mise upgrade) refuses to install it; a manual run completes setup.
+      message: versionOutput.stderr.includes("installed binary is missing")
+        ? "Muse Code has not finished installing. Run `muse --version` on this T3 server host, then refresh its status."
+        : "Muse Code CLI is installed but failed to run.",
     });
   }
 
   const probe = yield* probeMuseHost(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    Effect.timeoutOption(12_000),
+    // Startup shares the override, so the catalog keeps its 4 seconds on top of it.
+    Effect.timeoutOption(resolveMuseStartupTimeoutMs(museEnvironment) + 4_000),
     Effect.result,
   );
   if (Result.isFailure(probe) || Option.isNone(probe.success)) {
