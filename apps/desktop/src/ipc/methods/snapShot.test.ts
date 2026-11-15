@@ -8,6 +8,7 @@ import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import {
   setupSnapShot,
+  setSnapShotAnimationDestination,
   previewSnapShotConfig,
   applySnapShotConfig,
   snapShotRelativeFrame,
@@ -110,3 +111,40 @@ it("normalizes Wayland attachment coordinates without trusting Electron's screen
   );
   assert.isUndefined(snapShotRelativeFrame(frame, { ...bounds, width: 0 }, 1));
 });
+
+it.effect("scales snapshot details by pinch and page zoom without scaling the frame twice", () =>
+  setSnapShotAnimationDestination
+    .handler(
+      {
+        id: "12345678-1234-1234-1234-123456789abc",
+        viewportFrame: { x: 20, y: 40, width: 400, height: 200 },
+        backgroundColor: "black",
+        borderColor: "white",
+        borderWidth: 2,
+        cornerRadius: 16,
+        visualViewportScale: 2,
+      },
+      { sender: { id: 7 } },
+    )
+    .pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(ElectronWindow.ElectronWindow, {
+            main: Effect.succeedSome({
+              getContentBounds: () => ({ x: 100, y: 200, width: 1000, height: 600 }),
+              webContents: { id: 7, getZoomFactor: () => 1.25 },
+            }),
+          } as ElectronWindow.ElectronWindow["Service"]),
+          Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
+            setAnimationDestination: (_id, destination) =>
+              Effect.sync(() => {
+                assert.deepEqual(destination.frame, { x: 125, y: 250, width: 500, height: 250 });
+                assert.equal(destination.borderWidth, 2.5);
+                assert.equal(destination.cornerRadius, 20);
+                assert.equal(destination.scaleFactor, 2.5);
+              }),
+          } as DesktopSnapShot.DesktopSnapShot["Service"]),
+        ),
+      ),
+    ),
+);

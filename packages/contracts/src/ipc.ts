@@ -256,6 +256,7 @@ export const DesktopSnapShotAnimationDestination = Schema.Struct({
   borderColor: Schema.String,
   borderWidth: Schema.Number,
   cornerRadius: Schema.Number,
+  visualViewportScale: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
   details: Schema.optional(
     Schema.Struct({
       appName: SnapShotSource.fields.appName,

@@ -211,7 +211,7 @@ export const setSnapShotAnimationDestination = DesktopIpc.makeIpcMethod({
         borderColor: destination.borderColor,
         borderWidth: destination.borderWidth * window.webContents.getZoomFactor(),
         cornerRadius: destination.cornerRadius * window.webContents.getZoomFactor(),
-        scaleFactor: window.webContents.getZoomFactor(),
+        scaleFactor: window.webContents.getZoomFactor() * (destination.visualViewportScale ?? 1),
         details: destination.details,
       });
     },

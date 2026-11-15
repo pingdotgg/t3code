@@ -113,16 +113,18 @@ export function setSnapShotAnimationDestination(
   const frame = target.getBoundingClientRect();
   if (frame.width <= 0 || frame.height <= 0) return;
   const style = window.getComputedStyle(target);
+  const visualViewportScale = window.visualViewport?.scale ?? 1;
   const cornerRadius = Number.parseFloat(style.borderTopLeftRadius);
   const borderWidth = Number.parseFloat(style.borderTopWidth);
   const request = bridge
     .setSnapShotAnimationDestination({
       id,
       viewportFrame: toVisualViewportRect(frame),
+      visualViewportScale,
       backgroundColor: style.backgroundColor,
       borderColor: style.borderTopColor,
-      borderWidth: Number.isFinite(borderWidth) ? borderWidth : 0,
-      cornerRadius: Number.isFinite(cornerRadius) ? cornerRadius : 0,
+      borderWidth: (Number.isFinite(borderWidth) ? borderWidth : 0) * visualViewportScale,
+      cornerRadius: (Number.isFinite(cornerRadius) ? cornerRadius : 0) * visualViewportScale,
       ...(source
         ? {
             details: {
