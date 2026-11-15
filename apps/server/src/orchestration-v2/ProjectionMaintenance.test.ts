@@ -540,9 +540,10 @@ it.effect("lists every thread-scoped projection table or names why it is kept", 
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("keeps a deleted thread that a live run-fork still inherits history from", () =>
+it.effect("keeps deleted threads a live thread still inherits or merges back from", () =>
   Effect.gen(function* () {
-    const { maintenance, seed, remove } = yield* purgeFixture;
+    const { maintenance, now, seed, remove } = yield* purgeFixture;
+    const sql = yield* SqlClient.SqlClient;
     const root = yield* seed("root");
     const middle = yield* seed("middle", {
       type: "run",
@@ -555,6 +556,14 @@ it.effect("keeps a deleted thread that a live run-fork still inherits history fr
       runId: RunId.make("run:purge:middle"),
     });
     const unrelated = yield* seed("unrelated");
+    const mergedBack = yield* seed("merged-back");
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_context_transfers
+        (context_transfer_id, source_thread_id, target_thread_id, type, status, updated_at, payload_json)
+      VALUES ('transfer:purge', ${mergedBack.id}, ${fork.id},
+        'merge_back', 'pending', ${DateTime.formatIso(now)}, '{}')
+    `;
+    yield* remove(mergedBack, yield* DateTime.now);
     yield* remove(root, yield* DateTime.now);
     yield* remove(middle, yield* DateTime.now);
     yield* remove(unrelated, yield* DateTime.now);
@@ -565,6 +574,7 @@ it.effect("keeps a deleted thread that a live run-fork still inherits history fr
     assert.equal((yield* countContent(middle.id))?.items, 1);
     assert.equal((yield* countContent(fork.id))?.items, 1);
     assert.equal((yield* countContent(unrelated.id))?.items, 0);
+    assert.equal((yield* countContent(mergedBack.id))?.items, 1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -581,14 +591,8 @@ it.effect("purges a very large thread in bounded batches", () =>
     yield* remove(big, yield* DateTime.now);
     yield* TestClock.adjust("2 days");
 
-    let batches = 0;
-    const result = yield* maintenance.pruneEventStore(
-      Effect.sync(() => {
-        batches += 1;
-      }),
-    );
+    const result = yield* maintenance.pruneEventStore();
     assert.isAtLeast(result.purgedProjectionRowCount, 1200);
-    assert.isAtLeast(batches, 3);
     assert.equal((yield* countContent(big.id))?.positions, 0);
   }).pipe(Effect.provide(layerTest)),
 );

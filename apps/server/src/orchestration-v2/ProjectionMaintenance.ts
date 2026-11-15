@@ -280,8 +280,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     });
 
     // A deleted thread keeps only its tombstone row once the event history it could be replayed
-    // from has been pruned. A thread that a surviving run-fork inherits history from is kept
-    // whole. Idempotent: threads without content match nothing.
+    // from has been pruned. A thread that a surviving run-fork inherits history from, or that a
+    // surviving thread still has a pending merge-back from, is kept whole. Idempotent.
     const purgeDeletedThreadContent = Effect.fnUntraced(function* (
       now: DateTime.Utc,
       betweenPages: Effect.Effect<void>,
@@ -310,6 +310,13 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             WHERE json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
               AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
               AND (fork.deleted_at IS NULL OR fork.deleted_at > ${cutoff})
+            UNION
+            SELECT transfer.source_thread_id
+            FROM orchestration_v2_projection_context_transfers AS transfer
+            JOIN orchestration_v2_projection_threads AS target
+              ON target.thread_id = transfer.target_thread_id
+            WHERE transfer.type = 'merge_back' AND transfer.status = 'pending'
+              AND (target.deleted_at IS NULL OR target.deleted_at > ${cutoff})
             UNION
             SELECT json_extract(fork.payload_json, '$.forkedFrom.threadId')
             FROM inherited
