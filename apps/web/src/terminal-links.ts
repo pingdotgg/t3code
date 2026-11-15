@@ -165,16 +165,18 @@ export function isTerminalUrl(value: string): boolean {
 /**
  * Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`.
  * `hostname` is the terminal's environment's, which producers such as GNU `ls` put in the URI.
+ * A URI's path is the exact filename, so only its `#L12C3` hash is a position.
  */
 export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
   const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
-  return formatFilePathPosition(
-    splitFilePathPosition(
-      stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
-      fileUrl.hash,
-    ),
-  );
+  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path));
+  const position = splitFilePathPosition("", fileUrl.hash);
+  if (splitFilePathPosition(path).path === path)
+    return formatFilePathPosition({ ...position, path });
+  // Metadata, the launcher and editors read a trailing `:line:column` off the target, so a
+  // filename that ends like one keeps a full position after it to stay whole.
+  return `${path}:${position.line ?? 1}:${position.column ?? 1}`;
 }
 
 export function collectWrappedTerminalLinkLine(

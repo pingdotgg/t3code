@@ -216,6 +216,7 @@ it.effect.skipIf(windowsHost)(
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
         yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
+        yield* launcher.launchEditor({ editor: "vscode", cwd: `${colonProject}:1:1` });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -232,6 +233,7 @@ it.effect.skipIf(windowsHost)(
         [
           ["--new-window", project],
           ["--goto", file],
+          ["--new-window", colonProject],
           ["--new-window", colonProject],
         ],
       );

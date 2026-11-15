@@ -140,7 +140,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
-  isDirectory: boolean,
+  folder: string | undefined,
   projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
@@ -149,9 +149,8 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      if (isDirectory) return ["--new-window", target];
+      if (folder !== undefined) return ["--new-window", folder];
       return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
@@ -535,19 +534,30 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       });
     }
     const { command, baseArgs } = resolved.value;
-    const isDirectory =
-      editorDef.launchStyle === "goto" &&
-      (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
+    const fileSystem = yield* FileSystem.FileSystem;
+    const isFolder = (path: string) =>
+      fileSystem.stat(path).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
-      ));
+      );
+    // An existing folder wins over a position: `build:2026` is a legal folder name, and
+    // `build:2026:1:1` names that folder at a position.
+    const positioned = parseTargetPathAndPosition(input.cwd);
+    const folder =
+      editorDef.launchStyle !== "goto"
+        ? undefined
+        : (yield* isFolder(input.cwd))
+          ? input.cwd
+          : Option.isSome(positioned) && (yield* isFolder(positioned.value.path))
+            ? positioned.value.path
+            : undefined;
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
       args: [
         ...baseArgs,
-        ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
+        ...resolveCommandEditorArgs(editorDef, input.cwd, folder, input.projectRoot),
       ],
     };
   }

@@ -1,4 +1,4 @@
-import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -356,6 +356,36 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
+    // The URI path is the exact filename, even one ending like a position, as consumers read it.
+    for (const [href, target] of [
+      [
+        `file:///var/tmp/${encodeURIComponent("report.txt:12")}`,
+        { path: "/var/tmp/report.txt:12" },
+      ],
+      ["file:///var/tmp/report.txt:12:3", { path: "/var/tmp/report.txt:12:3" }],
+      [
+        `file:///var/tmp/${encodeURIComponent("report.txt:12-64")}`,
+        { path: "/var/tmp/report.txt:12-64" },
+      ],
+      [`file:///var/tmp/${encodeURIComponent("report.txt:0")}`, { path: "/var/tmp/report.txt:0" }],
+      [
+        `file:///var/tmp/${encodeURIComponent("report.txt:12")}#L5`,
+        { path: "/var/tmp/report.txt:12", line: 5 },
+      ],
+      [
+        `file:///var/tmp/${encodeURIComponent("literal%3A12.txt")}`,
+        { path: "/var/tmp/literal%3A12.txt" },
+      ],
+      [`file:///var/tmp/${encodeURIComponent("żółć.txt")}`, { path: "/var/tmp/żółć.txt" }],
+      [
+        `file:///var/tmp/${encodeURIComponent("a#b?.txt")}#L5C3`,
+        { path: "/var/tmp/a#b?.txt", line: 5, column: 3 },
+      ],
+    ] as const) {
+      expect
+        .soft(splitFilePathPosition(resolveTerminalLinkTarget(href, "/workspace/project")))
+        .toMatchObject(target);
+    }
     expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
       "/workspace/project/file:notes.md",
     );
