@@ -53,12 +53,21 @@ export class GitWorkflowService extends Context.Service<
       input: VcsStatusInput,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
+    readonly upstreamDivergence: (cwd: string) => Effect.Effect<
+      {
+        readonly refName: string;
+        readonly aheadCount: number;
+        readonly behindCount: number;
+      } | null,
+      GitManagerServiceError
+    >;
     readonly remoteStatus: (
       input: VcsStatusInput,
       options?: GitManager.GitRemoteStatusOptions,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
@@ -363,6 +372,16 @@ export const make = Effect.gen(function* () {
         detail: "Failed to read the checked-out branch.",
       });
     }),
+    upstreamDivergence: Effect.fn("GitWorkflowService.upstreamDivergence")(function* (cwd) {
+      const details = yield* git.statusDetailsRemote(cwd, { refreshUpstream: false });
+      return details.hasUpstream && details.branch !== null
+        ? {
+            refName: details.branch,
+            aheadCount: details.aheadCount,
+            behindCount: details.behindCount,
+          }
+        : null;
+    }),
     remoteStatus: Effect.fn("GitWorkflowService.remoteStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.remoteStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
@@ -372,6 +391,7 @@ export const make = Effect.gen(function* () {
     }),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
+    readRefSnapshot: git.readRefSnapshot,
     invalidateStatus: gitManager.invalidateStatus,
     headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
       return git
