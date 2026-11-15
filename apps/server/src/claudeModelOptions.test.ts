@@ -32,6 +32,13 @@ describe("compileClaudeModelSelection", () => {
       effort: "max",
       settings: { fastMode: true },
     });
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["sonnet[1m]"]);
+    expect(
+      compileClaudeModelSelection(
+        selection("sonnet[1m]", [{ id: "contextWindow", value: "200k" }]),
+        catalog,
+      ),
+    ).toMatchObject({ apiModelId: "sonnet", pinnedAlias: "sonnet" });
   });
 
   it("runs Ultracode at the chosen effort and reads the old Ultracode effort as xhigh", () => {
