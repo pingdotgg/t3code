@@ -91,6 +91,8 @@ if (process.argv.includes("--version")) {
   }
   Electron.app.exit(0);
 }
+const exitingBeforeReady =
+  !process.argv.includes("--version") && DesktopPreReadyPlatform.exitIfWaylandHasNoOutputs();
 
 const layerDesktopEnvironment = Layer.unwrap(
   Effect.gen(function* () {
@@ -264,4 +266,6 @@ const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
-DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);
+if (!exitingBeforeReady) {
+  DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);
+}

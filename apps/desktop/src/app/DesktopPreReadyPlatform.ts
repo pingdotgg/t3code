@@ -12,12 +12,14 @@ import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
+import { probeWaylandOutputCount, resolveWaylandSocketPath } from "./DesktopWaylandOutputProbe.ts";
 import { trimmedString } from "./DesktopConfig.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import {
   renderUrlHandlerDesktopEntry,
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
+import { launchDetachedAppImage } from "../electron/AppImageLaunch.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
@@ -46,6 +48,46 @@ export const resolveEarlyLinuxElectronOptionsFromProcess = (
     joinPath: NodePath.posix.join,
     readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
   });
+
+/** True when this process is already exiting, either to relaunch on X11 or with an error. */
+export function exitIfWaylandHasNoOutputs(): boolean {
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Runs before any Effect runtime.
+  if (process.platform !== "linux") return false;
+  const startup = DesktopEarlyElectronStartup.resolveLinuxWaylandStartup({
+    env: process.env,
+    argv: process.argv,
+    ozonePlatform: readCommandLineSwitchValue(Electron.app.commandLine, "ozone-platform"),
+    countWaylandOutputs: () => {
+      const socketPath = resolveWaylandSocketPath(process.env);
+      return socketPath === null ? null : probeWaylandOutputCount(socketPath, 1000);
+    },
+  });
+  switch (startup._tag) {
+    case "Continue":
+      return false;
+    case "RelaunchWithX11": {
+      // Nothing holds the single-instance or backend locks yet, so the new instance may start first.
+      const appImagePath = process.env.APPIMAGE;
+      if (!appImagePath) {
+        Electron.app.relaunch({ args: [...startup.args] });
+      } else if (!launchDetachedAppImage(appImagePath, startup.args)) {
+        return exitWithStartupError(`Could not restart ${appImagePath} with --ozone-platform=x11.`);
+      }
+      Electron.app.exit(0);
+      return true;
+    }
+    case "Exit":
+      return exitWithStartupError(startup.message);
+  }
+}
+
+function exitWithStartupError(message: string): true {
+  try {
+    NodeFS.writeSync(process.stderr.fd, `${message}\n`);
+  } catch {}
+  Electron.app.exit(1);
+  return true;
+}
 
 export class DesktopPreReadyElectronOptions extends Context.Service<
   DesktopPreReadyElectronOptions,

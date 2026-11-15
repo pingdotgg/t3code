@@ -192,3 +192,48 @@ export function restoreEarlyLinuxDeviceScaleFactor(
     // First launch, missing state, or unreadable state: keep Chromium's default.
   }
 }
+
+export type LinuxWaylandStartup =
+  | { readonly _tag: "Continue" }
+  | { readonly _tag: "RelaunchWithX11"; readonly args: ReadonlyArray<string> }
+  | { readonly _tag: "Exit"; readonly message: string };
+
+// Chromium stops parsing switches at "--"; later arguments are positional.
+const switchArguments = (argv: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const terminator = argv.indexOf("--");
+  return terminator === -1 ? argv : argv.slice(0, terminator);
+};
+
+// Chromium waits forever for a wl_output and fixes its Ozone backend before the main script runs.
+export function resolveLinuxWaylandStartup(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly argv: ReadonlyArray<string>;
+  readonly ozonePlatform: string | null;
+  readonly countWaylandOutputs: () => number | null;
+}): LinuxWaylandStartup {
+  if (input.ozonePlatform !== "wayland" || input.countWaylandOutputs() !== 0) {
+    return { _tag: "Continue" };
+  }
+  const problem = "The Wayland compositor reports no displays, so Electron cannot open a window.";
+  if (switchArguments(input.argv).some((arg) => arg.startsWith("--ozone-platform="))) {
+    return {
+      _tag: "Exit",
+      message: `${problem} Connect a display or start T3 Code without --ozone-platform=wayland.`,
+    };
+  }
+  if (trimNonEmpty(input.env.DISPLAY) === null) {
+    return {
+      _tag: "Exit",
+      message: `${problem} No X11 display is available as a fallback (DISPLAY is unset).`,
+    };
+  }
+  if (isDevelopmentEnvironment(input.env)) {
+    return { _tag: "Exit", message: `${problem} Restart the dev app with --ozone-platform=x11.` };
+  }
+  const args = input.argv.slice(1);
+  const switchCount = switchArguments(args).length;
+  return {
+    _tag: "RelaunchWithX11",
+    args: [...args.slice(0, switchCount), "--ozone-platform=x11", ...args.slice(switchCount)],
+  };
+}

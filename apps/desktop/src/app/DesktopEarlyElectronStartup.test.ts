@@ -6,6 +6,7 @@ import {
   restoreEarlyLinuxDeviceScaleFactor,
   resolveEarlyLinuxPasswordStorePreference,
   resolveLinuxDisableFeaturesSwitch,
+  resolveLinuxWaylandStartup,
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
@@ -128,6 +129,65 @@ describe("DesktopEarlyElectronStartup", () => {
         }),
       );
     });
+  });
+});
+
+describe("resolveLinuxWaylandStartup", () => {
+  const headlessKwin = {
+    env: { WAYLAND_DISPLAY: "wayland-0", DISPLAY: ":0" },
+    argv: ["/opt/T3 Code/t3code"],
+    ozonePlatform: "wayland",
+    countWaylandOutputs: () => 0,
+  };
+
+  it.each([
+    { argv: ["/opt/T3 Code/t3code"], args: ["--ozone-platform=x11"] },
+    {
+      argv: ["t3code", "--enable-logging", "--", "--ozone-platform=wayland", "t3code://open"],
+      args: [
+        "--enable-logging",
+        "--ozone-platform=x11",
+        "--",
+        "--ozone-platform=wayland",
+        "t3code://open",
+      ],
+    },
+  ])("relaunches on X11 with switches before positional arguments for $argv", ({ argv, args }) => {
+    assert.deepEqual(resolveLinuxWaylandStartup({ ...headlessKwin, argv }), {
+      _tag: "RelaunchWithX11",
+      args,
+    });
+  });
+
+  it.each([
+    { label: "an explicit Wayland choice", argv: ["t3code", "--ozone-platform=wayland"] },
+    { label: "a missing X11 display", env: { WAYLAND_DISPLAY: "wayland-0" } },
+    {
+      label: "the dev app, which the dev runner would restart on Wayland",
+      env: { ...headlessKwin.env, VITE_DEV_SERVER_URL: "http://localhost:5733" },
+    },
+  ])("exits with an error for $label", (overrides) => {
+    assert.equal(resolveLinuxWaylandStartup({ ...headlessKwin, ...overrides })._tag, "Exit");
+  });
+
+  it.each([
+    { label: "a Wayland session with an output", countWaylandOutputs: () => 1 },
+    { label: "an unanswered probe", countWaylandOutputs: () => null },
+  ])("keeps Wayland for $label", (overrides) => {
+    assert.deepEqual(resolveLinuxWaylandStartup({ ...headlessKwin, ...overrides }), {
+      _tag: "Continue",
+    });
+  });
+
+  it.each(["x11", "headless", null])("does not probe when the platform is %j", (ozonePlatform) => {
+    assert.deepEqual(
+      resolveLinuxWaylandStartup({
+        ...headlessKwin,
+        ozonePlatform,
+        countWaylandOutputs: () => assert.fail("Wayland should not be probed"),
+      }),
+      { _tag: "Continue" },
+    );
   });
 });
 
