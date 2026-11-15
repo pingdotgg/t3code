@@ -61,8 +61,7 @@ test(
     // The input mounts before fonts and WASM finish loading and its handlers are installed.
     await expect(input).toHaveAttribute("data-workspace-focus-default", "");
 
-    const opened: string[][] = [];
-    for (const [index] of LINKS.entries()) {
+    for (const [index, { opens }] of LINKS.entries()) {
       await removeEditorArgs();
       await input.focus();
       await browser.keyboard.type(`bash print-${index}.sh\n`);
@@ -88,13 +87,8 @@ test(
       await browser.keyboard.up("Control");
 
       await expect
-        .poll(async () => (await readLines(EDITOR_ARGS)).length > 0, { timeout: 15_000 })
-        .toBe(true);
-      opened.push(await readLines(EDITOR_ARGS));
+        .poll(() => readLines(EDITOR_ARGS), { timeout: 15_000 })
+        .toEqual(["--classic", ...opens.slice(0, -1), `${project}/${opens.at(-1)}`]);
     }
-
-    expect(opened).toEqual(
-      LINKS.map(({ opens }) => ["--classic", ...opens.slice(0, -1), `${project}/${opens.at(-1)}`]),
-    );
   },
 );
