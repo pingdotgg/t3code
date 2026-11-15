@@ -12186,6 +12186,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect.each([
     "notification-first",
+    "active-roster-first",
     "roster-first",
     "unawait",
     "query-closed",
@@ -12261,22 +12262,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               ["dev-server", false],
             ],
           );
+          if (order === "active-roster-first") {
+            yield* harness.offerAndWait(roster(["dev-server"], "active-roster-removal"));
+            assert.deepStrictEqual(
+              marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
+              [
+                ["dev-server", false],
+                [WAKE_TASK_ID, true],
+              ],
+            );
+          }
           yield* Queue.offer(harness.sdkMessages, turnOneResult);
           yield* Queue.take(harness.terminalReceipts);
+          if (order === "active-roster-first") {
+            assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          }
 
-          // A replacing level rebuilds every entry; the mark must survive it.
-          yield* Queue.offer(
-            harness.sdkMessages,
-            roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000302"),
-          );
-          assert.deepStrictEqual(
-            marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
-            [
-              ["dev-server", false],
-              [WAKE_TASK_ID, true],
-            ],
-          );
-
+          if (order !== "active-roster-first") {
+            // A replacing level rebuilds every entry; the mark must survive it.
+            yield* Queue.offer(
+              harness.sdkMessages,
+              roster(["dev-server", WAKE_TASK_ID], "00000000-0000-4000-8000-000000000302"),
+            );
+            assert.deepStrictEqual(
+              marks(yield* nextRoster((tasks) => tasks[0]?.taskId === "dev-server")),
+              [
+                ["dev-server", false],
+                [WAKE_TASK_ID, true],
+              ],
+            );
+          }
           const completedRoster = roster(["dev-server"], "00000000-0000-4000-8000-000000000303");
           if (order === "task-stopped") {
             yield* harness.offerAndWait(completedRoster);

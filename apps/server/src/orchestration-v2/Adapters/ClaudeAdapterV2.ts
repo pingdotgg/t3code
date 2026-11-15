@@ -10156,16 +10156,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 nextTasks.push(task);
               }
             }
-            if (input.activeContext === null) {
-              const previous = rosterForNativeThread(
-                yield* Ref.get(pendingBackgroundTasksByNativeThread),
-                input.nativeThreadId,
-              );
-              yield* holdAwaitedCompletions(
-                input.nativeThreadId,
-                [...previous.keys()].filter((taskId) => !listedTaskIds.has(taskId)),
-              );
-            }
+            yield* holdAwaitedCompletions(
+              input.nativeThreadId,
+              [...current.keys()].filter((taskId) => !listedTaskIds.has(taskId)),
+            );
             yield* replacePendingBackgroundTasks(input.nativeThreadId, nextTasks);
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_started") {
@@ -10224,8 +10218,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             rosterChanged = true;
           } else if (message.type === "system" && message.subtype === "task_notification") {
             yield* endClaudeMonitorTasks((taskId) => taskId === message.task_id);
-            const stoppedHold =
-              message.status === "stopped" &&
+            const releasedHold =
+              (message.status === "stopped" || input.activeContext !== null) &&
               (awaitedCompletionsByNativeThread
                 .get(input.nativeThreadId)
                 ?.delete(message.task_id) ??
@@ -10250,7 +10244,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             rosterChanged =
               removed ||
-              stoppedHold ||
+              releasedHold ||
               (awaitedCompletionsByNativeThread.get(input.nativeThreadId)?.has(message.task_id) ??
                 false);
           }
