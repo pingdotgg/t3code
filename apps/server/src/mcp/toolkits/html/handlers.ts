@@ -22,6 +22,9 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
     message: error.message,
   });
 
+export const HTML_PATH_NEEDS_FULL_ACCESS =
+  "Pass html instead of path: only full-access threads may pass a path.";
+
 // The server reads the file for the caller, so only a thread that reads files without asking may
 // pass a path; a supervised thread passes the HTML its provider already let it read.
 const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
@@ -41,7 +44,7 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   if (limits.runtimeMode !== "full-access") {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "Pass html instead of path: only full-access threads may pass a path.",
+      message: HTML_PATH_NEEDS_FULL_ACCESS,
     });
   }
   return { path: input.path } satisfies HtmlRender.HtmlRenderSource;

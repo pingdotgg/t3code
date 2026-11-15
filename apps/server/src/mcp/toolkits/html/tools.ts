@@ -21,7 +21,7 @@ const Html = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512_0
 });
 
 const HtmlPath = Schema.String.annotate({
-  description: "Absolute .html file path.",
+  description: "Absolute .html file path. Full access threads only; other threads pass html.",
 });
 
 const PAGE_RULES =
