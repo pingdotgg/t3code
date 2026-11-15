@@ -6,6 +6,7 @@ export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  readonly latestUserAuthoredMessageAt?: string | null;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -27,7 +28,12 @@ export function resolveSettledThreadTimestamp(thread: SettledThreadTimestampInpu
   if (thread.settledAt != null && toSortableTimestamp(thread.settledAt) !== null) {
     return thread.settledAt;
   }
+  return resolveThreadActivityTimestamp(thread);
+}
 
+export function resolveThreadActivityTimestamp(
+  thread: Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestRun" | "updatedAt">,
+): string | null {
   let latest: string | null = null;
   let latestMs = Number.NEGATIVE_INFINITY;
   for (const candidate of [
@@ -75,6 +81,18 @@ function getFirstSortableTimestamp(...values: Array<string | null | undefined>):
 }
 
 function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
+  // Agents also post in the user role; only what the user wrote counts. A thread
+  // the user never wrote in counts from its creation; older servers omit the field.
+  if (thread.latestUserAuthoredMessageAt !== undefined) {
+    return (
+      getFirstSortableTimestamp(
+        thread.latestUserAuthoredMessageAt,
+        thread.createdAt,
+        thread.updatedAt,
+      ) ?? Number.NEGATIVE_INFINITY
+    );
+  }
+
   if (thread.latestUserMessageAt) {
     const latestUserMessageTimestamp = toSortableTimestamp(thread.latestUserMessageAt);
     if (latestUserMessageTimestamp !== null) {
