@@ -203,17 +203,20 @@ export function parseElicitationForm(
   }
   // An optional `<id>__other` text field (OMP's ask dialog) is the free-text answer to
   // optional single choice `<id>`: ask them as one question and send custom text to the
-  // companion. Multi-select keeps both fields, since it can answer with options and text.
+  // companion. Multi-select keeps both fields, since it can answer with options and text;
+  // its companion is prefilled blank so clients accept leaving it empty.
   const companions = new Map<string, string>();
+  const optionalCompanions = new Set<string>();
   for (const [id, field] of fields) {
     const companionId = `${id}__other`;
     if (
-      field.kind === "choice" &&
+      (field.kind === "choice" || field.kind === "multiChoice") &&
       fields.get(companionId)?.kind === "text" &&
       !required.has(id) &&
       !required.has(companionId)
     ) {
-      companions.set(id, companionId);
+      if (field.kind === "choice") companions.set(id, companionId);
+      else optionalCompanions.add(companionId);
     }
   }
   const folded = new Set(companions.values());
@@ -230,6 +233,7 @@ export function parseElicitationForm(
         ? {}
         : { allowCustomAnswer: false }),
       ...(kind === "multiChoice" ? { multiSelect: true } : {}),
+      ...(optionalCompanions.has(id) ? { initialAnswer: "" } : {}),
     });
   }
   return {
@@ -239,6 +243,7 @@ export function parseElicitationForm(
       for (const [id, field] of fields) {
         if (folded.has(id)) continue;
         const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
+        if (optionalCompanions.has(id) && text(answer) === undefined) continue;
         const typed = answer === undefined ? undefined : typedAnswer(field, answer);
         const companionId = companions.get(id);
         if (typed !== undefined) entries.push([id, typed]);
