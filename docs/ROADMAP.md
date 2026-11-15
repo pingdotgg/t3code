@@ -20,12 +20,10 @@ integrated, and tested. Features inherited from T3 Code are marked _(upstream)_.
 | Git, worktrees, diffs, checkpoints _(upstream)_                      |                                                                                                         |
 | Terminal, in-app browser, live preview, element picking _(upstream)_ |                                                                                                         |
 | Usage dashboard _(upstream)_                                         | Token and cost estimates from local history                                                             |
-
-## In progress
-
-| Feature                     | Plan                                                                             |
-| --------------------------- | -------------------------------------------------------------------------------- |
-| Local models through Ollama | In-app Ollama setup, model browser with hardware checks, models usable by agents |
+| Automatic agent updates                                              | Settings → Provider updates; vendor builds in `~/.continuum/tools`, own installs untouched, revertible  |
+| Local models through Ollama                                          | Settings → Local models: install, hardware checks, downloads, agent use through Codex                   |
+| Memory vaults                                                        | Per-conversation Markdown vaults, access levels, relevant-section retrieval, agent tools                |
+| Default account and assisted switching                               | Default/fallback model _(upstream)_; **Continue on …** on usage-limit banner, never automatic           |
 
 ## Planned
 
@@ -33,10 +31,10 @@ integrated, and tested. Features inherited from T3 Code are marked _(upstream)_.
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
 | Browser-style workspace tabs                     | Session, editor, terminal, browser, settings tabs with drag, pin, split view, saved layouts  |
 | Built-in code editor                             | Monaco editor with tabs, search/replace, formatting, language features                       |
-| Account Manager                                  | One page for all accounts, default account per agent, assisted switching on usage limits     |
+| Account Manager page                             | One page listing every account with its limits                                               |
+| Agent Eyes                                       | Live follow of edits, commands, tests, and browser activity; timeline, replay, explanations  |
 | Session export/duplicate                         | Versioned export format                                                                      |
 | Adaptive Intelligence Engine                     | Optimization profiles (Native default), benchmarks against native behavior before any claims |
-| Project memory                                   | Local, inspectable, editable, per-project                                                    |
 | Simple / Advanced modes                          | Same capabilities, different density                                                         |
 | Multi-agent activity center                      | Overview of running agents, approvals, and errors                                            |
 | Signed installers, AUR, nixpkgs, macOS downloads | Need certificates or maintainers                                                             |

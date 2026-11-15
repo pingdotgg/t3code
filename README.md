@@ -37,15 +37,17 @@ It is **not** an official T3 Code release. See [License and attribution](#licens
 5. [First-time setup](#first-time-setup)
 6. [Using multiple accounts](#using-multiple-accounts)
 7. [Switching AI agents](#switching-ai-agents)
-8. [Using the editor, terminal, and browser](#using-the-editor-terminal-and-browser)
-9. [Settings](#settings)
-10. [Supported operating systems](#supported-operating-systems)
-11. [Building from source](#building-from-source)
-12. [Troubleshooting](#troubleshooting)
-13. [Updating](#updating)
-14. [Contributing](#contributing)
-15. [License and attribution](#license-and-attribution)
-16. [Roadmap](#roadmap)
+8. [Run models locally with Ollama](#run-models-locally-with-ollama)
+9. [Memory vaults](#memory-vaults)
+10. [Using the editor, terminal, and browser](#using-the-editor-terminal-and-browser)
+11. [Settings](#settings)
+12. [Supported operating systems](#supported-operating-systems)
+13. [Building from source](#building-from-source)
+14. [Troubleshooting](#troubleshooting)
+15. [Updating](#updating)
+16. [Contributing](#contributing)
+17. [License and attribution](#license-and-attribution)
+18. [Roadmap](#roadmap)
 
 ## Download
 
@@ -76,6 +78,13 @@ These features are working in the current release. Anything not finished yet is 
   Codex and Antigravity can be installed and signed in to from inside the app.
 - **Multiple accounts.** Add several accounts for the same agent (for example a work and a personal
   Claude account), name them, and choose which one a conversation uses.
+- **Always the newest models.** When Claude Code or Codex on your computer is too old to offer the
+  latest models, Continuum runs a current build from the vendor instead, without touching your own
+  install or sign-in ([details](#keeping-agents-up-to-date)).
+- **Local models with Ollama.** Install Ollama, browse models with hardware checks, download them,
+  and use them as a full coding agent, all from Settings → Local models.
+- **Memory vaults.** Plain Markdown notes that agents read and keep up to date, chosen per
+  conversation and kept apart from your project folder.
 - **Switch agents mid-task.** Change the agent or model in the middle of a conversation. Continuum
   hands the new agent the important parts of the conversation so it can keep going.
 - **Conversations that survive restarts.** Every conversation ("thread") is saved locally. Search,
@@ -221,8 +230,12 @@ Continuum treats each account as its own **provider instance**.
 - **Codex:** add a second ChatGPT connection from **Add Codex account**.
 - **Choose per conversation:** the model picker groups models by account; pick the account and
   model for each conversation.
-- **Usage limits:** when an account hits its limit, the conversation shows the provider's message.
-  Switch the thread to another account or agent from the model picker and continue.
+- **Default account:** Settings → Threads → **Default model** picks the account and model new
+  conversations start with. **Fallback model** is offered while the default is at its limit.
+- **Usage limits:** when an account hits its limit, the conversation shows the reset time and can
+  resume by itself when the limit resets. It also offers **Continue on …** buttons for your other
+  signed-in accounts (same agent first) that still have room. Clicking one selects it; your next
+  message continues the conversation there.
 
 Limits: an existing conversation can move between accounts of the same agent only when they share
 the same configuration folder; otherwise switching starts a fresh agent session that receives a
@@ -242,6 +255,38 @@ Claude to Codex. Continuum:
 The new agent does not receive the old agent's private reasoning or tool state; providers do not
 export those. For long or important tasks, restate key requirements in your next message. Details:
 [portable handoffs](./docs/user/portable-handoffs.md).
+
+## Run models locally with Ollama
+
+Run open models on your own computer, with no account and nothing sent to the cloud.
+
+1. Open **Settings → Local models**. Continuum shows your graphics card and memory.
+2. Click **Install Ollama** (or use an Ollama you already have running).
+3. Browse the model list. Each model shows its size and whether it fits your hardware. Click
+   **Download** and watch the progress.
+4. Turn on **Use local models in agents**. A provider called **Ollama (local)** appears in the
+   model picker, and its models can read and edit files and run commands like any other agent.
+
+Good to know: small models (1–8B) work best for simple tasks and can be slow without a graphics card
+with enough memory (an 8B model wants about 6 GB). Continuum runs agent models with a 32K context so
+long agent instructions are not cut off. Remove models from the same page to free disk space.
+
+## Memory vaults
+
+A memory vault is a folder of Markdown notes (project overview, architecture, decisions, tasks,
+bugs and fixes, history, preferences) that agents read before they answer and keep up to date.
+
+- **Pick a vault per conversation** with the brain button under the message box: create a vault,
+  reuse one from another project, or choose none. Choosing a vault never changes the project,
+  folder, branch, or files the conversation works on.
+- **Choose what the agent may do:** read and update, read only, or reference only (the agent can
+  search the vault when it needs to, but nothing is added up front).
+- **Only relevant notes are sent.** Continuum picks the sections that match your message and stays
+  within a size budget. Ask for "the whole vault" to send all of it.
+- **Manage vaults** in Settings → Memory vaults: edit notes, search, rename, export, import, delete,
+  set a default vault, and choose where vaults are stored (by default in `~/.continuum/memory-vaults`).
+- Notes are plain files you can open in any editor. Continuum writes them atomically and removes
+  things that look like keys or passwords before saving.
 
 ## Using the editor, terminal, and browser
 
@@ -358,6 +403,22 @@ conversation. Never delete the database while the app is running.
 
 ## Updating
 
+### Keeping agents up to date
+
+New models often need a newer Claude Code or Codex. With **Settings → Provider updates** set to
+**Keep up to date** (the default), Continuum checks at startup and every 6 hours. When an agent is
+outdated it downloads the current build from the vendor (Claude Code from Anthropic's release server,
+checked against its published SHA-256; Codex from OpenAI's releases) into `~/.continuum/tools` and
+uses that copy. Your sign-in and conversations carry over.
+
+- Your own install is never changed. Agents set to a custom program path are left alone.
+- **Use my installed CLI** on that page switches an agent back to your own copy.
+- **Update my installed CLIs** (off by default) also updates copies you installed with npm, Homebrew,
+  mise, or similar, using that tool. System packages such as Nix or apt are never changed.
+- Choose **Only show updates** or **Off** to manage versions yourself.
+
+### Updating Continuum
+
 Continuum checks this repository's GitHub Releases for updates and offers to install them
 (Windows installer, AppImage, and `.deb`). Updates keep your settings, accounts, and conversations,
 which live in `~/.continuum`, outside the app folder. To update by hand, download the newest file
@@ -383,10 +444,14 @@ keeps compatibility with them but does not operate them.
 
 ## Roadmap
 
-**Done in this release**
+**Done**
 
 - Independent identity: name, icons, app ID, installers, data folder (`~/.continuum`), and update
   feed, fully separate from any T3 Code installation
+- Automatic agent updates so the newest Claude and Codex models appear
+- Local models through Ollama, usable as a full agent
+- Memory vaults
+- Default account and **Continue on …** switching when an account hits its limit
 - Window transparency setting
 - Analytics off by default, no third-party endpoint
 - Windows and Linux installers built and published by GitHub Actions; Nix development shell
@@ -394,9 +459,10 @@ keeps compatibility with them but does not operate them.
 **Planned** (not available yet)
 
 - Browser-style workspace tabs with split views and saved layouts
+- Agent Eyes: follow an agent's edits, commands, and browser activity live, with replay
 - Built-in code editor (Monaco) with search and replace
-- Account Manager page with default account per agent and assisted switching on usage limits
-- Adaptive Intelligence Engine (optimization profiles) and persistent project memory
+- A single Account Manager page
+- Adaptive Intelligence Engine (optimization profiles)
 - Simple and Advanced interface modes
 
 The full plan and status: [docs/ROADMAP.md](./docs/ROADMAP.md).
