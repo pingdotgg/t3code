@@ -103,7 +103,8 @@ thread's own shell, route checks) keep the live snapshot, where a row the server
 sent must not look missing. The decision reads the snapshot's own sequence: a second
 atom derived from the same shell state can be one update behind the rows. The mobile
 splash screen also waits, for a bounded time, until every enabled environment has
-read its cached shell, so the first frame holds all cached rows.
+read its cached shell and Home's list has laid out those rows, so the first frame
+holds all cached rows.
 
 Shell snapshots can leave rows out when the client asks. Servers that advertise
 `shellThreadFamilies` leave out idle subagent children: a child stays while it

@@ -17,6 +17,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { connectedEnvironmentIdsAtom } from "../../state/presentation";
 import { readEnvironmentScope } from "../../state/session";
+import { clearComposerDraft } from "../../state/use-composer-drafts";
 import {
   environmentThreadShells,
   steadyNavigationThreadShellsAtom,
@@ -115,6 +116,7 @@ function useThreadActionExecutor(
     action: ThreadListAction,
     thread: EnvironmentThreadShell,
     onStarted?: () => void,
+    restoreUnsettledAt?: string | null,
   ) => {
     if (!checkThreadOperationPermission(thread, actionFailureTitle(action))) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -145,9 +147,6 @@ function useThreadActionExecutor(
         return false;
       }
       if (action === "unsettle") ThreadUndo.invalidate("settle", key);
-      if (action === "archive" || action === "delete") {
-        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
-      }
       onStarted?.();
       const result = await withThreadDismissal(
         key,
@@ -157,7 +156,11 @@ function useThreadActionExecutor(
               // suppressed until real activity clears the pin server-side.
               await unsettleMutation({
                 environmentId: thread.environmentId,
-                input: { threadId: thread.id, reason: "user" },
+                input: {
+                  threadId: thread.id,
+                  reason: "user",
+                  ...(restoreUnsettledAt === undefined ? {} : { restoreUnsettledAt }),
+                },
               })
             : await (
                 action === "settle"
@@ -177,9 +180,13 @@ function useThreadActionExecutor(
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
       }
+      if (action === "archive" || action === "delete") {
+        for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);
+      }
       if (action === "archive" || action === "unarchive" || action === "delete") {
         refreshArchivedThreadsForEnvironment(thread.environmentId);
       }
+      if (action === "delete") clearComposerDraft(key);
       onCompleted?.(action, thread);
       return true;
     })();
@@ -240,6 +247,9 @@ export function useThreadListActions(): {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const regenerateTitle = useAtomCommand(threadEnvironment.regenerateTitle, {
+    reportFailure: false,
+  });
   const snoozeInFlightThreadKeys = useRef(new Set<string>());
   const titleRegenerationInFlightThreadKeys = useRef(new Set<string>());
 
@@ -260,11 +270,19 @@ export function useThreadListActions(): {
             async (step) => {
               switch (step.action) {
                 case "unsettle":
-                  return unsettleThread(thread);
+                  return unsettleThread(thread, step.restoreUnsettledAt);
                 case "unsnooze":
                   return unsnoozeThread(thread);
                 case "pin":
                   return pinThread(thread, step.orderKey);
+                case "reorderActive": {
+                  const result = await reorderActiveMutation({
+                    environmentId: thread.environmentId,
+                    input: { threadId: thread.id, orderKey: step.orderKey },
+                  });
+                  if (result._tag === "Failure") throw Cause.squash(result.cause);
+                  return true;
+                }
                 case "snooze": {
                   const failureTitle =
                     action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
@@ -408,8 +426,10 @@ export function useThreadListActions(): {
     snoozeInFlightThreadKeys.current.delete(key);
     return succeeded;
   };
-  const unsettleThread = async (thread: EnvironmentThreadShell) =>
-    (await executeAction("unsettle", thread)) === true;
+  const unsettleThread = async (
+    thread: EnvironmentThreadShell,
+    restoreUnsettledAt?: string | null,
+  ) => (await executeAction("unsettle", thread, undefined, restoreUnsettledAt)) === true;
   const pinThread = async (thread: EnvironmentThreadShell, restoreOrderKey?: string) => {
     if (!checkThreadOperationPermission(thread, "Could not pin thread")) return false;
     if (!environmentConfigLoaded(thread.environmentId)) {
@@ -529,9 +549,9 @@ export function useThreadListActions(): {
     titleRegenerationInFlightThreadKeys.current.add(key);
     selectionHaptic();
     const succeeded = await (async () => {
-      const result = await updateThreadMetadata({
+      const result = await regenerateTitle({
         environmentId: thread.environmentId,
-        input: { threadId: thread.id, regenerateTitle: true },
+        input: { threadId: thread.id },
       });
       if (result._tag === "Failure") {
         const error = Cause.squash(result.cause);
@@ -540,6 +560,13 @@ export function useThreadListActions(): {
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "The thread title could not be regenerated.",
+        );
+        return false;
+      }
+      if (result.value?.status === "failed") {
+        Dialog.alert(
+          "Could not regenerate title",
+          result.value.message ?? "The thread title could not be regenerated.",
         );
         return false;
       }
