@@ -17,7 +17,7 @@ it.live("only exact top-level --version bypasses the CLI graph", () =>
     const guard = `import { registerHooks } from 'node:module'; registerHooks({ resolve(specifier, context, nextResolve) { if (specifier === './binCli.ts') throw new Error('CLI_GRAPH_LOADED'); return nextResolve(specifier, context); } });`;
     const run = Effect.fn("cliVersion.test.run")(function* (
       args: ReadonlyArray<string>,
-      { tty = false, noColor = "" } = {},
+      { tty = false, noColor = "", term = "xterm", forceColor = "" } = {},
     ) {
       const child = yield* spawner.spawn(
         ChildProcess.make(
@@ -34,6 +34,8 @@ it.live("only exact top-level --version bypasses the CLI graph", () =>
               T3CODE_HOME: `${root}/home`,
               NODE_DISABLE_COMPILE_CACHE: "1",
               NO_COLOR: noColor,
+              TERM: term,
+              FORCE_COLOR: forceColor,
             },
           },
         ),
@@ -60,6 +62,24 @@ it.live("only exact top-level --version bypasses the CLI graph", () =>
     });
     expect(yield* run(["--version"], { tty: true, noColor: "1" })).toEqual({
       stdout: `t3 v${packageJson.version}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+    for (const options of [
+      { tty: true, term: "dumb" },
+      { forceColor: "1", noColor: "1" },
+      { forceColor: "1", term: "dumb" },
+      { forceColor: "0" },
+      { forceColor: "false" },
+    ]) {
+      expect(yield* run(["--version"], options)).toEqual({
+        stdout: `t3 v${packageJson.version}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+    expect(yield* run(["--version"], { forceColor: "1" })).toEqual({
+      stdout: `\x1b[1mt3\x1b[0m \x1b[2mv\x1b[0m\x1b[1m${packageJson.version}\x1b[0m\n`,
       stderr: "",
       exitCode: 0,
     });

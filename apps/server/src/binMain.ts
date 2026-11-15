@@ -7,9 +7,15 @@ import packageJson from "../package.json" with { type: "json" };
 export async function runCliCommand() {
   const command = process.argv[2];
   if (command === "--version" && process.argv.length === 3) {
-    // Match the CLI formatter's TTY styling without loading its runtime.
+    // Match the CLI's TerminalCapabilities color policy without loading its runtime.
+    const forceColor = process.env.FORCE_COLOR;
+    const colors =
+      process.env.TERM !== "dumb" &&
+      !process.env.NO_COLOR &&
+      (process.stdout.isTTY ||
+        (!!forceColor && forceColor !== "0" && forceColor.toLowerCase() !== "false"));
     process.stdout.write(
-      process.stdout.isTTY && !process.env.NO_COLOR
+      colors
         ? `\x1b[1mt3\x1b[0m \x1b[2mv\x1b[0m\x1b[1m${packageJson.version}\x1b[0m\n`
         : `t3 v${packageJson.version}\n`,
     );
