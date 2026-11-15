@@ -147,18 +147,48 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
     b.cacheCreationTokens <= a.cacheCreationTokens &&
     b.outputTokens <= a.outputTokens &&
     b.reasoningTokens <= a.reasoningTokens &&
+    (copy.cacheCreation1hTokens ?? 0) <= (held.cacheCreation1hTokens ?? 0) &&
     reportedCostUsd === held.reportedCostUsd
   ) {
     return held;
   }
+  const cacheCreation1hTokens = Math.max(
+    held.cacheCreation1hTokens ?? 0,
+    copy.cacheCreation1hTokens ?? 0,
+  );
   return {
     ...held,
+    ...(cacheCreation1hTokens > 0 ? { cacheCreation1hTokens } : {}),
     totals: {
       uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
       cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
       cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
       outputTokens: Math.max(a.outputTokens, b.outputTokens),
       reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+/**
+ * Grok reports each turn once, complete, so real copies are equal. A larger one is a deleted
+ * transcript's pre-v17 maximum over turns that shared a prompt id, whichever source it came from.
+ */
+function smallestGrokCopy(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.min(held.reportedCostUsd, copy.reportedCostUsd);
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.min(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.min(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.min(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.min(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.min(a.reasoningTokens, b.reasoningTokens),
     },
     reportedCostUsd,
   };
@@ -211,7 +241,12 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
-        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
+        if (held.bucket !== null) {
+          held.record =
+            record.provider === "grok"
+              ? smallestGrokCopy(held.record, record)
+              : mergeUsageCopies(held.record, record);
+        }
         return false;
       }
     }
