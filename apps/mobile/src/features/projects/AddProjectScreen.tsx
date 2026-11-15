@@ -1602,7 +1602,8 @@ export function AddProjectDestinationScreen(props: {
       } else {
         let draftId: string | undefined;
         if (movedDraftId) {
-          await waitForComposerDraftsLoaded();
+          // A failed hydration is already logged; still open the new project.
+          await waitForComposerDraftsLoaded().catch(() => undefined);
           draftId = movedDraftId;
         } else if (prompt) {
           draftId = await draftWithPrompt(environment.environmentId, projectId, prompt).catch(

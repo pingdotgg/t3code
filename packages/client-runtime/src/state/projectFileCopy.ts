@@ -44,11 +44,11 @@ export function defaultCopiedFilePaths(files: readonly ProjectIgnoredFile[]): Re
  */
 export function projectSubdirectory(repositoryRoot: string | undefined, workspaceRoot: string) {
   if (!repositoryRoot) return "";
-  const prefix = repositoryRoot.replace(/[\\/]+$/, "");
-  const rest = workspaceRoot.slice(prefix.length);
-  return workspaceRoot.startsWith(prefix) && /^[\\/]/.test(rest)
-    ? rest.slice(1).replaceAll("\\", "/")
-    : "";
+  // git reports Windows roots with forward slashes; the workspace keeps the user's separators.
+  const normalize = (path: string) => path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const prefix = normalize(repositoryRoot);
+  const root = normalize(workspaceRoot);
+  return root.startsWith(`${prefix}/`) ? root.slice(prefix.length + 1) : "";
 }
 
 interface ProjectFileAtoms {

@@ -41,6 +41,7 @@ describe("projectSubdirectory", () => {
   it("is the project's path below its repository root", () => {
     expect(projectSubdirectory("/repo", "/repo/apps/web")).toBe("apps/web");
     expect(projectSubdirectory("C:\\repo\\", "C:\\repo\\apps\\web")).toBe("apps/web");
+    expect(projectSubdirectory("C:/repo", "C:\\repo\\apps\\web")).toBe("apps/web");
     expect(projectSubdirectory("/repo", "/repo")).toBe("");
     expect(projectSubdirectory("/repo", "/repo-other/apps")).toBe("");
     expect(projectSubdirectory(undefined, "/repo/apps/web")).toBe("");
