@@ -22,9 +22,11 @@ cask "continuum-ide" do
 
   # Continuum IDE is signed ad hoc, not notarized by Apple, so macOS would refuse to open it
   # after a download. Removing the quarantine flag trusts this tap's build of the app.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Continuum IDE.app"]
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:           ["-dr", "com.apple.quarantine", "{{appdir}}/Continuum IDE.app"],
+        writable_paths: ["{{appdir}}/Continuum IDE.app"],
+        must_succeed:   false
   end
 
   uninstall quit: "io.github.swashxdev.continuumide"

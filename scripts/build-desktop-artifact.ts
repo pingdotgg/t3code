@@ -1065,7 +1065,8 @@ export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type)
   ];
 }
 
-export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 80;
+// Continuum ships a few more resources than upstream (91 files at 0.2.0); still guards growth.
+export const WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT = 100;
 export const WINDOWS_SERVER_RESOURCE_SOURCE_DIR = "apps/desktop/prod-resources/windows-server";
 export const WINDOWS_SERVER_EXTRA_RESOURCES = [
   {

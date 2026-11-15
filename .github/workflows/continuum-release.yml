@@ -139,7 +139,9 @@ jobs:
           test -f release/Continuum-IDE-x86_64.AppImage
           test -f release/Continuum-IDE-amd64.deb
           test "$(dpkg-deb --field release/Continuum-IDE-amd64.deb Package)" = "continuum-ide"
-          dpkg-deb --contents release/Continuum-IDE-amd64.deb | grep -q "io.github.swashxdev.continuumide.metainfo.xml"
+          # Capture first: grep -q exits early and pipefail would fail dpkg-deb on the broken pipe.
+          contents="$(dpkg-deb --contents release/Continuum-IDE-amd64.deb)"
+          grep -q "io.github.swashxdev.continuumide.metainfo.xml" <<<"$contents"
           if [ -f release/latest-linux.yml ]; then grep -q "Continuum-IDE-x86_64.AppImage" release/latest-linux.yml; fi
 
       - name: Verify the Windows installer is Continuum's
@@ -164,7 +166,10 @@ jobs:
           test -f "$dmg"
           test -f "release/Continuum-IDE-${version}-${{ matrix.arch }}.zip"
           sha="$(shasum -a 256 "$dmg" | cut -d' ' -f1)"
-          packaging/homebrew/render-cask.sh "$version" "$sha" "$sha" "file://$PWD/release" > "$RUNNER_TEMP/continuum-ide.rb"
+          # Only this Mac's architecture is installed here; the other gets a placeholder checksum.
+          placeholder="$(printf '0%.0s' {1..64})"
+          if [ "${{ matrix.arch }}" = "arm64" ]; then arm="$sha"; x64="$placeholder"; else arm="$placeholder"; x64="$sha"; fi
+          packaging/homebrew/render-cask.sh "$version" "$arm" "$x64" "file://$PWD/release" > "$RUNNER_TEMP/continuum-ide.rb"
           packaging/homebrew/verify-macos-install.sh "$RUNNER_TEMP/continuum-ide.rb"
           # Both Mac builds write latest-mac.yml; keep each and merge them when publishing.
           if [ -f release/latest-mac.yml ]; then mv release/latest-mac.yml "release/latest-mac-${{ matrix.arch }}.yml"; fi

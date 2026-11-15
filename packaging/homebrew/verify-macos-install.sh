@@ -8,8 +8,6 @@ cask_file="$1"
 bundle_id="io.github.swashxdev.continuumide"
 app="/Applications/Continuum IDE.app"
 
-brew style "$cask_file"
-
 tap="continuum-verify/local"
 brew untap "$tap" >/dev/null 2>&1 || true
 brew tap-new --no-git "$tap" >/dev/null
@@ -18,6 +16,8 @@ mkdir -p "$tap_dir/Casks"
 cp "$cask_file" "$tap_dir/Casks/continuum-ide.rb"
 cleanup() { brew untap "$tap" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+# Style rules for casks apply inside a tap, as they will for SwashX-dev/tap.
+brew style "$tap/continuum-ide"
 
 brew install --cask "$tap/continuum-ide"
 test -d "$app" || { echo "::error::$app was not installed"; exit 1; }
