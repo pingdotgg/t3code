@@ -479,11 +479,12 @@ export function ThreadDetailsPrRow({
             <ThreadDetailsControl
               type="button"
               part="meta"
-              className="-ms-1.5"
+              className="-ms-1.5 -me-0.5"
               onClick={onOpen}
               onAuxClick={onOpen}
             >
-              <span className="tabular-nums">#{number}</span>
+              {/* Keeps the plain number's weight; the meta part sets font-medium. */}
+              <span className="font-normal tabular-nums">#{number}</span>
             </ThreadDetailsControl>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
