@@ -3691,6 +3691,45 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  // regression: #37396 a live owned server that sent no /api/event headers for a minute failed every thread
+  it.effect("recovers an owned server after more than five event subscriptions time out", () =>
+    Effect.gen(function* () {
+      const stalled = yield* Queue.unbounded<void>();
+      let subscribes = 0;
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          ...reconnected({ [SESSION]: { type: "running" } }),
+          ...openRequests([]),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        {
+          beforeResponse: (path) => {
+            if (path !== "/api/event") return Effect.void;
+            subscribes += 1;
+            // The first subscription opens the session; the next six time out without headers.
+            return subscribes === 1 || subscribes > 7
+              ? Effect.void
+              : Queue.offer(stalled, undefined).pipe(Effect.andThen(Effect.never));
+          },
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      for (let retry = 0; retry < 6; retry += 1) {
+        const failed = yield* Effect.raceFirst(
+          Queue.take(stalled).pipe(Effect.as(false)),
+          Fiber.await(terminal).pipe(Effect.as(true)),
+        );
+        if (failed) break;
+        // One attempt: the 10s subscription timeout, then the 2s retry spacing.
+        yield* TestClock.adjust("12 seconds");
+      }
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
   it.effect(
     "keeps a $skill found on the first read when the reread after the scan comes back empty",
     () =>

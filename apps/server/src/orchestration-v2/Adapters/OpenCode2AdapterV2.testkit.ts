@@ -154,8 +154,11 @@ const replayHttpClient = (
   onPrompt: ((input: unknown) => void) | undefined,
   beforeResponse: ((path: string) => Effect.Effect<void>) | undefined,
 ) =>
-  HttpClient.make((request, url) =>
-    Effect.tryPromise({
+  HttpClient.make((request, url) => {
+    // A subscription held here never sends headers, so it never opens a stream that takes events.
+    const subscribing = url.pathname === "/api/event";
+    const hold = (beforeResponse?.(url.pathname) ?? Effect.void).pipe(Effect.asVoid);
+    return Effect.tryPromise({
       try: async () => {
         if (controller.exited && controller.finished) {
           throw new Error("The replayed OpenCode server has exited.");
@@ -212,10 +215,10 @@ const replayHttpClient = (
           reason: new HttpClientError.TransportError({ request, cause }),
         }),
     }).pipe(
+      (send) => (subscribing ? Effect.andThen(hold, send) : Effect.tap(send, () => hold)),
       Effect.map((response) => HttpClientResponse.fromWeb(request, response)),
-      Effect.tap(() => beforeResponse?.(url.pathname) ?? Effect.void),
-    ),
-  );
+    );
+  });
 
 export const replayServer = (
   transcript: ProviderReplayTranscript,
