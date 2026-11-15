@@ -87,10 +87,18 @@ describe("parseFileUrlHref", () => {
       "D:/Programme/t3code/OpenInPicker.tsx",
       "#L69",
     ],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
+    [
+      "file://server/share/workspace-image.svg",
+      "\\\\server\\share\\workspace-image.svg",
+      "",
+      "box-node",
+    ],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
     // GNU `ls --hyperlink` names the machine's own hostname.
     ["file://box-node/var/tmp/report.txt", "/var/tmp/report.txt", "", "Box-Node"],
+    ["file://1234/var/tmp/report.txt", "/var/tmp/report.txt", "", "1234"],
+    ["file://127.1/var/tmp/report.txt", "/var/tmp/report.txt", "", "127.1"],
+    ["file://böx/var/tmp/report.txt", "/var/tmp/report.txt", "", "böx"],
   ])("parses %s", (href, path, hash, localHostname?: string) => {
     expect(parseFileUrlHref(href, localHostname)).toEqual({ path, hash });
   });
