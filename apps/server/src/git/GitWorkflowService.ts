@@ -67,8 +67,8 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
+    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
     readonly invalidateStatus: GitManager.GitManager["Service"]["invalidateStatus"];
-    readonly statusUpstreamFetchCount: GitVcsDriver.GitVcsDriver["Service"]["statusUpstreamFetchCount"];
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
@@ -122,6 +122,10 @@ export class GitWorkflowService extends Context.Service<
       { readonly commitSha: string; readonly remoteRefName: string } | null,
       GitCommandError
     >;
+    readonly resolveDefaultBranchName: (
+      cwd: string,
+      remoteName: string,
+    ) => Effect.Effect<string | null, GitCommandError>;
     readonly removeWorktree: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
@@ -391,8 +395,8 @@ export const make = Effect.gen(function* () {
     }),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
+    readRefSnapshot: git.readRefSnapshot,
     invalidateStatus: gitManager.invalidateStatus,
-    statusUpstreamFetchCount: git.statusUpstreamFetchCount,
     headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
       return git
         .execute({
@@ -496,6 +500,13 @@ export const make = Effect.gen(function* () {
       function (input) {
         return ensureGitCommand("GitWorkflowService.fetchWorktreeBaseCommit", input.cwd).pipe(
           Effect.andThen(git.fetchWorktreeBaseCommit(input)),
+        );
+      },
+    ),
+    resolveDefaultBranchName: Effect.fn("GitWorkflowService.resolveDefaultBranchName")(
+      function (cwd, remoteName) {
+        return ensureGitCommand("GitWorkflowService.resolveDefaultBranchName", cwd).pipe(
+          Effect.andThen(git.resolveDefaultBranchName(cwd, remoteName)),
         );
       },
     ),
