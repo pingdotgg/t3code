@@ -14,16 +14,12 @@ import * as ServerConfig from "../config.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
-/**
- * Runs `body` against the service with an extracted runtime, so installs download only the model.
- * `checkingRuntime` wraps the service's last file check before it decides whether to install.
- */
+/** Runs `body` against the service with an extracted runtime, so installs download only the model. */
 const withService = <A, E>(
   store: Partial<SpeechModelStore.SpeechModelStore["Service"]>,
   body: (
     service: LocalSpeechSynthesis.LocalSpeechSynthesis["Service"],
   ) => Effect.Effect<A, E, never>,
-  checkingRuntime: <B, F>(check: Effect.Effect<B, F>) => Effect.Effect<B, F> = (check) => check,
 ) =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -44,20 +40,6 @@ const withService = <A, E>(
     Effect.provide(
       LocalSpeechSynthesis.layer.pipe(
         Layer.provide(
-          Layer.effect(
-            FileSystem.FileSystem,
-            Effect.map(FileSystem.FileSystem, (fs) =>
-              FileSystem.FileSystem.of({
-                ...fs,
-                exists: (path) =>
-                  path.endsWith("libaudiocpp.0.1.0.dylib")
-                    ? checkingRuntime(fs.exists(path))
-                    : fs.exists(path),
-              }),
-            ),
-          ),
-        ),
-        Layer.provide(
           Layer.mock(SpeechModelStore.SpeechModelStore)({
             isReady: () => Effect.succeed(false),
             ...store,
@@ -74,40 +56,24 @@ const withService = <A, E>(
 
 it.effect("joins a second download of the same model instead of starting another install", () =>
   Effect.gen(function* () {
-    const bothChecking = yield* Deferred.make<void>();
-    const checked = yield* Deferred.make<void>();
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
-    let checking = 0;
     const download = vi.fn(() =>
       Deferred.succeed(started, undefined).pipe(
         Effect.andThen(Deferred.await(release)),
         Effect.as("/unused"),
       ),
     );
-    yield* withService(
-      { download },
-      (service) =>
-        Effect.gen(function* () {
-          const first = yield* Effect.forkChild(service.download("supertonic-3"));
-          const second = yield* Effect.forkChild(service.download("supertonic-3"));
-          // Both are mid-check, the window in which they could both claim the install.
-          yield* Deferred.await(bothChecking);
-          yield* Deferred.succeed(checked, undefined);
-          yield* Deferred.await(started);
-          yield* Deferred.succeed(release, undefined);
-          yield* Fiber.join(first);
-          yield* Fiber.join(second);
-          expect(download).toHaveBeenCalledTimes(1);
-        }),
-      // Holds each finished check, so nothing asynchronous separates the gate from the decision.
-      (check) =>
-        check.pipe(
-          Effect.tap(() =>
-            ++checking === 2 ? Deferred.succeed(bothChecking, undefined) : Effect.void,
-          ),
-          Effect.tap(() => Deferred.await(checked)),
-        ),
+    yield* withService({ download }, (service) =>
+      Effect.gen(function* () {
+        const first = yield* Effect.forkChild(service.download("supertonic-3"));
+        const second = yield* Effect.forkChild(service.download("supertonic-3"));
+        yield* Deferred.await(started);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(first);
+        yield* Fiber.join(second);
+        expect(download).toHaveBeenCalledTimes(1);
+      }),
     );
   }),
 );

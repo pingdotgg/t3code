@@ -207,8 +207,8 @@ const make = Effect.gen(function* () {
 
   type Transfer = {
     readonly modelId: string;
-    /** Fixed at the start, so extracting the runtime mid-transfer does not shrink it. */
-    readonly size: number;
+    /** Fixed once the install knows its runtimes, so extracting one does not shrink it. */
+    size: number;
     runtime: number;
     model: number;
     verifying: boolean;
@@ -264,20 +264,22 @@ const make = Effect.gen(function* () {
     const model = yield* findModel(modelId);
     if (!installs.length)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
-    // Read before the checks below: no yield may separate them from claiming `transfer`.
-    const missing = yield* missingRuntimes;
+    // Checked and claimed without yielding, so a concurrent download or removal cannot interleave.
     if (removing || (transfer && transfer.modelId !== modelId))
       return yield* new LocalSynthesisInstallError({ reason: "busy" });
     if (!transfer) {
       const state: Transfer = {
         modelId,
-        size: missing.reduce((size, install) => size + install.file.size, model.file.size),
+        size: model.file.size,
         runtime: 0,
         model: 0,
         verifying: false,
       };
       transfer = state;
       const install = Effect.gen(function* () {
+        // Read after claiming: no removal can start while this transfer exists.
+        const missing = yield* missingRuntimes;
+        state.size = missing.reduce((size, install) => size + install.file.size, state.size);
         let installed = 0;
         for (const install of missing) {
           const archivePath = yield* store.download(install.file, {
