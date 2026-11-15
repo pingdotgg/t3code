@@ -59,7 +59,13 @@ function timestamp(seconds: number) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 }
 
-function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<string | null> }) {
+function InlineAudio(
+  props: PreviewProps & {
+    readonly resolveUri: () => Promise<string | null>;
+    readonly onPlaybackActivityChange?: (active: boolean) => void;
+  },
+) {
+  const { onPlaybackActivityChange } = props;
   // An empty source keeps native buffering off until the user explicitly plays.
   const player = usePlaybackAudioPlayer(null);
   const status = useAudioPlayerStatus(player);
@@ -90,8 +96,17 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
       // oxlint-disable-next-line react/set-state-in-effect -- Native completion and fullscreen takeover invalidate the pending playback request.
       requestPlayback(false);
     }
+    // Playback that ran to completion (or failed) no longer needs keep-alive.
+    if (status.didJustFinish || status.error) onPlaybackActivityChange?.(false);
     if (fullscreenVideoOpen) pauseAudioPlayer(player);
-  }, [fullscreenVideoOpen, status.didJustFinish, status.error, player, requestPlayback]);
+  }, [
+    fullscreenVideoOpen,
+    status.didJustFinish,
+    status.error,
+    player,
+    requestPlayback,
+    onPlaybackActivityChange,
+  ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to pause audio in the background and releases the audio session on cleanup
   useEffect(() => {
     active.current = true;
@@ -131,6 +146,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
     );
     if (!isAudioSessionOwner(token)) return;
     props.onPlaybackStart?.();
+    onPlaybackActivityChange?.(true);
     audioToken.current = token;
     requestPlayback(true);
     const generation = ++requestGeneration.current;
@@ -149,6 +165,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
           if (!isCurrentRequest() || AppState.currentState !== "active") return;
           if (!uri) {
             requestPlayback(false);
+            onPlaybackActivityChange?.(false);
             setError(true);
             return;
           }
@@ -163,6 +180,7 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
       .catch(() => {
         if (isCurrentRequest()) {
           requestPlayback(false);
+          onPlaybackActivityChange?.(false);
           setError(true);
         }
       })
@@ -221,7 +239,9 @@ function InlineAudio(props: PreviewProps & { readonly resolveUri: () => Promise<
   );
 }
 
-function VisibleFilePreview(props: PreviewProps) {
+function VisibleFilePreview(
+  props: PreviewProps & { readonly onPlaybackActivityChange?: (active: boolean) => void },
+) {
   // Each mounted preview owns its source; feed streaming must not restart a fetch or player.
   const [source] = useState(props.source);
   const refresh = useRefreshAssetUrl(
@@ -235,13 +255,21 @@ function VisibleFilePreview(props: PreviewProps) {
 export function ThreadInlineFilePreview(props: PreviewProps) {
   const visible = useContext(ThreadMediaVisibleContext);
   const focused = useIsFocused();
+  // Once playback has started, keep the player mounted off-screen:
+  // unmounting disposes the native player and stops playback.
+  // The keep-alive latches on play and releases on finish or error.
+  const [playbackActive, setPlaybackActive] = useState(false);
   return (
     <View
       className="my-1 overflow-hidden rounded-xl border border-border bg-card"
       style={{ width: 280, maxWidth: "100%" }}
     >
-      {visible && focused ? (
-        <VisibleFilePreview key={filePreviewKey(props.source)} {...props} />
+      {focused && (visible || playbackActive) ? (
+        <VisibleFilePreview
+          key={filePreviewKey(props.source)}
+          {...props}
+          onPlaybackActivityChange={setPlaybackActive}
+        />
       ) : (
         <>
           <FileCardHeader {...props} />
