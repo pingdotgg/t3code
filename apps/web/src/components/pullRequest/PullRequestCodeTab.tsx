@@ -143,7 +143,7 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
-import { CUT_LINE_NOTE_CSS, hasCutLineNotes, markCutLineNotes } from "./cutLineNotes";
+import { CUT_LINES_CSS, hasCutLineNotes, markCutLineNotes } from "./cutLineNotes";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -662,7 +662,7 @@ function PullRequestCodeTab({
   );
   const withheldStatuses = new Map<string, WithheldFileStatus>();
   const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
-  const cutFiles = new Set<FileDiffMetadata>();
+  const cutFiles = new Set<unknown>();
   withheldPaths.forEach((path, index) => {
     const result = withheldResults[index];
     if (result === undefined) return;
@@ -1167,8 +1167,13 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: (fileContainer: HTMLElement) => {
+    onPostRender: (fileContainer: HTMLElement, instance: object) => {
       codeViewReveal.flush();
+      // Containers are reused across files, so the flag is set or cleared on every render.
+      fileContainer.toggleAttribute(
+        "data-cut-lines",
+        "fileDiff" in instance && cutFiles.has(instance.fileDiff),
+      );
       if (withheldFiles.size > 0) markCutLineNotes(fileContainer);
     },
     onItemCollapsedChange: (
@@ -1881,7 +1886,7 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              unsafeCSSExtra={`${REPLACE_FILE_COUNTS_CSS}\n${CUT_LINE_NOTE_CSS}`}
+              unsafeCSSExtra={`${REPLACE_FILE_COUNTS_CSS}\n${CUT_LINES_CSS}`}
             />
           </FileViewedToggleContext>
         </div>

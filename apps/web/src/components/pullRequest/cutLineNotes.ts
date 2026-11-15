@@ -6,11 +6,17 @@ export function hasCutLineNotes(patch: string): boolean {
   return new RegExp(CUT_LINE_NOTE.source, "m").test(patch);
 }
 
-/** Goes in the diff's shadow root, where the highlighted text lives. */
-export const CUT_LINE_NOTE_CSS = `
+/**
+ * Goes in the diff's shadow root, where the highlighted text lives. A file with cut lines cannot
+ * load the unchanged lines around them, so it drops the controls that would.
+ */
+export const CUT_LINES_CSS = `
 ::highlight(${HIGHLIGHT_NAME}) {
   color: var(--color-warning-foreground);
   background-color: color-mix(in srgb, var(--color-warning) 18%, transparent);
+}
+:host([data-cut-lines]) :is([data-expand-button], [data-expand-all-button]) {
+  display: none;
 }`;
 
 let highlight: Highlight | null = null;
