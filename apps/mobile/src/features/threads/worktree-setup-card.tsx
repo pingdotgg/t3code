@@ -147,6 +147,17 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   );
 }
 
+/** Holds the card's place until the server publishes the first setup snapshot. */
+export function WorktreePreparingHeader() {
+  return (
+    <View className="py-1">
+      <View className="min-h-11 flex-row items-center border-b border-border px-1">
+        <HeaderLabel label="Setting up worktree…" active />
+      </View>
+    </View>
+  );
+}
+
 export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
   const now = useVisibleSecondClock(true);
   return (
