@@ -2433,9 +2433,12 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
       },
     };
 
-    const launched = yield* launches.launch(input);
+    yield* launches.launch(input);
+    const stored = yield* (yield* ThreadManagement.ThreadManagementService).getThreadProjection(
+      input.threadId,
+    );
 
-    assert.deepInclude(launched.projection.providerThreads[0], {
+    assert.deepInclude(stored.providerThreads[0], {
       id: IdAllocator.deriveProviderThread({
         driver: input.importedNativeThread.ref.driver,
         providerInstanceId: modelSelection.instanceId,
@@ -2448,10 +2451,7 @@ it.effect("creates a strong provider-thread mapping for an imported native sessi
       status: "not_loaded",
       nativeMetadata: input.importedNativeThread.metadata,
     });
-    assert.equal(
-      launched.projection.thread.activeProviderThreadId,
-      launched.projection.providerThreads[0]?.id,
-    );
+    assert.equal(stored.thread.activeProviderThreadId, stored.providerThreads[0]?.id);
   }).pipe(Effect.provide(harness.layer));
 });
 

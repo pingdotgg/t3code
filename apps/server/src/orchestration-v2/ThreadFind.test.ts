@@ -27,6 +27,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import { makeThreadFind } from "./ThreadFind.ts";
 import {
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
@@ -487,37 +489,32 @@ describe("V2 thread find", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("keeps its caches while Find is in use and drops them after one idle minute", () =>
+  it.effect("re-parses only the messages that events changed since the last search", () =>
     Effect.gen(function* () {
       const projection = yield* setup;
-      yield* putItems([item("one", 1, "idle needle one"), item("two", 2, "idle needle two")]);
-      const parses = () =>
+      const one = item("one", 1, "kept needle one");
+      if (one.type !== "assistant_message") return;
+      yield* putItems([one, item("two", 2, "kept needle two")]);
+      const parses = (prefix: string) =>
         vi
           .mocked(searchableMessageSegments)
-          .mock.calls.filter(([message]) => message.text.startsWith("idle needle")).length;
+          .mock.calls.filter(([message]) => message.text.startsWith(prefix)).length;
       const search = (query: string) => projection.searchThread({ threadId, query });
-      // One idle minute passes inside this search. The later counts fail if it let the caches go.
-      yield* projection.searchThreadStream({ threadId, query: "needle" }).pipe(
-        Stream.tap((frame) =>
-          frame.complete === false ? TestClock.adjust("1 minute") : Effect.void,
-        ),
-        Stream.runDrain,
-      );
-      assert.equal(parses(), 2);
-      yield* TestClock.adjust("40 seconds");
-      yield* search("idle");
-      yield* TestClock.adjust("40 seconds");
-      // A repeated query is answered from the completed scan and still counts as use.
-      const repeated = yield* projection
-        .searchThreadStream({ threadId, query: "needle" })
-        .pipe(Stream.runCollect);
-      assert.equal(repeated.length, 1);
-      yield* TestClock.adjust("40 seconds");
-      yield* search("one");
-      assert.equal(parses(), 2);
-      yield* TestClock.adjust("1 minute");
-      yield* search("needle");
-      assert.equal(parses(), 4);
+      assert.equal((yield* search("needle")).totalMatches, 2);
+      assert.equal(parses("kept needle"), 2);
+      // A new query and an idle hour reuse the parsed text.
+      yield* TestClock.adjust("1 hour");
+      assert.equal((yield* search("one")).totalMatches, 1);
+      assert.equal(parses("kept needle"), 2);
+      // A streamed delta re-parses only its own message.
+      yield* putItems([{ ...one, text: "kept needle one needle" }], "delta");
+      assert.equal((yield* search("needle")).totalMatches, 3);
+      assert.equal(parses("kept needle"), 3);
+      // A new message and a run update re-read the index but parse only the new message.
+      yield* putItems([item("three", 3, "kept needle three")], "appended");
+      yield* commit([{ ...run(threadId, runId, 1, "running"), type: "run.updated" }]);
+      assert.equal((yield* search("needle")).totalMatches, 4);
+      assert.equal(parses("kept needle"), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -757,6 +754,44 @@ describe("V2 thread find", () => {
       const updated = yield* projection.searchThread({ threadId, query: "needle" });
       assert.equal(updated.totalMatches, 2);
       assert.equal(updated.match?.entryId, "inherited");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rebuilds a cached corpus whose missed edits were pruned from the event log", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("changed", 1, "needle"), item("head", 2, "nothing")]);
+      assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 1);
+      yield* putItems([item("changed", 1, "gone")], "edit");
+      yield* putItems([item("head", 2, "still nothing")], "new-head");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_metadata
+        SET last_sequence = (SELECT MAX(sequence) FROM orchestration_events)
+        WHERE projection_name = 'thread-projections'`;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* maintenance.pruneEventStore();
+      yield* TestClock.adjust("2 days");
+      assert.isAbove((yield* maintenance.pruneEventStore()).deletedEventCount, 0);
+      assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 0);
+    }).pipe(Effect.provide(ProjectionMaintenance.layer.pipe(Layer.provideMerge(layerTest)))),
+  );
+
+  it.effect("does not cache a corpus larger than the whole budget", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("small", 1, "huge needle"), item("big", 2, "huge needle needle")]);
+      const find = yield* makeThreadFind(
+        (id) => projection.getThreadProjection(id).pipe(Effect.map((p) => p.visibleTurnItems)),
+        20,
+      );
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("huge")).length;
+      assert.equal((yield* find.searchThread({ threadId, query: "needle" })).totalMatches, 3);
+      assert.equal(parses(), 2);
+      assert.equal((yield* find.searchThread({ threadId, query: "huge" })).totalMatches, 2);
+      assert.equal(parses(), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 });
