@@ -180,11 +180,15 @@ export function isMissedScheduledRun(
   const end = parseTimeOfDay(schedule.window.end);
   if (start === null || end === null) return true;
   if (!isInsideWindow(now, schedule.window.weekdays, start, end)) return true;
-  const occurrenceStart = DateTime.setParts(now, {
-    hour: start.hour,
-    minute: start.minute,
-    second: 0,
-    millisecond: 0,
-  });
-  return DateTime.toEpochMillis(dueAt) < DateTime.toEpochMillis(occurrenceStart);
+  const localDueAt = DateTime.isZoned(now)
+    ? DateTime.setZone(dueAt, now.zone)
+    : DateTime.toUtc(dueAt);
+  const dueParts = DateTime.toParts(localDueAt);
+  const nowParts = DateTime.toParts(now);
+  return (
+    dueParts.year !== nowParts.year ||
+    dueParts.month !== nowParts.month ||
+    dueParts.day !== nowParts.day ||
+    !isInsideWindow(localDueAt, schedule.window.weekdays, start, end)
+  );
 }

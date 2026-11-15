@@ -172,6 +172,17 @@ describe("scheduled task schedule calculation", () => {
     expect(
       isMissedScheduledRun({ type: "interval", everyMs: 3_600_000 }, dueAt, local(6, 21, 0)),
     ).toBe(false);
+    const afterGap = DateTime.makeZonedUnsafe(
+      { year: 2027, month: 3, day: 14, hour: 3, minute: 6, second: 0, millisecond: 0 },
+      { timeZone: "America/New_York", adjustForTimeZone: true },
+    );
+    expect(
+      isMissedScheduledRun(
+        { type: "interval", everyMs: 60_000, window: { start: "02:30", end: "04:00" } },
+        DateTime.toUtc(afterGap),
+        afterGap,
+      ),
+    ).toBe(false);
   });
 
   it("skips a window start that daylight saving shifts past the end", () => {
