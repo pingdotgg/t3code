@@ -486,6 +486,10 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
+  /** Options T3 may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
+  readonly answerablePermissionOptions?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => ReadonlyArray<EffectAcpSchema.PermissionOption>;
   readonly onSessionEvent?: (
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
@@ -6861,6 +6865,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* userInput.acknowledgeNativeResponse;
                 return response ?? ({ outcome: { outcome: "cancelled" } } as const);
               }
+              const answerableParams =
+                flavor.answerablePermissionOptions === undefined
+                  ? params
+                  : { ...params, options: flavor.answerablePermissionOptions(params) };
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
@@ -6887,7 +6895,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       : params,
                   );
                   if (disposition === "allow") {
-                    const optionId = selectAutoApprovedPermissionOption(params);
+                    const optionId = selectAutoApprovedPermissionOption(answerableParams);
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6897,7 +6905,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     };
                   }
                   if (disposition === "deny") {
-                    const optionId = selectPermissionOptionId(params, "decline");
+                    const optionId = selectPermissionOptionId(answerableParams, "decline");
                     return {
                       _tag: "Immediate" as const,
                       response:
@@ -6979,7 +6987,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (decision === "cancel") {
                   return { outcome: { outcome: "cancelled" } } as const;
                 }
-                const optionId = selectPermissionOptionId(params, decision);
+                const optionId = selectPermissionOptionId(answerableParams, decision);
                 return optionId === undefined
                   ? ({ outcome: { outcome: "cancelled" } } as const)
                   : ({ outcome: { outcome: "selected", optionId } } as const);
