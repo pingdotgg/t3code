@@ -7502,6 +7502,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // No cwd, matching the probe that sets that endpoint.
         const cachedCustomEndpoint = yield* Effect.cached(
           client.request("config/read", { includeLayers: false }).pipe(
+            Effect.timeout("10 seconds"),
             Effect.map((response) => codexCustomEndpoint(response.config) !== undefined),
             Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(false))),
           ),
