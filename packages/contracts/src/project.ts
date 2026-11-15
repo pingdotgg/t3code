@@ -248,7 +248,7 @@ export const ProjectSearchEntriesInput = Schema.Struct({
 export type ProjectSearchEntriesInput = typeof ProjectSearchEntriesInput.Type;
 
 export const ProjectEntry = Schema.Struct({
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   kind: ProjectEntryKind,
   ignored: Schema.optional(Schema.Boolean),
 });
@@ -297,7 +297,7 @@ export type ProjectSearchContentsResult = typeof ProjectSearchContentsResult.Typ
 
 export const ProjectListEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  directoryPath: Schema.optional(TrimmedString),
+  directoryPath: Schema.optional(Schema.String),
   reportSkipped: Schema.optional(Schema.Boolean),
 });
 export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
@@ -305,7 +305,7 @@ export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
 export const ProjectListEntriesResult = Schema.Struct({
   entries: Schema.Array(ProjectEntry),
   truncated: Schema.Boolean,
-  skippedPaths: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  skippedPaths: Schema.optional(Schema.Array(Schema.NonEmptyString)),
 });
 export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 
@@ -319,7 +319,7 @@ export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.T
 
 export const ProjectIgnoredFile = Schema.Struct({
   // Git's trailing / marks a collapsed folder, reported with byteLength 0.
-  path: TrimmedNonEmptyString,
+  path: Schema.NonEmptyString,
   byteLength: NonNegativeInt,
 });
 export type ProjectIgnoredFile = typeof ProjectIgnoredFile.Type;

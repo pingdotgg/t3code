@@ -77,7 +77,7 @@ function setup(
   ]);
   const writtenFiles = new Map<string, string>();
   mocks.runAtomCommand
-    .mockResolvedValueOnce({ _tag: "Success", value: { cwd: "/destination" } })
+    .mockResolvedValueOnce({ _tag: "Success", value: { projectId, cwd: "/destination" } })
     .mockImplementationOnce(async (_registry, _command, request) => {
       writtenFiles.set(request.input.relativePath, request.input.contents);
       return {
