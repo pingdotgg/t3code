@@ -2155,7 +2155,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return false;
     }
     // An empty draft has nothing to send; Enter does what the Resume thread button does.
-    if (showResumeAction && !activePendingProgress) {
+    // promptRef, not the draft: a same-tick fill has not re-rendered.
+    if (showResumeAction && !activePendingProgress && promptRef.current.trim().length === 0) {
       event?.preventDefault();
       if (isSendBusy || environmentUnavailable !== null) return false;
       onResume();

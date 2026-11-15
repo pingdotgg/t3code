@@ -59,3 +59,34 @@ it("the questions button sends /q, and waits while a draft is typed", async () =
     ).toMatchObject([{ text: "/q" }]),
   );
 });
+
+it("the questions button sends /q on an interrupted thread instead of resuming it", async () => {
+  const history = threadWithHistory("questions-interrupted", 1);
+  const interruptedRun = { ...history.runs[0]!, status: "interrupted" as const };
+  const thread = { ...history, runs: [interruptedRun] };
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByRole("button", { name: "Resume thread" })).toBeVisible();
+
+  await userEvent.click(page.getByRole("button", { name: "Work through my questions (/q)" }));
+
+  await vi.waitFor(() =>
+    expect(
+      dispatchedCommands().filter((command) => command.type === "message.dispatch"),
+    ).toMatchObject([{ text: "/q" }]),
+  );
+  expect(
+    dispatchedCommands().some(
+      (command) =>
+        command.type === "message.dispatch" && command.manualContinuationOfRunId !== undefined,
+    ),
+  ).toBe(false);
+});
