@@ -22,7 +22,6 @@ import {
   type ProviderApprovalDecision,
   type ProviderApprovalOption,
   type ProviderInstanceId,
-  type ProviderInteractionMode,
   type ProviderDriverKind,
   type ProviderRequestKind,
   type ProviderThreadId,
@@ -2087,7 +2086,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
-        const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        // What the open session was last configured for; a turn whose policy differs reconfigures.
+        const activeSessionPolicy = yield* Ref.make<string | null>(null);
+        const sessionPolicyKey = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+          JSON.stringify([
+            policy.interactionMode,
+            policy.maxRuntimeMode,
+            flavor.sessionModeForPolicy?.(policy),
+            flavor.sessionConfigForPolicy?.(policy),
+          ]);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -7473,7 +7480,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeSessionId, candidate.sessionId);
             yield* setActiveSessionSetup(candidate);
             yield* Ref.set(activeSelection, null);
-            yield* Ref.set(activeInteractionMode, null);
+            yield* Ref.set(activeSessionPolicy, null);
             yield* Ref.set(promptInstructionStates, new Map());
             yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
@@ -7826,7 +7833,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else {
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
             if (nativeBuild !== undefined) {
+              // The policy mode applied above already left Plan; a saved mode may predate a policy change.
+              const policyOwnsMode = policyMode !== undefined;
               if (
+                !policyOwnsMode &&
                 nativeBuild.modeId !== undefined &&
                 effectiveModeState?.currentModeId !== nativeBuild.modeId &&
                 effectiveModeState?.availableModes.some(
@@ -7840,6 +7850,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   (candidate) => candidate.type === "select" && candidate.id === saved.id,
                 );
                 if (option === undefined || option.type !== "select") continue;
+                if (policyOwnsMode && (option.category === "mode" || option.id === "mode"))
+                  continue;
                 const choices = option.options.flatMap((entry) =>
                   "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
                 );
@@ -7867,7 +7879,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           started.sessionId !== input.initialNativeThreadId ? unsetOptionDefaults : [],
         );
         yield* Ref.set(activeSelection, input.modelSelection);
-        yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
+        yield* Ref.set(activeSessionPolicy, sessionPolicyKey(input.runtimePolicy));
         const createdAt = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: input.providerSessionId,
@@ -8464,7 +8476,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
-          yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(activeSessionPolicy, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
           yield* Ref.set(promptRuntimeInstructions, new Map());
@@ -8500,14 +8512,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* setActiveSessionSetup(activated);
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
-              yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              yield* Ref.set(activeSessionPolicy, sessionPolicyKey(turnInput.runtimePolicy));
             } else {
               const configuredSelection = yield* Ref.get(activeSelection);
-              const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              const configuredPolicy = yield* Ref.get(activeSessionPolicy);
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredPolicy !== sessionPolicyKey(turnInput.runtimePolicy)
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -8522,7 +8534,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   turnInput.runtimePolicy,
                 );
                 yield* Ref.set(activeSelection, turnInput.modelSelection);
-                yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+                yield* Ref.set(activeSessionPolicy, sessionPolicyKey(turnInput.runtimePolicy));
               }
             }
             // Checked after activation: a loaded session advertises its own commands.
@@ -9201,7 +9213,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
-                    yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
+                    yield* Ref.set(activeSessionPolicy, sessionPolicyKey(nextRuntimePolicy));
                   }
                   const now = yield* DateTime.now;
                   return {
@@ -9707,7 +9719,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* setActiveSessionSetup(activated);
                     yield* Ref.set(activeSelection, null);
-                    yield* Ref.set(activeInteractionMode, null);
+                    yield* Ref.set(activeSessionPolicy, null);
                   }
                   const state = yield* Ref.get(snapshot);
                   const messages = state.order.flatMap((key) => {
@@ -9843,7 +9855,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* Ref.set(activeSessionId, forked.sessionId);
                   yield* setActiveSessionSetup(forked);
                   yield* Ref.set(activeSelection, null);
-                  yield* Ref.set(activeInteractionMode, null);
+                  yield* Ref.set(activeSessionPolicy, null);
                   itemIdentityVersion = 2;
                   const now = yield* DateTime.now;
                   const providerThread = makeProviderThread({

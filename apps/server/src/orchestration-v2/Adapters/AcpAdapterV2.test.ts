@@ -2277,12 +2277,19 @@ describe("AcpAdapterV2", () => {
   );
 
   it.live.each([
-    { modeIds: "plain", environment: {}, planModeId: "architect", buildModeId: "ask" },
+    {
+      modeIds: "plain",
+      environment: {},
+      planModeId: "architect",
+      buildModeId: "ask",
+      autoModeId: "code",
+    },
     {
       modeIds: "Copilot URL",
       environment: { T3_ACP_COPILOT_MODES: "1" },
       planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
       buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      autoModeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
     },
     {
       // Without a `mode` category, T3 derives no mode state and only the config option switches.
@@ -2290,10 +2297,11 @@ describe("AcpAdapterV2", () => {
       environment: { T3_ACP_COPILOT_MODES: "1", T3_ACP_MODE_OPTION_CATEGORY: "collaboration_mode" },
       planModeId: "https://agentclientprotocol.com/protocol/session-modes#plan",
       buildModeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      autoModeId: "https://agentclientprotocol.com/protocol/session-modes#autopilot",
     },
   ])(
-    "refreshes ACP prompt instructions and native mode when the interaction mode changes ($modeIds mode ids)",
-    ({ environment, planModeId, buildModeId }) =>
+    "refreshes ACP prompt instructions and native mode when the interaction or permission mode changes ($modeIds mode ids)",
+    ({ environment, planModeId, buildModeId, autoModeId }) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const selfInvocation = yield* resolveSelfInvocation();
@@ -2321,12 +2329,22 @@ describe("AcpAdapterV2", () => {
               protocolEvents,
               environment,
             }),
+            // Full access names no mode, so the agent's advertised default stands.
+            sessionModeForPolicy: ({ runtimeMode }) =>
+              runtimeMode === "auto"
+                ? autoModeId
+                : runtimeMode === "approval-required"
+                  ? buildModeId
+                  : undefined,
           },
           selfInvocation,
         });
-        const policy = (interactionMode: "default" | "plan") =>
+        const policy = (
+          interactionMode: "default" | "plan",
+          runtimeMode: "full-access" | "auto" | "approval-required" = "full-access",
+        ) =>
           ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
+            runtimeMode,
             interactionMode,
             cwd: process.cwd(),
           });
@@ -2430,12 +2448,33 @@ describe("AcpAdapterV2", () => {
           [buildModeId],
           "Build should restore the native mode that T3 temporarily replaced for Plan",
         );
-        const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", {
-          instanceId,
-          model: "composer-2",
-        });
+        const composer = { instanceId, model: "composer-2" } as const;
+        const switchedModel = yield* runTurn(7, defaultPolicy, "Switch models.", composer);
         assert.equal(switchedModel.textBlockCount, 2);
         assert.include(switchedModel.prompt, "as composer-2");
+
+        // Only the permission mode changes from here; the open session must follow it.
+        const permissionModeSets = Effect.fnUntraced(function* (
+          ordinal: number,
+          runtimeMode: "auto" | "approval-required",
+          interactionMode: "default" | "plan" = "default",
+        ) {
+          const turn = yield* runTurn(
+            ordinal,
+            policy(interactionMode, runtimeMode),
+            "Continue.",
+            composer,
+          );
+          assert.notInclude(turn.methods, "session/new");
+          return turn.modeSets;
+        });
+        assert.deepEqual(yield* permissionModeSets(8, "auto"), [autoModeId]);
+        assert.deepEqual(yield* permissionModeSets(9, "auto"), []);
+        assert.deepEqual(yield* permissionModeSets(10, "approval-required"), [buildModeId]);
+        assert.deepEqual(yield* permissionModeSets(11, "auto"), [autoModeId]);
+        assert.deepEqual(yield* permissionModeSets(12, "auto", "plan"), [planModeId]);
+        // Leaving Plan applies the permission mode of this turn, not the one saved on entering it.
+        assert.deepEqual(yield* permissionModeSets(13, "approval-required"), [buildModeId]);
       }).pipe(Effect.provide(layerTest)),
   );
 
