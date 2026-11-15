@@ -110,7 +110,7 @@ export function markAttachmentClaimFailure(input: {
     setUploadState(attachment.id, {
       status: "failed",
       environmentId: input.environmentId,
-      forceReupload: true,
+      forceReupload: attachment.file !== null,
       ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
         ? { attachmentId: upload.attachmentId }
         : {}),
