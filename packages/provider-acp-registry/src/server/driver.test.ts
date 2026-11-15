@@ -1300,27 +1300,34 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       yield* Fiber.join(probed);
 
-      // A fresh probe's view replaces the older probe's.
-      yield* fileSystem.writeFileString(effortModelsPath, JSON.stringify(["model-a"]));
-      version = "1.0.1";
-      const effortProbed = yield* waitFor("model-a", "effort").pipe(
+      const nextProbe = instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+        Stream.runHead,
+        Effect.map(Option.map(effortBySlug)),
         Effect.forkScoped({ startImmediately: true }),
       );
+
+      // A fresh probe's view replaces the older probe's, even while a session runs another model.
+      expect(yield* publish("model-b", "effort")).toBe(
+        "model-e:effort,model-a:,model-b:effort,model-c:effort,model-d:effort",
+      );
+      yield* fileSystem.writeFileString(effortModelsPath, JSON.stringify(["model-a"]));
+      version = "1.0.1";
+      const effortProbed = yield* nextProbe;
       yield* instance.snapshot.refresh;
-      yield* Fiber.join(effortProbed);
+      expect(yield* Fiber.join(effortProbed)).toEqual(
+        Option.some("model-e:effort,model-a:effort,model-b:effort,model-c:effort,model-d:effort"),
+      );
 
       // An update moves the agent's default; model-a still keeps what the probe saw.
       yield* fileSystem.writeFileString(modelsPath, JSON.stringify(models));
       version = "1.1.0";
-      const reprobed = yield* waitFor("model-e", "").pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      const reprobed = yield* nextProbe;
       yield* instance.snapshot.refresh;
-      yield* Fiber.join(reprobed);
 
       // The probe saw model-e without effort; models no session opened borrow the current one's.
-      expect(yield* publish("model-b", "effort")).toBe(
-        "model-e:,model-a:effort,model-b:effort,model-c:effort,model-d:effort",
+      expect(yield* Fiber.join(reprobed)).toEqual(
+        Option.some("model-e:,model-a:effort,model-b:effort,model-c:effort,model-d:effort"),
       );
       expect(yield* publish("model-c")).toBe(
         "model-e:,model-a:effort,model-b:effort,model-c:,model-d:",
@@ -1333,13 +1340,9 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       );
 
       // The probe still reports model-e without options; what its live session reported wins.
-      const replayed = yield* instance.snapshot.streamChanges.pipe(
-        Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
-        Stream.runHead,
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      const replayed = yield* nextProbe;
       yield* instance.snapshot.refresh;
-      expect(Option.map(yield* Fiber.join(replayed), effortBySlug)).toEqual(
+      expect(yield* Fiber.join(replayed)).toEqual(
         Option.some("model-e:depth,model-a:effort,model-b:thinking,model-c:,model-d:thinking"),
       );
     }),

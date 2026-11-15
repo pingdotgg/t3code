@@ -696,36 +696,40 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         processEnvironment,
       });
     // Refreshes rebuild the snapshot from the probe, so the models a session has
-    // opened (the probe's included) keep their reported options here.
-    const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const withOpenedModels = (
-      learned: ReadonlyArray<ServerProviderModel>,
-      provider: ServerProvider,
-    ) => [
-      ...learned,
-      ...openedModels(provider).filter((model) => !learned.some(({ slug }) => slug === model.slug)),
-    ];
+    // opened keep their reported options here. A live session outranks the probe,
+    // whose result may be a cached replay; a newer probe replaces an older one.
+    const learnedModels = yield* Ref.make<{
+      readonly live: ReadonlyArray<ServerProviderModel>;
+      readonly probed: ReadonlyArray<ServerProviderModel>;
+    }>({ live: [], probed: [] });
+    const without = (
+      models: ReadonlyArray<ServerProviderModel>,
+      replaced: ReadonlyArray<ServerProviderModel>,
+    ) => models.filter(({ slug }) => !replaced.some((model) => model.slug === slug));
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
     ) =>
       Ref.modify(learnedModels, (learned) => {
-        const observed = withOpenedModels(learned, provider);
         const next = applyAcpRegistryLiveConfiguration(
           provider,
           configuration,
           effectiveConfig.customModels,
-          observed,
+          [...learned.live, ...without(learned.probed, learned.live)],
         );
-        if (next.models === provider.models) return [next, observed];
+        if (next.models === provider.models) return [next, learned];
         return [
           next,
-          next.models.filter(
-            (model) => model.isDefault === true || observed.some(({ slug }) => slug === model.slug),
-          ),
+          {
+            ...learned,
+            live: next.models.filter(
+              (model) =>
+                model.isDefault === true || learned.live.some(({ slug }) => slug === model.slug),
+            ),
+          },
         ];
       });
-    const clearLearnedModels = Ref.set(learnedModels, []);
+    const clearLearnedModels = Ref.set(learnedModels, { live: [], probed: [] });
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
@@ -746,16 +750,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }).pipe(
             Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              const probed = openedModels(withCommands);
-              // Without a live configuration, learned models came from probes, so a fresh one wins.
-              return Ref.update(learnedModels, (learned) =>
-                withOpenedModels(
-                  Option.isNone(configuration)
-                    ? learned.filter(({ slug }) => !probed.some((model) => model.slug === slug))
-                    : learned,
-                  withCommands,
-                ),
-              ).pipe(
+              const opened = openedModels(withCommands);
+              return Ref.update(learnedModels, ({ live, probed }) => ({
+                live,
+                probed: [...opened, ...without(probed, opened)],
+              })).pipe(
                 Effect.andThen(
                   Option.match(configuration, {
                     onNone: () => Effect.succeed(withCommands),
