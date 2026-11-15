@@ -163,7 +163,7 @@ export function NewTaskDraftScreen(props: {
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const currentRoute = useRoute();
   const flowKey = newTaskFlowKey(currentRoute);
   const { getShare, isLoading: isIncomingShareInboxLoading } = useIncomingShare();
@@ -980,7 +980,10 @@ export function NewTaskDraftScreen(props: {
         selectedThread={thread}
         selectedThreadDetailRef={null}
         contentPresentation={{ kind: "ready" }}
-        screenTone={connectionTone(connectionState)}
+        screenTone={connectionTone(
+          connectionState,
+          environmentRuntime?.connectionAwaitingApproval === true,
+        )}
         connectionError={environmentRuntime?.connectionError ?? null}
         environmentLabel={selectedEnvironmentLabel}
         feedbackSubmissions={[]}

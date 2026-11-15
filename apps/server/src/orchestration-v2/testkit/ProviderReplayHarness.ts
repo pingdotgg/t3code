@@ -296,7 +296,8 @@ export function layerWithRegistry<Error>(
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
   | ProviderSessionManager.ProviderSessionManagerV2
-  | CommandOutputRecorder.CommandOutputRecorder,
+  | CommandOutputRecorder.CommandOutputRecorder
+  | ThreadCommandExecutor.ThreadCommandExecutor,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -454,7 +455,9 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
-    Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
+    Layer.provide(
+      Layer.mergeAll(layerEventSinkProvided, layerStores, layerProviderSessionManagerProvided),
+    ),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
@@ -551,6 +554,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        layerStores,
       ),
     ),
   );
@@ -565,6 +569,7 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
+    ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
