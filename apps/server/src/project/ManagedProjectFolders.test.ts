@@ -439,6 +439,15 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         const settings = yield* ServerSettings.ServerSettingsService;
         yield* settings.updateSettings({ newProjectDirectory: root });
         assert.equal(yield* folders.resolveNamedProjectsRoot(root), root);
+        const home = yield* HostProcess.HomeDirectory;
+        assert.equal(
+          yield* folders.resolveNamedProjectsRoot("~/custom-projects"),
+          path.resolve(home, "custom-projects"),
+        );
+        assert.equal(
+          yield* folders.resolveNamedProjectsRoot("custom-projects"),
+          path.resolve(home, "custom-projects"),
+        );
         const attributes = path.join(baseDir, "crlf.gitattributes");
         const crlfConfig = path.join(baseDir, "crlf.gitconfig");
         yield* fileSystem.writeFileString(attributes, "* text=auto eol=crlf\n");

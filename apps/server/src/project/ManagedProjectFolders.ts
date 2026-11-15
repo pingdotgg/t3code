@@ -401,7 +401,9 @@ const make = Effect.gen(function* () {
   const resolveNamedProjectsRoot = Effect.fn("ManagedProjectFolders.resolveNamedProjectsRoot")(
     (directory: string) =>
       Effect.succeed(
-        directory.trim() ? path.resolve(expandHomePath(directory.trim(), home)) : namedProjectsRoot,
+        directory.trim()
+          ? path.resolve(home, expandHomePath(directory.trim(), home))
+          : namedProjectsRoot,
       ),
   );
 
