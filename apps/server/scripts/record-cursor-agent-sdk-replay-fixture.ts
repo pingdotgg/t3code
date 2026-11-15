@@ -219,6 +219,6 @@ const recordCursorReplayCommand = Command.make(
 );
 
 Command.run(recordCursorReplayCommand, { version: "0.0.0" }).pipe(
-  Effect.provide(Layer.mergeAll(CursorSdk.layer, NodeServices.layer)),
+  Effect.provide(CursorSdk.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   NodeRuntime.runMain,
 );
