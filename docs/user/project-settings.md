@@ -64,6 +64,14 @@ back. On mobile, both are in **Settings → Projects → Organize**.
 
 A project on several machines must have every machine connected to pin or archive it.
 
+## Moved or renamed project folders
+
+If you move or rename a project's folder on disk, point the project at its new location instead
+of adding it again, so its threads stay with it. Choose **Change folder** next to the checkout in
+**Settings → Projects**, from the project's right-click menu in the sidebar, or with **Change
+project folder** in the command palette. The folder browser starts next to the old folder, and a
+path such as `../new-name` is read relative to it.
+
 ## Worktree branch names
 
 In **Settings → Worktrees → Worktree branch naming**, choose a static prefix,

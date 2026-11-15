@@ -16,6 +16,7 @@ import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
 import { InfoIcon, Trash2Icon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 
+import { openCommandPalette } from "../../commandPaletteBus";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { releaseProjectDraftUploads } from "../../lib/composerDraftUploads";
 import { persistClientSettingsUpdate, useClientSettings } from "../../hooks/useSettings";
@@ -147,6 +148,8 @@ interface ProjectSelection {
   readonly environmentId: EnvironmentId | null;
   readonly checkoutKey: string | null;
   readonly memberKeys: ReadonlyArray<string>;
+  // Member keys come from folders, so a changed folder is followed by project id.
+  readonly memberIds: ReadonlyArray<string>;
 }
 
 function sameProjectSelection(a: ProjectSelection | null, b: ProjectSelection): boolean {
@@ -156,7 +159,8 @@ function sameProjectSelection(a: ProjectSelection | null, b: ProjectSelection): 
     a.environmentId === b.environmentId &&
     a.checkoutKey === b.checkoutKey &&
     a.memberKeys.length === b.memberKeys.length &&
-    a.memberKeys.every((key, index) => key === b.memberKeys[index])
+    a.memberKeys.every((key, index) => key === b.memberKeys[index]) &&
+    a.memberIds.every((id, index) => id === b.memberIds[index])
   );
 }
 
@@ -190,20 +194,21 @@ export function ProjectSettingsPanel({
       environmentId,
       checkoutKey,
       memberKeys: members.map((member) => member.physicalProjectKey),
+      memberIds: members.map((member) => `${member.environmentId}:${member.id}`),
     };
     if (!sameProjectSelection(lastSelection, current)) setLastSelection(current);
   }
 
+  const isLastMember = (member: SidebarProjectGroupMember) =>
+    lastSelection !== null &&
+    (lastSelection.memberKeys.includes(member.physicalProjectKey) ||
+      lastSelection.memberIds.includes(`${member.environmentId}:${member.id}`));
   const successor =
     members.length === 0 &&
     lastSelection?.key === projectKey &&
     lastSelection.environmentId === environmentId &&
     lastSelection.checkoutKey === checkoutKey
-      ? groups.find((group) =>
-          group.memberProjects.some((member) =>
-            lastSelection.memberKeys.includes(member.physicalProjectKey),
-          ),
-        )
+      ? groups.find((group) => group.memberProjects.some(isLastMember))
       : undefined;
   if (successor) {
     return (
@@ -212,7 +217,10 @@ export function ProjectSettingsPanel({
         search={{
           project: successor.projectKey,
           machine: environmentId ?? undefined,
-          checkout: checkoutKey ?? undefined,
+          checkout:
+            checkoutKey === null
+              ? undefined
+              : successor.memberProjects.find(isLastMember)?.physicalProjectKey,
         }}
         replace
         hashScrollIntoView={false}
@@ -429,6 +437,22 @@ function ProjectDetail({
       <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
         <CheckoutGroupingSelect member={member} />
       </div>
+      {member.isScratch ? null : (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!editableIds.has(member.environmentId)}
+          onClick={() =>
+            openCommandPalette({
+              open: "change-project-folder",
+              projectRef: scopeProjectRef(member.environmentId, member.id),
+            })
+          }
+          aria-label={`Change folder of checkout ${member.workspaceRoot}`}
+        >
+          Change folder
+        </Button>
+      )}
       {hasMultipleCheckouts ? (
         <Button
           size="sm"

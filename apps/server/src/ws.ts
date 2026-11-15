@@ -2999,9 +2999,15 @@ export const layerWsRpc = (
                 new ProjectMutationError({
                   commandId: mutation.commandId,
                   message:
-                    cause._tag === "ProjectNotEmptyError" || cause._tag === "ProjectInvalidError"
+                    cause._tag === "ProjectNotEmptyError" ||
+                    cause._tag === "ProjectInvalidError" ||
+                    cause._tag === "ProjectConflictError"
                       ? cause.message
-                      : "Failed to mutate project.",
+                      : cause._tag === "ProjectOperationError" &&
+                          cause.operation === "normalize-workspace" &&
+                          cause.cause instanceof Error
+                        ? cause.cause.message
+                        : "Failed to mutate project.",
                   cause,
                 }),
             ),
