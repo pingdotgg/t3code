@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - runs from the update flow, before or without `vp i`.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off - runs from the update flow, before or without `vp i`.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
