@@ -6582,12 +6582,13 @@ body {
         scale: -1 1;
       }
 
-      /* Body fill, 1px past the cap into the middle and 1px below the edge.
+      /* Body fill, 1px past the cap into the middle. It stops at the bar's
+         foot, so content scrolled under the bar meets one straight edge.
          The overlap column skips the top row, where the middle's rim is. */
       & [data-jf] {
         inset-inline-start: var(--e);
         width: calc(var(--r) + 1px);
-        height: calc(100% + 1px);
+        height: 100%;
         border-start-start-radius: var(--r);
         background:
           linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) 0 0 / calc(100% - 1px) 100%
@@ -6621,6 +6622,7 @@ body {
         height: calc(var(--e) + 1px);
       }
       & [data-je] {
+        height: var(--e);
         background: radial-gradient(
           circle var(--e) at 0 0,
           transparent calc(var(--e) - 0.5px),
@@ -6652,7 +6654,7 @@ body {
 
       & [data-jm] {
         width: 1px;
-        height: calc(100% + 1px);
+        height: 100%;
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
         scale: var(--jm) 1;
