@@ -1971,6 +1971,16 @@ describe("thread folders", () => {
       settledFolder.settledShelfHeaderIndex,
     ]);
     expect(settledFolder.settledCount).toBe(1);
+    // A pinned all-settled folder stays on top but still offers Un-settle.
+    const pinnedSettled = buildThreadListV2Items({
+      ...input,
+      folders: [{ ...folder, threadIds: [settled.id], pinnedAt: NOW }],
+    });
+    expect(pinnedSettled.folderHeaders[0]).toMatchObject({
+      placement: "open",
+      settled: false,
+      allSettled: true,
+    });
     expect(
       buildThreadListV2ListItems({ ...settledFolder, pendingTasks: [] })
         .map((item) => (item.type === "v2-thread" ? item.item.thread.id : item.type))

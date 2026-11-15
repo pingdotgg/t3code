@@ -534,7 +534,7 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
             : item.snoozedCount > 0
               ? [{ id: "wake", title: `Wake folder (${item.snoozedCount})`, image: "alarm" }]
               : []),
-          item.settled
+          item.allSettled
             ? { id: "unsettle", title: "Un-settle folder", image: "arrow.uturn.backward" }
             : { id: "settle", title: "Settle folder", image: "checkmark.circle" },
           {

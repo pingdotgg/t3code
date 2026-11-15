@@ -535,6 +535,8 @@ export interface ThreadListV2SettledShelfListItem {
 export interface ThreadListV2FolderHeaderListItem {
   readonly type: "v2-folder-header";
   readonly settled: boolean;
+  /** Every member is settled, even when a pin keeps the folder on top; picks Settle or Un-settle. */
+  readonly allSettled: boolean;
   /** Where the folder shows: on top, or on the shelf every member shares. */
   readonly placement: ThreadFolderPlacement;
   /** Members that can still be snoozed, and members now snoozed, for the folder menu. */
@@ -611,6 +613,7 @@ export function threadListV2ListItemsAreEqual(
         JSON.stringify(previous.collectChoices) === JSON.stringify(item.collectChoices) &&
         previous.count === item.count &&
         previous.settled === item.settled &&
+        previous.allSettled === item.allSettled &&
         previous.placement === item.placement &&
         previous.snoozableCount === item.snoozableCount &&
         previous.snoozedCount === item.snoozedCount &&
@@ -1184,6 +1187,8 @@ export function buildThreadListV2Items(input: {
       collectChoices: threadFolderCollectChoices(block.folder, input.threads),
       count: block.threads.length,
       settled,
+      allSettled:
+        block.threads.length > 0 && block.threads.every((thread) => settledThreads.has(thread)),
       placement,
       snoozableCount: block.threads.filter(
         (thread) =>

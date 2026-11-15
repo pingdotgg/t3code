@@ -146,6 +146,8 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
         placement,
         collapsed,
         settled,
+        // Every member settled, wherever the folder shows (a pinned one stays on top).
+        allSettled: all.length > 0 && all.every((row) => row.section === "settled"),
         rows: collapsed ? all.filter((row) => isRoute(row.thread)) : rows,
         hiddenThreads: hidden.map((row) => row.thread),
         // The header tally counts live members only; parked ones never light it.
@@ -165,6 +167,33 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
         nextWakeAt: placement === "snoozed" ? earliestSnoozeWake(snoozed) : null,
       };
     }),
+  };
+}
+
+/**
+ * The folders a folder can move among (same section, same pin state, in screen order) and the
+ * stored order the server's `beforeFolderId` is relative to.
+ */
+export function resolveThreadFolderSection(
+  folder: EnvironmentThreadFolder,
+  blocks: ReadonlyArray<{ readonly folder: EnvironmentThreadFolder; readonly placement: string }>,
+  stored: ReadonlyArray<EnvironmentThreadFolder>,
+) {
+  const inEnvironment = blocks.filter(
+    (block) => block.folder.environmentId === folder.environmentId,
+  );
+  const placement =
+    inEnvironment.find((block) => block.folder.id === folder.id)?.placement ?? "open";
+  const pinned = folder.pinnedAt != null;
+  return {
+    order: stored
+      .filter((candidate) => candidate.environmentId === folder.environmentId)
+      .map((candidate) => candidate.id),
+    shown: inEnvironment
+      .filter(
+        (block) => block.placement === placement && (block.folder.pinnedAt != null) === pinned,
+      )
+      .map((block) => block.folder),
   };
 }
 

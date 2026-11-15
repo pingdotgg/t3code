@@ -213,6 +213,7 @@ import {
 } from "./threadActionMenu.logic";
 import {
   foldSidebarThreadFolders,
+  resolveThreadFolderSection,
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
@@ -666,6 +667,8 @@ function useSidebarThreads(input: {
     snoozedThreads,
     settledThreads,
     threadFolderBlocks,
+    // Stored folder order, which the server's beforeFolderId is relative to.
+    threadFolders,
     toggleThreadFolder: (key: string) =>
       setCollapsedFolderKeys((keys) =>
         keys.includes(key) ? keys.filter((candidate) => candidate !== key) : [...keys, key],
@@ -1419,6 +1422,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const {
     threadFolderBlocks,
+    threadFolders,
     toggleThreadFolder,
     toggleThreadFolderParked,
     workingCount,
@@ -1800,21 +1804,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
   // Shelf folders show under their shelf and pinned folders lead the top, so a folder
   // moves only among folders in the same section with the same pin state.
-  const folderSection = (folder: EnvironmentThreadFolder) => {
-    const blocks = threadFolderBlocksRef.current.filter(
-      (block) => block.folder.environmentId === folder.environmentId,
-    );
-    const placement = blocks.find((block) => block.folder.id === folder.id)?.placement ?? "open";
-    const pinned = folder.pinnedAt != null;
-    return {
-      order: blocks.map((block) => block.folder.id),
-      shown: blocks
-        .filter(
-          (block) => block.placement === placement && (block.folder.pinnedAt != null) === pinned,
-        )
-        .map((block) => block.folder),
-    };
-  };
+  const folderSection = (folder: EnvironmentThreadFolder) =>
+    resolveThreadFolderSection(folder, threadFolderBlocksRef.current, threadFolders);
   const moveThreadFolder = (folder: EnvironmentThreadFolder, index: number) => {
     const { order, shown } = folderSection(folder);
     const move = resolveFolderReorder(
@@ -4305,7 +4296,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 !serverConfigs.has(block.folder.environmentId) ||
                                 block.threads.length === 0
                                   ? null
-                                  : block.settled
+                                  : block.allSettled
                                     ? "unsettle"
                                     : "settle"
                               }

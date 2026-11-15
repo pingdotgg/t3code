@@ -1,3 +1,4 @@
+import { resolveFolderReorder } from "@t3tools/client-runtime/state/thread-folders";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
@@ -8,6 +9,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   foldSidebarThreadFolders,
+  resolveThreadFolderSection,
   shouldCreateNewThreadInCurrentProject,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -1885,7 +1887,12 @@ describe("foldSidebarThreadFolders", () => {
       settledThreads: [a],
       folders: [{ ...folder("f", [a.id]), pinnedAt: "2026-03-09T10:00:00Z" }],
     }).blocks[0]!;
-    expect(pinnedSettled).toMatchObject({ placement: "open", settled: false, collapsed: false });
+    expect(pinnedSettled).toMatchObject({
+      placement: "open",
+      settled: false,
+      allSettled: true,
+      collapsed: false,
+    });
     const settledOpened = foldSidebarThreadFolders({
       ...base,
       settledThreads: [a],
@@ -1893,6 +1900,24 @@ describe("foldSidebarThreadFolders", () => {
       collapsedKeys: new Set([folderKey("f")]),
     }).blocks[0]!;
     expect(settledOpened.rows).toEqual([{ thread: a, section: "settled" }]);
+
+    // Reorder works against stored order: [U, A, B] with A and B pinned shows [A, B, U].
+    const stored = [
+      folder("U", []),
+      { ...folder("A", []), pinnedAt: "2026-03-09T10:00:00Z" },
+      { ...folder("B", []), pinnedAt: "2026-03-09T10:00:00Z" },
+    ];
+    const blocks = foldSidebarThreadFolders({ ...base, folders: stored }).blocks;
+    const section = resolveThreadFolderSection(stored[1]!, blocks, stored);
+    expect(section.shown.map((candidate) => candidate.id)).toEqual(["A", "B"]);
+    expect(
+      resolveFolderReorder(
+        section.order,
+        section.shown.map((candidate) => candidate.id),
+        stored[1]!.id,
+        2,
+      ),
+    ).toEqual({ beforeFolderId: null });
   });
 });
 
