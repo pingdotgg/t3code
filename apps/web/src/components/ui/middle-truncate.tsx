@@ -19,19 +19,20 @@ export function MiddleTruncate({
   const split = splitForMiddleTruncate(value, tail);
   const headRef = useRef<HTMLSpanElement>(null);
   const head = split?.head;
+  const suffix = split?.tail;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fits the head span's DOM text and refits it through a ResizeObserver
   useLayoutEffect(() => {
     const element = headRef.current;
     // A new head can keep the same box size, so refit here, not only on resize.
-    if (!element || head === undefined) return;
+    if (!element || !element.parentElement || head === undefined || suffix === undefined) return;
     fitHead(element);
-    return observeResize(element, () => fitHead(element));
-  }, [head]);
+    return observeResize([element, element.parentElement], () => fitHead(element));
+  }, [head, suffix]);
   return (
     <span
       {...(showTitle ? { title: value } : {})}
       className={cn(
-        "inline-flex min-w-0 max-w-full overflow-hidden whitespace-nowrap",
+        "group/middle-truncate relative inline-flex min-w-0 max-w-full overflow-hidden whitespace-nowrap",
         variant === "cap-aligned" &&
           // Padding keeps descenders inside the box, so the cut does not clip them.
           "overflow-x-clip overflow-y-visible [&>span]:[text-box:trim-both_cap_alphabetic] [&>span]:-mb-1 [&>span]:pb-1 [&>span]:overflow-x-clip [&>span]:overflow-y-visible",
@@ -42,10 +43,17 @@ export function MiddleTruncate({
       {split ? (
         <>
           {/* The tail carries the ellipsis so it sits flush; a CSS ellipsis leaves a ragged gap. */}
-          <span ref={headRef} className="peer min-w-0 overflow-hidden whitespace-pre">
+          <span
+            ref={headRef}
+            className="peer min-w-0 overflow-hidden whitespace-pre group-data-tail-overflow/middle-truncate:invisible group-data-tail-overflow/middle-truncate:absolute"
+          >
             {split.head}
           </span>
-          <span className="shrink-0 whitespace-pre peer-data-overflow:before:content-['…']">
+          <span className="w-max shrink-0 whitespace-pre peer-data-overflow:before:content-['…'] group-data-tail-overflow/middle-truncate:invisible group-data-tail-overflow/middle-truncate:absolute">
+            {split.tail}
+          </span>
+          <span className="hidden min-w-0 truncate group-data-tail-overflow/middle-truncate:block">
+            {split.head}
             {split.tail}
           </span>
         </>
@@ -64,9 +72,16 @@ export function MiddleTruncate({
 // size stays the true available width.
 
 function fitHead(head: HTMLElement) {
+  const container = head.parentElement;
+  const tail = head.nextElementSibling;
+  container?.removeAttribute("data-tail-overflow");
   const text = head.firstChild;
   const overflowing = head.scrollWidth > head.clientWidth && text instanceof Text;
   head.toggleAttribute("data-overflow", overflowing);
+  if (container && tail instanceof HTMLElement && tail.offsetWidth > container.clientWidth) {
+    container.setAttribute("data-tail-overflow", "");
+    return;
+  }
   let slack = 0;
   if (overflowing) {
     const range = document.createRange();
@@ -87,7 +102,6 @@ function fitHead(head: HTMLElement) {
     slack = Math.max(0, head.clientWidth - widthTo(fits));
   }
   head.style.clipPath = slack > 0 ? `inset(-0.25em ${slack}px -0.25em 0)` : "";
-  const tail = head.nextElementSibling;
   if (tail instanceof HTMLElement) tail.style.translate = slack > 0 ? `-${slack}px 0` : "";
 }
 

@@ -1746,6 +1746,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
                 <MiddleTruncate
                   value={thread.title}
                   {...(textDirection(thread.title) === "rtl" ? { tail: 0 } : {})}
+                  dir={textDirection(thread.title)}
                   showTitle={false}
                   className="flex"
                 />
