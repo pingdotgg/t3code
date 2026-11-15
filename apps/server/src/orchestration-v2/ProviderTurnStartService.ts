@@ -1382,16 +1382,14 @@ export const layer: Layer.Layer<
           );
         }
         const resumed = yield* Effect.result(
-          uncertainDelivery || rejectedHistory
+          uncertainDelivery
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: rejectedHistory
-                    ? "Rejected native history"
-                    : "Uncertain native history injection",
+                  cause: "Uncertain native history injection",
                 }),
               )
             : session.resumeThread({
@@ -1401,7 +1399,7 @@ export const layer: Layer.Layer<
                 runtimePolicy: resolvedRuntimePolicy,
               }),
         );
-        if (resumed._tag === "Success") {
+        if (resumed._tag === "Success" && !rejectedHistory) {
           const context = handoffContextForThread(resumed.success);
           context.budget = yield* Effect.cached(context.budget);
           resumedHandoffContext = context;
