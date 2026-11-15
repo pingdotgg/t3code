@@ -129,8 +129,8 @@ localhost without forwarding or another reachable address.
 
 ## Simlock hosts (alpha)
 
-[Simlock](https://incubator.callstack.com/simlock/) pools iOS simulators and
-Android emulators across machines. If you run a Simlock gateway, T3 can lease
+[Simlock](https://incubator.callstack.com/simlock/) pools iOS simulators,
+Android emulators, and enrolled phones and tablets across machines. If you run a Simlock gateway, T3 can lease
 devices from it. Simlock is new and unreleased, so this integration is an
 alpha: it may change or stop working with a newer Simlock. T3 does not install
 or manage Simlock; set up the gateway and its workers yourself. It needs a
@@ -151,10 +151,23 @@ encrypted network such as Tailscale. The gateway
 and workers need `capabilities.stream.enabled` and `capabilities.input.enabled`
 for the live screen and for input.
 
-The picker lists the models your workers can make. Opening one takes a lease;
-closing it with **Return device to the pool**, or removing the host, returns it
-wiped. The panel keeps a watched device leased up to the host's lease limit.
-You can tap, swipe, type, and press Home, and Back and Recents on Android.
+The picker lists the models your workers can make, and each model and OS
+version of enrolled phone or tablet on a connected, undrained worker, marked
+**Physical**. Opening one takes a lease; closing it with **Return device to the
+pool**, or removing the host, returns it. A simulator or emulator comes back
+wiped. A phone or tablet is never erased: Simlock removes only apps that were not
+on it when it was enrolled, by app ID, and on an iPhone never App Store or
+TestFlight apps, so an enrolled app that is deleted and reinstalled stays.
+Every other app's data, settings, files, accounts and keychain items, including
+credentials a removed app stored, stay for the next lease. A physical iPhone
+needs its worker set up for phones, including the iOS signing team and bundle
+id (see [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone)
+in Simlock's docs). The panel shows its screen only on iOS 27 or later, and only
+when its worker has Simlock's `simlock-device-capture` program, which builds
+with Xcode 27 or later. The panel cannot send a physical iPhone input; agents can still drive
+it through `device_open`. The panel keeps a watched device leased up to the host's lease limit.
+You can tap, swipe, type, and press Home, and Back and Recents on Android,
+except on a physical iPhone.
 Rotation, appearance, text size, device tools, and screenshots are not offered
 for Simlock devices; agents can still do them through `device_open`. On iOS 27
 simulators, typing on your keyboard does nothing; tap the on-screen keyboard

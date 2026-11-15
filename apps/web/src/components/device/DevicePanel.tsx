@@ -336,8 +336,13 @@ export function DevicePanel(props: {
                                 <span className="truncate text-sm font-medium text-foreground">
                                   {device.name}
                                 </span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
+                                <span className="flex min-w-0 gap-1 text-xs text-muted-foreground">
+                                  <span className="truncate">
+                                    {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version}`}
+                                  </span>
+                                  <span className="shrink-0">
+                                    {`${device.physical ? `· ${gt("Physical", { $context: "physical device, not a simulator" })} ` : ""}· ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
+                                  </span>
                                 </span>
                               </div>
                               <Button

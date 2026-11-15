@@ -59,6 +59,32 @@ const Catalog = Schema.Struct({
   ),
 });
 const decodeCatalog = Schema.decodeUnknownEffect(Catalog);
+// The enrolled phones and tablets; `/v1/catalog` lists only models a worker can create.
+const Status = Schema.Struct({
+  devices: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        spec: Schema.Struct({
+          platform: Schema.String,
+          model: Schema.String,
+          osVersion: Schema.String,
+        }),
+        state: Schema.String,
+        physical: Schema.Boolean,
+        class: Schema.optional(Schema.String),
+        workerId: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+  workers: Schema.optional(
+    Schema.Array(
+      Schema.Struct({ id: Schema.String, connection: Schema.String, drained: Schema.Boolean }),
+    ),
+  ),
+});
+const decodeStatus = Schema.decodeUnknownEffect(Status);
+// A phone in any other state (absent, quarantined, deleted) cannot be leased until an operator acts.
+const LEASABLE_PHONE_STATES = new Set(["ready", "leased", "reclaiming"]);
 const decodeSessionRecord = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ leaseId: Schema.String })),
 );
@@ -94,6 +120,7 @@ const describeCliFailure = ({ error }: typeof CliFailure.Type) => {
 interface Lease {
   readonly leaseId: string;
   readonly platform: DevicePlatform;
+  readonly physical: boolean;
   readonly name: string;
   readonly version: string;
   readonly session: string;
@@ -105,7 +132,17 @@ interface Lease {
 }
 
 const catalogId = (platform: DevicePlatform, model: string) => `simlock:${platform}:${model}`;
+// A phone's entry names its OS: two enrolled phones of one model can run different versions.
+const phoneId = (platform: DevicePlatform, osVersion: string, model: string) =>
+  `simlock-phone:${platform}:${encodeURIComponent(osVersion)}:${model}`;
 const parseCatalogId = (id: string) => {
+  const phone = /^simlock-phone:(ios|android):([^:]+):(.+)$/.exec(id);
+  if (phone)
+    return {
+      platform: phone[1] as DevicePlatform,
+      osVersion: decodeURIComponent(phone[2]!),
+      model: phone[3]!,
+    };
   const match = /^simlock:(ios|android):(.+)$/.exec(id);
   return match ? { platform: match[1] as DevicePlatform, model: match[2]! } : null;
 };
@@ -324,6 +361,43 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
     return result.stdout;
   });
 
+  /** One entry per enrolled phone or tablet model on a connected, undrained worker. */
+  const fetchPhones = Effect.fn("SimlockDeviceHost.fetchPhones")(function* (agentToken: string) {
+    return yield* request(agentToken, "GET", "/v1/status").pipe(
+      Effect.flatMap(decodeStatus),
+      Effect.map((status) => {
+        const usable = new Set(
+          (status.workers ?? [])
+            .filter((worker) => worker.connection === "connected" && !worker.drained)
+            .map((worker) => worker.id),
+        );
+        const phones = new Map<string, DeviceHost.HostDevice>();
+        for (const device of status.devices ?? []) {
+          const { platform, model, osVersion } = device.spec;
+          if (!device.physical || (platform !== "ios" && platform !== "android")) continue;
+          if (!LEASABLE_PHONE_STATES.has(device.state)) continue;
+          if (device.workerId !== undefined && !usable.has(device.workerId)) continue;
+          if (device.class !== undefined && device.class !== "phone" && device.class !== "tablet")
+            continue;
+          const id = phoneId(platform, osVersion, model);
+          if (phones.has(id)) continue;
+          phones.set(id, {
+            id,
+            platform,
+            name: model,
+            version: platformVersion(platform, osVersion),
+            booted: false,
+            physical: true,
+          });
+        }
+        return [...phones.values()];
+      }),
+      // Phones are extra: a gateway that cannot list them still offers its simulators.
+      Effect.tapError((cause) => Effect.logWarning("Could not list Simlock phones", { cause })),
+      Effect.orElseSucceed(() => null),
+    );
+  });
+
   const fetchCatalog = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     if (catalog && now - catalog.at < CATALOG_TTL_MS) return catalog.devices;
@@ -354,11 +428,15 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         ];
       });
     });
-    const devices = byPlatform.flatMap((entry) => entry ?? []);
+    const virtual = byPlatform.flatMap((entry) => entry ?? []);
+    const phones = yield* fetchPhones(agentToken);
+    const devices = [...virtual, ...(phones ?? [])];
     // A platform with nothing to offer is usually its workers reconnecting; caching that would
     // hide it for the TTL, so only a catalog with devices on every platform is kept.
     catalog =
-      devices.length > 0 && byPlatform.every((entry) => entry === null || entry.length > 0)
+      phones !== null &&
+      virtual.length > 0 &&
+      byPlatform.every((entry) => entry === null || entry.length > 0)
         ? { at: now, devices }
         : null;
     return devices;
@@ -493,7 +571,14 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       yield* agentDevice(pending, ["connect", "proxy", "--daemon-base-url", agentDeviceUrl]);
       yield* agentDevice(
         pending,
-        ["open", "--platform", target.platform, "--device", target.model],
+        [
+          "open",
+          "--platform",
+          target.platform,
+          "--device",
+          target.model,
+          ...(target.osVersion === undefined ? [] : ["--physical", "--os", target.osVersion]),
+        ],
         { cwd: installDirectory, timeout: OPEN_TIMEOUT },
       );
       const record = yield* fs
@@ -505,6 +590,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
       const opened: Lease = {
         leaseId: record.leaseId,
         platform: target.platform,
+        physical: target.osVersion !== undefined,
         name: target.model,
         version: device.version,
         session,
@@ -572,7 +658,7 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
             name: lease.name,
             version: lease.version,
             booted: true,
-            physical: false,
+            physical: lease.physical,
           })),
         ],
         detail: undefined,
