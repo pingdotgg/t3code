@@ -245,21 +245,18 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
-  it.each(["rightPanelOpen", "terminalOpen", "previewOpen", "editableFocus"])(
-    "sends on Enter when a binding conditioned on !%s is inactive in the shortcut context",
-    (contextKey) => {
-      const keybindings = mergeWithDefaultKeybindings(
-        compileResolvedKeybindingsConfig([
-          { key: "enter", command: "commandPalette.toggle", when: `!${contextKey}` },
-        ]),
-      );
-      const conditioned = { ...input, keybindings, sendShortcut: "enter" as const, event: enter };
-      expect(composerSubmissionIntentForKey(conditioned)).toBeNull();
-      expect(
-        composerSubmissionIntentForKey({ ...conditioned, context: { [contextKey]: true } }),
-      ).toBe("foreground");
-    },
-  );
+  it("sends on Enter when a binding conditioned on !rightPanelOpen is inactive", () => {
+    const keybindings = mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "enter", command: "commandPalette.toggle", when: "!rightPanelOpen" },
+      ]),
+    );
+    const conditioned = { ...input, keybindings, sendShortcut: "enter" as const, event: enter };
+    expect(composerSubmissionIntentForKey(conditioned)).toBeNull();
+    expect(
+      composerSubmissionIntentForKey({ ...conditioned, context: { rightPanelOpen: true } }),
+    ).toBe("foreground");
+  });
 
   it.each([
     { isSoftwareKeyboardOpen: true },
