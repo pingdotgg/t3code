@@ -3099,10 +3099,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       assert.isFalse(diff.truncated);
       assert.isNull(diff.nextCursor);
+      // The refusal covers one file's read too.
+      assert.isUndefined(diff.withheldFilesReadable);
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
       assert.strictEqual(callAt(1).host, "github.acme.dev");
       assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+    }),
+  );
+
+  it.effect("cuts one withheld file out of GitHub's whole diff", () =>
+    Effect.gen(function* () {
+      const sdk = "diff --git a/patches/sdk.patch b/patches/sdk.patch\n@@ -1 +1 @@\n-old\n+new\n";
+      const patch = `diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-a\n+b\n${sdk}diff --git a/z.ts b/z.ts\n@@ -1 +1 @@\n-y\n+z\n`;
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(patch)));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const ref = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+      const file = yield* cli.getPullRequestDiff({ ...ref, path: "patches/sdk.patch" });
+      expect(file).toEqual({ patch: sdk, truncated: false, nextCursor: null });
+      expect(pathAt(0)).toBe("repos/acme/web/pulls/7");
+      expect(callAt(0)).toMatchObject({ kind: "rest", accept: "application/vnd.github.diff" });
+
+      const minified = `diff --git a/b.js b/b.js\n@@ -10,2 +10,2 @@\n ${"c".repeat(1200)}\n-${"a".repeat(3000)}\n+${"b".repeat(1500)}\n`;
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(minified)));
+      const shortened = yield* cli.getPullRequestDiff({ ...ref, path: "b.js" });
+      expect(shortened.patch).toBe(
+        `diff --git a/b.js b/b.js\n@@ -10,2 +10,2 @@\n ${"c".repeat(1000)} …[200 more characters]\n-${"a".repeat(1000)} …[2,000 more characters]\n+${"b".repeat(1000)} …[500 more characters]\n`,
+      );
+
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(patch, true)));
+      const error = yield* Effect.flip(
+        cli.getPullRequestDiff({ ...ref, path: "patches/sdk.patch" }),
+      );
+      expect(error._tag).toBe("GitHubPullRequestReadError");
     }),
   );
 
@@ -3992,6 +4021,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
+      assert.isTrue(slice.withheldFilesReadable);
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
     }),
   );

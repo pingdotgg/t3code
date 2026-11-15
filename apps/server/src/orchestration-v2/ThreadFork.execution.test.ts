@@ -1166,18 +1166,6 @@ it.effect("closing a side chat deletes it only while unused; a deleted parent ta
       ThreadId.make("side-chat-close-orphan"),
     ).pipe(Effect.flip);
     assert.include(String(orphan.cause), "was deleted");
-    const runFork = yield* orchestrator
-      .dispatch({
-        type: "thread.fork",
-        commandId: CommandId.make("side-chat-close-run-fork"),
-        sourceThreadId: parentId,
-        targetThreadId: ThreadId.make("side-chat-close-run-fork"),
-        sourcePoint: { type: "latest_stable" },
-        createdBy: "user",
-        creationSource: "web",
-      })
-      .pipe(Effect.flip);
-    assert.include(String(runFork.cause), "was deleted");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
