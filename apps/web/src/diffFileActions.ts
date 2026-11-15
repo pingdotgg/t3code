@@ -36,23 +36,40 @@ function normalizedRelativePathSegments(
   return segments;
 }
 
+/** Segments of `descendant` below `root`, or null when it is not below it. */
+function relativePathSegments(root: string, descendant: string): ReadonlyArray<string> | null {
+  const normalizedRoot = normalizeProjectPathForComparison(root);
+  const normalizedDescendant = normalizeProjectPathForComparison(descendant);
+  if (normalizedRoot === normalizedDescendant) return [];
+
+  const windowsRoot = isWindowsAbsolutePath(normalizedRoot);
+  const separator = windowsRoot ? "\\" : "/";
+  const rootPrefix = normalizedRoot.endsWith(separator)
+    ? normalizedRoot
+    : `${normalizedRoot}${separator}`;
+  if (!normalizedDescendant.startsWith(rootPrefix)) return null;
+
+  // Keep the descendant's case for the path we build; only the comparison is case-insensitive.
+  const descendantSegments = windowsRoot ? descendant.split(/[\\/]/) : descendant.split("/");
+  return descendantSegments
+    .filter(Boolean)
+    .slice(rootPrefix.split(separator).filter(Boolean).length);
+}
+
 function repositoryRelativeWorkspaceSegments(
   workspaceRoot: string | undefined,
   repositoryRoot: string | undefined,
 ): ReadonlyArray<string> | null {
   if (!workspaceRoot || !repositoryRoot) return null;
+  return relativePathSegments(repositoryRoot, workspaceRoot);
+}
 
-  const normalizedWorkspaceRoot = normalizeProjectPathForComparison(workspaceRoot);
-  const normalizedRepositoryRoot = normalizeProjectPathForComparison(repositoryRoot);
-  if (normalizedWorkspaceRoot === normalizedRepositoryRoot) return [];
-
-  const separator = isWindowsAbsolutePath(normalizedRepositoryRoot) ? "\\" : "/";
-  const repositoryPrefix = normalizedRepositoryRoot.endsWith(separator)
-    ? normalizedRepositoryRoot
-    : `${normalizedRepositoryRoot}${separator}`;
-  if (!normalizedWorkspaceRoot.startsWith(repositoryPrefix)) return null;
-
-  return normalizedWorkspaceRoot.slice(repositoryPrefix.length).split(separator).filter(Boolean);
+function workspaceRelativeRepositorySegments(
+  workspaceRoot: string | undefined,
+  repositoryRoot: string | undefined,
+): ReadonlyArray<string> | null {
+  if (!workspaceRoot || !repositoryRoot) return null;
+  return relativePathSegments(workspaceRoot, repositoryRoot);
 }
 
 export function resolveDiffPathForWorkspace(input: {
@@ -78,7 +95,18 @@ export function resolveDiffPathForWorkspace(input: {
     input.workspaceRoot,
     input.repositoryRoot,
   );
-  if (!workspaceSegments || workspaceSegments.length === 0) {
+  if (!workspaceSegments) {
+    // The repository can instead sit below the workspace, as with a clone inside a plain
+    // project folder; its diff paths are still relative to the repository root.
+    const repositorySegments = workspaceRelativeRepositorySegments(
+      input.workspaceRoot,
+      input.repositoryRoot,
+    );
+    return repositorySegments && repositorySegments.length > 0
+      ? [...repositorySegments, ...fileSegments].join("/")
+      : fileSegments.join("/");
+  }
+  if (workspaceSegments.length === 0) {
     return fileSegments.join("/");
   }
 
@@ -88,7 +116,9 @@ export function resolveDiffPathForWorkspace(input: {
   const belongsToWorkspace = workspaceSegments.every((segment, index) => {
     const candidate = fileSegments[index];
     if (candidate === undefined) return false;
-    return caseInsensitive ? candidate.toLowerCase() === segment : candidate === segment;
+    return caseInsensitive
+      ? candidate.toLowerCase() === segment.toLowerCase()
+      : candidate === segment;
   });
   if (!belongsToWorkspace) return null;
 

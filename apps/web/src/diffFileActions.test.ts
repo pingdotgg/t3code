@@ -35,6 +35,28 @@ describe("openDiffFilePrimaryAction", () => {
     expect(openInEditor).not.toHaveBeenCalled();
   });
 
+  // regression: #12902 a repository below a plain project folder keeps its intermediate folders
+  it("opens repository-relative diff files from a repository below the workspace", () => {
+    const openInEditor = vi.fn();
+
+    openDiffFilePrimaryAction({
+      threadRef: THREAD_REF,
+      filePath: "lms-platform/web/backoffice/values.yaml.gotmpl",
+      activeCwd: "E:\\Work\\FinBeat",
+      repositoryRoot: "E:\\Work\\FinBeat\\Kubernetes\\kubernetes-pak-cl-dev",
+      openInEditor,
+    });
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId:
+        "file:Kubernetes/kubernetes-pak-cl-dev/lms-platform/web/backoffice/values.yaml.gotmpl",
+    });
+    expect(openInEditor).not.toHaveBeenCalled();
+  });
+
   it("preserves repository-relative paths in a separate worktree", () => {
     expect(
       resolveDiffPathForWorkspace({
@@ -69,6 +91,31 @@ describe("openDiffFilePrimaryAction", () => {
       workspaceRoot: "/repo/back\\slash",
       repositoryRoot: "/repo",
       expected: null,
+    },
+    {
+      filePath: "lms-platform/web/backoffice/values.yaml.gotmpl",
+      workspaceRoot: "E:\\Work\\FinBeat",
+      repositoryRoot: "E:\\Work\\FinBeat\\Kubernetes\\kubernetes-pak-cl-dev",
+      expected: "Kubernetes/kubernetes-pak-cl-dev/lms-platform/web/backoffice/values.yaml.gotmpl",
+    },
+    {
+      filePath: "lms-platform\\web\\backoffice\\values.yaml.gotmpl",
+      workspaceRoot: "E:\\Work\\FinBeat",
+      repositoryRoot: "E:\\Work\\FinBeat\\Kubernetes\\kubernetes-pak-cl-dev",
+      expected: "Kubernetes/kubernetes-pak-cl-dev/lms-platform/web/backoffice/values.yaml.gotmpl",
+    },
+    {
+      filePath: "src/index.ts",
+      workspaceRoot: "/work/mono",
+      repositoryRoot: "/work/mono/repos/app",
+      expected: "repos/app/src/index.ts",
+    },
+    {
+      // The repository folder keeps its own case; only the Windows comparison ignores case.
+      filePath: "src/index.ts",
+      workspaceRoot: "C:\\Work\\FinBeat",
+      repositoryRoot: "c:\\work\\finbeat\\Kubernetes\\App",
+      expected: "Kubernetes/App/src/index.ts",
     },
   ])(
     "resolves $filePath in $workspaceRoot",
