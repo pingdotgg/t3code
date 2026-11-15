@@ -19,7 +19,11 @@ import {
   type GuideProgress,
 } from "./guideRunStore";
 import { stepTourPosition, stopFilePaths } from "@t3tools/client-runtime/review-guide-tour";
+import { translateDynamic } from "../../../i18nCore";
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 
 export function GuideTour({
   environmentId,
@@ -104,11 +108,11 @@ export function GuideTour({
           {banner}
           {diff.error !== null ? (
             <p className="text-xs text-muted-foreground">
-              The diff could not be loaded, so excerpts are missing: {diff.error}
+              {td("guide.diffLoadFailed", { error: diff.error })}
             </p>
           ) : null}
           {stop === null ? (
-            <p className="text-sm text-muted-foreground">This change has no files to tour.</p>
+            <p className="text-sm text-muted-foreground">{td("guide.noFilesToTour")}</p>
           ) : (
             <GuideStop
               key={position}

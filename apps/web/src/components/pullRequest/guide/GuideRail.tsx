@@ -5,6 +5,10 @@ import { cn } from "~/lib/utils";
 
 import { Badge } from "../../ui/badge";
 import { stopSubline } from "@t3tools/client-runtime/review-guide-tour";
+import { translateDynamic } from "../../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 
 export function GuideRail({
   stops,
@@ -40,9 +44,9 @@ export function GuideRail({
   );
 
   return (
-    <nav aria-label="Review tour" className="flex min-h-0 flex-col gap-4">
+    <nav aria-label={td("guide.reviewTour")} className="flex min-h-0 flex-col gap-4">
       <p className="text-xs text-muted-foreground tabular-nums @max-[56rem]/guide:hidden">
-        {reviewed} of {stops.length} read
+        {td("guide.readCounter", { current: reviewed, count: stops.length })}
       </p>
       <div className="flex flex-col gap-4">
         <ol className="flex flex-col gap-0.5">{stops.map(renderStop)}</ol>
