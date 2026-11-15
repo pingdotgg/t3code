@@ -163,7 +163,6 @@ const fileDiff = parsePatchFiles(
     ...lines.map((line) => `+${line}`),
     "",
   ].join("\n"),
-  "big.sql",
 )[0]!.files[0]!;
 
 function copy(): string {
