@@ -860,9 +860,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     title: thread.title,
     variant,
     woke: showsWoke,
-    // Working and waiting rows show only an icon and a duration, so name them for speech.
-    statusLabel:
-      statusLabel && (statusLabel.label ?? (status === "waiting" ? "Waiting" : "Working")),
+    statusLabel: pillKind === null ? undefined : (pillLabel ?? STATUS_PILL_BY_KIND[pillKind].label),
     timeLabel,
     snoozeWakeLabel: snoozedRow ? props.snoozeWakeLabelText : undefined,
     providerNameLabel,
