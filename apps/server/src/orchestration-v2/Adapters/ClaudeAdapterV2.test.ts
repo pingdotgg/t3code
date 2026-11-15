@@ -2802,10 +2802,9 @@ describe("ClaudeAdapterV2 query exit", () => {
           name.includes("orchestration-v2.claude-query-stream-failed"),
         );
         assert.isDefined(warning);
-        assert.include(
-          String(warning?.[2]["effect.cause"]),
-          "Query closed before response received",
-        );
+        // The trace sink clamps effect.cause before the nested reason, so the event carries it.
+        assert.include(warning?.[0], "Query closed before response received");
+        assert.include(warning?.[0], "setMcpServers");
       }),
     ).pipe(
       Effect.withTracer(tracer),

@@ -9645,12 +9645,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
           const buffered = (yield* Ref.get(wakeBuffers)).get(closedQuery.nativeThreadId)?.messages;
           if (cause !== undefined) {
+            const failure = Cause.squash(cause);
             yield* Effect.logWarning(
               "orchestration-v2.claude-query-stream-failed",
               {
                 providerSessionId: input.providerSessionId,
                 providerThreadId: context.input.providerThread.id,
                 providerTurnId: context.providerTurnId,
+                // Trace attributes clamp the pretty cause inside the wrapper's stack, before this.
+                ...(isClaudeAgentSdkQueryRunnerError(failure)
+                  ? {
+                      method: failure.method,
+                      reason:
+                        failure.cause instanceof Error
+                          ? failure.cause.message
+                          : String(failure.cause),
+                    }
+                  : {}),
               },
               cause,
             );
