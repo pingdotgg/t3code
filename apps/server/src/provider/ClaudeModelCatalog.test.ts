@@ -88,6 +88,12 @@ describe("Claude model catalog", () => {
       updateRequiredModels: [{ slug: "claude-haiku-5-5", name: "Haiku", minVersion: "2.1.293" }],
       models: [
         opus,
+        {
+          slug: "claude-opus-4-5-20251101",
+          name: "SDK dated Opus",
+          isCustom: false,
+          capabilities: { optionDescriptors: [] },
+        },
         { slug: "haiku", name: "Custom Haiku", isCustom: true, capabilities: null },
         { slug: "claude-sonnet-4-6", name: "Saved Sonnet", isCustom: false, capabilities: null },
         { slug: "known", name: "Known", isCustom: false, capabilities: null },
@@ -358,6 +364,7 @@ describe("Claude model catalog", () => {
       "us.anthropic.claude-opus-4-6-v1",
     );
     assert.strictEqual(apiModel(defaultBedrock, "claude-haiku-4-5"), "haiku");
+    assert.strictEqual(apiModel(defaultBedrock, "claude-haiku-4-5-20251001"), "haiku");
     assert.strictEqual(apiModel(defaultBedrock, "claude-haiku-5-5"), "claude-haiku-5-5");
 
     // First-party ids already are what Claude Code runs, even when an alias points elsewhere.

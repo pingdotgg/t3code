@@ -156,8 +156,9 @@ export function applyClaudeGatewayModels(
             !unavailable.has(resolveClaudeReportedModelSlug(catalog, model.id)),
         )
         .map((model) => {
-          const metadata =
-            known.get(model.id) ?? known.get(resolveClaudeReportedModelSlug(catalog, model.id));
+          const exact = known.get(model.id);
+          const canonical = known.get(resolveClaudeReportedModelSlug(catalog, model.id));
+          const metadata = exact?.isCustom ? exact : (canonical ?? exact);
           return metadata
             ? { ...metadata, slug: model.id }
             : {
