@@ -829,20 +829,20 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         "https://flag.example.test/",
       ]);
 
-      for (const [rejected, shown] of [
-        ["http://t3.example.test", "http://t3.example.test"],
-        ["not a url", "not a url"],
+      for (const rejected of [
+        "http://t3.example.test",
+        "not a url",
         // A proxy under a path prefix shares its origin with other apps.
-        ["https://t3.example.test/app", "https://t3.example.test/app"],
-        ["https://t3.example.test?x=1", "https://t3.example.test?x=1"],
-        ["https://user:secret@t3.example.test", "t3.example.test"],
+        "https://t3.example.test/app",
+        "https://t3.example.test?token=secret",
+        "https://user:secret@t3.example.test",
       ]) {
         const error = String(
           yield* resolve({ T3CODE_ADVERTISE_URL: `https://t3.example.test,${rejected}` }).pipe(
             Effect.flip,
           ),
         );
-        expect(error).toContain(`"${shown}" is not an https origin`);
+        expect(error).toContain("An advertised address must be an https origin");
         expect(error).not.toContain("secret");
       }
     }),

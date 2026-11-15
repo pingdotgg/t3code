@@ -48,8 +48,8 @@ const AdvertisedUrlsFromString = Schema.String.pipe(
           ) {
             return Effect.fail(
               new SchemaIssue.InvalidValue({
-                // Credentials written into an address stay out of the error.
-                message: `"${entry.slice(entry.lastIndexOf("@") + 1)}" is not an https origin. An advertised address is https with no path, query or credentials, such as https://t3.example.com.`,
+                message:
+                  "An advertised address must be an https origin with no path, query or credentials, such as https://t3.example.com.",
               }),
             );
           }
