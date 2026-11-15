@@ -533,6 +533,7 @@ function PullRequestCodeTab({
         existing.patch === next.patch &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
+        existing.source.withheldFilesReadable === next.source.withheldFilesReadable &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
         existing.omittedFileStats.every((file, index) => {
           const refreshed = next.omittedFileStats[index];
@@ -898,6 +899,7 @@ function PullRequestCodeTab({
   });
 
   const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
+  const withheldFilesReadable = loadedSlices[0]?.source.withheldFilesReadable === true;
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
     parsedSlices.some((parsed) => parsed?.kind === "raw");
@@ -1291,7 +1293,7 @@ function PullRequestCodeTab({
       {annotation.metadata.withheld ? (
         <WithheldFileNotice
           {...annotation.metadata.withheld}
-          onLoad={detail.capabilities.withheldFileDiff === true ? loadWithheldFile : undefined}
+          onLoad={withheldFilesReadable ? loadWithheldFile : undefined}
         />
       ) : null}
       <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />

@@ -111,8 +111,6 @@ export function usePullRequestDiffEntry(navigation: {
 export function usePullRequestDiff(
   params: PullRequestDiffParams,
   terminology: ChangeRequestTerminology,
-  /** The host can read one withheld file, so its notice offers to load it. */
-  canLoadWithheldFiles = false,
 ) {
   const reference = pullRequestTarget(params);
   const target = {
@@ -157,6 +155,8 @@ export function usePullRequestDiff(
     if (withheldPaths.includes(path)) registry.refresh(withheldFileDiff(key, path));
     else setWithheldLoads({ key, paths: [...withheldPaths, path] });
   };
+  // A refetch keeps showing the last patch, whose lines may not exist at the new head.
+  const withheldRefetching = withheldResults.some((result) => result.waiting);
   const loads = new Map<string, WithheldFileLoad>();
   withheldPaths.forEach((path, index) => {
     const result = withheldResults[index];
@@ -175,7 +175,9 @@ export function usePullRequestDiff(
     () => getCachedPullRequestDiffPages(pages, key, terminology),
     [key, pages, terminology],
   );
-  const parsed = withWithheldFiles(pagesParsed, loads, canLoadWithheldFiles, key);
+  // The server says whether a withheld file can be read alone; GitHub may refuse the whole diff.
+  const withheldFilesReadable = pages[0]?.result.withheldFilesReadable === true;
+  const parsed = withWithheldFiles(pagesParsed, loads, withheldFilesReadable, key);
   const patch = useMemo(() => pages.map((page) => page.result.patch).join("\n"), [pages]);
   const nextCursor = pages.at(-1)?.result.nextCursor ?? null;
   const canLoadMore =
@@ -204,6 +206,7 @@ export function usePullRequestDiff(
     refresh,
     parsed,
     loadWithheldFile,
+    withheldRefetching,
     patch,
     nextCursor,
     canLoadMore,

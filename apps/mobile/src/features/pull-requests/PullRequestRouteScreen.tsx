@@ -974,11 +974,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const terminology = sourceControlClients.get(
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
-  const result = usePullRequestDiff(
-    route.params,
-    terminology,
-    detail.data?.capabilities.withheldFileDiff === true,
-  );
+  const result = usePullRequestDiff(route.params, terminology);
   // Other screens open files with the link's params spread in; only the link's own entry follows it.
   const linkAnchor =
     route.params.path === "" &&
@@ -1015,6 +1011,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     !staleDiff &&
     !detail.isPending &&
     !result.isPending &&
+    !result.withheldRefetching &&
     !result.error;
   const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(route.params)));
   const baseData = useMemo(() => getCachedNativeReviewDiffData({ parsedDiff: parsed }), [parsed]);
