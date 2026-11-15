@@ -275,6 +275,16 @@ Normalized in the comparison:
   --json-schema … --tools "" --permission-mode dontAsk`, the prompt on stdin, a fresh temp
   folder, 180 s, a retry without `--no-session-persistence` for CLIs before 2.0.63. No SDK host.
   Proven by the four `title*` scenarios of `tools/probe-conformance`.
+- **Stop hook and goals:** every query gets T3's `Stop` hook (`onStop`), so `initialize` is
+  equal. T3's hook answers `{continue: false}` while a Claude `/goal` is active and a
+  delegated task will wake the thread; this provider tracks no Claude goals (`active_goal` is
+  ignored), so its hook always answers `{}`, T3's answer without an active goal.
+- **Native session title:** as T3, a turn sends `rename_session` (`source: "host"`) when the
+  thread title differs from the one last applied to the native session; a new session applies
+  its title at spawn, and the applied titles live per provider instance, across sessions.
+  T3 also records the applied title in `nativeMetadata.title`, so it survives a restart; this
+  provider reads a recorded title but writes none, so after a restart it renames once more.
+  A native `/rename` does not retitle the thread here (T3 #36879).
 - **Elicitation:** only field-less forms; TS fills simple forms.
 - **No `/mcp` instructions text** in this crate: the server passes it as `mcp_instructions`.
 

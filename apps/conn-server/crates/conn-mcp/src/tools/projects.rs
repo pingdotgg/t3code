@@ -27,7 +27,8 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .map(|p| p.iter().filter(|p| p["deletedAt"].is_null()).collect())
         .unwrap_or_default();
     let cursor = u64_arg(args, "cursor").unwrap_or(0) as usize;
-    let limit = u64_arg(args, "limit").unwrap_or(20) as usize;
+    // `clampedPositiveInt(100)`: a larger limit is clamped, not refused.
+    let limit = u64_arg(args, "limit").map_or(20, |l| l.min(100)) as usize;
     let page: Vec<Value> = projects
         .iter()
         .skip(cursor)

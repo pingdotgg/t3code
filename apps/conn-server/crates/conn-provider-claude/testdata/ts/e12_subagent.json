@@ -1,5 +1,5 @@
 {
-  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e12_subagent.ndjson, via the wake test harness; driver field kept. Clock is the TestClock (epoch 0).",
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e12_subagent.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
   "offered": [
     {
       "type": "user",
@@ -8,13 +8,12 @@
         "content": "Ultrathink:\nUse the Agent tool with subagent_type general-purpose. Tell the subagent: run the Bash command `echo sub-ok` and reply with its output only. Then tell me what it said, in three words or fewer."
       },
       "parent_tool_use_id": null,
-      "uuid": "6879e874-a4bb-4f66-8c6f-0f95c2258536"
+      "uuid": "af0f4dcd-f4b3-4e1e-ac27-4b0fbe234d7b"
     }
   ],
   "events": [
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
         "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
@@ -33,7 +32,6 @@
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -58,13 +56,13 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       }
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
@@ -95,7 +93,6 @@
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -122,14 +119,14 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false
     },
     {
       "type": "app_thread.created",
-      "driver": "claudeAgent",
       "appThread": {
         "createdBy": "agent",
         "creationSource": "provider",
@@ -175,7 +172,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -200,7 +196,6 @@
     },
     {
       "type": "subagent.updated",
-      "driver": "claudeAgent",
       "subagent": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -233,7 +228,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -258,7 +252,6 @@
     },
     {
       "type": "message.updated",
-      "driver": "claudeAgent",
       "message": {
         "createdBy": "agent",
         "creationSource": "provider",
@@ -278,7 +271,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Aprompt",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -311,7 +303,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
         "threadId": "thread-claude-wake",
@@ -343,7 +334,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
@@ -375,7 +365,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
@@ -407,7 +396,6 @@
     },
     {
       "type": "subagent.updated",
-      "driver": "claudeAgent",
       "subagent": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -440,7 +428,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
         "threadId": "thread-claude-wake",
@@ -472,7 +459,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -497,7 +483,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -523,7 +508,6 @@
     },
     {
       "type": "subagent.updated",
-      "driver": "claudeAgent",
       "subagent": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -557,7 +541,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
         "threadId": "thread-claude-wake",
@@ -590,7 +573,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -615,7 +597,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:toolu_01At7jrCbdhTkdqeCNsG8wYz",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -642,7 +623,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
         "threadId": "thread-claude-wake",
@@ -667,7 +647,6 @@
     },
     {
       "type": "message.updated",
-      "driver": "claudeAgent",
       "message": {
         "createdBy": "agent",
         "creationSource": "provider",
@@ -685,7 +664,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:msg_011Cgzqpm7pFVDJ9DWQ7owhn%3Atext%3A0",
         "threadId": "thread-claude-wake",
@@ -713,7 +691,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
@@ -745,7 +722,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
@@ -777,7 +753,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
         "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
@@ -794,7 +769,9 @@
         "completedAt": "1970-01-01T00:00:00.000Z",
         "model": "claude-haiku-5-5",
         "turnTokenUsage": {
-          "models": ["claude-haiku-5-5"],
+          "models": [
+            "claude-haiku-5-5"
+          ],
           "otherUsage": {
             "inputTokens": 22417,
             "outputTokens": 119
@@ -812,7 +789,6 @@
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -839,14 +815,14 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false
     },
     {
       "type": "turn.terminal",
-      "driver": "claudeAgent",
       "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
       "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-1",
       "runOrdinal": 1,
@@ -856,7 +832,6 @@
     },
     {
       "type": "message.updated",
-      "driver": "claudeAgent",
       "message": {
         "createdBy": "agent",
         "creationSource": "provider",
@@ -874,7 +849,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:4bd52588-ac00-4638-8cf6-8ccd4f110ec2",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -902,7 +876,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -927,7 +900,6 @@
     },
     {
       "type": "subagent.updated",
-      "driver": "claudeAgent",
       "subagent": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5",
         "threadId": "thread-claude-wake",
@@ -961,7 +933,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Athread-root",
         "threadId": "thread:subagent:577204032c49e53f",
@@ -986,7 +957,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:task%3Aa64d7f2917f9109b5%3Asubagent",
         "threadId": "thread-claude-wake",
@@ -1019,7 +989,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
         "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
@@ -1038,7 +1007,6 @@
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -1065,13 +1033,13 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       }
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -1098,14 +1066,14 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
@@ -1136,7 +1104,6 @@
     },
     {
       "type": "node.updated",
-      "driver": "claudeAgent",
       "node": {
         "id": "node:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
         "threadId": "thread-claude-wake",
@@ -1161,7 +1128,6 @@
     },
     {
       "type": "message.updated",
-      "driver": "claudeAgent",
       "message": {
         "createdBy": "agent",
         "creationSource": "provider",
@@ -1179,7 +1145,6 @@
     },
     {
       "type": "turn_item.updated",
-      "driver": "claudeAgent",
       "turnItem": {
         "id": "turn-item:provider:claudeAgent:native-item:msg_011Cgzqpzp5QCckzEk7iV25X%3Atext%3A0",
         "threadId": "thread-claude-wake",
@@ -1207,7 +1172,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "threadId": "thread-claude-wake",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
@@ -1239,7 +1203,6 @@
     },
     {
       "type": "provider_turn.updated",
-      "driver": "claudeAgent",
       "providerTurn": {
         "id": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
         "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
@@ -1256,7 +1219,9 @@
         "completedAt": "1970-01-01T00:00:00.000Z",
         "model": "claude-haiku-5-5",
         "turnTokenUsage": {
-          "models": ["claude-haiku-5-5"],
+          "models": [
+            "claude-haiku-5-5"
+          ],
           "otherUsage": {
             "inputTokens": 22799,
             "outputTokens": 7
@@ -1274,7 +1239,6 @@
     },
     {
       "type": "provider_thread.updated",
-      "driver": "claudeAgent",
       "providerThread": {
         "id": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
         "driver": "claudeAgent",
@@ -1301,14 +1265,14 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 207,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false
     },
     {
       "type": "turn.terminal",
-      "driver": "claudeAgent",
       "providerThreadId": "provider-thread:provider:claudeAgent:native-thread:2c168e2f-1c9a-4d97-bbe0-46d301e4690d",
       "providerTurnId": "provider-turn:provider:claudeAgent:native-turn:turn%3Aattempt-2",
       "runOrdinal": 1,

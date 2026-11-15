@@ -1,7 +1,8 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/multi_turn/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
- "capturedOn": "2026-11-14",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/multi_turn/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
+ "capturedOn": "2026-11-15",
  "outcome": "passed",
+ "gates": [],
  "transcripts": [
   [
    {
@@ -4376,7 +4377,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-7SE9qJ"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-zvNJ3t"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -4397,7 +4398,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-7SE9qJ"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-zvNJ3t"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Amulti_turn%3Aproject%3Aproject%253Afixture%253Amulti_turn%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -4539,7 +4540,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-7SE9qJ"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-zvNJ3t"
     }
    },
    "exit": {
@@ -4638,7 +4639,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-7SE9qJ"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-multi_turn-zvNJ3t"
     }
    },
    "exit": {

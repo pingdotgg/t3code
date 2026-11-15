@@ -167,6 +167,10 @@ pub(crate) fn decode_uri_component(text: &str) -> Option<String> {
     while let Some(&byte) = bytes.get(index) {
         if byte == b'%' {
             let hex = bytes.get(index + 1..index + 3)?;
+            // Two hex digits exactly: `from_str_radix` would also take a sign.
+            if !hex.iter().all(u8::is_ascii_hexdigit) {
+                return None;
+            }
             let text = std::str::from_utf8(hex).ok()?;
             out.push(u8::from_str_radix(text, 16).ok()?);
             index += 3;
@@ -232,22 +236,62 @@ pub fn clone_url_for_protocol(url: &str, protocol: CloneProtocol) -> Option<Stri
     }
 }
 
-/// `lowerCaseRemote`.
-fn lower_case_remote(value: &str) -> String {
-    let trimmed = value.trim().trim_end_matches('/');
-    let lower = trimmed.to_lowercase();
-    match lower.strip_suffix(".git") {
-        Some(stripped) => stripped.to_owned(),
-        None => lower,
+/// `canonicalPathSegment`: decode, lower, encode, lower; lower only where decoding throws.
+/// Lowering before encoding matters: lowering the escape `%C3%84` never reaches the `Ä` it names.
+fn canonical_path_segment(segment: &str) -> String {
+    match decode_uri_component(segment) {
+        Some(decoded) => {
+            crate::hosts::github::encode_uri_component(&decoded.to_lowercase()).to_lowercase()
+        }
+        None => segment.to_lowercase(),
     }
 }
 
+/// `canonicalRepositoryPath`: a repository path in one lower-case spelling, so `a%20(b)`,
+/// `a%20%28b%29` and `a (b)` compare equal.
+pub fn canonical_repository_path(path: &str) -> String {
+    path.split('/')
+        .map(canonical_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// `stripGitSuffix`, or the path as written when `keep_git_suffix`.
+fn drop_git_suffix(path: &str, keep_git_suffix: bool) -> &str {
+    if keep_git_suffix {
+        return path;
+    }
+    match path
+        .len()
+        .checked_sub(4)
+        .and_then(|at| path.get(at..).map(|s| (at, s)))
+    {
+        Some((at, suffix)) if suffix.eq_ignore_ascii_case(".git") => path.get(..at).unwrap_or(path),
+        _ => path,
+    }
+}
+
+/// `lowerCaseRemote`.
+fn lower_case_remote(value: &str, keep_git_suffix: bool) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    drop_git_suffix(trimmed, keep_git_suffix).to_lowercase()
+}
+
 /// `parseGitRemoteRepository`: the host and repository path a remote names, lower case and
-/// without a port, or `None` for a remote that names no host, such as a local path.
+/// without a port, or `None` for a remote that names no host, such as a local path. The path
+/// drops a `.git` suffix and takes `canonicalRepositoryPath`'s spelling.
 ///
 /// A URL goes through the WHATWG parser (`url`), as `new URL` reads it.
 pub fn parse_git_remote_repository(value: &str) -> Option<(String, String)> {
-    let normalized = lower_case_remote(value);
+    parse_git_remote_repository_with(value, false)
+}
+
+/// `parseGitRemoteRepository(value, { keepGitSuffix })`.
+fn parse_git_remote_repository_with(
+    value: &str,
+    keep_git_suffix: bool,
+) -> Option<(String, String)> {
+    let normalized = lower_case_remote(value, keep_git_suffix);
     let is_url = ["ssh://", "https://", "http://", "git://"]
         .iter()
         .any(|scheme| normalized.starts_with(scheme));
@@ -255,34 +299,60 @@ pub fn parse_git_remote_repository(value: &str) -> Option<(String, String)> {
         // `new URL(value.trim().toLowerCase())`: the WHATWG parser, IDNA and escapes included.
         let url = url::Url::parse(&value.trim().to_lowercase()).ok()?;
         let hostname = url.host_str().unwrap_or_default();
-        let path = url.path().trim_end_matches('/');
-        let path = path.strip_suffix(".git").unwrap_or(path);
+        let path = drop_git_suffix(url.path().trim_end_matches('/'), keep_git_suffix);
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        return (!hostname.is_empty() && segments.len() > 1)
-            .then(|| (hostname.to_owned(), segments.join("/")));
+        return (!hostname.is_empty() && segments.len() > 1).then(|| {
+            (
+                hostname.to_owned(),
+                canonical_repository_path(&segments.join("/")),
+            )
+        });
     }
     // A userless one-letter prefix is a Windows drive, not an SCP host.
     let mut chars = normalized.chars();
     if chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next() == Some(':') {
         return None;
     }
-    // `^(?:[a-zA-Z0-9._-]+@)?([^@:/\\\s]+):\/?([^/\s]+(?:\/[^/\s]+)+)$`
+    // `^(?:[a-zA-Z0-9._-]+@)?(\[[0-9a-f:.]+\]|[^@:/\\\s[\]]+):\/?([^/\s]+(?:\/[^/\s]+)+)$`
     fn attempt(text: &str) -> Option<(String, String)> {
-        let (host, path) = text.split_once(':')?;
-        if host.is_empty()
-            || host
-                .chars()
-                .any(|c| matches!(c, '@' | '/' | '\\') || is_space(c))
-        {
-            return None;
-        }
+        let (host, path) = if text.starts_with('[') {
+            let (inside, rest) = text.get(1..)?.split_once(']')?;
+            let valid = !inside.is_empty()
+                && inside
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() || matches!(b, b':' | b'.'));
+            if !valid {
+                return None;
+            }
+            (text.get(..inside.len() + 2)?, rest.strip_prefix(':')?)
+        } else {
+            let (host, path) = text.split_once(':')?;
+            if host.is_empty()
+                || host
+                    .chars()
+                    .any(|c| matches!(c, '@' | '/' | '\\' | '[' | ']') || is_space(c))
+            {
+                return None;
+            }
+            (host, path)
+        };
         let path = path.strip_prefix('/').unwrap_or(path);
         let segments: Vec<&str> = path.split('/').collect();
         let valid = segments.len() > 1
             && segments
                 .iter()
                 .all(|s| !s.is_empty() && !s.chars().any(is_space));
-        valid.then(|| (host.to_owned(), path.to_owned()))
+        if !valid {
+            return None;
+        }
+        let path = canonical_repository_path(path);
+        if !host.starts_with('[') {
+            return Some((host.to_owned(), path));
+        }
+        // Spell an IPv6 host as the URL branch does, so `[::1]:a/b` and `ssh://[::1]/a/b` share
+        // a key.
+        let url = url::Url::parse(&format!("ssh://{host}")).ok()?;
+        Some((url.host_str()?.to_owned(), path))
     }
     let with_user = normalized.split_once('@').and_then(|(user, rest)| {
         let valid = !user.is_empty()
@@ -294,24 +364,49 @@ pub fn parse_git_remote_repository(value: &str) -> Option<(String, String)> {
     with_user.or_else(|| attempt(&normalized))
 }
 
-/// The registry's `repositoryKeyFromRemote`: `host/path`, with Azure DevOps's SSH spelling
-/// rewritten to its web spelling, or the lower-cased remote when it names no host.
-pub fn repository_key_from_remote(remote_url: &str) -> String {
-    let Some((host, path)) = parse_git_remote_repository(remote_url) else {
-        return lower_case_remote(remote_url);
-    };
-    let key = format!("{host}/{path}");
-    // `ssh.dev.azure.com/v3/<org>/<project>/<repo>` (the Azure DevOps definition).
-    let parts: Vec<&str> = path.split('/').collect();
-    if let ["v3", org, project, repo] = parts.as_slice() {
-        if host == "ssh.dev.azure.com" {
-            return format!("dev.azure.com/{org}/{project}/_git/{repo}");
+/// Azure DevOps's `isAzureHostname`.
+pub(crate) fn is_azure_hostname(hostname: &str) -> bool {
+    hostname == "dev.azure.com"
+        || hostname.ends_with(".dev.azure.com")
+        || hostname.ends_with(".visualstudio.com")
+}
+
+/// Azure DevOps's `repositoryKeyFromRemote`, on a remote's `host/path` with `.git` kept: the SSH
+/// spelling rewritten to the web one, any other Azure key as written, `None` for other hosts.
+fn azure_repository_key_from_remote(key: &str) -> Option<String> {
+    let parts: Vec<&str> = key.split('/').collect();
+    if let [host, "v3", org, project, repo] = parts.as_slice() {
+        let clean = [org, project, repo].iter().all(|s| !s.is_empty());
+        if clean && *host == "ssh.dev.azure.com" {
+            return Some(format!("dev.azure.com/{org}/{project}/_git/{repo}"));
         }
-        if host == "vs-ssh.visualstudio.com" {
-            return format!("{org}.visualstudio.com/{project}/_git/{repo}");
+        if clean && *host == "vs-ssh.visualstudio.com" {
+            return Some(format!("{org}.visualstudio.com/{project}/_git/{repo}"));
         }
     }
-    key
+    // Azure takes a name as written, so its keys keep the `.git` other hosts drop.
+    is_azure_hostname(key.split('/').next().unwrap_or_default()).then(|| key.to_owned())
+}
+
+/// `normalizeGitRemoteUrl`: `host/path` for a remote that names a host, else the remote itself,
+/// lower case.
+pub fn normalize_git_remote_url(value: &str) -> String {
+    match parse_git_remote_repository(value) {
+        Some((host, path)) => format!("{host}/{path}"),
+        None => lower_case_remote(value, false),
+    }
+}
+
+/// The registry's `repositoryKeyFromRemote`: `normalizeGitRemoteUrl`, unless a host spells the
+/// remote's `host/path` (`.git` kept) its own way; only Azure DevOps does.
+pub fn repository_key_from_remote(remote_url: &str) -> String {
+    let key = normalize_git_remote_url(remote_url);
+    match parse_git_remote_repository_with(remote_url, true) {
+        Some((host, path)) => {
+            azure_repository_key_from_remote(&format!("{host}/{path}")).unwrap_or(key)
+        }
+        None => key,
+    }
 }
 
 /// `scheme://` at `index`: `[a-z][a-z0-9+.-]*://`, case-insensitive. Returns the index after
@@ -570,6 +665,17 @@ mod tests {
             "c:/repos/x",
             "a drive"
         );
+        // T3 since b9a68e0: one spelling of escaped names, Azure keeps `.git`, IPv6 SCP hosts.
+        assert_eq!(
+            repository_key_from_remote("https://github.com/o/a%20%28B%29.git"),
+            "github.com/o/a%20(b)"
+        );
+        assert_eq!(
+            repository_key_from_remote("https://dev.azure.com/o/p/_git/r.git"),
+            "dev.azure.com/o/p/_git/r.git"
+        );
+        assert_eq!(repository_key_from_remote("git@[::1]:o/r.git"), "[::1]/o/r");
+        assert_eq!(canonical_repository_path("A%C3%84/%zz"), "a%c3%a4/%zz");
     }
 
     // SourceControlRepositoryService.test.ts: "strips embedded credentials from the remote URL

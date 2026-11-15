@@ -220,6 +220,20 @@ const QUERY_METHODS = new Set([
   "mcpServerStatus",
 ]);
 
+/**
+ * T3's `renameSession`: the `rename_session` control request through the Query's own `request`
+ * (`sendClaudeControlRequest`), so `claude --resume` shows the thread's title.
+ */
+async function renameSession(q, title) {
+  if (typeof title !== "string") throw new Error("renameSession needs a title");
+  const send = q === undefined ? undefined : Reflect.get(q, "request");
+  if (typeof send !== "function") {
+    throw new Error("This Claude Agent SDK cannot send rename_session.");
+  }
+  const reply = await Reflect.apply(send, q, [{ subtype: "rename_session", title, source: "host" }]);
+  return reply !== null && typeof reply === "object" ? (reply.response ?? null) : null;
+}
+
 /** T3's `DEFAULT_TIMEOUT_MS`: the deadline of the probe's optional usage and settings reads. */
 const PROBE_READ_TIMEOUT_MS = 4_000;
 /** The account fields the probe reports (`ClaudeCapabilitiesProbe`); never a token. */
@@ -407,21 +421,26 @@ export function createDriver(host) {
         session.request("elicitation", callbackOptions?.requestId, request, callbackOptions?.signal);
       options.onUserDialog = (request, callbackOptions) =>
         session.request("userDialog", callbackOptions?.requestId, request, callbackOptions?.signal);
+      // T3's `hooks`: SubagentStart first, then Stop, so the CLI numbers their callbacks alike.
+      const hooks = {};
       if (typeof command.subagentStartContext === "string") {
         const additionalContext = command.subagentStartContext;
-        options.hooks = {
-          SubagentStart: [
-            {
-              hooks: [
-                () =>
-                  Promise.resolve({
-                    hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext },
-                  }),
-              ],
-            },
-          ],
-        };
+        hooks.SubagentStart = [
+          {
+            hooks: [
+              () =>
+                Promise.resolve({
+                  hookSpecificOutput: { hookEventName: "SubagentStart", additionalContext },
+                }),
+            ],
+          },
+        ];
       }
+      // T3's `onStop` answers `{continue: false}` only while a Claude goal is active and a
+      // delegated task will wake the thread. The Conn Server tracks no Claude goals, so it gives
+      // T3's answer for a thread without an active goal.
+      if (command.stopHook === true) hooks.Stop = [{ hooks: [() => Promise.resolve({})] }];
+      if (Object.keys(hooks).length > 0) options.hooks = hooks;
       if (command.wrap !== false) options.spawnClaudeCodeProcess = makeSpawner(state, describeError);
 
       let q;
@@ -471,6 +490,7 @@ export function createDriver(host) {
     },
 
     async call(session, method, args) {
+      if (method === "renameSession") return renameSession(session.state?.query, args?.[0]);
       if (!QUERY_METHODS.has(method)) throw new Error(`unknown query method ${method}`);
       const q = session.state?.query;
       const fn = q?.[method];

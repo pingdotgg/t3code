@@ -29,6 +29,8 @@ use crate::protocol::RequestId;
 pub(crate) const EVENT_CAPACITY: usize = 256;
 /// `ACP_TEXT_FLUSH_INTERVAL`.
 pub(crate) const FLUSH_INTERVAL: Duration = Duration::from_millis(50);
+/// `ACP_SUBAGENT_TEXT_FLUSH_INTERVAL`: the server's paragraph throttle cadence.
+const SUBAGENT_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
 /// `ACP_DEFERRED_FINALIZE_DEBOUNCE`.
 pub(crate) const FINALIZE_DEBOUNCE: Duration = Duration::from_secs(3);
 /// `ACP_STOP_CONFIRM_TIMEOUT_MS`.
@@ -104,6 +106,7 @@ struct State<E: Env> {
     /// What the running prompt delivers once it succeeds.
     delivery: Option<Delivery>,
     flush_armed: bool,
+    subagent_flush_armed: bool,
     restart_required: bool,
     closed: bool,
     runtime_mode: String,
@@ -449,6 +452,7 @@ impl AcpSession {
                 delivered_notes: None,
                 delivery: None,
                 flush_armed: false,
+                subagent_flush_armed: false,
                 restart_required: false,
                 closed: false,
                 runtime_mode,
@@ -681,16 +685,32 @@ impl Inner {
     /// the state lock, so order holds.
     async fn deliver(self: &Arc<Self>, state: &mut State<DynEnv>, outs: Vec<Out>) {
         let mut arm = false;
+        let mut arm_subagent = false;
         for out in outs {
             match out {
                 Out::ScheduleFlush => arm = true,
+                Out::ScheduleSubagentFlush => arm_subagent = true,
                 Out::Timer(timer) => self.run_timer(timer),
                 other => deliver_one(state, other).await,
             }
         }
+        // `None` (replays) holds both flushes, as T3's paused test clock does.
         let Some(interval) = self.config.flush_interval else {
             return;
         };
+        if arm_subagent && !state.subagent_flush_armed {
+            state.subagent_flush_armed = true;
+            let weak = Arc::downgrade(self);
+            tokio::spawn(async move {
+                tokio::time::sleep(SUBAGENT_FLUSH_INTERVAL).await;
+                let Some(inner) = weak.upgrade() else { return };
+                let mut state = inner.state.lock().await;
+                state.subagent_flush_armed = false;
+                for out in state.mapper.flush_subagent_text() {
+                    deliver_one(&mut state, out).await;
+                }
+            });
+        }
         if arm && !state.flush_armed {
             state.flush_armed = true;
             let weak = Arc::downgrade(self);
@@ -777,7 +797,7 @@ async fn deliver_one(state: &mut State<DynEnv>, out: Out) {
                 runtime.connection.reply(&id, result).await;
             }
         }
-        Out::ScheduleFlush | Out::Timer(_) => {}
+        Out::ScheduleFlush | Out::ScheduleSubagentFlush | Out::Timer(_) => {}
     }
 }
 

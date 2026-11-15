@@ -12,4 +12,4 @@ pub(super) const MANIFEST_RETRY_MS: i64 = 300000;
 /// `FETCH_TIMEOUT_MS`.
 pub(super) const FETCH_TIMEOUT_MS: u64 = 10000;
 /// The bundled manifest's `updatedAt`: an older fetched or cached manifest is refused.
-pub(super) const BUNDLED_UPDATED_AT: &str = "2026-11-12T18:25:36Z";
+pub(super) const BUNDLED_UPDATED_AT: &str = "2026-11-14T15:58:47Z";

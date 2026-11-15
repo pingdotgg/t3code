@@ -1,14 +1,14 @@
 {
-  "roots": 1009,
-  "namedSchemas": 1800,
-  "references": 1469,
-  "rustItems": 1757,
-  "literalTypes": 504,
-  "methods": 236,
-  "methodsFullyTyped": 236,
+  "roots": 1013,
+  "namedSchemas": 1808,
+  "references": 1474,
+  "rustItems": 1763,
+  "literalTypes": 506,
+  "methods": 237,
+  "methodsFullyTyped": 237,
   "opaqueFallbacks": 0,
   "lax": 13,
-  "dedupedItems": 824,
+  "dedupedItems": 831,
   "passThroughLinksDropped": 9,
   "opaque": [],
   "laxDetails": [
@@ -66,15 +66,15 @@
     }
   ],
   "fixtures": {
-    "roots": 1007,
-    "samples": 3070,
+    "roots": 1011,
+    "samples": 3080,
     "sampleFailures": 2,
     "encodeForbidden": 6,
     "failed": [
       "ChatAttachment#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
-    "keys": 1008
+    "keys": 1012
   },
   "methodTypes": [
     {
@@ -1554,6 +1554,15 @@
       "typed": true
     },
     {
+      "tag": "server.getSettings",
+      "stream": false,
+      "origin": "official",
+      "payload": "ServerProbePayload",
+      "success": "ServerSettings",
+      "error": "ServerGetSettingsError",
+      "typed": true
+    },
+    {
       "tag": "server.getStorageCleanupReport",
       "stream": true,
       "origin": "official",
@@ -1721,7 +1730,7 @@
       "origin": "official",
       "payload": "ServerProbePayload",
       "success": "StorageCleanupReport",
-      "error": "ServerUpdateSettingsError",
+      "error": "ServerGetSettingsError",
       "typed": true
     },
     {
@@ -1793,7 +1802,7 @@
       "origin": "official",
       "payload": "ServerUpdateSettingsPayload",
       "success": "ServerSettings",
-      "error": "ServerUpdateSettingsError",
+      "error": "ServerGetSettingsError",
       "typed": true
     },
     {

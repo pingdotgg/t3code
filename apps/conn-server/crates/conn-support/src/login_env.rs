@@ -89,12 +89,12 @@ fn overlay_onto(
     env
 }
 
-/// `mergePathEntries`: the preferred entries first, then the inherited ones, each once, blank
-/// entries dropped.
+/// `mergePathEntries`: the preferred entries first, then the inherited ones, each once, empty
+/// entries dropped. POSIX entries keep their whitespace: a directory may start or end with it.
 pub fn merge_path_entries(preferred: Option<&str>, inherited: Option<&str>) -> Option<String> {
     let mut merged: Vec<&str> = Vec::new();
     for value in [preferred, inherited].into_iter().flatten() {
-        for entry in value.split(':').map(str::trim) {
+        for entry in value.split(':') {
             if !entry.is_empty() && !merged.contains(&entry) {
                 merged.push(entry);
             }
@@ -373,7 +373,7 @@ mod tests {
     fn merges_like_merge_path_entries() {
         assert_eq!(
             merge_path_entries(Some("/a: /b ::/c"), Some("/b:/d")).as_deref(),
-            Some("/a:/b:/c:/d")
+            Some("/a: /b :/c:/b:/d")
         );
         assert_eq!(merge_path_entries(None, Some("")), None);
     }

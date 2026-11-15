@@ -293,6 +293,9 @@ const steps = [
   ],
   ["t3_thread_list", () => ({ allProjects: true })],
   ["t3_thread_list", () => ({})],
+  // T3 #30976: a limit above the maximum is clamped, not refused.
+  ["t3_thread_list", () => ({ allProjects: true, limit: 200 })],
+  ["t3_project_list", () => ({ limit: 200 })],
   // A worktree thread without a message starts no turn, so it runs without --model too.
   [
     "t3_thread_launch",
@@ -339,6 +342,7 @@ const steps = [
   // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: 5, limit: 1 })],
+  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 200 })],
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read" })],
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read", queuedRunId: "run:none" })],
   ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel" })],

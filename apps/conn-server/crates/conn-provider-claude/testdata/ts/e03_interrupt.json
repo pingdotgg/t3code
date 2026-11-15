@@ -1,5 +1,5 @@
 {
-  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e03_interrupt.ndjson, via the wake test harness at 828a9a48; driver field dropped. Clock is the TestClock (epoch 0).",
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e03_interrupt.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
   "offered": [
     {
       "type": "user",
@@ -8,7 +8,7 @@
         "content": "Ultrathink:\nWrite the numbers 1 to 400 as words, one per line. No other text."
       },
       "parent_tool_use_id": null,
-      "uuid": "e9072c02-af15-4b07-bae2-9f8ad713822c"
+      "uuid": "9682c15f-29a9-4f77-9847-b70be8090736"
     },
     {
       "type": "user",
@@ -17,7 +17,7 @@
         "content": "Ultrathink:\nReply only: alive"
       },
       "parent_tool_use_id": null,
-      "uuid": "beaef311-210c-4816-9144-28e3955366a5"
+      "uuid": "6175f90e-2d9a-4d02-a858-8455cec1878d"
     }
   ],
   "events": [
@@ -65,7 +65,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 80,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       }
     },
@@ -210,7 +211,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 80,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false
@@ -270,7 +272,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 112,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       }
     },
@@ -421,7 +424,9 @@
         "completedAt": "1970-01-01T00:00:00.000Z",
         "model": "claude-haiku-5-5",
         "turnTokenUsage": {
-          "models": ["claude-haiku-5-5"],
+          "models": [
+            "claude-haiku-5-5"
+          ],
           "otherUsage": {
             "inputTokens": 0,
             "outputTokens": 0
@@ -465,7 +470,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 112,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false

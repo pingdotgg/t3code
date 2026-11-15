@@ -123,6 +123,7 @@ fn session(helper: &Helper) -> (ClaudeSession, mpsc::Receiver<conn_provider::Pro
         helper.clone(),
         tx,
         vec![],
+        Default::default(),
     );
     (session, events)
 }
@@ -384,6 +385,7 @@ async fn an_abandoned_start_aborts_the_booting_query() {
             url: "http://127.0.0.1:9/mcp".into(),
             headers: vec![],
         }],
+        Default::default(),
     );
     let cwd = scratch.cwd();
     let thread = new_thread(&session, "full-access", &cwd).await;

@@ -62,6 +62,7 @@ pub struct ClaudeProvider {
     helper: Helper,
     /// The entry the last status probe built; `None` before the first one.
     status: std::sync::Mutex<Option<Value>>,
+    applied_titles: session::AppliedTitles,
 }
 
 impl std::fmt::Debug for ClaudeProvider {
@@ -80,6 +81,7 @@ impl ClaudeProvider {
             config,
             helper,
             status: std::sync::Mutex::new(None),
+            applied_titles: Default::default(),
         }
     }
 
@@ -109,6 +111,7 @@ impl ClaudeProvider {
             config,
             helper,
             status: std::sync::Mutex::new(Some(pending)),
+            applied_titles: Default::default(),
         }
     }
 
@@ -268,6 +271,7 @@ impl Provider for ClaudeProvider {
                 self.helper.clone(),
                 tx,
                 input.mcp_servers,
+                self.applied_titles.clone(),
             );
             Ok(OpenedSession {
                 session: Box::new(session),

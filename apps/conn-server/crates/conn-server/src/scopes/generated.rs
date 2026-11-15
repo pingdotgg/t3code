@@ -182,6 +182,7 @@ pub(super) const SCOPES: &[(&str, &str)] = &[
     ("server.getProcessDiagnostics", "diagnostics:read"),
     ("server.getProcessResourceHistory", "diagnostics:read"),
     ("server.getResourceTelemetryHistory", "diagnostics:read"),
+    ("server.getSettings", "orchestration:read"),
     ("server.getStorageCleanupReport", "orchestration:read"),
     ("server.getTraceDiagnostics", "diagnostics:read"),
     ("server.getUsageSummary", "diagnostics:read"),

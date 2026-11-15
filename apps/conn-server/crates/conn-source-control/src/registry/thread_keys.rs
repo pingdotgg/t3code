@@ -39,7 +39,8 @@ fn js_trim(text: &str) -> &str {
 pub fn normalize_thread_pull_request_key(key: KeySource<'_>) -> ThreadPullRequestKey {
     let authority = key.authority.map(str::to_owned).or_else(|| {
         let parsed = key.url.and_then(parse_change_request_url)?.1.link;
-        (parsed.repository == js_trim(key.repository).to_lowercase() && parsed.number == key.number)
+        (parsed.repository == crate::remote::canonical_repository_path(js_trim(key.repository))
+            && parsed.number == key.number)
             .then_some(parsed.authority)
             .flatten()
     });

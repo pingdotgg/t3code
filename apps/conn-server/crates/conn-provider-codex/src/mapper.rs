@@ -1423,14 +1423,15 @@ impl<E: Env> Mapper<E> {
         let now = self.env.now();
         let (ordinal, started_at) = turn.position(&native_item, now.clone());
         let node_id = ids::node_from_item(DRIVER, &native_item);
+        // Each update is a complete snapshot and nothing later completes it (T3 #22617).
         let node = node_json(
             turn,
             &node_id,
             "todo_list",
-            "running",
+            "completed",
             &native_item,
             &started_at,
-            None,
+            Some(&now),
         );
         let mut plan = json!({
             "id": plan_id, "threadId": turn.thread_id, "runId": turn.run_id, "nodeId": node_id,
@@ -1441,9 +1442,9 @@ impl<E: Env> Mapper<E> {
             &native_item,
             &node_id,
             ordinal,
-            "running",
+            "completed",
             &started_at,
-            None,
+            Some(&now),
             &now,
         );
         extend(

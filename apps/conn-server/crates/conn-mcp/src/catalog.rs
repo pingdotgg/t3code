@@ -323,7 +323,10 @@ mod tests {
         assert!(!args.contains_key("runId"));
         let mut args = json!({"threadId": 5}).as_object().unwrap().clone();
         assert!(check_arguments("t3_thread_wait", &wait, &wait_order, &mut args).is_err());
+        // T3 #30976: a limit above the maximum passes, and the tool clamps it.
         let mut args = json!({"limit": 101}).as_object().unwrap().clone();
+        check_arguments("t3_thread_list", &schema, &order, &mut args).unwrap();
+        let mut args = json!({"limit": 0}).as_object().unwrap().clone();
         assert!(check_arguments("t3_thread_list", &schema, &order, &mut args).is_err());
         let mut args = json!({"statuses": ["running"]})
             .as_object()
@@ -357,7 +360,8 @@ mod tests {
         for (args, problem) in [
             (
                 json!({"action": "list", "limit": 0}),
-                Some("Expected a value between 1 and 100\n  at [\"limit\"]"),
+                // `clampedPositiveInt(100)` since T3 #30976: only the lower bound refuses.
+                Some("Expected a value greater than or equal to 1\n  at [\"limit\"]"),
             ),
             (
                 json!({"action": "list", "cursor": -1}),

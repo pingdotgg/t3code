@@ -14,7 +14,10 @@ pub mod thread_keys;
 
 use url::Url;
 
-use crate::remote::{parse_git_remote_repository, repository_key_from_remote as remote_key};
+use crate::remote::{
+    canonical_repository_path, is_azure_hostname, parse_git_remote_repository,
+    repository_key_from_remote as remote_key,
+};
 
 /// The seven hosts, in the registry's display order (T3's `builtInSourceControlDefinitions`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -395,10 +398,9 @@ impl HostKind {
                     ProviderInfo::of(self, name, base())
                 })
             }
-            HostKind::AzureDevOps => (hostname == "dev.azure.com"
-                || hostname.ends_with(".dev.azure.com")
-                || hostname.ends_with(".visualstudio.com"))
-            .then(|| ProviderInfo::of(self, "Azure DevOps", base())),
+            HostKind::AzureDevOps => {
+                is_azure_hostname(hostname).then(|| ProviderInfo::of(self, "Azure DevOps", base()))
+            }
         }
     }
 
@@ -412,7 +414,7 @@ impl HostKind {
             Some(ParsedChangeRequestUrl {
                 link: ChangeRequestLink {
                     host: host.clone(),
-                    repository: m.repository.to_lowercase(),
+                    repository: canonical_repository_path(m.repository),
                     number,
                     authority: None,
                 },
@@ -431,7 +433,7 @@ impl HostKind {
                 Some(ParsedChangeRequestUrl {
                     link: ChangeRequestLink {
                         host: CURSOR_ORIGIN_GIT_HOST.to_owned(),
-                        repository: m.repository.to_lowercase(),
+                        repository: canonical_repository_path(m.repository),
                         number,
                         authority: None,
                     },
@@ -590,8 +592,8 @@ impl HostKind {
                                 .as_deref()
                                 .unwrap_or(&link.host)
                                 .to_lowercase()
-                            && web.path().trim_matches('/').to_lowercase()
-                                == link.repository.to_lowercase()
+                            && canonical_repository_path(web.path().trim_matches('/'))
+                                == canonical_repository_path(&link.repository)
                     }
                 }
             }
@@ -599,8 +601,9 @@ impl HostKind {
                 if !is_authority_of_project(identity, link) {
                     return false;
                 }
-                let project = identity.canonical_key.to_lowercase();
-                let linked = format!("{}/{}", link.host, link.repository).to_lowercase();
+                let project = canonical_repository_path(&identity.canonical_key);
+                let linked =
+                    canonical_repository_path(&format!("{}/{}", link.host, link.repository));
                 azure_canonical_repository_key(&project).unwrap_or(project)
                     == azure_canonical_repository_key(&linked).unwrap_or(linked)
             }
@@ -718,8 +721,9 @@ fn in_project_repository(
                 }
                 _ => None,
             });
-    repository.is_some_and(|r| r.to_lowercase() == link.repository.to_lowercase())
-        && on_project_host(project_host, identity, link)
+    repository.is_some_and(|r| {
+        canonical_repository_path(&r) == canonical_repository_path(&link.repository)
+    }) && on_project_host(project_host, identity, link)
 }
 
 /// Azure DevOps's `canonicalRepositoryKey`: every spelling of a Services repository, on
@@ -811,14 +815,24 @@ pub fn repository_key_from_remote(remote_url: &str) -> String {
     remote_key(remote_url)
 }
 
+/// The registry's `canonicalKeyPath`: the key's path in `canonicalRepositoryPath`'s spelling, so
+/// keys persisted before paths had one spelling still compare equal.
+fn canonical_key_path(key: &str) -> String {
+    match key.split_once('/') {
+        Some((host, path)) => format!("{host}/{}", canonical_repository_path(path)),
+        None => key.to_owned(),
+    }
+}
+
 /// `canonicalRepositoryKey`.
 pub fn canonical_repository_key(key: &str) -> String {
-    azure_canonical_repository_key(key).unwrap_or_else(|| key.to_owned())
+    let key = canonical_key_path(key);
+    azure_canonical_repository_key(&key).unwrap_or(key)
 }
 
 /// `findByRepositoryKey`: the host with more than one spelling of `key`.
 pub fn find_by_repository_key(key: &str) -> Option<HostKind> {
-    azure_canonical_repository_key(key).map(|_| HostKind::AzureDevOps)
+    azure_canonical_repository_key(&canonical_key_path(key)).map(|_| HostKind::AzureDevOps)
 }
 
 /// `repositorySelector`: what a host's tools take to select the project's repository.

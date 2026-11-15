@@ -314,6 +314,8 @@ impl<E: Env> Mapper<E> {
                 // The 50 ms text flush is due long before the 3 s debounce; T3's test clock
                 // fires it on the same advance.
                 out = self.flush_text();
+                // So is the 400 ms subagent flush.
+                out.extend(self.flush_subagent_text());
                 out.extend(self.finalize(&status, None));
             }
             Timer::Hydration { turn, task_id } => {

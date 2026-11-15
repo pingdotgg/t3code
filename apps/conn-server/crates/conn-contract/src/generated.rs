@@ -345,6 +345,7 @@ pub mod lit {
     literal!(ProviderAdapterThreadInUseError = "ProviderAdapterThreadInUseError");
     literal!(ProviderAdapterTurnStartError = "ProviderAdapterTurnStartError");
     literal!(ProviderCompactionUnsupportedError = "ProviderCompactionUnsupportedError");
+    literal!(ProviderResumeUnsupportedError = "ProviderResumeUnsupportedError");
     literal!(ProviderSessionDetach = "provider-session.detach");
     literal!(ProviderSessionDetached = "provider-session.detached");
     literal!(ProviderSessionUpdated = "provider_session.updated");
@@ -530,6 +531,7 @@ pub mod lit {
     literal!(User = "user");
     literal!(UserInputRequest = "user_input_request");
     literal!(UserMessage = "user_message");
+    literal!(VcsCheckpointStorageError = "VcsCheckpointStorageError");
     literal!(VcsProcessExitError = "VcsProcessExitError");
     literal!(VcsProcessMissingExitCodeError = "VcsProcessMissingExitCodeError");
     literal!(VcsProcessOutputLimitError = "VcsProcessOutputLimitError");
@@ -2084,6 +2086,8 @@ pub struct ThreadPullRequestSnapshot {
     pub checks_state: Option<Option<PullRequestSummaryChecksState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mergeability: Option<PullRequestMergeability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebase_required: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2131,6 +2135,8 @@ pub struct ThreadPullRequestWatch {
     pub remarks_through: String,
     pub remark_ids: Vec<String>,
     pub conflicting: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebase_required: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -3171,6 +3177,43 @@ pub struct OrchestrationV2CommandThreadCreateImportedNativeThread {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct GuestMessageAttribution {
+    pub guest_message_id: String,
+    pub name: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_id: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationMessageContext {
+    pub version: lit::N1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guest: Option<GuestMessageAttribution>,
+    pub records: Vec<Json>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrchestrationV2CommandThreadCreateInitialMessage {
+    pub message_id: String,
+    pub text: String,
+    pub attachments: Vec<ChatAttachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<OrchestrationMessageContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_seed: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scheduled_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_strategy: Option<OrchestrationV2ThreadLaunchWorkspaceStrategy>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2CommandThreadCreate {
     pub r#type: lit::ThreadCreate,
     pub created_by: OrchestrationV2Actor,
@@ -3190,6 +3233,8 @@ pub struct OrchestrationV2CommandThreadCreate {
     pub delegated_from: Option<OrchestrationV2LinkedSender>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_native_thread: Option<OrchestrationV2CommandThreadCreateImportedNativeThread>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_message: Option<OrchestrationV2CommandThreadCreateInitialMessage>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -3265,6 +3310,12 @@ pub struct OrchestrationV2CommandThreadUnsettle {
     pub command_id: String,
     pub thread_id: String,
     pub reason: lit::User,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::support::double_option"
+    )]
+    pub restore_unsettled_at: Option<Option<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -3710,25 +3761,6 @@ pub struct OrchestrationV2LinkedSender {
     pub environment_id: String,
     pub thread_id: String,
     pub title: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GuestMessageAttribution {
-    pub guest_message_id: String,
-    pub name: String,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub share_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OrchestrationMessageContext {
-    pub version: lit::N1,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub guest: Option<GuestMessageAttribution>,
-    pub records: Vec<Json>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -4958,6 +4990,8 @@ pub struct OrchestrationV2Run {
     pub context_handoff_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restart_continuation_of_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_continuation_of_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_limit_continuation_of_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -6809,6 +6843,16 @@ pub struct OrchestrationV2TurnItemRunInterruptResult {
     pub message: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OrchestrationV2TurnItemSystemNoticeLevel {
+    #[serde(rename = "info")]
+    Info,
+    #[serde(rename = "warning")]
+    Warning,
+    #[serde(rename = "error")]
+    Error,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2TurnItemSystemNotice {
@@ -6838,6 +6882,8 @@ pub struct OrchestrationV2TurnItemSystemNotice {
     pub updated_at: String,
     pub r#type: lit::SystemNotice,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<OrchestrationV2TurnItemSystemNoticeLevel>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -9349,9 +9395,18 @@ pub struct ProviderAdapterTurnStartError {
     pub cause: Option<Option<Json>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderResumeUnsupportedError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::ProviderResumeUnsupportedError,
+    pub driver: String,
+    pub provider_thread_id: String,
+}
+
 tagged_union! {
     ProviderAdapterV2Error, "_tag",
-    variants { ProviderAdapterCapabilitiesError(ProviderAdapterCapabilitiesError), ProviderAdapterOpenSessionError(ProviderAdapterOpenSessionError), ProviderAdapterCloseSessionError(ProviderAdapterCloseSessionError), ProviderAdapterResumeThreadError(ProviderAdapterResumeThreadError), ProviderAdapterThreadInUseError(ProviderAdapterThreadInUseError), ProviderAdapterEnsureThreadError(ProviderAdapterEnsureThreadError), ProviderAdapterReadThreadSnapshotError(ProviderAdapterReadThreadSnapshotError), ProviderAdapterRollbackThreadError(ProviderAdapterRollbackThreadError), ProviderAdapterForkThreadError(ProviderAdapterForkThreadError), ProviderAdapterTurnStartError(ProviderAdapterTurnStartError), ProviderAdapterSteerRunUnsupportedError(ProviderAdapterSteerRunUnsupportedError), ProviderAdapterSteerRunError(ProviderAdapterSteerRunError), ProviderAdapterSteerDeclinedError(ProviderAdapterSteerDeclinedError), ProviderAdapterInterruptError(ProviderAdapterInterruptError), ProviderAdapterInterruptTimeoutError(ProviderAdapterInterruptTimeoutError), ProviderAdapterRuntimeRequestResponseError(ProviderAdapterRuntimeRequestResponseError), ProviderAdapterEventStreamError(ProviderAdapterEventStreamError), ProviderAdapterProtocolError(ProviderAdapterProtocolError), ProviderAdapterSessionStoppedError(ProviderAdapterSessionStoppedError) },
+    variants { ProviderAdapterCapabilitiesError(ProviderAdapterCapabilitiesError), ProviderAdapterOpenSessionError(ProviderAdapterOpenSessionError), ProviderAdapterCloseSessionError(ProviderAdapterCloseSessionError), ProviderAdapterResumeThreadError(ProviderAdapterResumeThreadError), ProviderAdapterThreadInUseError(ProviderAdapterThreadInUseError), ProviderAdapterEnsureThreadError(ProviderAdapterEnsureThreadError), ProviderAdapterReadThreadSnapshotError(ProviderAdapterReadThreadSnapshotError), ProviderAdapterRollbackThreadError(ProviderAdapterRollbackThreadError), ProviderAdapterForkThreadError(ProviderAdapterForkThreadError), ProviderAdapterTurnStartError(ProviderAdapterTurnStartError), ProviderResumeUnsupportedError(ProviderResumeUnsupportedError), ProviderAdapterSteerRunUnsupportedError(ProviderAdapterSteerRunUnsupportedError), ProviderAdapterSteerRunError(ProviderAdapterSteerRunError), ProviderAdapterSteerDeclinedError(ProviderAdapterSteerDeclinedError), ProviderAdapterInterruptError(ProviderAdapterInterruptError), ProviderAdapterInterruptTimeoutError(ProviderAdapterInterruptTimeoutError), ProviderAdapterRuntimeRequestResponseError(ProviderAdapterRuntimeRequestResponseError), ProviderAdapterEventStreamError(ProviderAdapterEventStreamError), ProviderAdapterProtocolError(ProviderAdapterProtocolError), ProviderAdapterSessionStoppedError(ProviderAdapterSessionStoppedError) },
     dispatch {
         "ProviderAdapterCapabilitiesError" => [ProviderAdapterCapabilitiesError(ProviderAdapterCapabilitiesError)],
         "ProviderAdapterOpenSessionError" => [ProviderAdapterOpenSessionError(ProviderAdapterOpenSessionError)],
@@ -9363,6 +9418,7 @@ tagged_union! {
         "ProviderAdapterRollbackThreadError" => [ProviderAdapterRollbackThreadError(ProviderAdapterRollbackThreadError)],
         "ProviderAdapterForkThreadError" => [ProviderAdapterForkThreadError(ProviderAdapterForkThreadError)],
         "ProviderAdapterTurnStartError" => [ProviderAdapterTurnStartError(ProviderAdapterTurnStartError)],
+        "ProviderResumeUnsupportedError" => [ProviderResumeUnsupportedError(ProviderResumeUnsupportedError)],
         "ProviderAdapterSteerRunUnsupportedError" => [ProviderAdapterSteerRunUnsupportedError(ProviderAdapterSteerRunUnsupportedError)],
         "ProviderAdapterSteerRunError" => [ProviderAdapterSteerRunError(ProviderAdapterSteerRunError)],
         "ProviderAdapterSteerDeclinedError" => [ProviderAdapterSteerDeclinedError(ProviderAdapterSteerDeclinedError)],
@@ -10908,6 +10964,20 @@ pub enum PreviewAutomationTimeoutErrorRemoteDetailKind {
     Boolean,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PreviewAutomationSnapshotStage {
+    #[serde(rename = "metrics")]
+    Metrics,
+    #[serde(rename = "frames")]
+    Frames,
+    #[serde(rename = "page state")]
+    PageState,
+    #[serde(rename = "screenshot")]
+    Screenshot,
+    #[serde(rename = "accessibility tree")]
+    AccessibilityTree,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewAutomationTimeoutError {
@@ -10936,6 +11006,8 @@ pub struct PreviewAutomationTimeoutError {
         with = "crate::support::double_option"
     )]
     pub cause: Option<Option<Json>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_stages: Option<Vec<PreviewAutomationSnapshotStage>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
@@ -11660,6 +11732,8 @@ pub enum DeviceOperationErrorReason {
     SettingsFailed,
     #[serde(rename = "hub_rejected")]
     HubRejected,
+    #[serde(rename = "package_manager_missing")]
+    PackageManagerMissing,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15297,6 +15371,8 @@ pub struct PullRequestListEntry {
     pub state: PullRequestState,
     pub is_draft: bool,
     pub mergeability: PullRequestMergeability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebase_required: Option<bool>,
     pub additions: i64,
     pub deletions: i64,
     pub created_at: String,
@@ -15608,6 +15684,8 @@ pub struct PullRequestDetail {
     pub state: PullRequestState,
     pub is_draft: bool,
     pub mergeability: PullRequestMergeability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebase_required: Option<bool>,
     pub additions: i64,
     pub deletions: i64,
     pub changed_files: i64,
@@ -15663,7 +15741,7 @@ pub struct PullRequestDiffFileContentsInput {
     pub number: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
-    pub change_type: ReviewDiffFileContentsInputChangeType,
+    pub change_type: ReviewDiffChangeType,
     pub old_path: String,
     pub new_path: String,
 }
@@ -16298,6 +16376,8 @@ pub struct PullRequestSummary {
     pub checks_state: Option<Option<PullRequestSummaryChecksState>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mergeability: Option<PullRequestMergeability>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebase_required: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -16576,6 +16656,25 @@ pub struct ReviewBranchCommitsResult {
     pub truncated: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum VcsCheckpointStorageErrorStage {
+    #[serde(rename = "isolate")]
+    Isolate,
+    #[serde(rename = "publish")]
+    Publish,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VcsCheckpointStorageError {
+    #[serde(rename = "_tag")]
+    pub tag: lit::VcsCheckpointStorageError,
+    pub operation: String,
+    pub cwd: String,
+    pub stage: VcsCheckpointStorageErrorStage,
+    pub cause: Json,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VcsProcessSpawnError {
@@ -16748,7 +16847,7 @@ pub enum ReviewDiffPreviewSourceKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ReviewDiffFileContentsInputChangeType {
+pub enum ReviewDiffChangeType {
     #[serde(rename = "change")]
     Change,
     #[serde(rename = "rename-pure")]
@@ -16766,7 +16865,7 @@ pub enum ReviewDiffFileContentsInputChangeType {
 pub struct ReviewDiffFileContentsInput {
     pub cwd: String,
     pub source_kind: ReviewDiffPreviewSourceKind,
-    pub change_type: ReviewDiffFileContentsInputChangeType,
+    pub change_type: ReviewDiffChangeType,
     pub base_ref: Option<String>,
     pub head_ref: Option<String>,
     pub old_path: String,
@@ -16821,6 +16920,8 @@ pub struct ReviewDiffPreviewInput {
 pub struct ReviewDiffFileStat {
     pub path: String,
     pub previous_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<ReviewDiffChangeType>,
     pub additions: JsNumber,
     pub deletions: JsNumber,
 }
@@ -16856,8 +16957,9 @@ pub struct ReviewDiffPreviewResult {
 
 tagged_union! {
     ReviewGetDiffPreviewError, "_tag",
-    variants { VcsProcessSpawnError(VcsProcessSpawnError), VcsProcessExitError(VcsProcessExitError), VcsProcessTimeoutError(VcsProcessTimeoutError), VcsProcessStdinWriteError(VcsProcessStdinWriteError), VcsProcessOutputReadError(VcsProcessOutputReadError), VcsProcessOutputLimitError(VcsProcessOutputLimitError), VcsProcessMissingExitCodeError(VcsProcessMissingExitCodeError), VcsRepositoryDetectionError(VcsRepositoryDetectionError), VcsUnsupportedOperationError(VcsUnsupportedOperationError), GitCommandError(GitCommandError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
+    variants { VcsCheckpointStorageError(VcsCheckpointStorageError), VcsProcessSpawnError(VcsProcessSpawnError), VcsProcessExitError(VcsProcessExitError), VcsProcessTimeoutError(VcsProcessTimeoutError), VcsProcessStdinWriteError(VcsProcessStdinWriteError), VcsProcessOutputReadError(VcsProcessOutputReadError), VcsProcessOutputLimitError(VcsProcessOutputLimitError), VcsProcessMissingExitCodeError(VcsProcessMissingExitCodeError), VcsRepositoryDetectionError(VcsRepositoryDetectionError), VcsUnsupportedOperationError(VcsUnsupportedOperationError), GitCommandError(GitCommandError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
     dispatch {
+        "VcsCheckpointStorageError" => [VcsCheckpointStorageError(VcsCheckpointStorageError)],
         "VcsProcessSpawnError" => [VcsProcessSpawnError(VcsProcessSpawnError)],
         "VcsProcessExitError" => [VcsProcessExitError(VcsProcessExitError)],
         "VcsProcessTimeoutError" => [VcsProcessTimeoutError(VcsProcessTimeoutError)],
@@ -17879,6 +17981,8 @@ pub struct ExecutionEnvironmentCapabilities {
     pub server_installation: Option<Json>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_self_update_progress: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_update_staging: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_update_thread_continuation: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19440,6 +19544,8 @@ pub struct UsageLimitSourceSnapshotsItemItem {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
     pub checked_at: String,
     pub accounts: Vec<Option<UsageLimitSourceSnapshotsItemItemAccountsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -19936,6 +20042,16 @@ pub struct ResourceTelemetryHistory {
     pub health: ResourceTelemetryHealth,
 }
 
+tagged_union! {
+    ServerGetSettingsError, "_tag",
+    variants { ServerSettingsError(ServerSettingsError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
+    dispatch {
+        "ServerSettingsError" => [ServerSettingsError(ServerSettingsError)],
+        "EnvironmentAuthorizationError" => [EnvironmentAuthorizationError(EnvironmentAuthorizationError)],
+    },
+    fallback []
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StorageCleanupReportTrigger {
     #[serde(rename = "automatic")]
@@ -20273,6 +20389,8 @@ pub struct UsageSummarySourcesItemFingerprint {
     pub provider: UsageProviderKind,
     pub resolved_home_path: String,
     pub volume_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physical_source_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -21139,6 +21257,8 @@ pub struct ServerSelfUpdateInput {
     pub channel: Option<DesktopUpdateChannelSchema>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_database_migration: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_only: Option<bool>,
 }
 
 tagged_union! {
@@ -21922,16 +22042,6 @@ pub struct ServerUpdateSettingsPayload {
     pub patch: ClientServerSettingsPatch,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_instance_mutation: Option<ProviderInstanceMutation>,
-}
-
-tagged_union! {
-    ServerUpdateSettingsError, "_tag",
-    variants { ServerSettingsError(ServerSettingsError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
-    dispatch {
-        "ServerSettingsError" => [ServerSettingsError(ServerSettingsError)],
-        "EnvironmentAuthorizationError" => [EnvironmentAuthorizationError(EnvironmentAuthorizationError)],
-    },
-    fallback []
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -23430,8 +23540,9 @@ pub struct VcsInitInput {
 
 tagged_union! {
     VcsInitError, "_tag",
-    variants { VcsProcessSpawnError(VcsProcessSpawnError), VcsProcessExitError(VcsProcessExitError), VcsProcessTimeoutError(VcsProcessTimeoutError), VcsProcessStdinWriteError(VcsProcessStdinWriteError), VcsProcessOutputReadError(VcsProcessOutputReadError), VcsProcessOutputLimitError(VcsProcessOutputLimitError), VcsProcessMissingExitCodeError(VcsProcessMissingExitCodeError), VcsRepositoryDetectionError(VcsRepositoryDetectionError), VcsUnsupportedOperationError(VcsUnsupportedOperationError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
+    variants { VcsCheckpointStorageError(VcsCheckpointStorageError), VcsProcessSpawnError(VcsProcessSpawnError), VcsProcessExitError(VcsProcessExitError), VcsProcessTimeoutError(VcsProcessTimeoutError), VcsProcessStdinWriteError(VcsProcessStdinWriteError), VcsProcessOutputReadError(VcsProcessOutputReadError), VcsProcessOutputLimitError(VcsProcessOutputLimitError), VcsProcessMissingExitCodeError(VcsProcessMissingExitCodeError), VcsRepositoryDetectionError(VcsRepositoryDetectionError), VcsUnsupportedOperationError(VcsUnsupportedOperationError), EnvironmentAuthorizationError(EnvironmentAuthorizationError) },
     dispatch {
+        "VcsCheckpointStorageError" => [VcsCheckpointStorageError(VcsCheckpointStorageError)],
         "VcsProcessSpawnError" => [VcsProcessSpawnError(VcsProcessSpawnError)],
         "VcsProcessExitError" => [VcsProcessExitError(VcsProcessExitError)],
         "VcsProcessTimeoutError" => [VcsProcessTimeoutError(VcsProcessTimeoutError)],
@@ -24923,6 +25034,13 @@ pub mod rpc {
             pub type Success = ResourceTelemetryHistory;
             pub type Error = EnvironmentAuthorizationError;
         }
+        /// `server.getSettings`
+        pub mod get_settings {
+            use crate::{support::*, *};
+            pub type Payload = ServerProbePayload;
+            pub type Success = ServerSettings;
+            pub type Error = ServerGetSettingsError;
+        }
         /// `server.getStorageCleanupReport`
         pub mod get_storage_cleanup_report {
             use crate::{support::*, *};
@@ -25054,7 +25172,7 @@ pub mod rpc {
             use crate::{support::*, *};
             pub type Payload = ServerProbePayload;
             pub type Success = StorageCleanupReport;
-            pub type Error = ServerUpdateSettingsError;
+            pub type Error = ServerGetSettingsError;
         }
         /// `server.searchAcpRegistry`
         pub mod search_acp_registry {
@@ -25110,7 +25228,7 @@ pub mod rpc {
             use crate::{support::*, *};
             pub type Payload = ServerUpdateSettingsPayload;
             pub type Success = ServerSettings;
-            pub type Error = ServerUpdateSettingsError;
+            pub type Error = ServerGetSettingsError;
         }
         /// `server.upsertKeybinding`
         pub mod upsert_keybinding {

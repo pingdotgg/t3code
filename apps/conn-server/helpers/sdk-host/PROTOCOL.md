@@ -50,6 +50,11 @@ Write `drivers/<name>.mjs` exporting `createDriver({describeError})`, which retu
 
 - `canUseTool`, `onElicitation`, `onUserDialog`: forwarded to the server as `request`.
 - `hooks.SubagentStart` returning `subagentStartContext`, when given (T3's device-tool text).
+- `hooks.Stop` answering `{}`, when `stopHook` is `true` (T3's `onStop` for a thread without an
+  active Claude goal; the Conn Server tracks no goals).
+
+The `claude` driver's `call` also takes `renameSession` (`[title]`): T3's `rename_session`
+control request (`source: "host"`), sent through the Query's `request`.
 - `spawnClaudeCodeProcess`, unless `wrap` is `false`: the T3 server's spawn. The CLI runs as
   `/bin/sh -c <watch script> t3-claude <claude> <args...>` in its own process group, with a
   fourth pipe (fd 3) that only the host holds: when it closes (also when the host dies), the

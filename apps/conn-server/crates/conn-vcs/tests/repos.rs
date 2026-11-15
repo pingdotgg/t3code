@@ -11,11 +11,11 @@ mod support;
 use std::path::PathBuf;
 
 use conn_contract::{
-    ReviewBranchCommitsInput, ReviewDiffFileContentsInput,
-    ReviewDiffFileContentsInputChangeType as ChangeType, ReviewDiffPreviewInput,
-    ReviewDiffPreviewInputFile, ReviewDiffPreviewInputSourceKind as InputKind,
-    ReviewDiffPreviewSourceKind as Kind, VcsCreateRefInput, VcsDriverKind, VcsInitInput,
-    VcsListRefsInput, VcsListRefsInputRefKind, VcsPullResultStatus, VcsSwitchRefInput,
+    ReviewBranchCommitsInput, ReviewDiffChangeType as ChangeType, ReviewDiffFileContentsInput,
+    ReviewDiffPreviewInput, ReviewDiffPreviewInputFile,
+    ReviewDiffPreviewInputSourceKind as InputKind, ReviewDiffPreviewSourceKind as Kind,
+    VcsCreateRefInput, VcsDriverKind, VcsInitInput, VcsListRefsInput, VcsListRefsInputRefKind,
+    VcsPullResultStatus, VcsSwitchRefInput,
 };
 use conn_vcs::{
     refs, review, status,

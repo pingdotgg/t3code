@@ -711,6 +711,9 @@ pub(crate) fn round_trip(
         "ProviderReplayTranscriptHeader" => {
             go::<conn_contract::ProviderReplayTranscriptHeader>(value)
         }
+        "ProviderResumeUnsupportedError" => {
+            go::<conn_contract::ProviderResumeUnsupportedError>(value)
+        }
         "ProviderUserInputAnswers" => go::<conn_contract::ProviderUserInputAnswers>(value),
         "RuntimeMode" => go::<conn_contract::RuntimeMode>(value),
         "ServerAuthBootstrapMethod" => go::<conn_contract::ServerAuthBootstrapMethod>(value),
@@ -2126,6 +2129,15 @@ pub(crate) fn round_trip(
         }
         "rpc::server::get_resource_telemetry_history::Success" => {
             go::<conn_contract::rpc::server::get_resource_telemetry_history::Success>(value)
+        }
+        "rpc::server::get_settings::Error" => {
+            go::<conn_contract::rpc::server::get_settings::Error>(value)
+        }
+        "rpc::server::get_settings::Payload" => {
+            go::<conn_contract::rpc::server::get_settings::Payload>(value)
+        }
+        "rpc::server::get_settings::Success" => {
+            go::<conn_contract::rpc::server::get_settings::Success>(value)
         }
         "rpc::server::get_storage_cleanup_report::Error" => {
             go::<conn_contract::rpc::server::get_storage_cleanup_report::Error>(value)

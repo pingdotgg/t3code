@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/todo_list.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
-  "capturedOn": "2026-11-13",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/todo_list.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
+  "capturedOn": "2026-11-15",
   "startTurn": [
     {
       "appThread": {
@@ -10,7 +10,10 @@
         "projectId": "project:fixture:todo_list:f2604e9d-55b7-45de-a716-838867faae7e",
         "title": "Replay fixture: todo_list",
         "providerInstanceId": "codex",
-        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "modelSelection": {
+          "instanceId": "codex",
+          "model": "gpt-6-luna"
+        },
         "runtimeMode": "full-access",
         "interactionMode": "default",
         "branch": null,
@@ -69,15 +72,20 @@
         "createdBy": "user",
         "creationSource": "web"
       },
-      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "modelSelection": {
+        "instanceId": "codex",
+        "model": "gpt-6-luna"
+      },
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-MX9Suh",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-mcCwZW",
         "approvalPolicy": "never",
         "sandboxPolicy": {
           "type": "readOnly",
-          "access": { "type": "fullAccess" },
+          "access": {
+            "type": "fullAccess"
+          },
           "networkAccess": false
         }
       }
@@ -100,7 +108,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:32.415Z",
+        "startedAt": "2026-11-15T14:52:16.399Z",
         "completedAt": null
       }
     },
@@ -113,7 +121,7 @@
         "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
         "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
         "kind": "todo_list",
-        "status": "running",
+        "status": "completed",
         "countsForRun": false,
         "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
         "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
@@ -125,7 +133,7 @@
         "runtimeRequestId": null,
         "checkpointScopeId": null,
         "startedAt": "1970-01-01T00:00:00.002Z",
-        "completedAt": null
+        "completedAt": "1970-01-01T00:00:00.002Z"
       }
     },
     {
@@ -138,9 +146,21 @@
         "kind": "todo_list",
         "status": "active",
         "steps": [
-          { "id": "step-1", "text": "Inspect package.json", "status": "running" },
-          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "pending" },
-          { "id": "step-3", "text": "Report completion", "status": "pending" }
+          {
+            "id": "step-1",
+            "text": "Inspect package.json",
+            "status": "running"
+          },
+          {
+            "id": "step-2",
+            "text": "Inspect tsconfig.json",
+            "status": "pending"
+          },
+          {
+            "id": "step-3",
+            "text": "Report completion",
+            "status": "pending"
+          }
         ]
       }
     },
@@ -160,17 +180,29 @@
         },
         "parentItemId": null,
         "ordinal": 101,
-        "status": "running",
+        "status": "completed",
         "title": null,
         "startedAt": "1970-01-01T00:00:00.002Z",
-        "completedAt": null,
+        "completedAt": "1970-01-01T00:00:00.002Z",
         "updatedAt": "1970-01-01T00:00:00.002Z",
         "type": "todo_list",
         "planId": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
         "steps": [
-          { "id": "step-1", "text": "Inspect package.json", "status": "running" },
-          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "pending" },
-          { "id": "step-3", "text": "Report completion", "status": "pending" }
+          {
+            "id": "step-1",
+            "text": "Inspect package.json",
+            "status": "running"
+          },
+          {
+            "id": "step-2",
+            "text": "Inspect tsconfig.json",
+            "status": "pending"
+          },
+          {
+            "id": "step-3",
+            "text": "Report completion",
+            "status": "pending"
+          }
         ]
       }
     },
@@ -291,7 +323,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:32.415Z",
+        "startedAt": "2026-11-15T14:52:16.399Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 22980,
@@ -313,7 +345,7 @@
         "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
         "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
         "kind": "todo_list",
-        "status": "running",
+        "status": "completed",
         "countsForRun": false,
         "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
         "providerTurnId": "provider-turn:provider:codex:native-turn:01a0d691-5c9c-7873-a191-5a599fd58099",
@@ -325,7 +357,7 @@
         "runtimeRequestId": null,
         "checkpointScopeId": null,
         "startedAt": "1970-01-01T00:00:00.002Z",
-        "completedAt": null
+        "completedAt": "1970-01-01T00:00:00.002Z"
       }
     },
     {
@@ -338,9 +370,21 @@
         "kind": "todo_list",
         "status": "active",
         "steps": [
-          { "id": "step-1", "text": "Inspect package.json", "status": "completed" },
-          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "completed" },
-          { "id": "step-3", "text": "Report completion", "status": "completed" }
+          {
+            "id": "step-1",
+            "text": "Inspect package.json",
+            "status": "completed"
+          },
+          {
+            "id": "step-2",
+            "text": "Inspect tsconfig.json",
+            "status": "completed"
+          },
+          {
+            "id": "step-3",
+            "text": "Report completion",
+            "status": "completed"
+          }
         ]
       }
     },
@@ -360,17 +404,29 @@
         },
         "parentItemId": null,
         "ordinal": 101,
-        "status": "running",
+        "status": "completed",
         "title": null,
         "startedAt": "1970-01-01T00:00:00.002Z",
-        "completedAt": null,
+        "completedAt": "1970-01-01T00:00:00.002Z",
         "updatedAt": "1970-01-01T00:00:00.002Z",
         "type": "todo_list",
         "planId": "plan:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:provider:codex:run:run%3Athread%3Athread%253Afixture%253Atodo_list%253Aproject%253Aproject%25253Afixture%25253Atodo_list%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:60ae850c-0af3-4468-9967-365ecc316207",
         "steps": [
-          { "id": "step-1", "text": "Inspect package.json", "status": "completed" },
-          { "id": "step-2", "text": "Inspect tsconfig.json", "status": "completed" },
-          { "id": "step-3", "text": "Report completion", "status": "completed" }
+          {
+            "id": "step-1",
+            "text": "Inspect package.json",
+            "status": "completed"
+          },
+          {
+            "id": "step-2",
+            "text": "Inspect tsconfig.json",
+            "status": "completed"
+          },
+          {
+            "id": "step-3",
+            "text": "Report completion",
+            "status": "completed"
+          }
         ]
       }
     },
@@ -389,7 +445,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:32.415Z",
+        "startedAt": "2026-11-15T14:52:16.399Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 23417,
@@ -486,7 +542,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-13T12:14:32.415Z",
+        "startedAt": "2026-11-15T14:52:16.399Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 23449,
@@ -514,7 +570,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-13T12:14:32.415Z",
+        "startedAt": "2026-11-15T14:52:16.399Z",
         "completedAt": "2026-09-25T03:17:39.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",
@@ -525,7 +581,9 @@
           "outputTokens": 161,
           "reasoningTokens": 0,
           "hasSubagents": false,
-          "models": ["gpt-6-luna"]
+          "models": [
+            "gpt-6-luna"
+          ]
         },
         "model": "gpt-6-luna"
       }

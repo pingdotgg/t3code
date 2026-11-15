@@ -15,12 +15,20 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
 
 - **Proven:** with the monorepo at the old pin (`b12470dcad`) and the move applied,
   `tools/check.sh` passes 44 of 44, none skipped, the canary clean (macOS).
-- **Not yet followed:** Conn `main` moved past the old pin (the 2026-11-15 sync). On that tree
-  `tools/follow-conn.sh --since b12470dcad` is red: the review diff's new `changeType` (ported
-  on a branch), `canonicalRepositoryKey` now percent-encodes (`registry-diff`), T3's Claude
-  launch sends a Stop hook and `rename_session` (`claude conformance`), the Codex harness needs
-  a `PortDiscovery` mock (`codex conformance`), and `claude_background_monitor_wake` changed
-  (`t3 fixture replay`). Until that lands, `conn-server-checks.yml` is red on this tree.
+- **Followed to Conn `9efd55e5cb`** (the 2026-11-15 sync), on this tree: the review diff's
+  `changeType` from `--raw` records (T3 #33310); one spelling of escaped repository paths,
+  Azure keys that keep `.git`, IPv6 SCP hosts (`canonicalRepositoryPath`, #36929);
+  Claude's `Stop` hook and `rename_session` (#30646, #34775); POSIX `PATH` entries keep their
+  whitespace (#33840); Monitor commands in the background roster (#37019); the Codex
+  conformance harness provides `PortDiscovery` (#36501); `/mcp` list limits clamp instead of
+  refusing (#30976, in `parity.mjs`); Codex todo items complete with each update (#22617) and
+  ACP subagent replies flush every 400 ms (#29422), both in the provider replays. Not followed: Claude goals (the Stop hook answers `{}`),
+  the native `/rename` retitle (#36879), Codex's stopped-command wake rule (#36501), and four
+  `/mcp` changes whose new definitions are served but whose behaviour no check covers:
+  `delegate_task` waits at most 45 s and reports `starting` (#15622), `delegatedFrom` in the
+  thread list and read (#36961), and scheduled tasks that return `webhookUrl` only on
+  creation and take a `scheduledTaskId` filter (#27716). See
+  `crates/conn-provider-claude/README.md`, "Known differences".
 - The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
 
 ## Why it was parked for a day, and what that means

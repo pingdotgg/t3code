@@ -645,7 +645,7 @@ const mcpLayer = (scenario: any) =>
 const harnessFor = (scenario: any, log: Array<unknown>) => {
   const factory = CodexAdapterV2.layerAppServerClientFactory.pipe(
     Layer.provide(NodeServices.layer),
-    Layer.provide(Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => {} })),
+    Layer.provide(PortScanner.layerTest),
     Layer.provide(
       Layer.succeed(ProviderEventLoggers.ProviderEventLoggers, { native: undefined, canonical: undefined } as any),
     ),
@@ -695,7 +695,15 @@ const harnessFor = (scenario: any, log: Array<unknown>) => {
       ),
     ).pipe(
       Layer.provide(
-        Layer.mergeAll(factory, serverConfig, NodeServices.layer, NodeCrypto.layer, IdAllocator.layer),
+        // The adapter reads PortDiscovery itself (T3's CodexAdapterV2.testkit gives layerTest).
+        Layer.mergeAll(
+          factory,
+          serverConfig,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          IdAllocator.layer,
+          PortScanner.layerTest,
+        ),
       ),
     );
     return scenario.mcp ? registry.pipe(Layer.provide(mcpLayer(scenario))) : registry;

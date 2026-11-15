@@ -36,6 +36,9 @@ pub(super) struct Subagent {
     pub(super) child_session_id: Option<String>,
     assistant_text: String,
     assistant_messages: HashMap<String, String>,
+    /// Messages whose latest text waits for a delayed flush (`pendingAssistantMessages`), in
+    /// the order they started to wait.
+    pending_assistant: Vec<String>,
     child_item_ordinals: HashMap<String, u32>,
     next_child_ordinal: u32,
     pub(super) terminal_status_projected: bool,
@@ -395,6 +398,7 @@ impl<E: Env> Mapper<E> {
             child_session_id: None,
             assistant_text: String::new(),
             assistant_messages: HashMap::new(),
+            pending_assistant: Vec::new(),
             child_item_ordinals: HashMap::new(),
             next_child_ordinal: 101,
             terminal_status_projected: false,
@@ -505,6 +509,7 @@ impl<E: Env> Mapper<E> {
                 self.project_subagent_notification(&native_task_id, &notification, out);
             }
         }
+        self.flush_subagent_assistant(&native_task_id, out);
 
         let Some(mut subagent) = self
             .turn
@@ -626,7 +631,9 @@ impl<E: Env> Mapper<E> {
         );
     }
 
-    /// `emitSubagentAssistant`. `replace` sets the text; otherwise it is appended.
+    /// `emitSubagentAssistant`. `replace` sets the text; otherwise it is appended. A message's
+    /// first text goes out at once; later appends wait for the next subagent flush (T3 #29422,
+    /// `ACP_SUBAGENT_TEXT_FLUSH_INTERVAL`), each message once per flush.
     fn emit_subagent_assistant(
         &mut self,
         native_task_id: &str,
@@ -638,7 +645,6 @@ impl<E: Env> Mapper<E> {
         if text.is_empty() && !replace {
             return;
         }
-        let now = self.env.now();
         let Some(subagent) = self
             .turn
             .as_mut()
@@ -651,21 +657,49 @@ impl<E: Env> Mapper<E> {
             subagent.native_task_id(),
             message_id.unwrap_or("result")
         );
-        let previous = subagent
-            .assistant_messages
-            .get(&native_item_id)
-            .cloned()
-            .unwrap_or_default();
+        let previous = subagent.assistant_messages.get(&native_item_id).cloned();
         let message_text = if replace {
             text.to_owned()
         } else {
-            format!("{previous}{text}")
+            format!("{}{text}", previous.as_deref().unwrap_or_default())
         };
         subagent
             .assistant_messages
             .insert(native_item_id.clone(), message_text.clone());
-        subagent.assistant_text = message_text.clone();
-        let ordinal = Self::child_ordinal(subagent, &native_item_id);
+        subagent.assistant_text = message_text;
+        if !replace && previous.is_some() {
+            // Bounded by the subagent's messages; emptied by each flush.
+            if !subagent.pending_assistant.contains(&native_item_id) {
+                subagent.pending_assistant.push(native_item_id);
+                out.push(Out::ScheduleSubagentFlush);
+            }
+            return;
+        }
+        subagent
+            .pending_assistant
+            .retain(|id| *id != native_item_id);
+        self.write_subagent_assistant(native_task_id, &native_item_id, out);
+    }
+
+    /// `writeSubagentAssistantUnlocked`: the message's current text.
+    fn write_subagent_assistant(
+        &mut self,
+        native_task_id: &str,
+        native_item_id: &str,
+        out: &mut Vec<Out>,
+    ) {
+        let now = self.env.now();
+        let Some(subagent) = self
+            .turn
+            .as_mut()
+            .and_then(|t| t.subagents.get_mut(native_task_id))
+        else {
+            return;
+        };
+        let Some(text) = subagent.assistant_messages.get(native_item_id).cloned() else {
+            return;
+        };
+        let ordinal = Self::child_ordinal(subagent, native_item_id);
         let thread = subagent.child_thread_id.clone();
         let root = subagent.child_root_node_id.clone();
         let provider_thread = subagent.task["providerThreadId"].clone();
@@ -673,14 +707,44 @@ impl<E: Env> Mapper<E> {
             &thread,
             &root,
             provider_thread,
-            &native_item_id,
+            native_item_id,
             "assistant",
-            &message_text,
+            &text,
             ordinal,
             None,
             &now,
             out,
         );
+    }
+
+    /// `flushPendingSubagentAssistant`: writes the subagent's messages that wait for a flush.
+    fn flush_subagent_assistant(&mut self, native_task_id: &str, out: &mut Vec<Out>) {
+        let pending = match self
+            .turn
+            .as_mut()
+            .and_then(|t| t.subagents.get_mut(native_task_id))
+        {
+            Some(subagent) => std::mem::take(&mut subagent.pending_assistant),
+            None => return,
+        };
+        for native_item_id in pending {
+            self.write_subagent_assistant(native_task_id, &native_item_id, out);
+        }
+    }
+
+    /// The delayed subagent flush (the session's 400 ms timer, or T3's test clock advancing):
+    /// every subagent's waiting messages.
+    pub(crate) fn flush_subagent_text(&mut self) -> Vec<Out> {
+        let mut out = Vec::new();
+        let ids: Vec<String> = self
+            .turn
+            .as_ref()
+            .map(|t| t.subagents.list.iter().map(|(id, _)| id.clone()).collect())
+            .unwrap_or_default();
+        for native_task_id in ids {
+            self.flush_subagent_assistant(&native_task_id, &mut out);
+        }
+        out
     }
 
     /// `projectSubagentNotification`.

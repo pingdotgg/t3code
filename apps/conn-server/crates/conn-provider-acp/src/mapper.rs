@@ -41,6 +41,9 @@ pub(crate) enum Out {
     /// The turn's text changed after its first emission: flush it in 50 ms
     /// (`ACP_TEXT_FLUSH_INTERVAL`).
     ScheduleFlush,
+    /// A subagent's reply changed after its first emission: flush it in 400 ms
+    /// (`ACP_SUBAGENT_TEXT_FLUSH_INTERVAL`).
+    ScheduleSubagentFlush,
     /// Run this timer and hand it back to [`Mapper::timer_fired`].
     Timer(Timer),
 }
@@ -1740,6 +1743,8 @@ impl<E: Env> Mapper<E> {
             self.terminalize_open_tools("interrupted", &mut out);
         }
         self.close_texts(&mut out);
+        // Ingestion may stop at the terminal frame, before a delayed flush would run.
+        out.extend(self.flush_subagent_text());
         let now = self.env.now();
         let Some(mut turn) = self.turn.take() else {
             return out;

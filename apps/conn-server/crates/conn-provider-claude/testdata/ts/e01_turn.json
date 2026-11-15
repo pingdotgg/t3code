@@ -1,5 +1,5 @@
 {
-  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e01_turn.ndjson, via the wake test harness at 828a9a48; driver field dropped. Clock is the TestClock (epoch 0).",
+  "note": "ProviderAdapterV2Event list from ClaudeAdapterV2 (TS) for cli/e01_turn.ndjson, via the wake test harness (tools/capture-ts); driver field dropped. Clock is the TestClock (epoch 0).",
   "offered": [
     {
       "type": "user",
@@ -8,7 +8,7 @@
         "content": "Ultrathink:\nReply with exactly: pong"
       },
       "parent_tool_use_id": null,
-      "uuid": "234ff7a2-8b51-4f4d-af16-6f6700cbf6de"
+      "uuid": "a812b778-de85-4ebd-b7cc-5678baf58378"
     }
   ],
   "events": [
@@ -56,7 +56,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 39,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       }
     },
@@ -238,7 +239,9 @@
         "completedAt": "1970-01-01T00:00:00.000Z",
         "model": "claude-haiku-5-5",
         "turnTokenUsage": {
-          "models": ["claude-haiku-5-5"],
+          "models": [
+            "claude-haiku-5-5"
+          ],
           "otherUsage": {
             "inputTokens": 1272,
             "outputTokens": 12
@@ -282,7 +285,8 @@
           "claudeAttachmentBudget": {
             "bytesUsed": 39,
             "pagesUsed": 0
-          }
+          },
+          "title": "Claude attachment test"
         }
       },
       "pendingBackgroundWork": false

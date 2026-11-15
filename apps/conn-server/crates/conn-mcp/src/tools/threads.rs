@@ -93,7 +93,8 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     // Newest first.
     threads.sort_by(|a, b| b["createdAt"].as_str().cmp(&a["createdAt"].as_str()));
     let cursor = u64_arg(args, "cursor").unwrap_or(0) as usize;
-    let limit = u64_arg(args, "limit").map_or(DEFAULT_LIST_LIMIT, |l| l as usize);
+    // `clampedPositiveInt(100)`: a larger limit is clamped, not refused.
+    let limit = u64_arg(args, "limit").map_or(DEFAULT_LIST_LIMIT, |l| l.min(100) as usize);
     let page: Vec<Value> = threads
         .iter()
         .skip(cursor)

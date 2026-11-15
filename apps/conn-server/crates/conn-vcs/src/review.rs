@@ -6,6 +6,7 @@
 //! written.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -14,10 +15,9 @@ use std::{
 use conn_contract::support::JsNumber;
 use conn_contract::{
     ReviewBranchCommitsInput, ReviewBranchCommitsResult, ReviewBranchCommitsResultCommitsItem,
-    ReviewDiffFileContentsInput, ReviewDiffFileContentsInputChangeType as ChangeType,
-    ReviewDiffFileContentsResult, ReviewDiffFileStat, ReviewDiffPreviewInput,
-    ReviewDiffPreviewInputSourceKind, ReviewDiffPreviewResult, ReviewDiffPreviewSource,
-    ReviewDiffPreviewSourceKind,
+    ReviewDiffChangeType as ChangeType, ReviewDiffFileContentsInput, ReviewDiffFileContentsResult,
+    ReviewDiffFileStat, ReviewDiffPreviewInput, ReviewDiffPreviewInputSourceKind,
+    ReviewDiffPreviewResult, ReviewDiffPreviewSource, ReviewDiffPreviewSourceKind,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -58,6 +58,9 @@ fn literal_pathspec(path: &str) -> String {
 pub struct FileStat {
     pub path: String,
     pub previous_path: Option<String>,
+    /// From the `--raw` record before the numstat; T3 leaves the key out when there is none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_type: Option<ChangeType>,
     pub additions: u64,
     pub deletions: u64,
 }
@@ -67,18 +70,43 @@ impl FileStat {
         ReviewDiffFileStat {
             path: self.path.clone(),
             previous_path: self.previous_path.clone(),
+            change_type: self.change_type,
             additions: JsNumber(self.additions as f64),
             deletions: JsNumber(self.deletions as f64),
         }
     }
 }
 
-/// Parses `git diff --numstat -z`. A rename has an empty path field followed by the old and the
-/// new path. Binary files count 0/0.
+/// `rawChangeType`: the change type of a `--raw` status (`M`, `A`, `D`, `R087`, ...).
+fn raw_change_type(status: &str) -> ChangeType {
+    match status.as_bytes().first() {
+        Some(b'A') => ChangeType::New,
+        Some(b'D') => ChangeType::Deleted,
+        Some(b'R') if status == "R100" => ChangeType::RenamePure,
+        Some(b'R') => ChangeType::RenameChanged,
+        _ => ChangeType::Change,
+    }
+}
+
+/// Parses `git diff --raw --numstat -z` as T3's `parseReviewNumstat` does. `--raw` records
+/// (`:<modes> <ids> <status>`, then the path, or the old and the new path for a rename or copy)
+/// give each file's change type, keyed by its path. A numstat rename has an empty path field
+/// followed by the old and the new path. Binary files count 0/0.
 pub fn parse_numstat(output: &str) -> Vec<FileStat> {
     let mut files = Vec::new();
+    let mut change_types: HashMap<&str, ChangeType> = HashMap::new();
     let mut fields = output.split('\0');
     while let Some(field) = fields.next() {
+        if field.starts_with(':') {
+            let status = field.rsplit(' ').next().unwrap_or_default();
+            if status.starts_with(['R', 'C']) {
+                fields.next();
+            }
+            if let Some(path) = fields.next() {
+                change_types.insert(path, raw_change_type(status));
+            }
+            continue;
+        }
         let mut parts = field.splitn(3, '\t');
         let (Some(add), Some(del), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
             continue;
@@ -100,6 +128,7 @@ pub fn parse_numstat(output: &str) -> Vec<FileStat> {
             files.push(FileStat {
                 path: new.to_owned(),
                 previous_path: Some(old.to_owned()),
+                change_type: change_types.get(new).copied(),
                 additions,
                 deletions,
             });
@@ -107,6 +136,7 @@ pub fn parse_numstat(output: &str) -> Vec<FileStat> {
             files.push(FileStat {
                 path: path.to_owned(),
                 previous_path: None,
+                change_type: change_types.get(path).copied(),
                 additions,
                 deletions,
             });
@@ -392,7 +422,7 @@ impl DiffRequest<'_> {
         let stat = match self
             .command(
                 "GitVcsDriver.getReviewDiffPreview.stat",
-                &["--numstat", "-z"],
+                &["--raw", "--numstat", "-z"],
                 &[&reference],
             )
             .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
@@ -417,7 +447,7 @@ impl DiffRequest<'_> {
                 reference = repo::empty_tree(self.cwd).await?;
                 self.command(
                     "GitVcsDriver.getReviewDiffPreview.stat",
-                    &["--numstat", "-z"],
+                    &["--raw", "--numstat", "-z"],
                     &[&reference],
                 )
                 .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
@@ -751,7 +781,7 @@ async fn commit_preview(
     let stat = request
         .command(
             "GitVcsDriver.getReviewDiffPreview.stat",
-            &["--numstat", "-z"],
+            &["--raw", "--numstat", "-z"],
             &refs,
         )
         .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
@@ -1083,18 +1113,21 @@ mod tests {
                 FileStat {
                     path: "src/a.rs".into(),
                     previous_path: None,
+                    change_type: None,
                     additions: 3,
                     deletions: 1
                 },
                 FileStat {
                     path: "img.png".into(),
                     previous_path: None,
+                    change_type: None,
                     additions: 0,
                     deletions: 0
                 },
                 FileStat {
                     path: "new/name.rs".into(),
                     previous_path: Some("old/name.rs".into()),
+                    change_type: None,
                     additions: 2,
                     deletions: 0
                 },
@@ -1108,6 +1141,7 @@ mod tests {
         let files = [FileStat {
             path: "a".into(),
             previous_path: None,
+            change_type: None,
             additions: 1,
             deletions: 0,
         }];
@@ -1116,5 +1150,43 @@ mod tests {
             r#"["d\n",[{"path":"a","previousPath":null,"additions":1,"deletions":0}]]"#
         );
         assert_eq!(diff_hash("d\n", &files).len(), 64);
+        // T3 puts `changeType` between `previousPath` and `additions` when the raw record has one.
+        let files = [FileStat {
+            change_type: Some(ChangeType::New),
+            ..files[0].clone()
+        }];
+        assert_eq!(
+            serde_json::to_string(&("d\n", &files[..])).unwrap(),
+            r#"["d\n",[{"path":"a","previousPath":null,"changeType":"new","additions":1,"deletions":0}]]"#
+        );
+    }
+
+    #[test]
+    fn raw_records_give_change_types() {
+        // `git diff --raw --numstat -z`, as T3's parseReviewNumstat reads it.
+        let out = ":100644 100644 aaa bbb M\0src/a.rs\0\
+                   :000000 100644 000 ccc A\0new.rs\0\
+                   :100644 000000 ddd 000 D\0gone.rs\0\
+                   :100644 100644 eee eee R100\0old.rs\0moved.rs\0\
+                   :100644 100644 fff 111 R087\0was.rs\0edited.rs\0\
+                   3\t1\tsrc/a.rs\0 4\t0\tnew.rs\0 0\t2\tgone.rs\0\
+                   0\t0\t\0old.rs\0moved.rs\0 1\t1\t\0was.rs\0edited.rs\0\
+                   1\t0\tno-raw.rs\0";
+        let out = out.replace("\0 ", "\0");
+        let types: Vec<_> = parse_numstat(&out)
+            .into_iter()
+            .map(|file| (file.path, file.change_type))
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                ("src/a.rs".to_owned(), Some(ChangeType::Change)),
+                ("new.rs".to_owned(), Some(ChangeType::New)),
+                ("gone.rs".to_owned(), Some(ChangeType::Deleted)),
+                ("moved.rs".to_owned(), Some(ChangeType::RenamePure)),
+                ("edited.rs".to_owned(), Some(ChangeType::RenameChanged)),
+                ("no-raw.rs".to_owned(), None),
+            ]
+        );
     }
 }

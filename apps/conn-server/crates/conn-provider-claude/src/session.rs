@@ -37,7 +37,14 @@ use crate::protocol::{
     CanUseTool, ControlRequest, Delivery, Elicitation, Inbound, UserDialog, user_message_value,
 };
 
+/// T3's `appliedSessionTitles`, which its adapter keeps for all sessions: the title last applied
+/// to each native session, so a turn renames it only when the thread title changed. One entry
+/// per thread the provider ran.
+pub(crate) type AppliedTitles = Arc<Mutex<HashMap<String, String>>>;
+
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
+/// T3 gives `renameSession` 10 s.
+const RENAME_TIMEOUT: Duration = Duration::from_secs(10);
 /// `CLAUDE_BOOT_TIMEOUT`: the SDK leaves boot unbounded.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// `CLAUDE_MCP_REGISTRATION_TIMEOUT`.
@@ -75,6 +82,8 @@ struct Inner {
     config: ClaudeConfig,
     helper: Helper,
     state: Mutex<State>,
+    /// The provider's `AppliedTitles`, shared by its sessions.
+    applied_titles: AppliedTitles,
     /// Runs turn starts and interrupts one at a time, as T3's effect outbox runs a thread's
     /// effects: a turn sent after a Stop starts once the interrupted CLI has exited.
     turn_control: tokio::sync::Mutex<()>,
@@ -143,12 +152,14 @@ impl ClaudeSession {
         helper: Helper,
         events: mpsc::Sender<ProviderEvent>,
         mcp_servers: Vec<McpServer>,
+        applied_titles: AppliedTitles,
     ) -> Self {
         let mapper = Mapper::new(SystemEnv, id.as_str());
         let inner = Arc::new(Inner {
             instance_id: instance_id.to_string(),
             config,
             helper,
+            applied_titles,
             state: Mutex::new(State {
                 mapper,
                 events: Some(events),
@@ -927,6 +938,12 @@ impl ClaudeSession {
         let title = to_json(&input.app_thread)["title"]
             .as_str()
             .map(str::to_string);
+        // A resume keeps the native session's stored title: start from the one recorded.
+        if let Some(recorded) = thread["nativeMetadata"]["title"].as_str() {
+            crate::lock(&inner.applied_titles)
+                .entry(native.clone())
+                .or_insert_with(|| recorded.to_owned());
+        }
 
         let (plan, old) = {
             let mut state = inner.lock();
@@ -983,7 +1000,7 @@ impl ClaudeSession {
                     policy: policy.clone(),
                     cwd: cwd.clone(),
                     resume_at: conversation_head(&thread),
-                    title,
+                    title: title.clone(),
                     t3_mcp,
                     prompt_suggestions: false,
                 };
@@ -995,7 +1012,14 @@ impl ClaudeSession {
         }
 
         match plan {
-            Plan::Launch(query) => self.launch(*query, run_id).await?,
+            Plan::Launch(query) => {
+                let fresh = !query.resume;
+                self.launch(*query, run_id).await?;
+                // A new session's spawn applied this turn's title (`title` in its options).
+                if let (true, Some(title)) = (fresh, &title) {
+                    crate::lock(&inner.applied_titles).insert(native.clone(), title.clone());
+                }
+            }
             Plan::Reuse {
                 set_selection,
                 set_mode,
@@ -1026,6 +1050,23 @@ impl ClaudeSession {
                 if set_mcp {
                     let servers = inner.lock().mcp_servers.clone();
                     inner.set_mcp_servers(&servers).await?;
+                }
+            }
+        }
+        // `claude --resume` shows the native title. A failed or late rename forgets the applied
+        // title, so the next turn sends it again; the turn goes on either way.
+        if let Some(title) = title {
+            let applied = crate::lock(&inner.applied_titles).get(&native) == Some(&title);
+            if !applied {
+                let renamed = inner
+                    .call("renameSession", json!([title]), RENAME_TIMEOUT)
+                    .await
+                    .is_ok();
+                let mut applied = crate::lock(&inner.applied_titles);
+                if renamed {
+                    applied.insert(native.clone(), title);
+                } else {
+                    applied.remove(&native);
                 }
             }
         }
@@ -1278,7 +1319,8 @@ impl ClaudeSession {
                 .map_err(|e| failed_err("start_turn", e.to_string()))?
                 .map_err(|e| failed_err("start_turn", e))?;
         let options = launch::query_options(&inner.config, &input, env, &applied);
-        let mut query = inner.helper.open(options, json!({}))?;
+        // T3's `openQuery` gives every turn's query its `onStop` hook.
+        let mut query = inner.helper.open(options, json!({"stopHook": true}))?;
         let Some(rx) = query.take_events() else {
             return Err(failed_err("start_turn", "the query has no event stream"));
         };

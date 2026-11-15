@@ -329,6 +329,7 @@ async fn live_interrupt_then_continue() {
         helper,
         tx,
         vec![],
+        Default::default(),
     );
     let thread = new_thread(&session, "full-access", &scratch.cwd()).await;
     session
@@ -483,6 +484,7 @@ fn concrete(config: ClaudeConfig) -> (ClaudeSession, crate::Helper, mpsc::Receiv
             helper.clone(),
             tx,
             vec![],
+            Default::default(),
         ),
         helper,
         events,

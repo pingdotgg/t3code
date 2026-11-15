@@ -412,10 +412,12 @@ impl<E: Env> Mapper<E> {
                     msg.parent_task_id.as_ref(),
                     tool,
                 );
-                // The launching command's row, when it is a command of the running turn.
+                // The launching command's row, when it is a command or a Monitor of the running
+                // turn.
                 if let (Some(turn), Some(tool)) = (&self.turn, tool)
                     && let Some(call) = turn.tools.get(tool)
-                    && super::classify_tool(&call.name).0 == "command_execution"
+                    && (super::classify_tool(&call.name).0 == "command_execution"
+                        || call.name == "Monitor")
                     && let Some(command) = text(call.input.get("command"))
                 {
                     task["itemId"] = json!(ids::turn_item_from_item(DRIVER, tool));

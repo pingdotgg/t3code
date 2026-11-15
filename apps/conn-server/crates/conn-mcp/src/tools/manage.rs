@@ -304,7 +304,8 @@ pub(super) async fn queue(cx: &Cx<'_>, args: &Args) -> ToolResult {
         if action == "list" {
             let runs = queued_in_delivery_order(&projection);
             let cursor = u64_arg(args, "cursor").unwrap_or(0) as usize;
-            let limit = u64_arg(args, "limit").map_or(QUEUE_DEFAULT_LIMIT, |l| l as usize);
+            // `clampedPositiveInt(100)`: a larger limit is clamped, not refused.
+            let limit = u64_arg(args, "limit").map_or(QUEUE_DEFAULT_LIMIT, |l| l.min(100) as usize);
             let end = cursor.saturating_add(limit);
             let items: Vec<Value> = runs
                 .iter()

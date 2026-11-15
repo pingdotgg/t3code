@@ -1,7 +1,8 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
- "capturedOn": "2026-11-14",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
+ "capturedOn": "2026-11-15",
  "outcome": "passed",
+ "gates": [],
  "transcripts": [
   [
    {
@@ -6986,7 +6987,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7015,7 +7016,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7165,7 +7166,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7523,7 +7524,7 @@
     "type": "dynamic_tool",
     "toolName": "write",
     "input": {
-     "file_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt",
+     "file_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
      "content": "codex app-server approval fixture"
     }
    }
@@ -7574,8 +7575,8 @@
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "file_change",
-    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt",
-    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
+    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
+    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
    }
   },
   {
@@ -7715,8 +7716,8 @@
     "completedAt": "1970-01-01T00:00:00.003Z",
     "updatedAt": "1970-01-01T00:00:00.003Z",
     "type": "file_change",
-    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt",
-    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-8WutTW/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
+    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
+    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
    }
   },
   {
