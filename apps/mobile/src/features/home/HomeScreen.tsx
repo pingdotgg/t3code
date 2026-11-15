@@ -286,8 +286,10 @@ export function HomeScreen(props: HomeScreenProps) {
       rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
     );
   };
-  // Status-bar, accessibility and programmatic scrolls bypass the gate; activate visible rows after settling.
+  // Rows scrolled into view wake while the list glides, so a touch that catches the glide can swipe;
+  // the trailing timer covers the final position and scrolls that bypass the gate.
   const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastActivationAtRef = useRef(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
   useEffect(() => () => clearTimeout(activationTimerRef.current), []);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -297,6 +299,11 @@ export function HomeScreen(props: HomeScreenProps) {
         "threads",
         Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
+    const now = Date.now();
+    if (now - lastActivationAtRef.current >= 150) {
+      lastActivationAtRef.current = now;
+      activateVisibleRows(listRef.current?.getState().data ?? []);
+    }
     clearTimeout(activationTimerRef.current);
     activationTimerRef.current = setTimeout(
       () => activateVisibleRows(listRef.current?.getState().data ?? []),
