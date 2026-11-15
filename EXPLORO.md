@@ -40,15 +40,14 @@ cd apps/server && sudo env "PATH=$PATH" node src/bin.ts browser setup --base-dir
 
 ## QA skill
 
-`skills/exploro-qa/SKILL.md` is the QA method agents follow. Threads without a project run in a
-fresh scratch folder, so the skill has to be installed at user level for providers to find it:
+`skills/exploro-qa/SKILL.md` is the QA method agents follow. Exploro sends it to every agent that has
+the browser tools, as part of its built-in instructions, so nothing needs installing and users don't
+have to name the skill. The agents get the copy in
+`packages/provider-core/src/server/exploroQaInstructions.ts`. When you edit the skill, copy its body
+there too. A test fails until the two match.
 
-```bash
-cp -r skills/exploro-qa ~/.claude/skills/
-cp -r skills/exploro-qa ~/.agents/skills/
-```
-
-Claude reads `~/.claude/skills`. Codex reads `~/.agents/skills`.
+To use the skill outside Exploro, copy it to `~/.claude/skills/` (Claude) or `~/.agents/skills/`
+(Codex). Inside Exploro those copies aren't needed.
 
 ## Workflow
 

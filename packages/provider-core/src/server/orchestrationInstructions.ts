@@ -1,5 +1,11 @@
 import type { ProviderInteractionMode } from "@t3tools/contracts";
 
+import { EXPLORO_QA_SKILL_SECTIONS } from "./exploroQaInstructions.ts";
+
+const EXPLORO_QA_PREAMBLE = `## Exploro QA
+
+Exploro is a QA app. For every request to test, QA or check a site, page or flow, follow the exploro-qa method below, whether or not the user names it. It is already loaded here: don't look for an exploro-qa skill or read its file.`;
+
 // Codex truncates entries over 4,000 bytes; keep each section self-contained and below that limit.
 export const T3_CODE_ORCHESTRATION_SECTIONS: ReadonlyArray<string> = [
   `## T3 Code orchestration
@@ -22,6 +28,9 @@ Ordinary coding tasks need no T3 tools.
 
 - Answer data with a trend or comparison with a chart and show any visual the user asks for here: pass an HTML file path or inline HTML to \`html_preview\`, then \`html_render\`. A screenshot on disk or a text description doesn't show it. Never start a server for it. Page tools write only on user request. Never use them to show results. Asked for an image to post, send or use elsewhere: a \`.png\` file and its path, never \`html_render\`.
 - Never use \`preview_*\` unasked to verify or show your own edit. Use them when the current request asks for browser work, including recording edits, or names a page or tab. Don't repeat preview calls from an earlier turn. Public pages: web fetch or search unless browser work was asked; then preview tools only, no web fetch. Close a tab you opened before you reply, unless the user asked for it or uses it.`,
+  ...EXPLORO_QA_SKILL_SECTIONS.map((section, index) =>
+    index === 0 ? `${EXPLORO_QA_PREAMBLE}\n\n${section}` : section,
+  ),
 ];
 
 export const T3_CODE_ORCHESTRATION_INSTRUCTIONS = `
