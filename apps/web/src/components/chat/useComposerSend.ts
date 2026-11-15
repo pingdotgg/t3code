@@ -401,6 +401,8 @@ export function useComposerSend(input: ComposerSendInput) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    /** The id of the message already shown for this send, which the sent message replaces. */
+    shownMessageId?: MessageId,
   ) => {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
@@ -853,7 +855,7 @@ export function useComposerSend(input: ComposerSendInput) {
     const outgoingMessageContext = buildOutgoingMessageContext(
       composerAttachmentsSnapshot.map((attachment) => attachment.id),
     );
-    const messageIdForSend = newMessageId();
+    const messageIdForSend = shownMessageId ?? newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
@@ -1175,7 +1177,10 @@ export function useComposerSend(input: ComposerSendInput) {
     } else {
       optimisticBlobPreviews.release(optimisticMessage);
     }
-    setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
+    setOptimisticUserMessages((existing) => [
+      ...existing.filter((message) => message.id !== messageIdForSend),
+      optimisticMessage,
+    ]);
     if (shouldQueueBehindActiveRun) {
       undispatchedQueuedSendsRef.current.set(messageIdForSend, optimisticMessage);
     }
@@ -1615,6 +1620,7 @@ export function useComposerSend(input: ComposerSendInput) {
   };
 
   const onSendLatest = useStableCallback(onSend);
+  const [sendWaitsOnBoatCloud, setSendWaitsOnBoatCloud] = useState(false);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
     args[0]?.preventDefault();
     const refresh =
@@ -1622,20 +1628,53 @@ export function useComposerSend(input: ComposerSendInput) {
         ? null
         : (wakeBeforeSend?.() ?? refreshBeforeSend());
     if (refresh === null) return onSend(...args);
+    // A Boat cloud start can take a while, so the thread opens with the message now and sends it
+    // once the VM is ready. The composer keeps the message until then, hidden.
+    const createdAt = new Date().toISOString();
+    const shownMessage: ChatMessage | null =
+      wakeBeforeSend === null &&
+      draftThread?.environmentSelection === "cloud" &&
+      !draftThread.promotedTo &&
+      promptRef.current.trim().length > 0
+        ? {
+            id: newMessageId(),
+            role: "user",
+            text: promptRef.current,
+            runId: null,
+            createdAt,
+            updatedAt: createdAt,
+            streaming: false,
+          }
+        : null;
+    if (shownMessage !== null) {
+      setOptimisticUserMessages((existing) => [...existing, shownMessage]);
+      setSendWaitsOnBoatCloud(true);
+    }
     sendInFlightRef.current = true;
-    const ready = await refresh.finally(() => {
-      sendInFlightRef.current = false;
-    });
-    if (!ready) return;
-    // A draft's instance is keyed by its draft, so a route change there is the same draft moving
-    // or promoting. A server thread's instance is reused across threads, so it must still be here.
-    if (draftId === null && currentRouteThreadKeyRef.current !== routeThreadKey) return;
-    // A woken VM's connection lands in a store update; commit it so the send reads it.
-    flushSync(() => {});
-    await onSendLatest(...args);
-    onRoutedSendDispatched();
+    try {
+      const ready = await refresh.finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (!ready) return;
+      // A draft's instance is keyed by its draft, so a route change there is the same draft moving
+      // or promoting. A server thread's instance is reused across threads, so it must still be here.
+      if (draftId === null && currentRouteThreadKeyRef.current !== routeThreadKey) return;
+      // A woken VM's connection lands in a store update; commit it so the send reads it.
+      flushSync(() => {});
+      await onSendLatest(args[0], args[1], args[2], args[3], shownMessage?.id);
+      onRoutedSendDispatched();
+    } finally {
+      if (shownMessage !== null) {
+        // A send that went out replaced it under the same id; one that did not leaves it here.
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message !== shownMessage),
+        );
+        setSendWaitsOnBoatCloud(false);
+      }
+    }
   };
   return {
+    sendWaitsOnBoatCloud,
     onSend: onSendWithRouting,
     withdrawQueuedSend,
     onRetryFailedRun,
