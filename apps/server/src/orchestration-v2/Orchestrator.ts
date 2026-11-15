@@ -7086,6 +7086,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection,
       command.dispatchMode,
       command.deliveryIntent,
+      command.attachments.length > 0,
     );
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
       const targetRunId = dispatchMode.targetRunId;
