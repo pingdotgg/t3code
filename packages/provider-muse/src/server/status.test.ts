@@ -96,23 +96,25 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         `if (JSON.stringify(process.argv.slice(2)) !== ${JSON.stringify(JSON.stringify(args))}) process.exit(2);
 process.stdout.write("muse 1.0.3-R2198.1\\n");`,
       );
-      const result = yield* checkMuseProviderStatus(
-        settings({ enabled: true, binaryPath }),
-        {},
-        undefined,
-        async () => makeHost(metaCatalog),
-      ).pipe(
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(SpawnExecutableResolution, (command) =>
-          command === binaryPath
-            ? binaryPath
-            : command.toLowerCase().endsWith("powershell.exe")
-              ? executable
-              : undefined,
-        ),
-      );
-      expect(result.status).toBe("ready");
-      expect(result.version).toBe("1.0.3-R2198.1");
+      for (const configuredPath of [binaryPath, binaryPath.replace(/\.ps1$/, "")]) {
+        const result = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath: configuredPath }),
+          {},
+          undefined,
+          async () => makeHost(metaCatalog),
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, (command) =>
+            command === configuredPath || command === binaryPath
+              ? binaryPath
+              : command.toLowerCase().endsWith("powershell.exe")
+                ? executable
+                : undefined,
+          ),
+        );
+        expect(result.status).toBe("ready");
+        expect(result.version).toBe("1.0.3-R2198.1");
+      }
     }).pipe(Effect.scoped),
   );
 
