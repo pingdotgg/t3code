@@ -99,6 +99,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  composerDraftContentChanged,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -106,8 +107,8 @@ import {
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
-  awaitAttachmentUploads,
   getUploadedAttachments,
+  refreshExpiredAttachmentUploads,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -872,6 +873,14 @@ export function useComposerSend(input: ComposerSendInput) {
       multipleTargets.push(resolved);
     }
 
+    const draftBeforePreparation = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget);
+    const draftChangedDuringPreparation = () => {
+      if (composerRef.current?.hasPendingAttachments() === true) return true;
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      return composerDraftContentChanged(draftBeforePreparation, draft);
+    };
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -919,6 +928,17 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
+    if (draftChangedDuringPreparation()) {
+      sendInFlightRef.current = false;
+      setThreadError(
+        threadIdForSend,
+        "Draft changed while preparing this message. Review it and send again.",
+      );
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      return;
+    }
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
@@ -940,7 +960,22 @@ export function useComposerSend(input: ComposerSendInput) {
       composerAttachmentsSnapshot.length > 0 &&
       (sendCtx?.shownPendingApprovalIds.length ?? 0) > 0
     ) {
-      await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
+      await refreshExpiredAttachmentUploads({
+        environmentId,
+        images: composerAttachmentsSnapshot,
+        draftTarget: composerDraftTarget,
+      });
+      if (draftChangedDuringPreparation()) {
+        sendInFlightRef.current = false;
+        setThreadError(
+          threadIdForSend,
+          "Draft changed while preparing this message. Review it and send again.",
+        );
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        return;
+      }
       const uploadBlockReason =
         readLiveAttachmentCapabilities().fileBlockReason ??
         (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null
@@ -1103,6 +1138,7 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentId,
       attachments: composerAttachmentsSnapshot,
       usesAttachmentUploads: turnUsesAttachmentUploads,
+      draftTarget: composerDraftTarget,
     });
     if (multipleModelSelections !== null) {
       await sendToMultipleModels({
@@ -1118,6 +1154,7 @@ export function useComposerSend(input: ComposerSendInput) {
         readFileBlockReason: () => readLiveAttachmentCapabilities().fileBlockReason,
         buildOutgoingMessageContext,
         isCurrentSend: () => composerSendGenerationRef.current === sendGeneration,
+        draftChangedDuringPreparation,
       });
       return;
     }
