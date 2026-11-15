@@ -42,11 +42,12 @@ const check = Effect.fn("ResetCreditAutoRedeem.check")(function* (attempted: Set
   for (const instance of yield* registry.listInstances) {
     const consume = instance.consumeResetCredit;
     if (!instance.enabled || !consume) continue;
-    const snapshot = yield* instance.snapshot.getSnapshot;
+    const credits = (yield* instance.snapshot.getSnapshot).usageLimits?.resetCredits;
     candidates.push({
       input: { instanceId: instance.instanceId },
-      credits: snapshot.usageLimits?.resetCredits,
-      redeem: consume(),
+      credits,
+      // The expiring credit is the next one; drivers without credit ids ignore it.
+      redeem: consume(credits?.nextCreditId),
     });
   }
   for (const source of yield* hubs.current) {

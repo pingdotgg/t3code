@@ -2,7 +2,6 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
-  type CustomModelSetting,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentCloudLinkStateResult,
   EnvironmentId,
@@ -23,6 +22,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -745,7 +745,6 @@ it.layer(
         const toolkit = yield* EnvironmentToolkit;
         return yield* finalResult(
           toolkit.handle("t3_environment_preferences_update", {
-            // @ts-expect-error null is exactly the invalid value under test
             textGenerationModelSelection: null,
           }),
         );
@@ -806,12 +805,7 @@ it.layer(
         }),
       ).pipe(Effect.provide(restartedSettingsWithSecrets()));
       const outputs: Array<unknown> = [];
-      const call = (params: {
-        readonly instanceId: ProviderInstanceId;
-        readonly customModels?: ReadonlyArray<CustomModelSetting>;
-        readonly displayName?: string | null;
-        readonly accentColor?: string | null;
-      }) =>
+      const call = (params: Schema.Json) =>
         Effect.flatMap(EnvironmentToolkit, (toolkit) =>
           finalResult(toolkit.handle("t3_provider_instance_update", params)),
         ).pipe(

@@ -14,6 +14,7 @@ import {
   PullRequestReviewGuide,
   PullRequestReviewGuideRun,
   PullRequestState,
+  PullRequestUnavailableError,
   SourceControlProviderKind,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
@@ -28,6 +29,13 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
+import {
+  PullRequestUrlInvalidError,
+  PullRequestTargetIncompleteError,
+  PullRequestHostRequiredError,
+  PullRequestUrlUnavailableError,
+} from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 
@@ -42,6 +50,8 @@ const guideDependencies = [
   ...dependencies,
   PullRequestReviewGuideService.PullRequestReviewGuideService,
 ];
+
+const watchDependencies = [...dependencies, PullRequestWatchService.PullRequestWatchService];
 
 // Observation tools bind to a project, never to a thread, so external read-only clients can use them.
 const readDependencies = [
@@ -76,42 +86,6 @@ export const PullRequestTargetInput = Schema.Struct({
 });
 export type PullRequestTargetInput = typeof PullRequestTargetInput.Type;
 
-export class PullRequestUrlInvalidError extends Schema.TaggedError<PullRequestUrlInvalidError>()(
-  "PullRequestUrlInvalidError",
-  {},
-) {
-  override get message(): string {
-    return "This is not a recognised pull request URL. Pass repository and number instead.";
-  }
-}
-
-export class PullRequestTargetIncompleteError extends Schema.TaggedError<PullRequestTargetIncompleteError>()(
-  "PullRequestTargetIncompleteError",
-  {},
-) {
-  override get message(): string {
-    return "Pass either url, or both repository and number.";
-  }
-}
-
-export class PullRequestHostRequiredError extends Schema.TaggedError<PullRequestHostRequiredError>()(
-  "PullRequestHostRequiredError",
-  {},
-) {
-  override get message(): string {
-    return "This thread's project has no recognised remote. Pass host or url.";
-  }
-}
-
-export class PullRequestUrlUnavailableError extends Schema.TaggedError<PullRequestUrlUnavailableError>()(
-  "PullRequestUrlUnavailableError",
-  {},
-) {
-  override get message(): string {
-    return "This thread's project is on a host with no known pull request URL shape. Pass url.";
-  }
-}
-
 export class PullRequestThreadRequiredError extends Schema.TaggedError<PullRequestThreadRequiredError>()(
   "PullRequestThreadRequiredError",
   {},
@@ -136,33 +110,6 @@ export class PullRequestUnlinkFailedError extends Schema.TaggedError<PullRequest
 ) {
   override get message(): string {
     return "Could not unlink the pull request.";
-  }
-}
-
-export class PullRequestWatchFailedError extends Schema.TaggedError<PullRequestWatchFailedError>()(
-  "PullRequestWatchFailedError",
-  {},
-) {
-  override get message(): string {
-    return "Could not change whether the pull request is watched.";
-  }
-}
-
-export class PullRequestNotOpenError extends Schema.TaggedError<PullRequestNotOpenError>()(
-  "PullRequestNotOpenError",
-  { state: Schema.String },
-) {
-  override get message(): string {
-    return `The pull request is ${this.state}, so there is nothing to watch.`;
-  }
-}
-
-export class PullRequestWatchFromSubagentError extends Schema.TaggedError<PullRequestWatchFromSubagentError>()(
-  "PullRequestWatchFromSubagentError",
-  {},
-) {
-  override get message(): string {
-    return "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
   }
 }
 
@@ -237,9 +184,10 @@ export const PullRequestToolError = Schema.Union([
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
-  PullRequestWatchFailedError,
-  PullRequestNotOpenError,
-  PullRequestWatchFromSubagentError,
+  PullRequestWatchService.PullRequestWatchFailedError,
+  PullRequestUnavailableError,
+  PullRequestWatchService.PullRequestNotOpenError,
+  PullRequestWatchService.PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
   PullRequestGuideFailedError,
   PullRequestProjectUnknownError,
@@ -341,6 +289,8 @@ export const ListThreadPullRequestsResult = Schema.Struct({
       numbers: Schema.Array(Schema.Int),
     }),
   ),
+  /** Pass as `cursor` for the next page; null on the last page. */
+  nextCursor: Schema.NullOr(Schema.String),
 });
 export type ListThreadPullRequestsResult = typeof ListThreadPullRequestsResult.Type;
 
@@ -360,7 +310,7 @@ const LinkPullRequestTool = Tool.make("link_pull_request", {
 
 const LinkPullRequestsTool = Tool.make("link_pull_requests", {
   description:
-    "Link several PRs to a thread in one call. Use it instead of one `link_pull_request` per PR. URLs that are not PRs come back in `invalidUrls`.",
+    "Link several PRs to a thread. Use it instead of one `link_pull_request` per PR. URLs that are not PRs come back in `invalidUrls`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
@@ -392,7 +342,7 @@ const UnlinkPullRequestTool = Tool.make("unlink_pull_request", {
 
 const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
   description:
-    "Unlink every PR on a thread whose last known state (as `list_thread_pull_requests` shows) is in `states`, in one call. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
+    "Unlink a thread's PRs whose last known state is in `states`. Use it instead of one `unlink_pull_request` per PR. PRs with no known state stay linked.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
@@ -410,10 +360,12 @@ const UnlinkPullRequestsTool = Tool.make("unlink_pull_requests", {
 
 const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
   description:
-    "List PRs linked to a thread, with last known state and stack order (bottom to top). Call only when you need that list. Never as an end-of-work check.",
+    "List a thread's PRs, with last known state and stack order (bottom to top). Not an end-of-work check.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId.annotate({ description: "Thread. Default: this thread." })),
+    states: Schema.optional(Schema.Array(PullRequestState)),
+    cursor: Schema.optional(Schema.String),
   }),
   success: ListThreadPullRequestsResult,
   failure: PullRequestToolError,
@@ -431,7 +383,7 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
-  dependencies,
+  dependencies: watchDependencies,
 })
   .annotate(Tool.Title, "Watch pull request")
   .annotate(Tool.Readonly, false)
@@ -445,7 +397,7 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
-  dependencies,
+  dependencies: watchDependencies,
 })
   .annotate(Tool.Title, "Stop watching pull request")
   .annotate(Tool.Readonly, false)

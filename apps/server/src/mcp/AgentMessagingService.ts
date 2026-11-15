@@ -171,7 +171,9 @@ const layerEffect = Effect.gen(function* () {
       return yield* failure("thread_not_found", "The sending agent thread is not available.");
     }
 
-    const familyRoot = (start: OrchestrationV2ThreadShell): ThreadId | undefined => {
+    const familyRoot = (
+      start: Pick<OrchestrationV2ThreadShell, "id" | "lineage">,
+    ): ThreadId | undefined => {
       let current = start;
       const seen = new Set<ThreadId>();
       while (
@@ -190,7 +192,21 @@ const layerEffect = Effect.gen(function* () {
     if (rootThreadId === undefined) {
       return yield* failure("orchestration_error", "The delegation family lineage is incomplete.");
     }
-    const familyShells = projectThreads.filter((thread) => familyRoot(thread) === rootThreadId);
+    // The project listing is lean; only the family needs full shells.
+    const familyShells = yield* threads
+      .getShellSnapshot({
+        location: "active",
+        threadIds: projectThreads
+          .filter((thread) => familyRoot(thread) === rootThreadId)
+          .map((thread) => thread.id),
+      })
+      .pipe(
+        Effect.map((snapshot) => snapshot.threads),
+        Effect.mapError(() =>
+          failure("orchestration_error", "Unable to resolve the delegation family."),
+        ),
+      );
+    const familyById = new Map(familyShells.map((thread) => [thread.id, thread] as const));
     const parentThreadIds = new Set(
       familyShells.flatMap((thread) =>
         thread.lineage.relationshipToParent === "subagent" && thread.lineage.parentThreadId !== null
@@ -215,7 +231,7 @@ const layerEffect = Effect.gen(function* () {
         .flat()
         .filter((task): task is OrchestrationV2Subagent & { readonly childThreadId: ThreadId } => {
           const child =
-            task.childThreadId === null ? undefined : byThreadId.get(task.childThreadId);
+            task.childThreadId === null ? undefined : familyById.get(task.childThreadId);
           return (
             task.origin === "app_owned" &&
             task.childThreadId !== null &&

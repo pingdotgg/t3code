@@ -24,7 +24,6 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import * as Settings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as CloudLink from "../cloud/CloudLink.ts";
-import type { Tool } from "effect/ai";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import * as Receipts from "./CommandReceiptStore.ts";
@@ -363,7 +362,7 @@ it.effect(
       const environment = yield* EnvironmentToolkit;
       const call = <Name extends keyof typeof CompletionAudioToolkit.tools>(
         name: Name,
-        input: Tool.ParametersEncoded<(typeof CompletionAudioToolkit.tools)[Name]>,
+        input: Schema.Json,
         invocation = scope("full-access"),
       ) =>
         completion.handle(name, input).pipe(

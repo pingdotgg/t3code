@@ -27,12 +27,17 @@ it.layer(NodeServices.layer)("ClaudeDriver maintenance", (it) => {
         const shimPath = NodePath.join(shimRoot, "claude");
         const nativeBinDir = NodePath.join(tempDir, ".local", "bin");
         const nativePath = NodePath.join(nativeBinDir, "claude");
+        // Only a launcher linked into the versions directory proves a native install.
+        const versionsDir = NodePath.join(tempDir, ".local", "share", "claude", "versions");
+        const versionPath = NodePath.join(versionsDir, "2.0.0");
         yield* fs.makeDirectory(shimRoot, { recursive: true });
         yield* fs.makeDirectory(nativeBinDir, { recursive: true });
+        yield* fs.makeDirectory(versionsDir, { recursive: true });
         yield* fs.writeFileString(shimPath, "#!/bin/sh\n");
-        yield* fs.writeFileString(nativePath, "#!/bin/sh\n");
+        yield* fs.writeFileString(versionPath, "#!/bin/sh\n");
         yield* fs.chmod(shimPath, 0o755);
-        yield* fs.chmod(nativePath, 0o755);
+        yield* fs.chmod(versionPath, 0o755);
+        yield* fs.symlink(versionPath, nativePath);
 
         const env = {
           PATH: [shimRoot, nativeBinDir].join(NodePath.delimiter),
@@ -82,13 +87,13 @@ it.layer(NodeServices.layer)("ClaudeDriver maintenance", (it) => {
             },
           },
         );
-        expect(unknownWrapper.update).toMatchObject(throughShim);
+        expect(unknownWrapper.update).toBeNull();
 
         const explicitPath = yield* resolveProviderMaintenanceCapabilitiesEffect(
           makeClaudeDriverMaintenanceResolver(),
           { binaryPath: shimPath, env },
         );
-        expect(explicitPath.update).toMatchObject(throughShim);
+        expect(explicitPath.update).toBeNull();
       }).pipe(Effect.provideService(HostProcess.Platform, "darwin"), Effect.scoped),
   );
 });

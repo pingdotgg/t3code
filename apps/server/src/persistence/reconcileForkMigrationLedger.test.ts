@@ -6,8 +6,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import DesktopPairingMigration from "./Migrations/081_AuthDesktopPairingSessionTtl.ts";
-import RealtimeVoiceHistoryResumeMigration from "./Migrations/082_RealtimeVoiceHistoryResume.ts";
+import DesktopPairingMigration from "./Migrations/093_AuthDesktopPairingSessionTtl.ts";
+import RealtimeVoiceHistoryResumeMigration from "./Migrations/094_RealtimeVoiceHistoryResume.ts";
 import { reconcileForkMigrationLedger } from "./reconcileForkMigrationLedger.ts";
 
 const forkHistory = [
@@ -394,7 +394,7 @@ describe("desktop pairing backport upgrade", () => {
           "ScheduledTaskWebhooks",
         );
         assert.strictEqual(
-          history.find((row) => row.migration_id === 81)?.name,
+          history.find((row) => row.migration_id === 93)?.name,
           "AuthDesktopPairingSessionTtl",
         );
         assert.strictEqual(history.length, migrationManifest.length);
@@ -430,15 +430,27 @@ const forkRenumberTail = [
   [78, "DropOrchestrationEventCorrelationIndex"],
   [79, "DelegatedRecoveryIndexes"],
   [80, "ScheduledTaskThreadMode"],
-  [81, "AuthDesktopPairingSessionTtl"],
-  [82, "RealtimeVoiceHistoryResume"],
+  [81, "ProjectionMessageSearchText"],
+  [82, "TurnItemConversationIndex"],
+  [83, "CommandReadIndexes"],
+  [84, "LastExecutedRunIndex"],
+  [85, "TurnItemCounts"],
+  [86, "QueuedTurnInputIndex"],
+  [87, "ProjectionProjectsCustomTitle"],
+  [88, "TurnItemTypeStatusIndex"],
+  [89, "ShellThreadReadIndexes"],
+  [90, "AuthConnectDevices"],
+  [91, "AuthConnectDeniedRequests"],
+  [92, "QueuedTurnInputIndexJsonValid"],
+  [93, "AuthDesktopPairingSessionTtl"],
+  [94, "RealtimeVoiceHistoryResume"],
 ];
 
 const readRenumberTail = Effect.map(readHistory, (history) =>
   history.filter((row) => row.migration_id >= 69).map((row) => [row.migration_id, row.name]),
 );
 
-// Upstream 070–080 must have run, not just been recorded.
+// Upstream 070–092 must have run, not just been recorded.
 const assertUpstreamSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const hasColumn = (table: string, column: string) =>
@@ -452,15 +464,20 @@ const assertUpstreamSchema = Effect.gen(function* () {
   );
   assert.isTrue(yield* hasColumn("projection_projects", "pinned_at"));
   assert.isTrue(yield* hasColumn("scheduled_tasks", "thread_mode"));
+  assert.isTrue(yield* hasColumn("orchestration_v2_projection_messages", "search_text"));
+  assert.isTrue(yield* hasColumn("projection_projects", "has_custom_title"));
+  assert.isTrue(yield* hasColumn("auth_pairing_links", "connect_denied"));
+  assert.isTrue(yield* hasColumn("auth_pairing_links", "desktop_session_ttl_days"));
   const indexes = yield* sql`
     SELECT name FROM sqlite_master
     WHERE type = 'index' AND name IN (
       'orchestration_v2_projection_turn_items_waiting_link_idx',
       'orchestration_v2_projection_turn_items_active_ordinal_idx',
-      'orchestration_v2_projection_runs_delegated_delivery_idx'
+      'orchestration_v2_projection_runs_delegated_delivery_idx',
+      'orchestration_v2_projection_turn_items_queued_input_idx'
     )
   `;
-  assert.strictEqual(indexes.length, 3);
+  assert.strictEqual(indexes.length, 4);
 });
 
 describe("fork migration renumber", () => {
@@ -470,6 +487,7 @@ describe("fork migration renumber", () => {
     [72, 73, 74],
     [76, 77, 78],
     [79, 80, 81],
+    [80, 81, 82],
   ] as const)(
     "reruns fork migrations recorded after upstream migration %i",
     ([throughId, pairingId, voiceId]) =>
@@ -503,16 +521,16 @@ describe("fork migration renumber", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("adds only the fork migrations to an upstream database at 080", () =>
+  it.effect("adds only the fork migrations to an upstream database at 092", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 80 });
+      yield* runMigrations({ toMigrationInclusive: 92 });
       const before = yield* readHistory;
       const executed = yield* runMigrations();
       assert.deepStrictEqual(
         executed.map(([id, name]) => [id, name]),
         [
-          [81, "AuthDesktopPairingSessionTtl"],
-          [82, "RealtimeVoiceHistoryResume"],
+          [93, "AuthDesktopPairingSessionTtl"],
+          [94, "RealtimeVoiceHistoryResume"],
         ],
       );
       assert.deepStrictEqual((yield* readHistory).slice(0, before.length), before);

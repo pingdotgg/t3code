@@ -4,8 +4,10 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("./server", async () => {
@@ -20,9 +22,10 @@ vi.mock("./server", async () => {
 });
 
 import {
-  resolvePendingThreadCreation,
   pendingThreadCreationShell,
+  resolvePendingThreadCreation,
   selectThreadCreationDetail,
+  withLaunchingThreads,
   type PendingThreadCreation,
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
@@ -216,5 +219,32 @@ describe("selectThreadCreationDetail", () => {
         outcomes: {},
       }),
     ).toEqual({ pendingCreation: null, detailRef: threadRef });
+  });
+});
+
+describe("withLaunchingThreads", () => {
+  it("reads as working from Send until the thread's first run arrives", () => {
+    const launch = (threads: Parameters<typeof withLaunchingThreads>[0]["threads"]) =>
+      withLaunchingThreads({ threads, launches: [creation], hiddenThreadKeys: new Set() });
+    // Before the shell arrives, and after the server commits the thread without its run.
+    const created = { ...pendingThreadCreationShell(creation)!, title: "Server title" };
+    for (const threads of [launch([]), launch([created])]) {
+      expect(threads).toHaveLength(1);
+      expect(isThreadWorking(threads[0]!)).toBe(true);
+    }
+    expect(launch([created])[0]!.title).toBe("Server title");
+
+    const started = {
+      ...created,
+      latestRun: {
+        runId: RunId.make("run-1"),
+        status: "completed" as const,
+        requestedAt: null,
+        startedAt: null,
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    };
+    expect(launch([started])[0]).toBe(started);
   });
 });

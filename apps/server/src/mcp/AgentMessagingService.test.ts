@@ -201,6 +201,12 @@ const makeThreadLayer = (readRootTasks = () => rootTasks) =>
         : Effect.succeed(activeProjection(thread));
     },
     listProjectThreads: () => Effect.succeed(shells),
+    getShellSnapshot: (options) =>
+      Effect.succeed({
+        snapshotSequence: 0,
+        threads: shells.filter((shell) => options?.threadIds?.includes(shell.id) ?? true),
+        archivedThreads: [],
+      } as never),
     sendToThread: (input) =>
       Effect.succeed({
         run: {
