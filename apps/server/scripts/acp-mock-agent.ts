@@ -23,11 +23,18 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
+// Comma-separated command names the mock advertises, so `/compact` support is testable.
+const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitV2Fidelity = process.env.T3_ACP_EMIT_V2_FIDELITY === "1";
 const emitNotice = process.env.T3_ACP_EMIT_NOTICE === "1";
+const hangCloseSession = process.env.T3_ACP_HANG_CLOSE_SESSION === "1";
 const vibeRetryOutcome = process.env.T3_ACP_VIBE_RETRY_OUTCOME;
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitInTurnTaskOutputThenLateDuplicate =
@@ -76,6 +83,10 @@ const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
+// These prompts end while their compaction is still in progress.
+const openCompactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -85,6 +96,7 @@ const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
 const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
 const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
+const failDeleteSession = process.env.T3_ACP_FAIL_DELETE_SESSION === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
@@ -608,6 +620,18 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
+      if (advertisedCommandNames.length > 0) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: advertisedCommandNames.map((name) => ({
+              name,
+              description: `${name} command`,
+            })),
+          },
+        });
+      }
       return {
         sessionId,
         configOptions: configOptions(),
@@ -663,6 +687,15 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (loadedCommandNames !== undefined) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
+          },
+        });
+      }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
@@ -731,6 +764,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleCloseSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (hangCloseSession) {
+        return yield* Effect.never;
+      }
       return {};
     }),
   );
@@ -738,6 +774,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleDeleteSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (failDeleteSession) {
+        return yield* AcpError.AcpRequestError.internalError("delete failed");
+      }
       return {};
     }),
   );
@@ -1334,6 +1373,16 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      if (openCompactionPromptOrdinals.has(promptCount)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: `compact-${promptCount}`,
+            status: "in_progress",
+          },
+        });
+      }
       if (compactionPromptOrdinals.has(promptCount)) {
         for (const status of ["in_progress", "completed"] as const) {
           yield* agent.client.sessionUpdate({
