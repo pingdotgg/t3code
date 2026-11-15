@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { type AtomCommandSuccess, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
@@ -92,13 +93,17 @@ export function resolveCitationPhase(input: {
 }): CitationPhase {
   if (input.history._tag === "failed") return { _tag: "failed" };
   const source = input.entries.find(
-    (entry) => entry.kind === "message" && entry.message.id === input.messageId,
+    (entry) =>
+      (entry.kind === "message" && entry.message.id === input.messageId) ||
+      (entry.kind === "sent-message" && entry.id === input.messageId),
   );
   // The history store can hold the message a render before the entries do.
   if (!source) return { _tag: "loading" };
-  if (source.kind !== "message" || source.message.role !== "assistant") return { _tag: "failed" };
+  if (source.kind === "message" && source.message.role !== "assistant") return { _tag: "failed" };
   const row = input.rows.find(
-    (candidate) => candidate.kind === "message" && candidate.message.id === input.messageId,
+    (candidate) =>
+      (candidate.kind === "message" && candidate.message.id === input.messageId) ||
+      (candidate.kind === "sent-message" && candidate.id === input.messageId),
   );
   if (row) return { _tag: "ready", rowId: row.id };
   return { _tag: "expanding" };
@@ -127,12 +132,16 @@ export function citedThreadSnapshot(input: {
   }
   // Older pages merge into the visible turn items, not the message list.
   const item = input.thread.projection.visibleTurnItems.find(
-    (row) =>
-      (row.item.type === "assistant_message" || row.item.type === "user_message") &&
-      row.item.messageId === input.messageId,
+    ({ item }) =>
+      ((item.type === "assistant_message" || item.type === "user_message") &&
+        item.messageId === input.messageId) ||
+      (item.type === "dynamic_tool" &&
+        item.id === input.messageId &&
+        item.status === "completed" &&
+        sentMessageFromToolItem(item) !== undefined),
   )?.item;
   return {
-    message: item === undefined ? null : item.type === "assistant_message" ? "assistant" : "other",
+    message: item === undefined ? null : item.type === "user_message" ? "other" : "assistant",
     hasMoreHistory: input.history.hasMoreHistory,
   };
 }
