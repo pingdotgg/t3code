@@ -171,3 +171,33 @@ it("names the checked path when the server cannot find the file", async () => {
   );
   expect(harness.alert.mock.calls[0]?.[1]).not.toMatch(/reconnect/i);
 });
+
+it.each([
+  [true, 1],
+  [false, 2],
+])(
+  "a re-tap of the open item mounts a new viewer only once the native one is gone (active: %s)",
+  async (active, mounts) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    harness.mounts = 0;
+    harness.refreshAssetUrl.mockResolvedValue("https://signed.test/a.png");
+    const selected = image("https://github.com/a.png");
+    const root = createRoot(document.createElement("div"));
+    await using _root = { [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
+    const render = () =>
+      act(async () =>
+        root.render(
+          <FilePreviewSession
+            source={{ ...selected, gallery: [selected] }}
+            onRequestClose={() => {}}
+            progressiveGallery
+            Viewer={Viewer}
+            isViewerActive={() => active}
+          />,
+        ),
+      );
+    await render();
+    await render();
+    expect(harness.mounts).toBe(mounts);
+  },
+);

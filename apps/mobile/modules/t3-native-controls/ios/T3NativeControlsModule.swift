@@ -10,6 +10,9 @@ public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
   private var videoPresentation: T3NativeVideoPresentation?
   private var filePresentation: T3NativeFilePresentation?
+  /// Whether a file preview is loading or on screen. Written on main, read synchronously from JS.
+  private let filePreviewActivity = NSLock()
+  private var filePreviewActive = false
 
   public func definition() -> ModuleDefinition {
     Events("videoPlaybackChange")
@@ -93,6 +96,11 @@ public final class T3NativeControlsModule: Module {
       }
       file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
     }.runOnQueue(.main)
+
+    // A tap can reach JS before the old viewer's close does; this tells it whether that viewer is gone.
+    Function("isFilePreviewActive") { () -> Bool in
+      self.filePreviewActivity.withLock { self.filePreviewActive }
+    }
 
     // A nil URL marks the item as one that could not be resolved.
     AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
@@ -294,13 +302,20 @@ public final class T3NativeControlsModule: Module {
     guard filePresentation == nil, videoPresentation == nil,
       appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
-    let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifiers: sourceIdentifiers) { [weak self] error in
+    let file = T3NativeFilePresentation(
+      identifier: identifier, sources: presentationSources, sourceIdentifiers: sourceIdentifiers,
+      onFinish: { [weak self] in self?.setFilePreviewActive(false) }
+    ) { [weak self] error in
       self?.filePresentation = nil
       if let error { promise.reject(error) } else { promise.resolve(nil) }
     }
     filePresentation = file
+    setFilePreviewActive(true)
     return file
+  }
+
+  private func setFilePreviewActive(_ active: Bool) {
+    filePreviewActivity.withLock { filePreviewActive = active }
   }
 
   private func presentFile(url: URL, title: String, sourceIdentifier: String,

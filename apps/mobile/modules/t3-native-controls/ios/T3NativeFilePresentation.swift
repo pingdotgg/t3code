@@ -37,6 +37,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   let identifier: String
   private var controller: FilePreviewController?
   private let completion: (Error?) -> Void
+  private let onFinish: () -> Void
   private weak var sources: T3PresentationSources?
   private let sourceIdentifiers: [String]
   private var titles: [String] = []
@@ -58,10 +59,11 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
   private var finished = false
 
   init(identifier: String, sources: T3PresentationSources, sourceIdentifiers: [String],
-       completion: @escaping (Error?) -> Void) {
+       onFinish: @escaping () -> Void, completion: @escaping (Error?) -> Void) {
     self.identifier = identifier
     self.sources = sources
     self.sourceIdentifiers = sourceIdentifiers
+    self.onFinish = onFinish
     self.completion = completion
     super.init()
   }
@@ -269,6 +271,8 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
     files.removeAll()
     items.removeAll()
     DispatchQueue.main.async { [completion, openError] in completion(openError) }
+    // After queueing the completion, so a new presentation JS starts on seeing this lands behind it.
+    onFinish()
   }
 
   private static func remove(_ file: URL) {

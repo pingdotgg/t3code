@@ -25,6 +25,8 @@ interface FilePreviewSessionOptions {
   /** Opens before every image resolves; the viewer takes later URLs as they arrive. */
   readonly progressiveGallery: boolean;
   readonly Viewer: ComponentType<FilePreviewViewerProps>;
+  /** Whether the native viewer is still loading or on screen; omitted when JS owns the viewer. */
+  readonly isViewerActive?: () => boolean;
 }
 
 class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>()(
@@ -220,11 +222,22 @@ export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSes
       ? null
       : { ...props.source, gallery: filePreviewGallery(props.source, group) };
   usePreviewPresentation(source && filePreviewKey(source), props.onRequestClose);
+  // A tap can land after the native viewer closed but before its close reached the caller, which
+  // still holds the same item; that tap only opens a new viewer under a new key.
+  const [opening, setOpening] = useState({ source: props.source, count: 0 });
+  if (opening.source !== props.source) {
+    const reopened =
+      opening.source !== null &&
+      props.source !== null &&
+      filePreviewKey(opening.source) === filePreviewKey(props.source) &&
+      props.isViewerActive?.() === false;
+    setOpening({ source: props.source, count: opening.count + (reopened ? 1 : 0) });
+  }
 
   if (!source) return null;
   return (
     <ResolvedFilePreview
-      key={filePreviewKey(source)}
+      key={`${opening.count}:${filePreviewKey(source)}`}
       source={source}
       onRequestClose={props.onRequestClose}
       progressiveGallery={props.progressiveGallery}

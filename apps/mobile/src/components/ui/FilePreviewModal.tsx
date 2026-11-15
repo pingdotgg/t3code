@@ -31,6 +31,7 @@ const NativeControls = requireNativeModule<{
   ): Promise<void>;
   updateFile(identifier: string, index: number, uri: string | null): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
+  isFilePreviewActive(): boolean;
 }>("T3NativeControls");
 
 // Null tells the viewer an image failed; undefined means its URL has not arrived yet.
@@ -100,5 +101,12 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
 
 /** Shows images, PDFs and documents full screen in the native viewer (Android: FilePreviewModal.android.tsx). */
 export function FilePreviewModal(props: FilePreviewModalProps) {
-  return <FilePreviewSession {...props} progressiveGallery Viewer={NativeFilePreview} />;
+  return (
+    <FilePreviewSession
+      {...props}
+      progressiveGallery
+      Viewer={NativeFilePreview}
+      isViewerActive={() => NativeControls.isFilePreviewActive()}
+    />
+  );
 }
