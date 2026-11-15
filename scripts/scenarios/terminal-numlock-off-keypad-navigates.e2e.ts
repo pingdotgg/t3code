@@ -68,7 +68,7 @@ test(
     await browser.keyboard.press("Enter");
     await expect.poll(() => read("received"), { timeout: 15_000 }).toBe(READY);
 
-    // Playwright cannot press a keypad key with NumLock off, so send the events Chromium reports.
+    // The e2e keyboard cannot press a keypad key with NumLock off, so send the events Chromium reports.
     await browser.evaluate((keys) => {
       const input = document.activeElement;
       if (!input) throw new Error("Terminal input lost focus");
