@@ -2281,9 +2281,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       setFolderDropKey(folderDrop);
     }
     const key = contextDragKeyRef.current;
-    // Folder members are not in the sortable list, so they always drag as a ghost.
+    // Folder members are not in the sortable list, and search results cannot reorder,
+    // so both drag as a ghost from the start.
     const contextDrag =
       folderDrop !== null ||
+      searchResultsListRef.current !== null ||
       threadFolderBlocksRef.current.some((block) =>
         block.threads.some((member) => threadShellKey(member) === key),
       ) ||

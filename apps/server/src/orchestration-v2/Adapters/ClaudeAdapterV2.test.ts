@@ -757,6 +757,39 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
   });
 });
 
+describe("ClaudeAdapterV2 SDK warnings", () => {
+  it("drops only the SDK's canUseTool shadowing warning while opening a query", async () => {
+    using emitWarning = vi.spyOn(process, "emitWarning").mockImplementation(() => {});
+    for (const options of [
+      { permissionMode: "default", allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD] },
+      { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true },
+    ] satisfies ReadonlyArray<ClaudeSdk.Options>) {
+      const query = ClaudeAdapterV2.withoutClaudeCanUseToolShadowedWarning(() =>
+        ClaudeSdk.query({
+          prompt: "",
+          options: {
+            ...options,
+            canUseTool: async (_toolName, input) => ({ behavior: "allow", updatedInput: input }),
+            pathToClaudeCodeExecutable: "/nonexistent/claude",
+          },
+        }),
+      );
+      await query.next().catch(() => undefined);
+    }
+    ClaudeAdapterV2.withoutClaudeCanUseToolShadowedWarning(() =>
+      process.emitWarning("unrelated", { code: "UNRELATED_WARNING" }),
+    );
+
+    assert.deepEqual(
+      emitWarning.mock.calls.map(([, options]) =>
+        typeof options === "object" ? options.code : options,
+      ),
+      ["UNRELATED_WARNING"],
+    );
+    assert.strictEqual<unknown>(process.emitWarning, emitWarning);
+  });
+});
+
 describe("ClaudeAdapterV2 native protocol logging", () => {
   it("injects thread-scoped MCP configuration without logging the credential", () => {
     const threadId = ThreadId.make("thread-claude-mcp");
@@ -970,6 +1003,22 @@ describe("ClaudeAdapterV2 session permissions", () => {
     assert.equal(result.decisionClassification, "user_reject");
     assert.equal(result.message, "User declined tool execution.");
     assert.equal(result.interrupt, undefined);
+
+    // regression: #27854 bare feedback read to Claude as a tool error, not the user's words
+    const withFeedback = ClaudeAdapterV2.permissionResultFromDecision({
+      toolName: "Bash",
+      decision: "decline",
+      toolInput: { command: "make" },
+      toolUseID: "denied-build",
+      feedback: "  Use the dry-run flag first. ",
+    });
+    assert.equal(withFeedback.behavior, "deny");
+    if (withFeedback.behavior !== "deny") return;
+    assert.equal(withFeedback.decisionClassification, "user_reject");
+    assert.equal(
+      withFeedback.message,
+      "The user declined this tool call and said:\nUse the dry-run flag first.",
+    );
   });
 
   it("forces suggested permission updates to session scope", () => {
@@ -1255,6 +1304,36 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 
   const appendSystemPrompt = (options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined) =>
     (options?.systemPrompt as { readonly append?: string } | undefined)?.append;
+
+  // regression: #35594 append text starting with "--" was read as a missing value
+  it.effect("sends append launch text that starts with two hyphens to Claude", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-cwd-" });
+        const plain = yield* startTurnWithLaunchArgs("", cwd);
+        const { exit, opened } = yield* startTurnWithLaunchArgs(
+          '--append-system-prompt "-- Always answer in English"',
+          cwd,
+        );
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.lengthOf(opened, 1);
+        assert.equal(
+          appendSystemPrompt(opened[0]),
+          `${appendSystemPrompt(plain.opened[0])}\n\n-- Always answer in English`,
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect("sends append launch arguments to Claude after the T3 instructions", () =>
     Effect.gen(function* () {
@@ -7177,7 +7256,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("declines URL and value forms without a card", () =>
+    it.effect("cancels URL and value forms without a card", () =>
       Effect.gen(function* () {
         const { elicit, runtimeRequests } = yield* startElicitationTurn();
         for (const request of [
@@ -7191,7 +7270,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           },
         ] satisfies ReadonlyArray<ElicitationRequest>) {
-          assert.deepEqual(yield* Fiber.join(yield* elicit(request)), { action: "decline" });
+          assert.deepEqual(yield* Fiber.join(yield* elicit(request)), { action: "cancel" });
         }
         assert.isEmpty(runtimeRequests());
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
@@ -12436,14 +12515,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
         .pendingBackgroundTasks;
+      const monitorItem = harness.events.find(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu_monitor_0",
+      );
+      assert.equal(monitorItem?.type, "turn_item.updated");
+      if (monitorItem?.type !== "turn_item.updated") return;
       assert.deepEqual(roster, [
         {
           taskId: longRunning.taskId,
           kind: "monitor",
+          awaited: true,
           description: "Monitor 0",
           nativeItemId: "toolu_monitor_0",
+          command: "sleep 8 && echo MONITOR_DONE",
+          itemId: monitorItem.turnItem.id,
+          sourceThreadId: harness.threadId,
         },
       ]);
+      assert.isDefined(harness.runtime.awaitBackgroundTasks);
+      const released = yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: [longRunning.taskId],
+        awaited: false,
+      });
+      assert.deepEqual(released.matched, [longRunning.taskId]);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [
+            { task_id: longRunning.taskId, task_type: "local_bash", description: "Monitor 0" },
+          ],
+          uuid: nextUuid(),
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.equal(
+        providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+          .pendingBackgroundTasks?.[0]?.awaited,
+        undefined,
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -12639,6 +12752,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(harness.terminalEvents()[settled + 1]?.status, "completed");
         assert.include(assistantTexts(), "Scheduled answer.");
         assert.lengthOf(harness.continuationRequests, 2);
+        assert.deepInclude(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+            .pendingBackgroundTasks?.[0],
+          { taskId, kind: "monitor", awaited: true },
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

@@ -1,12 +1,19 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ORCHESTRATION_V2_WS_METHODS,
+  RunId,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
   compileResolvedKeybindingsConfig,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
@@ -18,6 +25,7 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
+import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
@@ -27,6 +35,7 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   answerAssetUrls,
+  answerRpc,
   assistantItem,
   dispatchedCommands,
   emitThreadEvent,
@@ -38,6 +47,52 @@ import {
   type FakeDriver,
 } from "../../test/fakeEnvironment";
 import { act, fakeTimers, render } from "../../test/render";
+
+const PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  ),
+  (char) => char.charCodeAt(0),
+);
+
+/** Accepts every attachment upload without sending its bytes, until disposed. */
+function acceptAttachmentUploads(): Disposable {
+  const mint = answerRpc(WS_METHODS.attachmentsCreateUploadUrl, () =>
+    Effect.succeed({ attachmentId: "upload-1", relativeUrl: "/upload", expiresAt: 0 }),
+  );
+  // Sending verifies each ready upload still exists on the server.
+  const verify = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+    Effect.succeed({ relativeUrl: "/upload-1", expiresAt: 0 }),
+  );
+  const status = vi.spyOn(XMLHttpRequest.prototype, "status", "get").mockReturnValue(200);
+  const send = vi.spyOn(XMLHttpRequest.prototype, "send").mockImplementation(function (
+    this: XMLHttpRequest,
+  ) {
+    queueMicrotask(() => this.dispatchEvent(new ProgressEvent("load")));
+  });
+  return {
+    [Symbol.dispose]: () => {
+      send.mockRestore();
+      status.mockRestore();
+      mint[Symbol.dispose]();
+      verify[Symbol.dispose]();
+    },
+  };
+}
+
+/** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
+function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: Input[] = [];
+  const answer = answerRpc(method, (input: Input) => {
+    calls.push(input);
+    return Effect.promise(() => held).pipe(Effect.andThen(end));
+  });
+  return { calls, release, [Symbol.dispose]: () => answer[Symbol.dispose]() };
+}
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -194,6 +249,51 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-image-only-interrupted");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-image-only-interrupted"),
+    });
+  // A dropped connection interrupts a new thread's launch, which is not resent.
+  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  const editor = page.getByTestId("composer-editor");
+  await expect.element(editor).toBeVisible();
+  // The send needs the project, which arrives with the shell snapshot.
+  await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+  await userEvent.click(editor);
+  const clipboardData = new DataTransfer();
+  clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+  editor
+    .element()
+    .dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+  await vi.waitFor(() => expect(launch.calls).toHaveLength(1));
+  await userEvent.keyboard("next draft");
+  await expect.element(editor).toHaveTextContent("next draft");
+  launch.release();
+
+  await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
+  await expect.element(editor).toHaveTextContent("next draft");
+  // With no text there is nothing to copy.
+  expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
 });
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
@@ -513,4 +613,52 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   await userEvent.keyboard("{Control>}t{/Control}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
   await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+it("selecting a side-chat tab focuses that side chat's composer", async () => {
+  const parent = threadWithHistory("focus-parent", 1);
+  // The shell loaded by the file's first test stays; a family read serves side chats added later.
+  const sideChat = (name: string) => ({
+    ...threadWithHistory(name, 1),
+    sideChatOf: parent.id,
+    olderSettled: true as const,
+  });
+  const side = sideChat("focus-side");
+  const otherSide = sideChat("focus-other-side");
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, side, otherSide]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
+  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
+  const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
+  const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
+  await expect.element(sideEditor).toBeVisible();
+  await userEvent.click(mainEditor);
+  await userEvent.keyboard("main draft");
+
+  await userEvent.click(screen.getByRole("button", { name: otherSide.title, exact: true }));
+  const otherEditor = screen.getByRole("textbox", {
+    name: `Message ${otherSide.title}`,
+    exact: true,
+  });
+  await expect.element(otherEditor).toHaveFocus();
+  await userEvent.keyboard("other draft");
+  await expect.element(otherEditor).toHaveTextContent("other draft");
+
+  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
+  await expect.element(sideEditor).toHaveFocus();
+  await expect.element(mainEditor).toHaveTextContent("main draft");
 });
