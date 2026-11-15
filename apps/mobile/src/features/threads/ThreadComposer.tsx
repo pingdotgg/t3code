@@ -30,8 +30,6 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
-import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
-import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -102,9 +100,9 @@ import { useComposerTextRole, type ScaledTextRole } from "../settings/appearance
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { Menu } from "../../components/ui/Menu";
-import type {
-  ActiveTurnComposerAction,
-  ComposerLocalCommand,
+import {
+  composerRunsDraftLocally,
+  type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
@@ -219,7 +217,6 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
 
 export interface ThreadComposerProps {
   readonly isDraft?: boolean;
-  readonly replyingToApproval: boolean;
   readonly canOperateThread: boolean;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
@@ -239,7 +236,6 @@ export interface ThreadComposerProps {
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
-  readonly sideChatAvailable: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -484,20 +480,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const composerHoldsOnlyText = draftAttachments.length === 0 && draftContext === undefined;
-  const localComposerCommand: ComposerLocalCommand | null =
-    parseSideChatCommand(draftMessage) !== null
-      ? !props.sideChatAvailable
-        ? "side-chat-unavailable"
-        : draftAttachments.length > 0 || (draftContext?.records.length ?? 0) > 0
-          ? "side-chat-text-only"
-          : "side-chat"
-      : composerHoldsOnlyText &&
-          props.onFreshSession !== undefined &&
-          props.selectedThread.latestRun !== null &&
-          isClearComposerCommand(draftMessage)
-        ? "clear"
-        : null;
   const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
@@ -560,21 +542,19 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );
+  const draftRunsLocally = composerRunsDraftLocally({
+    text: draftMessage,
+    holdsOnlyText: draftAttachments.length === 0,
+    // A redirect's text answers its approval, so `/side` there is that text.
+    sideChat: !props.redirectsApproval,
+    usageLimits: usageLimitsOffered,
+    codexFeedback: selectedProviderStatus?.driver === "codex",
+    freshSession: props.onFreshSession !== undefined && draftContext === undefined,
+  });
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
-    isDraft: props.isDraft === true,
-    replyingToApproval: props.replyingToApproval,
-    running: props.activeThreadBusy,
+    running: props.activeThreadBusy && !draftRunsLocally,
     canSteer: props.canSteerActiveTurn,
-    localCommand:
-      localComposerCommand ??
-      (draftAttachments.length === 0 && usageLimitsOffered && isUsageLimitsCommand(draftMessage)
-        ? "usage-limits"
-        : draftAttachments.length === 0 &&
-            selectedProviderStatus?.driver === "codex" &&
-            parseCodexFeedbackCommand(draftMessage.trim())
-          ? "feedback"
-          : null),
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,

@@ -24,7 +24,6 @@ import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   alternateComposerDispatchAction,
-  type ComposerLocalCommand,
   resolveComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 
@@ -47,8 +46,6 @@ interface ComposerPrimaryActionsProps {
   runId?: string | null;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
-  /** A command the composer runs itself, so the running turn neither queues nor steers it. */
-  localCommand?: ComposerLocalCommand | null;
   alternateShortcutLabel?: string | null;
   /** Dictation is running; Send finishes it and submits once the transcript lands. */
   voiceInputActive?: boolean;
@@ -97,15 +94,6 @@ const messageActionPillClassName =
 
 const preventPointerFocus: PointerEventHandler<HTMLElement> = (event) => {
   event.preventDefault();
-};
-
-const LOCAL_COMMAND_LABELS: Record<ComposerLocalCommand, string> = {
-  "side-chat": "Start side chat",
-  "side-chat-unavailable": "Side chat unavailable",
-  "side-chat-text-only": "Side chat requires text only",
-  clear: "Start fresh session",
-  feedback: "Submit feedback",
-  "usage-limits": "Show usage limits",
 };
 
 type StopPhase = "pending" | "timedOut" | "landed" | null;
@@ -241,7 +229,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   runId = null,
   followUpBehavior = "steer",
   canSteer = true,
-  localCommand = null,
   alternateShortcutLabel = null,
   voiceInputActive = false,
   isSendBusy,
@@ -269,7 +256,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
     !isEditingQueuedMessage &&
-    localCommand === null &&
     resolveComposerDispatchMode({
       running: isRunning,
       activeTurnDefault: followUpBehavior,
@@ -383,25 +369,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       : null;
   const compactsBeforeSend = compactTokens !== null && !keepFullHistory;
 
-  const localCommandLabel = localCommand === null ? null : LOCAL_COMMAND_LABELS[localCommand];
-  const localCommandTooltip =
-    localCommand === "side-chat"
-      ? isRunning
-        ? "Start a side chat without interrupting the running turn"
-        : "Start a side chat with this question"
-      : localCommandLabel;
   const submitLabel = showResume
     ? "Resume thread"
     : isEditingQueuedMessage
       ? "Update queued message"
-      : (localCommandLabel ??
-        (compactsBeforeSend
-          ? "Compact and send"
-          : isQueuing
-            ? "Queue message"
-            : isRunning
-              ? "Steer message"
-              : "Submit message"));
+      : compactsBeforeSend
+        ? "Compact and send"
+        : isQueuing
+          ? "Queue message"
+          : isRunning
+            ? "Steer message"
+            : "Submit message";
   const submitStatus = isEnvironmentUnavailable
     ? "Environment disconnected"
     : (sendDisabledReason ??
@@ -414,7 +392,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           : null));
   const submitTooltip =
     submitStatus ??
-    (isEditingQueuedMessage ? null : localCommandTooltip) ??
     (compactsBeforeSend
       ? `Summarize ${compactTokens} tokens of history, then send`
       : isRunning && !isEditingQueuedMessage && canSteer
@@ -460,7 +437,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         <CheckIcon className="size-4" aria-hidden="true" />
       ) : isRunning && isQueuing ? (
         <ListPlusIcon className="size-4" aria-hidden="true" />
-      ) : isRunning && localCommand === null ? (
+      ) : isRunning ? (
         <CornerUpRightIcon className="size-4" aria-hidden="true" />
       ) : (
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
