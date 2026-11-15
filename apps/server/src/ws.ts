@@ -250,6 +250,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
+import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1507,6 +1508,7 @@ export const layerWsRpc = (
       const ollama = yield* OllamaService.OllamaService;
       const memoryVaults = yield* MemoryVaultService.MemoryVaultService;
       const providerRuntimes = yield* ProviderRuntimeUpdater.ProviderRuntimeUpdater;
+      const usageSharing = yield* UsageSharing.UsageSharingService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -2704,6 +2706,18 @@ export const layerWsRpc = (
           providerRuntimes.updateSettings(input),
         [WS_METHODS.providerRuntimesCheckNow]: (_input) => providerRuntimes.checkNow,
         [WS_METHODS.providerRuntimesRestore]: (input) => providerRuntimes.restore(input.instanceId),
+        [WS_METHODS.usageSharingOverview]: (_input) => usageSharing.overview,
+        [WS_METHODS.usageSharingSetSource]: (input) => usageSharing.setSource(input),
+        [WS_METHODS.usageSharingSetEndpoint]: (input) => usageSharing.setEndpoint(input.endpoint),
+        [WS_METHODS.usageSharingCreateGrant]: (input) => usageSharing.createGrant(input),
+        [WS_METHODS.usageSharingUpdateGrant]: (input) => usageSharing.updateGrant(input),
+        [WS_METHODS.usageSharingRevokeGrant]: (input) => usageSharing.revokeGrant(input.id),
+        [WS_METHODS.usageSharingRotateGrant]: (input) => usageSharing.rotateGrant(input.id),
+        [WS_METHODS.usageSharingRedeem]: (input) => usageSharing.redeem(input.code),
+        [WS_METHODS.usageSharingRefreshConnection]: (input) =>
+          usageSharing.refreshConnection(input.id),
+        [WS_METHODS.usageSharingRemoveConnection]: (input) =>
+          usageSharing.removeConnection(input.id),
         [WS_METHODS.memoryVaultsOverview]: (input) => memoryVaults.overview(input.threadId),
         [WS_METHODS.memoryVaultsUpdateSettings]: (input) => memoryVaults.updateSettings(input),
         [WS_METHODS.memoryVaultsManage]: (input) => memoryVaults.manage(input),

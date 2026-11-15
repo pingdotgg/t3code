@@ -211,6 +211,8 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
+import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
+import { usageSharingRoutesLayer } from "./usageSharing/http.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
@@ -799,7 +801,12 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+// Sharing redeems codes into provider instances using the runtime installer the core provides.
+const layerRuntimeCoreWithSharing = UsageSharing.layer.pipe(
+  Layer.provideMerge(layerRuntimeCoreDependencies),
+);
+
+const layerRuntimeDependencies = layerRuntimeCoreWithSharing.pipe(
   Layer.provideMerge(MemoryVaultService.layer),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(
@@ -858,6 +865,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,
+    usageSharingRoutesLayer,
   ),
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),

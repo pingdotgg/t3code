@@ -26,6 +26,7 @@ import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threa
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
 import { Route as ChatSettingsVideoThemeRouteImport } from './routes/_chat.settings.video-theme'
+import { Route as ChatSettingsUsageSharingRouteImport } from './routes/_chat.settings.usage-sharing'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
@@ -142,6 +143,12 @@ const ChatSettingsVideoThemeRoute = ChatSettingsVideoThemeRouteImport.update({
   path: '/video-theme',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsUsageSharingRoute =
+  ChatSettingsUsageSharingRouteImport.update({
+    id: '/usage-sharing',
+    path: '/usage-sharing',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsThreadsRoute = ChatSettingsThreadsRouteImport.update({
   id: '/threads',
   path: '/threads',
@@ -343,6 +350,7 @@ export interface FileRoutesByFullPath {
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
+  '/settings/usage-sharing': typeof ChatSettingsUsageSharingRoute
   '/settings/video-theme': typeof ChatSettingsVideoThemeRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
@@ -391,6 +399,7 @@ export interface FileRoutesByTo {
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
+  '/settings/usage-sharing': typeof ChatSettingsUsageSharingRoute
   '/settings/video-theme': typeof ChatSettingsVideoThemeRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
@@ -441,6 +450,7 @@ export interface FileRoutesById {
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
+  '/_chat/settings/usage-sharing': typeof ChatSettingsUsageSharingRoute
   '/_chat/settings/video-theme': typeof ChatSettingsVideoThemeRoute
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
@@ -491,6 +501,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/storage'
     | '/settings/threads'
+    | '/settings/usage-sharing'
     | '/settings/video-theme'
     | '/settings/voice'
     | '/settings/worktrees'
@@ -539,6 +550,7 @@ export interface FileRouteTypes {
     | '/settings/source-control'
     | '/settings/storage'
     | '/settings/threads'
+    | '/settings/usage-sharing'
     | '/settings/video-theme'
     | '/settings/voice'
     | '/settings/worktrees'
@@ -588,6 +600,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/source-control'
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
+    | '/_chat/settings/usage-sharing'
     | '/_chat/settings/video-theme'
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
@@ -725,6 +738,13 @@ declare module '@tanstack/react-router' {
       path: '/video-theme'
       fullPath: '/settings/video-theme'
       preLoaderRoute: typeof ChatSettingsVideoThemeRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/usage-sharing': {
+      id: '/_chat/settings/usage-sharing'
+      path: '/usage-sharing'
+      fullPath: '/settings/usage-sharing'
+      preLoaderRoute: typeof ChatSettingsUsageSharingRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/threads': {
@@ -969,6 +989,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
   ChatSettingsThreadsRoute: typeof ChatSettingsThreadsRoute
+  ChatSettingsUsageSharingRoute: typeof ChatSettingsUsageSharingRoute
   ChatSettingsVideoThemeRoute: typeof ChatSettingsVideoThemeRoute
   ChatSettingsVoiceRoute: typeof ChatSettingsVoiceRoute
   ChatSettingsWorktreesRoute: typeof ChatSettingsWorktreesRoute
@@ -1003,6 +1024,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
   ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
+  ChatSettingsUsageSharingRoute: ChatSettingsUsageSharingRoute,
   ChatSettingsVideoThemeRoute: ChatSettingsVideoThemeRoute,
   ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,
   ChatSettingsWorktreesRoute: ChatSettingsWorktreesRoute,

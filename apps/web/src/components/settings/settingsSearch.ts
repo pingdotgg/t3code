@@ -29,6 +29,7 @@ export type SettingsPath =
   | "/settings/snap-shot"
   | "/settings/providers"
   | "/settings/provider-updates"
+  | "/settings/usage-sharing"
   | "/settings/local-models"
   | "/settings/memory-vaults"
   | "/settings/threads"
@@ -108,6 +109,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
   "/settings/provider-updates": msg("Provider updates"),
+  "/settings/usage-sharing": msg("Usage sharing"),
   "/settings/local-models": msg("Local models"),
   "/settings/memory-vaults": msg("Memory vaults"),
   "/settings/threads": msg("Threads"),
@@ -150,6 +152,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: msg("Agents"),
     paths: [
       "/settings/providers",
+      "/settings/usage-sharing",
       "/settings/provider-updates",
       "/settings/local-models",
       "/settings/memory-vaults",
@@ -430,6 +433,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Download a model by name",
     to: "/settings/local-models",
     searchTerms: ["ollama pull model library"],
+  },
+  {
+    id: "setting-usage-sharing-redeem",
+    title: "Redeem a sharing code",
+    to: "/settings/usage-sharing",
+    searchTerms: ["sharing code redeem connect shared ai access invite"],
+  },
+  {
+    id: "setting-usage-sharing-endpoint",
+    title: "Usage sharing address",
+    to: "/settings/usage-sharing",
+    searchTerms: ["share ai usage api key relay tailscale recipients limits revoke"],
   },
   {
     id: "setting-video-background",
@@ -1494,6 +1509,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
   "/settings/provider-updates": null,
+  "/settings/usage-sharing": null,
   "/settings/video-theme": null,
   "/settings/local-models": null,
   "/settings/memory-vaults": null,

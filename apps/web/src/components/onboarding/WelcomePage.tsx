@@ -1,3 +1,4 @@
+import { RedeemShareCode } from "../usageSharing/RedeemShareCode";
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
@@ -34,6 +35,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   PlusIcon,
+  Share2Icon,
   SmartphoneIcon,
   TerminalIcon,
 } from "lucide-react";
@@ -340,6 +342,31 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
       </a>
       .
     </p>
+  );
+}
+
+/** No AI account needed: a sharing code from someone else connects shared access directly. */
+function ShareCodeOnboardingRow({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="flex min-h-10 flex-col gap-2 py-1" data-onboarding-share-code>
+      <div className="flex items-center gap-3">
+        <RowIcon>
+          <Share2Icon className="size-4" />
+        </RowIcon>
+        <span className="min-w-0 flex-1 text-sm">Connect with a Sharing Code</span>
+        {open ? null : (
+          <Button size="xs" variant="outline" onClick={() => setOpen(true)}>
+            Enter code
+          </Button>
+        )}
+      </div>
+      {open ? (
+        <div className="ps-8">
+          <RedeemShareCode environmentId={environmentId} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -691,6 +718,7 @@ function AgentsSection({
           />
         </div>
       ) : null}
+      <ShareCodeOnboardingRow environmentId={environmentId} />
       {isPrimary ? <CliPathSetup /> : null}
       {terminalSession !== null ? (
         <AgentInstallTerminal

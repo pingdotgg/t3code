@@ -11,6 +11,7 @@ export * from "./relayClient.ts";
 export * from "./ollama.ts";
 export * from "./memoryVault.ts";
 export * from "./providerRuntimes.ts";
+export * from "./usageSharing.ts";
 export * from "./desktopBootstrap.ts";
 export * from "./desktopBrowser.ts";
 export * from "./desktopAppActivation.ts";

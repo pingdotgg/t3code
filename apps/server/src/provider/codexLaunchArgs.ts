@@ -68,7 +68,8 @@ export const codexExecLaunchArgs = (launchArgs?: string) =>
 export const codexMcpListLaunchArgs = (launchArgs?: string) =>
   filterLaunchArgs(launchArgs, MCP_LIST_FILTER);
 
-const LOCAL_MODEL_PROVIDERS = new Set(["ollama", "lmstudio", "oss"]);
+// `continuum_share` is a shared connection redeemed from a Usage Sharing code.
+const LOCAL_MODEL_PROVIDERS = new Set(["ollama", "lmstudio", "oss", "continuum_share"]);
 
 /**
  * The local model provider an instance's launch arguments select, if any. Codex still answers

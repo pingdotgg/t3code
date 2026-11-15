@@ -17,6 +17,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -82,6 +83,13 @@ export class ProviderRuntimeUpdater extends Context.Service<
     readonly restore: (
       instanceId: string,
     ) => Effect.Effect<ProviderRuntimeStatus, ProviderRuntimeError>;
+    /**
+     * A Claude Code or Codex that runs: the one already installed, else one Continuum downloads.
+     * An empty path means the default command on PATH.
+     */
+    readonly ensureRuntime: (
+      driver: "claudeAgent" | "codex",
+    ) => Effect.Effect<{ readonly executablePath: string }, ProviderRuntimeError>;
   }
 >()("t3/providerRuntimes/ProviderRuntimeUpdater") {}
 
@@ -380,7 +388,23 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
+  const ensureRuntime = Effect.fn("ProviderRuntimeUpdater.ensureRuntime")(function* (
+    driver: "claudeAgent" | "codex",
+  ) {
+    if (driver === "codex") {
+      const existing = yield* codex.resolve().pipe(Effect.option);
+      if (Option.isSome(existing)) return { executablePath: existing.value.executablePath };
+      return yield* installCodex;
+    }
+    const onPath = yield* runVersion("claude").pipe(Effect.option);
+    if (Option.isSome(onPath) && isClaudeVersion(onPath.value.split(" ")[0] ?? "")) {
+      return { executablePath: "" };
+    }
+    return yield* installClaude;
+  });
+
   return ProviderRuntimeUpdater.of({
+    ensureRuntime,
     status: readState.pipe(Effect.flatMap(statusOf)),
     updateSettings,
     checkNow,

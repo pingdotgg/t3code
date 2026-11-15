@@ -420,6 +420,18 @@ import {
   ProviderRuntimeStatus,
 } from "./providerRuntimes.ts";
 import {
+  UsageShareCodeResult,
+  UsageShareConnectionIdInput,
+  UsageShareCreateGrantInput,
+  UsageShareGrantIdInput,
+  UsageShareRedeemInput,
+  UsageShareSetEndpointInput,
+  UsageShareSetSourceInput,
+  UsageShareUpdateGrantInput,
+  UsageSharingError,
+  UsageSharingOverview,
+} from "./usageSharing.ts";
+import {
   MemoryVaultError,
   MemoryVaultManageInput,
   MemoryVaultManageResult,
@@ -593,6 +605,16 @@ export const WS_METHODS = {
   providerRuntimesUpdateSettings: "providerRuntimes.updateSettings",
   providerRuntimesCheckNow: "providerRuntimes.checkNow",
   providerRuntimesRestore: "providerRuntimes.restore",
+  usageSharingOverview: "usageSharing.overview",
+  usageSharingSetSource: "usageSharing.setSource",
+  usageSharingSetEndpoint: "usageSharing.setEndpoint",
+  usageSharingCreateGrant: "usageSharing.createGrant",
+  usageSharingUpdateGrant: "usageSharing.updateGrant",
+  usageSharingRevokeGrant: "usageSharing.revokeGrant",
+  usageSharingRotateGrant: "usageSharing.rotateGrant",
+  usageSharingRedeem: "usageSharing.redeem",
+  usageSharingRefreshConnection: "usageSharing.refreshConnection",
+  usageSharingRemoveConnection: "usageSharing.removeConnection",
 
   memoryVaultsOverview: "memoryVaults.overview",
   memoryVaultsUpdateSettings: "memoryVaults.updateSettings",
@@ -1098,6 +1120,58 @@ const WsProviderRuntimesRestoreRpc = Rpc.make(WS_METHODS.providerRuntimesRestore
   payload: ProviderRuntimeRestoreInput,
   success: ProviderRuntimeStatus,
   error: ProviderRuntimeRpcError,
+});
+
+const UsageSharingRpcError = Schema.Union([UsageSharingError, EnvironmentAuthorizationError]);
+const WsUsageSharingOverviewRpc = Rpc.make(WS_METHODS.usageSharingOverview, {
+  payload: Schema.Struct({}),
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingSetSourceRpc = Rpc.make(WS_METHODS.usageSharingSetSource, {
+  payload: UsageShareSetSourceInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingSetEndpointRpc = Rpc.make(WS_METHODS.usageSharingSetEndpoint, {
+  payload: UsageShareSetEndpointInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingCreateGrantRpc = Rpc.make(WS_METHODS.usageSharingCreateGrant, {
+  payload: UsageShareCreateGrantInput,
+  success: UsageShareCodeResult,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingUpdateGrantRpc = Rpc.make(WS_METHODS.usageSharingUpdateGrant, {
+  payload: UsageShareUpdateGrantInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingRevokeGrantRpc = Rpc.make(WS_METHODS.usageSharingRevokeGrant, {
+  payload: UsageShareGrantIdInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingRotateGrantRpc = Rpc.make(WS_METHODS.usageSharingRotateGrant, {
+  payload: UsageShareGrantIdInput,
+  success: UsageShareCodeResult,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingRedeemRpc = Rpc.make(WS_METHODS.usageSharingRedeem, {
+  payload: UsageShareRedeemInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingRefreshConnectionRpc = Rpc.make(WS_METHODS.usageSharingRefreshConnection, {
+  payload: UsageShareConnectionIdInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
+});
+const WsUsageSharingRemoveConnectionRpc = Rpc.make(WS_METHODS.usageSharingRemoveConnection, {
+  payload: UsageShareConnectionIdInput,
+  success: UsageSharingOverview,
+  error: UsageSharingRpcError,
 });
 
 const MemoryVaultRpcError = Schema.Union([MemoryVaultError, EnvironmentAuthorizationError]);
@@ -2328,6 +2402,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderRuntimesUpdateSettingsRpc,
   WsProviderRuntimesCheckNowRpc,
   WsProviderRuntimesRestoreRpc,
+  WsUsageSharingOverviewRpc,
+  WsUsageSharingSetSourceRpc,
+  WsUsageSharingSetEndpointRpc,
+  WsUsageSharingCreateGrantRpc,
+  WsUsageSharingUpdateGrantRpc,
+  WsUsageSharingRevokeGrantRpc,
+  WsUsageSharingRotateGrantRpc,
+  WsUsageSharingRedeemRpc,
+  WsUsageSharingRefreshConnectionRpc,
+  WsUsageSharingRemoveConnectionRpc,
   WsMemoryVaultsOverviewRpc,
   WsMemoryVaultsUpdateSettingsRpc,
   WsMemoryVaultsManageRpc,

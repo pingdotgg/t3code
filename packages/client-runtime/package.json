@@ -578,6 +578,10 @@
     "./state/providerRuntimes": {
       "types": "./src/state/providerRuntimes.ts",
       "default": "./src/state/providerRuntimes.ts"
+    },
+    "./state/usageSharing": {
+      "types": "./src/state/usageSharing.ts",
+      "default": "./src/state/usageSharing.ts"
     }
   },
   "scripts": {

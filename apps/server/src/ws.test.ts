@@ -129,6 +129,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as OllamaService from "./ollama/OllamaService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
+import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
@@ -874,6 +875,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(OllamaService.OllamaService)({}),
   Layer.mock(MemoryVaultService.MemoryVaultService)({}),
   Layer.mock(ProviderRuntimeUpdater.ProviderRuntimeUpdater)({}),
+  Layer.mock(UsageSharing.UsageSharingService)({}),
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
