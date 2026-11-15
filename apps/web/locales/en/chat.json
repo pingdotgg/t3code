@@ -190,9 +190,12 @@
     "branch": "Branch",
     "cannotReadLocalDiffs": "This connection cannot read local diffs.",
     "changeComparisonTargetA11y": "Change comparison target. Currently {{base}}",
+    "changedFilesCount_one": "{{count}} changed file",
+    "changedFilesCount_other": "{{count}} changed files",
     "changes": "Changes",
     "checkingFileAccess": "Checking file access...",
     "collapseAllFiles": "Collapse all files",
+    "collapseAllFolders": "Collapse all folders",
     "collapseDiff": "Collapse diff",
     "collapseFileA11y": "Collapse {{filePath}}",
     "commits": "Commits",
@@ -203,6 +206,7 @@
     "emptyContent": "Empty content.",
     "enableWrapping": "Enable line wrapping",
     "expandAllFiles": "Expand all files",
+    "expandAllFolders": "Expand all folders",
     "expandDiff": "Expand diff",
     "expandFileA11y": "Expand {{filePath}}",
     "filesA11y": "{{title}} files",
@@ -217,6 +221,10 @@
     "loadingCommits": "Loading commits...",
     "loadingToolCallDiff": "Loading tool call diff...",
     "loadingUncommitted": "Loading uncommitted changes...",
+    "moreFilesInFullDiff_one": "{{count}} more file in the full diff",
+    "moreFilesInFullDiff_other": "{{count}} more files in the full diff",
+    "openDiff": "Open diff",
+    "openFullDiffAria": "Open the full diff",
     "noCommitsOnBranch": "No commits on this branch.",
     "noMatchingRefs": "No matching refs.",
     "noNetChanges": "No net changes in this selection.",
@@ -322,7 +330,9 @@
   "htmlDialog": {
     "close": "Close",
     "expandedPreview": "Expanded {{title}} preview",
+    "openFullScreen": "Open full screen",
     "resetZoom": "Reset zoom",
+    "unableToLoad": "Unable to load {{title}}",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out"
   },
@@ -442,6 +452,7 @@
     "environmentNotConnected": "Environment is not connected.",
     "fileNotFoundOn": "The file was not found on {{target}} at {{path}}.",
     "linkFailed": "Unable to link pull request",
+    "loadingImage": "Loading image",
     "mediaLoadFailed": "The file could not be loaded. It may have been moved or deleted.",
     "mediaUnavailable": "Media unavailable",
     "openApp": "Open app",
@@ -451,6 +462,13 @@
     "thread": "Thread",
     "toggleTask": "Toggle task",
     "unlinkFailed": "Unable to unlink pull request"
+  },
+  "media": {
+    "nextMedia": "Next media",
+    "previousMedia": "Previous media",
+    "zoomHint": "Click to zoom in or return to fit. Pinch or Ctrl+scroll to zoom, scroll or drag to pan. Use Enter to toggle zoom, plus or minus to zoom, and 0 to fit.",
+    "zoomPercent": "{{percent}}% zoom",
+    "zoomableImageAria": "{{name}}, zoomable image"
   },
   "mcp": {
     "appLeftPage": "The {{server}} app left its page and was stopped",
