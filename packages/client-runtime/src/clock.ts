@@ -1,5 +1,7 @@
 // @effect-diagnostics globalTimers:off globalDate:off - Render clocks for React hooks, outside an Effect runtime.
 
+import type { EnvironmentId } from "@t3tools/contracts";
+
 /**
  * A `useSyncExternalStore`-shaped clock. Snapshots stay cached between
  * notifications while subscribed, as `useSyncExternalStore` requires.
@@ -69,6 +71,43 @@ export const minuteTick: ClockStore<string> = makeTickStore(
   () => new Date().toISOString().slice(0, 16),
   60_000,
 );
+
+// How far each environment's clock runs ahead of this one. Timers read it on
+// every tick, so a reconnect's new reading lands without a re-render.
+const serverClockOffsets = new Map<EnvironmentId, number>();
+
+/**
+ * The host stamped `serverTimeMs` between the request and its reply, so the
+ * offset lies within that window. Keep the one nearest 0, so clocks that agree
+ * read as 0 instead of shifting every timer by network latency.
+ */
+export function recordServerClock(
+  environmentId: EnvironmentId,
+  sample: {
+    readonly serverTimeMs: number | undefined;
+    readonly requestedAtMs: number;
+    readonly receivedAtMs: number;
+  },
+): void {
+  const { serverTimeMs, requestedAtMs, receivedAtMs } = sample;
+  if (serverTimeMs === undefined || !Number.isFinite(serverTimeMs)) {
+    serverClockOffsets.delete(environmentId);
+    return;
+  }
+  serverClockOffsets.set(
+    environmentId,
+    serverTimeMs > receivedAtMs
+      ? serverTimeMs - receivedAtMs
+      : serverTimeMs < requestedAtMs
+        ? serverTimeMs - requestedAtMs
+        : 0,
+  );
+}
+
+/** Converts client epoch milliseconds to the environment's clock. */
+export function toServerClock(environmentId: EnvironmentId, clientMs: number): number {
+  return clientMs + (serverClockOffsets.get(environmentId) ?? 0);
+}
 
 export interface DeadlineStore extends ClockStore<boolean> {
   /**
