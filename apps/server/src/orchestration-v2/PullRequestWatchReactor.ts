@@ -689,6 +689,7 @@ export const make = Effect.gen(function* () {
         );
       }
     }
+    let activityAttempted = plan.activity;
     let activity = Exit.isSuccess(activityRead)
       ? activityRead.value
       : Option.none<PullRequestActivity>();
@@ -709,6 +710,7 @@ export const make = Effect.gen(function* () {
     const holds = (target: WatchTarget) => target.thread.busy;
     const wakes = (target: WatchTarget) => !holds(target) && reportOf(target).changes.length > 0;
     if (!plan.activity && Option.isNone(activity) && group.targets.some(wakes)) {
+      activityAttempted = true;
       activity = yield* pullRequests.activity(reference).pipe(
         Effect.asSome,
         Effect.catch((error) =>
@@ -740,9 +742,7 @@ export const make = Effect.gen(function* () {
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
-      remarksComplete: Option.isSome(activity)
-        ? remarks !== null
-        : (last?.remarksComplete ?? false),
+      remarksComplete: activityAttempted ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
@@ -753,14 +753,19 @@ export const make = Effect.gen(function* () {
       if (report.changes.length > 0 && holds(target)) {
         deferred.add(lifeKey(target));
         const baseline =
-          target.watch.awaitingBaseline === undefined
+          target.watch.awaitingBaseline === undefined ||
+          (target.watch.headSha !== null && target.watch.headSha !== report.next.headSha)
             ? target.watch
             : {
                 ...report.next,
                 remarksThrough: target.watch.remarksThrough,
                 remarkIds: target.watch.remarkIds,
-                conflicting: target.watch.conflicting,
-                rebaseRequired: target.watch.rebaseRequired,
+                ...(target.watch.awaitingBaseline === "all"
+                  ? {}
+                  : {
+                      conflicting: target.watch.conflicting,
+                      rebaseRequired: target.watch.rebaseRequired,
+                    }),
                 mergeQueueRemovalId: target.watch.mergeQueueRemovalId,
                 wakes: target.watch.wakes,
               };

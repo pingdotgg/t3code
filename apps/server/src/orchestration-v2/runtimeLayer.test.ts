@@ -4562,11 +4562,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("takes a new watch's check baseline while its thread works", () =>
+  it.effect.each([false, true])("takes a busy watch baseline across a push: %s", (push) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-busy-baseline");
-      const projectId = ProjectId.make("pr-watch-busy-baseline-project");
+      const threadId = ThreadId.make(`runtime-pull-request-watch-busy-baseline-${push}`);
+      const projectId = ProjectId.make(`pr-watch-busy-baseline-project-${push}`);
       yield* seedProject({
         projectId,
         title: "Watch busy baseline",
@@ -4578,7 +4578,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "thread.create",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-busy-baseline-create"),
+        commandId: CommandId.make(`pr-watch-busy-baseline-create-${push}`),
         threadId,
         projectId,
         title: "Watch busy baseline",
@@ -4591,7 +4591,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const watch = (on: boolean, id: string) =>
         orchestrator.dispatch({
           type: "thread.pull-request.watch",
-          commandId: CommandId.make(`pr-watch-busy-baseline-${id}`),
+          commandId: CommandId.make(`pr-watch-busy-baseline-${push}-${id}`),
           threadId,
           host: "github.com",
           repository: "pingdotgg/t3code",
@@ -4604,9 +4604,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("pr-watch-busy-baseline-run"),
+        commandId: CommandId.make(`pr-watch-busy-baseline-run-${push}`),
         threadId,
-        messageId: MessageId.make("pr-watch-busy-baseline-run"),
+        messageId: MessageId.make(`pr-watch-busy-baseline-run-${push}`),
         text: "Keep this run active.",
         attachments: [],
         modelSelection,
@@ -4614,10 +4614,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
 
       let status: PullRequestCheck["status"] = "pending";
+      let activityUnavailable = false;
+      let headSha = "c0ffee0aaa";
+      let comment = "Thanks, looking now.";
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
+          watchFingerprint: () => Effect.succeed({ status: headSha + status, remarks: comment }),
+          invalidate: () => Effect.void,
           detail: () =>
             Effect.sync(() => ({
               ...watchedPullRequestDetail({
@@ -4625,37 +4630,53 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 number: 15,
                 at: "2026-10-02T12:00:00.000Z",
               }),
-              headSha: "c0ffee0aaa",
-              checks: [{ name: "test", status, description: null, url: null, required: true }],
-            })),
-          activity: () =>
-            Effect.succeed({
-              comments: [
+              headSha,
+              mergeability: "conflicting" as const,
+              rebaseRequired: true,
+              checks: [
                 {
-                  id: "remark-early",
-                  kind: "issue-comment" as const,
-                  author: { login: "reviewer", name: null, avatarUrl: null },
-                  body: "Thanks, looking now.",
-                  createdAt: "2999-01-01T00:00:00.000Z",
+                  name: "test",
+                  status,
+                  description: null,
                   url: null,
-                  path: null,
-                  reviewState: null,
+                  required: true,
+                  placeholder: push && status === "pending",
                 },
               ],
-              commentCount: 1,
-              commentsTruncated: false,
-              reviewThreadsTruncated: false,
-              reviewThreads: [],
-              commits: [],
-            }),
+            })),
+          activity: () =>
+            activityUnavailable
+              ? Effect.die("comments unavailable")
+              : Effect.succeed({
+                  comments: [
+                    {
+                      id: comment,
+                      kind: "issue-comment" as const,
+                      author: { login: "reviewer", name: null, avatarUrl: null },
+                      body: comment,
+                      createdAt: "2999-01-01T00:00:00.000Z",
+                      url: null,
+                      path: null,
+                      reviewState: null,
+                    },
+                  ],
+                  commentCount: 1,
+                  commentsTruncated: false,
+                  reviewThreadsTruncated: false,
+                  reviewThreads: [],
+                  commits: [],
+                }),
         }),
       );
 
       // The first read finds a comment while the thread works; it still sets the check baseline.
       const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* reactor.sweep;
+      if (push) headSha = "deadbeef00";
       status = "failure";
       yield* TestClock.adjust("10 minutes");
+      yield* reactor.sweep;
+      yield* TestClock.adjust("1 hour");
       yield* reactor.sweep;
       status = "success";
       yield* TestClock.adjust("10 minutes");
@@ -4669,6 +4690,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         messages.filter((message) => message.notification !== undefined),
         1,
       );
+      if (!push) {
+        assert.notInclude(messages.at(-1)?.text ?? "", "now conflicts");
+        assert.notInclude(messages.at(-1)?.text ?? "", "requires a rebase");
+      }
       const summaries = messages.flatMap((message) => message.notification?.summary ?? []);
       assert.isTrue(
         summaries.some((summary) => summary.includes("checks failed")),
@@ -4678,6 +4703,18 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         messages.find((message) => message.notification !== undefined)?.text ?? "",
         "Thanks, looking now.",
       );
+      yield* finishRuns(threadId);
+      comment = "Please handle the empty list.";
+      activityUnavailable = true;
+      yield* reactor.sweep;
+      activityUnavailable = false;
+      yield* reactor.sweep;
+      const recovered = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.lengthOf(
+        recovered.messages.filter((message) => message.notification !== undefined),
+        2,
+      );
+      assert.isTrue(recovered.messages.some((message) => message.text.includes(comment)));
       yield* watch(false, "end");
     }),
   );
