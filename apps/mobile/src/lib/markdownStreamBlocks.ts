@@ -74,7 +74,8 @@ export function nativeMarkdownPipeline(
 
 // Ties blocks together: a reference definition (`]:`, even in a quote or list or over several
 // lines) that any block may use, or an HTML block that runs past a blank line.
-const UNSAFE_LINE = /\]:|^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+[ \t>]*)*<[A-Za-z!?/]/;
+// A single `[ \t]` after each marker keeps the repeated group from backtracking exponentially.
+const UNSAFE_LINE = /\]:|^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t][ \t>]*)*<[A-Za-z!?/]/;
 // The parser drops a byte-order mark, which would shift every offset after it.
 const BYTE_ORDER_MARK = String.fromCharCode(0xfeff);
 // CommonMark blank lines hold only spaces and tabs; `trim()` would also accept NBSP and friends.

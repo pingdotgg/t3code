@@ -225,6 +225,12 @@ describe("splitMarkdownStreamBlocks", () => {
     expect(blocks).toEqual(["Before\n\n", `${fence}\n\n`, "After"]);
   });
 
+  it("scans long runs of list markers in linear time", () => {
+    expect(splitMarkdownStreamBlocks(`Intro\n\n${"-    ".repeat(1500)}<0\n\nTail`)).not.toBeNull();
+    expect(splitMarkdownStreamBlocks(`a\n\n${"-  ".repeat(40)}x\n\nb`)).not.toBeNull();
+    expect(splitMarkdownStreamBlocks(`a\n\n${"-  ".repeat(40)}<b>\n\nc`)).toBeNull();
+  });
+
   it("does not look inside a fenced code block for syntax that ties blocks together", () => {
     expect(
       splitMarkdownStreamBlocks("```ts\ntype T = { [k: string]: number };\n<View />\n```\n\nafter"),
