@@ -303,7 +303,16 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
     (project) => project.workspaceRoot === normalizedWorkspaceRoot,
   );
 
-  const resolved = exactWorkspaceMatch;
+  const resolved =
+    exactWorkspaceMatch ??
+    Option.getOrUndefined(
+      yield* Effect.findFirst(activeProjects, (project) =>
+        normalizeWorkspaceRootForProjectCommand(project.workspaceRoot).pipe(
+          Effect.map((root) => root === normalizedWorkspaceRoot),
+          Effect.orElseSucceed(() => false),
+        ),
+      ),
+    );
   if (!resolved) {
     return yield* new ProjectNotFoundError({
       operation: "resolveProjectTarget",

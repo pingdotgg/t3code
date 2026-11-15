@@ -458,6 +458,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           (yield* readProjects(baseDir)).projects.map((entry) => entry.id),
           [project.id],
         );
+        NodeFS.renameSync(workspaceRoot, `${workspaceRoot}-physical`);
+        NodeFS.symlinkSync(`${workspaceRoot}-physical`, workspaceRoot, "junction");
+        yield* runCli(["project", "rename", aliasPath, "Legacy", "--base-dir", baseDir]);
+        assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Legacy");
         yield* runCli(["project", "remove", `${aliasPath}${NodePath.sep}.`, "--base-dir", baseDir]);
         assert.lengthOf((yield* readProjects(baseDir)).projects, 0);
         assert.isTrue(NodeFS.existsSync(workspaceRoot));
