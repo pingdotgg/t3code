@@ -344,6 +344,7 @@ it.live("answers content searches with git grep while a slow content index build
     } as unknown as FileFinder;
     vi.spyOn(FileFinder, "create")
       .mockReturnValueOnce({ ok: true, value: finder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder });
 
     const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
@@ -389,38 +390,45 @@ it.live("answers content searches with git grep while a slow content index build
     expect(yield* search({ limit: 1 })).toMatchObject({ truncated: true });
     expect(grep).not.toHaveBeenCalled();
 
-    // A git without PCRE must not turn a valid regex into a literal; fff answers once ready.
-    const noPcreIndex = yield* WorkspaceSearchIndex.make(cwd, "content").pipe(
-      Effect.provideService(
-        VcsProcess.VcsProcess,
-        VcsProcess.VcsProcess.of({
-          run: (input) =>
-            input.args.includes("-P")
-              ? Effect.succeed({
-                  exitCode: ChildProcessSpawner.ExitCode(128),
-                  stdout: "",
-                  stderr:
-                    "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE\n",
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                })
-              : vcsProcess.run(input),
-        }),
-      ),
-    );
-    const regex = yield* noPcreIndex.searchContents({
+    // When git cannot give regex results or their ranges, fff answers once ready instead.
+    const failingGitIndex = (failingArgument: string, stderr: string) =>
+      WorkspaceSearchIndex.make(cwd, "content").pipe(
+        Effect.provideService(
+          VcsProcess.VcsProcess,
+          VcsProcess.VcsProcess.of({
+            run: (input) =>
+              input.args.includes(failingArgument)
+                ? Effect.succeed({
+                    exitCode: ChildProcessSpawner.ExitCode(128),
+                    stdout: "",
+                    stderr,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                  })
+                : vcsProcess.run(input),
+          }),
+        ),
+      );
+    const regexInput = {
       query: "ne+dles?",
       limit: 10,
       caseSensitive: false,
-      wholeWord: false,
+      wholeWord: true,
       useRegex: true,
-    });
-    expect(regex.regexFallbackError).toBeUndefined();
+    };
+    const noPcreIndex = yield* failingGitIndex(
+      "-P",
+      "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE\n",
+    );
+    expect((yield* noPcreIndex.searchContents(regexInput)).regexFallbackError).toBeUndefined();
     expect(grep).toHaveBeenCalledTimes(1);
+    const noRangesIndex = yield* failingGitIndex("-o", "fatal: unexpected failure\n");
+    yield* noRangesIndex.searchContents(regexInput);
+    expect(grep).toHaveBeenCalledTimes(2);
 
     isWarmupComplete = true;
     yield* search({});
-    expect(grep).toHaveBeenCalledTimes(2);
+    expect(grep).toHaveBeenCalledTimes(3);
     expect(finder.destroy).not.toHaveBeenCalled();
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );

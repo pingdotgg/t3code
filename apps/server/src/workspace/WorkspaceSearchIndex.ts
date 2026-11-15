@@ -741,7 +741,9 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (regexMode) {
       // Ranges come from git too: running the user's pattern in JS could backtrack without bound.
       const ranges = yield* runGitGrep(input.query, { ...options, regexMode, onlyMatching: true });
-      if (Option.isSome(ranges) && ranges.value.exitCode === 0) {
+      // Without ranges, whole-word filtering would drop every hit and report no matches.
+      if (Option.isNone(ranges) || ranges.value.exitCode > 1) return Option.none();
+      if (ranges.value.exitCode === 0) {
         for (const record of parseGitGrepRecords(
           ranges.value.stdout,
           4,
