@@ -27,6 +27,8 @@ T3 Code does not show fx's backend selector. To use Codex, Grok, or Vercel AI Ga
 
 Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case; to run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
 
+fx threads load the MCP servers from fx's profile config, `~/.fx/mcp.json`, on the machine that runs the T3 Code server.
+
 ## Permission modes
 
 fx offers two composer modes.
@@ -50,7 +52,6 @@ fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs 
 
 ## Not supported yet
 
-- Plan mode.
 - **Full access**.
 - **Auto-accept edits**.
 - Commit messages, pull request text, branch names, and thread titles. Pick another provider for those.
