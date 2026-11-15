@@ -914,9 +914,10 @@ export const layerWithOptions = (
           readonly reason: ProviderSessionReleaseReason;
           readonly detachedThreadId?: ThreadId;
         }) {
+          const tasksEnd = input.entry.runtime.backgroundTasksEndWithProcess === true;
           if (
             input.reason === "server_shutdown" ||
-            input.entry.runtime.backgroundTasksEndWithProcess !== true
+            (!tasksEnd && input.entry.runtime.nativeSubagentsEndWithProcess !== true)
           ) {
             return [];
           }
@@ -933,8 +934,11 @@ export const layerWithOptions = (
                 providerSessionId,
                 providerThreadId: providerThread.id,
                 driver: providerThread.driver,
+                toolCallsEnd: tasksEnd,
                 taskIds: new Set(
-                  (providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
+                  tasksEnd
+                    ? (providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId)
+                    : [],
                 ),
               });
             }
@@ -1006,6 +1010,7 @@ export const layerWithOptions = (
       const writeReleasedToolCallEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedToolCallEvents",
       )(function* (released: ReleasedProviderThread, releasedAt: DateTime.Utc) {
+        if (!released.toolCallsEnd) return;
         const { threadId, providerSessionId, providerThreadId, driver } = released;
         const readCutOff = projectionStore
           .getThreadRecords(threadId, ["turnItems"], {

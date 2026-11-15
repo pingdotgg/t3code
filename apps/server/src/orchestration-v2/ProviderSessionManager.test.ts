@@ -458,6 +458,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
+    readonly nativeSubagentsEndWithProcess?: true;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
@@ -562,6 +563,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(options.backgroundTasksEndWithProcess === false
             ? {}
             : { backgroundTasksEndWithProcess: true as const }),
+          ...(options.nativeSubagentsEndWithProcess === undefined
+            ? {}
+            : { nativeSubagentsEndWithProcess: options.nativeSubagentsEndWithProcess }),
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
@@ -640,6 +644,7 @@ function layerTest(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
+  readonly nativeSubagentsEndWithProcess?: true;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
@@ -686,6 +691,9 @@ function layerTest(input: {
       ...(input.backgroundTasksEndWithProcess === undefined
         ? {}
         : { backgroundTasksEndWithProcess: input.backgroundTasksEndWithProcess }),
+      ...(input.nativeSubagentsEndWithProcess === undefined
+        ? {}
+        : { nativeSubagentsEndWithProcess: input.nativeSubagentsEndWithProcess }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -3507,16 +3515,19 @@ it.effect.each(["detach", "stream failure", "provider stop", "early close"] as c
     }),
 );
 
-it.effect.each(["a runtime whose tasks can outlive it", "server shutdown"] as const)(
+it.effect.each([
+  "a runtime whose tasks can outlive it",
+  "a runtime whose only native subagents end with it",
+  "server shutdown",
+] as const)(
   "ProviderSessionManagerV2 keeps the background work after the release of %s",
   (release) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const effect = Effect.gen(function* () {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const { providerSessionId, rosters, toolCalls } = yield* openSessionWithBackgroundCommand(
-          "provider-session-manager-outliving-roster",
-        );
+        const { providerSessionId, rosters, toolCalls, nativeSubagentStatus } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-outliving-roster");
 
         yield* release === "server shutdown"
           ? manager.release({ providerSessionId, reason: "server_shutdown" })
@@ -3524,6 +3535,12 @@ it.effect.each(["a runtime whose tasks can outlive it", "server shutdown"] as co
 
         assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
         assert.equal((yield* toolCalls).cutOff, "running");
+        assert.equal(
+          yield* nativeSubagentStatus,
+          release === "a runtime whose only native subagents end with it"
+            ? "interrupted"
+            : "running",
+        );
       });
 
       yield* effect.pipe(
@@ -3532,6 +3549,9 @@ it.effect.each(["a runtime whose tasks can outlive it", "server shutdown"] as co
             state,
             idleTimeoutMs: 60_000,
             ...(release === "server shutdown" ? {} : { backgroundTasksEndWithProcess: false }),
+            ...(release === "a runtime whose only native subagents end with it"
+              ? { nativeSubagentsEndWithProcess: true as const }
+              : {}),
           }),
         ),
       );

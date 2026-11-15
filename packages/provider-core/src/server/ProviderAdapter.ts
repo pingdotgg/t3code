@@ -711,6 +711,8 @@ export interface ProviderAdapterV2SessionRuntime {
    * must keep Waiting.
    */
   readonly backgroundTasksEndWithProcess?: true;
+  /** Set if native subagents run inside the process, so releasing the session ends them. */
+  readonly nativeSubagentsEndWithProcess?: true;
   readonly getModelContextWindow?: (
     modelSelection: ModelSelection,
     cwd?: string | null,
