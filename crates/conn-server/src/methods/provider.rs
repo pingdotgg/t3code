@@ -251,9 +251,16 @@ fn performance_profile(deps: &Deps) -> bool {
     let Some(environment) = deps.environment.as_ref() else {
         return false;
     };
+    // `raw()` is a `Map`: indexing it with a missing key panics, so read with `get`. Orbit's
+    // settings hold neither key, and the panic aborted the server at the first 5-minute tick.
     let settings = environment.settings.raw();
-    settings["backgroundActivity"]["profile"] == "performance"
-        || settings["backgroundActivityProfile"] == "performance"
+    let is_performance =
+        |value: Option<&Value>| value.and_then(Value::as_str) == Some("performance");
+    is_performance(
+        settings
+            .get("backgroundActivity")
+            .and_then(|activity| activity.get("profile")),
+    ) || is_performance(settings.get("backgroundActivityProfile"))
 }
 
 /// The periodic probe (`refreshOnInterval`): only the providers a client wants
@@ -457,6 +464,60 @@ mod tests {
             2,
             "then back to the interval"
         );
+    }
+
+    /// Deps with a real environment whose `settings.json` holds `settings`.
+    fn deps_with_settings(settings: &Value) -> (Deps, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-server-provider-{}",
+            crate::auth::random_hex(6)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), settings.to_string()).unwrap();
+        let environment =
+            crate::environment::Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
+        let flaky = Arc::new(Flaky {
+            id: "grok".into(),
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        let deps = Deps {
+            engine: None,
+            environment: Some(Arc::new(environment)),
+            providers: vec![flaky as Arc<dyn conn_provider::Provider>].into(),
+            ..Deps::default()
+        };
+        (deps, dir)
+    }
+
+    /// The periodic tick reads the background profile from the stored settings. Orbit's
+    /// settings (`{"linkedEnvironmentsEnabled": true}`) name no profile; the tick panicked on
+    /// that missing key and, with `panic = "abort"`, stopped the server 5 minutes after start
+    /// (found on Beast, at the thaw of a 10-minute container pause).
+    #[tokio::test(flavor = "current_thread")]
+    async fn the_periodic_tick_reads_settings_without_a_background_profile() {
+        let (deps, dir) = deps_with_settings(&json!({"linkedEnvironmentsEnabled": true}));
+        assert!(!performance_profile(&deps));
+        // Awaited here, not spawned, so a panic fails the test.
+        assert!(!refresh_on_interval(&deps, false).await);
+        std::fs::remove_dir_all(dir).unwrap();
+
+        for (settings, performance) in [
+            (
+                json!({"backgroundActivity": {"profile": "performance"}}),
+                true,
+            ),
+            (json!({"backgroundActivityProfile": "performance"}), true),
+            (
+                json!({"backgroundActivity": {"profile": "balanced"}}),
+                false,
+            ),
+            (json!({"backgroundActivity": "performance"}), false),
+            (json!({"backgroundActivity": {}}), false),
+        ] {
+            let (deps, dir) = deps_with_settings(&settings);
+            assert_eq!(performance_profile(&deps), performance, "{settings}");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     /// Before its first probe the Claude entry is T3's pending one (`makePendingClaudeProvider`);
