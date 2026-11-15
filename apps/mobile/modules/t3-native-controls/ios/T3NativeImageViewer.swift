@@ -142,7 +142,7 @@ final class T3NativeImageViewer: NSObject {
       let image = isSVG ? nil : await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       if isSVG {
-        // The open transition hides the thumbnail, which would draw blank until it is back.
+        // The open transition hides the thumbnail, which draws blank until it is back.
         await controller?.untilRevealed()
         guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       }
@@ -202,16 +202,17 @@ final class T3NativeImageViewer: NSObject {
   private static func render(_ view: UIView) -> UIImage? {
     let screen = view.window?.screen.bounds.size ?? CGSize(width: 1024, height: 1024)
     let fit = min(screen.width / max(view.bounds.width, 1), screen.height / max(view.bounds.height, 1))
-    return snapshot(view, scale: max(1, fit) * (view.window?.screen.scale ?? 2))
+    // The thumbnail was shown again after the open transition, in a frame not yet on screen.
+    return snapshot(view, scale: max(1, fit) * (view.window?.screen.scale ?? 2), afterScreenUpdates: true)
   }
 
-  private static func snapshot(_ view: UIView, scale: CGFloat) -> UIImage? {
+  private static func snapshot(_ view: UIView, scale: CGFloat, afterScreenUpdates: Bool = false) -> UIImage? {
     guard view.bounds.width > 1, view.bounds.height > 1, view.window != nil else { return nil }
     let format = UIGraphicsImageRendererFormat()
     format.scale = scale
     format.opaque = false
     return UIGraphicsImageRenderer(bounds: view.bounds, format: format).image { _ in
-      view.drawHierarchy(in: view.bounds, afterScreenUpdates: false)
+      view.drawHierarchy(in: view.bounds, afterScreenUpdates: afterScreenUpdates)
     }
   }
 
