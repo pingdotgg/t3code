@@ -122,6 +122,8 @@ interface EnvironmentSubscriptionAtomOptions<Input, A, E, R> {
   readonly subscribe: (input: Input) => Stream.Stream<A, E, R>;
   readonly completeWhen?: (value: A) => boolean;
   readonly idleTtlMs?: number;
+  /** Keeps a completed value this long after its last reader leaves, so reopening skips a resubscribe. */
+  readonly completedTtlMs?: number;
 }
 
 export type SettledAsyncResult<A, E> = AsyncResult.Success<A, E> | AsyncResult.Failure<A, E>;
@@ -557,6 +559,45 @@ const refreshEveryUntilFinal =
       { initialValueTarget: self },
     );
 
+const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs: number) => {
+  if (result.waiting) return false;
+  const success =
+    result._tag === "Failure" ? Option.getOrUndefined(result.previousSuccess) : result;
+  if (success?._tag !== "Success") return result._tag === "Failure";
+  // @effect-diagnostics-next-line globalDate:off - `AsyncResult` timestamps come from `Date.now`.
+  return Date.now() - success.timestamp >= staleTimeMs;
+};
+
+/**
+ * Stale-while-revalidate on every mount. `Atom.swr` checks only when its node builds, which an idle
+ * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
+ * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
+ */
+const revalidateOnMount =
+  (staleTimeMs: number) =>
+  <A, E>(
+    self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  ): Atom.Atom<AsyncResult.AsyncResult<A, E>> =>
+    Atom.transform(
+      self,
+      (get) => {
+        const current = get(self);
+        if (Option.isNone(get.self()) && isStale(current, staleTimeMs)) {
+          let active = true;
+          get.addFinalizer(() => {
+            active = false;
+          });
+          // Deferred out of the build, which runs while React renders. A plain read drops this
+          // node before the task runs, so only a mount refetches.
+          get.registry.schedulerAsync.makeDispatcher().scheduleTask(() => {
+            if (active && isStale(get.once(self), staleTimeMs)) get.refresh(self);
+          }, 0);
+        }
+        return current;
+      },
+      { initialValueTarget: self },
+    );
+
 /**
  * A query result's data alone. A refetch always publishes a new result (a new
  * timestamp, `waiting` on and off), while equal data keeps its identity, so a
@@ -607,6 +648,13 @@ function environmentConnectionAtoms<R, ER>(
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentConnection | null>>;
   connectionAtomsByRuntime.set(runtime, family);
   return family;
+}
+
+export function environmentConnectionAtom<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  environmentId: EnvironmentIdType,
+) {
+  return environmentConnectionAtoms(runtime)(environmentId);
 }
 
 const sessionGenerationAtomsByRuntime = new WeakMap<
@@ -668,6 +716,9 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
   readonly input: Input;
 }) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const connectionAtom = environmentConnectionAtoms(runtime);
+  // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
+  // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
+  const membersByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
   const family = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
@@ -794,13 +845,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           );
         });
       })
-      .pipe(
-        Atom.swr({
-          staleTime: options.staleTimeMs ?? 30_000,
-          revalidateOnMount: true,
-        }),
-        Atom.setIdleTTL(idleTtlMs),
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs));
     const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
       options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
     const intervalQuery =
@@ -808,11 +853,17 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
-    return (
+    const cache = (
       refreshTrigger === undefined
         ? intervalQuery
         : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
-    ).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(`${options.label}:${key}`));
+    ).pipe(Atom.setIdleTTL(idleTtlMs));
+    const member = cache.pipe(
+      revalidateOnMount(options.staleTimeMs ?? 30_000),
+      Atom.withLabel(`${options.label}:${key}`),
+    );
+    membersByCache.set(cache, member);
+    return member;
   });
   return (target) => family(environmentRpcKey(target));
 }
@@ -826,7 +877,12 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
     EnvironmentSupervisor.EnvironmentSupervisor | R
   >,
 ) {
-  const family = Atom.family((key: string) => {
+  const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
+  const label = (key: string) =>
+    options.sensitiveInput
+      ? `${options.label}:${parseEnvironmentRpcKey<Input>(key).environmentId}`
+      : `${options.label}:${key}`;
+  const live = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     return runtime
       .atom(
@@ -834,15 +890,31 @@ export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
           followStreamInEnvironment(target.environmentId, options.subscribe(target.input)),
         ).pipe(options.completeWhen ? Stream.takeUntil(options.completeWhen) : (stream) => stream),
       )
-      .pipe(
-        Atom.setIdleTTL(options.idleTtlMs ?? 5 * 60_000),
-        Atom.withLabel(
-          options.sensitiveInput
-            ? `${options.label}:${target.environmentId}`
-            : `${options.label}:${key}`,
-        ),
-      );
+      .pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key)));
   });
+  const { completeWhen, completedTtlMs } = options;
+  if (completeWhen === undefined || completedTtlMs === undefined) {
+    return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
+      live(environmentRpcKey(target));
+  }
+  const completed = Atom.family((key: string) =>
+    Atom.make(Option.none<A>()).pipe(
+      Atom.setIdleTTL(completedTtlMs),
+      Atom.withLabel(`${label(key)}:completed`),
+    ),
+  );
+  // Reading `completed` first drops the live subscription once its value is final.
+  const family = Atom.family((key: string) =>
+    Atom.make((get) => {
+      const done = get(completed(key));
+      if (Option.isSome(done)) return AsyncResult.success(done.value);
+      const result = get(live(key));
+      if (AsyncResult.isSuccess(result) && !result.waiting && completeWhen(result.value)) {
+        get.set(completed(key), Option.some(result.value));
+      }
+      return result;
+    }).pipe(Atom.setIdleTTL(idleTtlMs), Atom.withLabel(label(key))),
+  );
   return (target: { readonly environmentId: EnvironmentIdType; readonly input: Input }) =>
     family(environmentRpcKey(target));
 }
@@ -929,6 +1001,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
     readonly tag: TTag;
     readonly idleTtlMs?: number;
     readonly completeWhen?: (value: B) => boolean;
+    readonly completedTtlMs?: number;
     readonly transform?: (
       stream: Stream.Stream<
         EnvironmentRpcStreamValue<TTag>,
@@ -945,6 +1018,7 @@ export function createEnvironmentRpcSubscriptionAtomFamily<
   return createEnvironmentSubscriptionAtomFamily(runtime, {
     label: options.label,
     ...(options.completeWhen === undefined ? {} : { completeWhen: options.completeWhen }),
+    ...(options.completedTtlMs === undefined ? {} : { completedTtlMs: options.completedTtlMs }),
     ...(options.idleTtlMs === undefined ? {} : { idleTtlMs: options.idleTtlMs }),
     subscribe: (input: EnvironmentRpcInput<TTag>) => {
       const stream = subscribe(options.tag, input);
@@ -980,6 +1054,8 @@ export function createEnvironmentRpcCommand<
     ) => Started;
     readonly execute?: (
       input: Input,
+      registry: AtomRegistry.AtomRegistry,
+      environmentId: EnvironmentIdType,
     ) => Effect.Effect<
       EnvironmentRpcSuccess<TTag>,
       EnvironmentRpcFailure<TTag> | EnvironmentRpcUnavailableError,
@@ -1024,7 +1100,9 @@ export function createEnvironmentRpcCommand<
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => {
           started = options.onStart?.(target, registry);
-          return options.execute?.(input) ?? requestGuarded(options.tag, input);
+          return (
+            options.execute?.(input, registry, environmentId) ?? requestGuarded(options.tag, input)
+          );
         }),
         Effect.provideService(RpcPermissionGuard, {
           authorize: (id, method, payload) =>
