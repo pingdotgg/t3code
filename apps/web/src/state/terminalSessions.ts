@@ -145,7 +145,14 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
     }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
   }
   const [environmentId, terminal] = decoded.value;
-  return Atom.make((get): TerminalSessionState => {
+  type Projection = {
+    readonly state: TerminalSessionState;
+    readonly identity: TerminalSessionState["pty"];
+    readonly source: TerminalSessionState["pty"];
+    readonly canOperate: boolean;
+  };
+  return Atom.make((get): Projection => {
+    const previous = Option.getOrNull(get.self<Projection>());
     const session = get(environmentSession.sessionStateAtom(environmentId));
     const canRead = sessionHasScope(session, AuthTerminalReadScope);
     const canOperate = sessionHasScope(session, AuthTerminalOperateScope);
@@ -175,11 +182,35 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
       attach === null
         ? EMPTY_TERMINAL_BUFFER_STATE
         : AsyncResult.getOrElse(attach, () => EMPTY_TERMINAL_BUFFER_STATE);
-    const state = combineTerminalSessionState(summary, buffer);
-    return attach?._tag === "Failure"
-      ? { ...state, error: formatEnvironmentQueryError(attach.cause), status: "error" }
-      : state;
-  }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
+    // Attach is disposed when grants become read-only; its replacement snapshot is not a restart.
+    const sameProcess = previous?.identity?.pid === buffer.pty?.pid;
+    const newProcess =
+      previous?.canOperate === canOperate &&
+      previous?.source !== null &&
+      previous?.source !== buffer.pty;
+    const identity =
+      buffer.pty === null
+        ? (previous?.identity ?? null)
+        : sameProcess && !newProcess
+          ? previous!.identity
+          : buffer.pty;
+    const state = {
+      ...combineTerminalSessionState(summary, buffer),
+      pty: buffer.pty === null ? null : identity,
+    };
+    return {
+      state:
+        attach?._tag === "Failure"
+          ? { ...state, error: formatEnvironmentQueryError(attach.cause), status: "error" }
+          : state,
+      identity,
+      source: buffer.pty ?? previous?.source ?? null,
+      canOperate: buffer.pty === null ? (previous?.canOperate ?? canOperate) : canOperate,
+    };
+  }).pipe(
+    Atom.map((projection) => projection.state),
+    Atom.withLabel(`web-terminal-session:${key}`),
+  );
 });
 
 /**

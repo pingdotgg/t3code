@@ -1,13 +1,13 @@
 import { chunkTerminalWrite } from "@t3tools/contracts";
 
 /** Sends one chunk of terminal input; resolves false when it failed and the rest should drop. */
-type SendTerminalChunk = (chunk: string) => Promise<boolean>;
+type SendTerminalChunk = (chunk: string) => Promise<boolean | "not-dispatched">;
 
 /**
  * Orders one terminal's input into writes that fit `terminal.write`. A split write goes one chunk
  * per round trip and later input waits behind it; small writes use a bounded immediate window.
  */
-export function createTerminalInputWriter() {
+export function createTerminalInputWriter(onIdle = () => {}) {
   let pending: Promise<void> | null = null;
   // Allow typing ahead of acknowledgements without letting stalled RPCs grow without bound.
   const immediate = new Set<Promise<void>>();
@@ -26,14 +26,23 @@ export function createTerminalInputWriter() {
     chunks: ReadonlyArray<string>,
     send: SendTerminalChunk,
     recover: () => Promise<boolean>,
+    interrupted: () => void,
   ) => {
-    if (closeInterruptedPaste !== null && !(await closePaste())) return;
+    if (closeInterruptedPaste !== null && !(await closePaste())) {
+      interrupted();
+      return;
+    }
     const bracketed =
       chunks.length > 1 && data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~");
     let opened = false;
     try {
       for (const chunk of chunks) {
-        if (!(await send(chunk))) return;
+        const result = await send(chunk);
+        if (result !== true) {
+          if (result !== "not-dispatched") opened = bracketed;
+          if (chunks.length > 1) interrupted();
+          return;
+        }
         opened = bracketed;
       }
       opened = false;
@@ -48,10 +57,14 @@ export function createTerminalInputWriter() {
   return (
     data: string,
     send: SendTerminalChunk,
-    recover = () => send("\x1b[201~"),
+    recover: () => Promise<boolean> = async () => (await send("\x1b[201~")) === true,
+    interrupted = () => {},
   ): Promise<void> => {
+    const idle = () => {
+      if (pending === null && immediate.size === 0 && closeInterruptedPaste === null) onIdle();
+    };
     const chunks = chunkTerminalWrite(data);
-    const run = () => sendChunks(data, chunks, send, recover);
+    const run = () => sendChunks(data, chunks, send, recover, interrupted);
     if (
       pending === null &&
       closeInterruptedPaste === null &&
@@ -61,8 +74,14 @@ export function createTerminalInputWriter() {
       const current = run();
       immediate.add(current);
       void current.then(
-        () => immediate.delete(current),
-        () => immediate.delete(current),
+        () => {
+          immediate.delete(current);
+          idle();
+        },
+        () => {
+          immediate.delete(current);
+          idle();
+        },
       );
       return current;
     }
@@ -71,8 +90,24 @@ export function createTerminalInputWriter() {
     pending = current;
     const reset = () => {
       if (pending === current) pending = null;
+      idle();
     };
     void current.then(reset, reset);
     return current;
   };
+}
+
+const writers = new Map<string, ReturnType<typeof createTerminalInputWriter>>();
+
+/** Retain ordering and framing obligations until acknowledged, across terminal view remounts. */
+export function terminalInputWriter(key: string, retain: () => () => void) {
+  const existing = writers.get(key);
+  if (existing) return existing;
+  const release = retain();
+  const writer = createTerminalInputWriter(() => {
+    if (writers.get(key) === writer) writers.delete(key);
+    release();
+  });
+  writers.set(key, writer);
+  return writer;
 }

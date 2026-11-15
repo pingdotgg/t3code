@@ -27,6 +27,7 @@ const fixture = vi.hoisted(() => ({
   typeIntoSurface: null as ((data: string) => void) | null,
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
   writes: [] as Array<{ threadId: string; data: string }>,
+  messages: [] as string[],
   resetSessions: () => {},
   setSession: (
     _thread: ScopedThreadRef,
@@ -51,6 +52,7 @@ const fixture = vi.hoisted(() => ({
 const fakeSurface: object = new Proxy(
   {
     input: document.createElement("textarea"),
+    write: (data: string) => fixture.messages.push(data),
     // The real surface re-reports its measured grid.
     resendSize: () => {
       const size = fixture.reportedSize;
@@ -226,11 +228,11 @@ function Drawer(props: {
 function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.resetSessions();
   const original: ScopedThreadRef = {
-    environmentId: EnvironmentId.make("environment-a"),
+    environmentId: EnvironmentId.make(`environment-a-${expect.getState().currentTestName}`),
     threadId: ThreadId.make("thread-a"),
   };
   const other: ScopedThreadRef = {
-    environmentId: EnvironmentId.make("environment-b"),
+    environmentId: EnvironmentId.make(`environment-b-${expect.getState().currentTestName}`),
     threadId: ThreadId.make("thread-b"),
   };
   fixture.statusByThreadId = new Map([
@@ -241,6 +243,7 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.typeIntoSurface = null;
   fixture.pressKey = null;
   fixture.writes = [];
+  fixture.messages = [];
   fixture.surfaceOptions = [];
   fixture.reportedSize = null;
   fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
@@ -459,6 +462,9 @@ it.each([
     await act(async () => {
       fixture.typeIntoSurface?.("after");
     });
+    expect(
+      fixture.messages.filter((message) => message.includes("paste interrupted")),
+    ).toHaveLength(1);
     expect(fixture.writes.map(({ data }) => data)).toEqual([
       large.slice(0, 65_536),
       ...(closes ? ["\x1b[201~"] : []),
@@ -466,6 +472,37 @@ it.each([
     ]);
   },
 );
+
+it("closes an interrupted paste after disposal before input from a remounted view", async () => {
+  const { other: threadRef } = setup();
+  let settleWrite = () => {};
+  fixture.runWrite = () =>
+    new Promise((resolve) => {
+      settleWrite = () => {
+        fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+        resolve({ _tag: "Success" });
+      };
+    });
+  await using screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+  fixture.typeIntoSurface?.(large);
+  fixture.typeIntoSurface?.("stale");
+  await screen.rerender(<div />);
+  await act(async () => {
+    settleWrite();
+  });
+  await screen.rerender(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  await act(async () => {
+    fixture.typeIntoSurface?.("after");
+  });
+  expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 6, 5]);
+});
 
 it("resends a failed resize once in each writable session", async () => {
   const { other: threadRef } = setup();

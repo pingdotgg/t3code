@@ -1,6 +1,6 @@
 import { TerminalWriteInput } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createTerminalInputWriter } from "./terminalInputWriter";
 
@@ -129,6 +129,38 @@ describe("createTerminalInputWriter", () => {
     expect(sent[4]!.chunk).toBe("after");
     sent[4]!.settle(true);
     await after;
+  });
+
+  it("closes an opening chunk whose acknowledgement was lost without retrying payload", async () => {
+    const sent: string[] = [];
+    const write = createTerminalInputWriter();
+    const send = async (chunk: string) => {
+      sent.push(chunk);
+      return chunk === "\x1b[201~" || chunk === "after";
+    };
+    const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+    await write(large, send);
+    await write("after", send);
+    expect(sent).toEqual([large.slice(0, 65_536), "\x1b[201~", "after"]);
+  });
+
+  it("reports each input blocked by failed framing recovery without retrying payload", async () => {
+    const sent: string[] = [];
+    const interrupted = vi.fn();
+    const write = createTerminalInputWriter();
+    const send = async (chunk: string) => {
+      sent.push(chunk);
+      return false;
+    };
+    const recover = async () => {
+      sent.push("\x1b[201~");
+      return false;
+    };
+    const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+    await write(large, send, recover, interrupted);
+    await write("after", send, recover, interrupted);
+    expect(sent).toEqual([large.slice(0, 65_536), "\x1b[201~", "\x1b[201~"]);
+    expect(interrupted).toHaveBeenCalledTimes(2);
   });
 
   it("drops the rest of a split write after a failed chunk and keeps later input", async () => {
