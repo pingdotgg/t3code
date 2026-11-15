@@ -85,16 +85,13 @@ describe("orderDiffFiles", () => {
     ]);
   });
 
-  it("resolves a specifier carrying a bundler query such as ?worker", () => {
+  it("strips a bundler query such as ?worker but keeps a # subpath import", () => {
     expect(
       order([file("src/a.js", ['import Worker from "./z.js?worker";']), file("src/z.js")]),
     ).toEqual(["src/z.js", "src/a.js"]);
     expect(
       order([file("src/a.ts", ['import url from "~/lib/b.logic?url";']), file("lib/b.logic.ts")]),
     ).toEqual(["lib/b.logic.ts", "src/a.ts"]);
-  });
-
-  it("keeps the leading # of a package subpath import", () => {
     expect(
       order([file("src/a.ts", ['import { z } from "#internal/z";']), file("src/z.ts")]),
     ).toEqual(["src/z.ts", "src/a.ts"]);
