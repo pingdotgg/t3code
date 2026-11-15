@@ -1136,6 +1136,7 @@ export function buildThreadListV2Items(input: {
                 ? "working"
                 : "active",
       ),
+      { folderPinned: block.folder.pinnedAt != null },
     );
   const blocksAt = (placement: ThreadFolderPlacement) =>
     folderLayout.blocks.filter((block) => placementOf(block) === placement);
@@ -1201,7 +1202,11 @@ export function buildThreadListV2Items(input: {
             (thread) => `${thread.environmentId}:${thread.id}` !== selectedThreadKey,
           ).length,
       parked,
-      sectionFolders: blocksAt(placement).map((candidate) => candidate.folder),
+      sectionFolders: blocksAt(placement)
+        .filter(
+          (candidate) => (candidate.folder.pinnedAt != null) === (block.folder.pinnedAt != null),
+        )
+        .map((candidate) => candidate.folder),
       expanded,
       disabled: false,
       index: items.length,

@@ -411,7 +411,7 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
   readonly onApplyRule: (folder: EnvironmentThreadFolder) => Promise<boolean>;
   readonly onPark: (
     folder: EnvironmentThreadFolder,
-    action: "settle" | "unsettle" | "wake" | { readonly snoozedUntil: string },
+    action: "pin" | "unpin" | "settle" | "unsettle" | "wake" | { readonly snoozedUntil: string },
   ) => Promise<boolean>;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }) {
@@ -453,6 +453,9 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
       <Menu
         shouldOpenOnLongPress
         actions={[
+          item.folder.pinnedAt != null
+            ? { id: "unpin", title: "Unpin folder", image: "pin.slash" }
+            : { id: "pin", title: "Pin folder", image: "pin" },
           { id: "rename", title: "Rename", image: "square.and.pencil" },
           ...(folderIndex > 0 ? [{ id: "move-up", title: "Move up", image: "arrow.up" }] : []),
           ...(folderIndex >= 0 && folderIndex < folders.length - 1
@@ -562,6 +565,8 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
             if ((by === "branch" || by === "worktree") && value.length > 0)
               void props.onCollect(item.folder, { by, value: value.join(":") });
           }
+          if (nativeEvent.event === "pin") void props.onPark(item.folder, "pin");
+          if (nativeEvent.event === "unpin") void props.onPark(item.folder, "unpin");
           if (nativeEvent.event === "settle") void props.onPark(item.folder, "settle");
           if (nativeEvent.event === "unsettle") void props.onPark(item.folder, "unsettle");
           if (nativeEvent.event === "wake") void props.onPark(item.folder, "wake");
@@ -626,6 +631,11 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
               ) : (
                 <SymbolView name="folder" size={16} tintColorClassName={colors.tint} />
               )}
+              {item.folder.pinnedAt != null ? (
+                <View className="absolute -right-1 -top-1">
+                  <SymbolView name="pin" size={9} tintColorClassName="accent-foreground-muted" />
+                </View>
+              ) : null}
             </View>
           }
           disclosure={{
@@ -633,7 +643,7 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
             disabled: item.disabled,
             onToggle: () => props.onToggle(item.folderKey),
             accessibilityLabel: [
-              `${item.folder.name}, ${item.count} threads`,
+              `${item.folder.name}${item.folder.pinnedAt != null ? ", pinned" : ""}, ${item.count} threads`,
               ...item.tally.map(
                 (entry) => `${entry.count} ${FOLDER_TALLY_STYLE[entry.status].label}`,
               ),

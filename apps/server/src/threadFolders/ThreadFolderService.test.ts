@@ -232,6 +232,30 @@ it.layer(layer)("ThreadFolderService", (it) => {
         ],
       );
 
+      const pinned = yield* folders.mutate({
+        type: "folder.update",
+        folderId: fixes,
+        pinned: true,
+      });
+      const pinnedAt = pinned.folders.find((folder) => folder.id === fixes)?.pinnedAt;
+      assert.isString(pinnedAt);
+      // Pinning again keeps the first pin time; unpinning clears it.
+      const repinned = yield* folders.mutate({
+        type: "folder.update",
+        folderId: fixes,
+        pinned: true,
+      });
+      assert.strictEqual(
+        repinned.folders.find((folder) => folder.id === fixes)?.pinnedAt,
+        pinnedAt,
+      );
+      const unpinned = yield* folders.mutate({
+        type: "folder.update",
+        folderId: fixes,
+        pinned: false,
+      });
+      assert.isNull(unpinned.folders.find((folder) => folder.id === fixes)?.pinnedAt);
+
       const unfiled = yield* folders.mutate({
         type: "folder.move",
         threadIds: [live],

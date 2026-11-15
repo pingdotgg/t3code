@@ -235,6 +235,8 @@ function confirmThreadDeletion(
 }
 
 export type ThreadFolderParkAction =
+  | "pin"
+  | "unpin"
   | "settle"
   | "unsettle"
   | "wake"
@@ -368,6 +370,13 @@ export function useThreadListActions(): {
   };
   // Members that need the user cannot snooze, so a snoozed folder skips them.
   const parkFolder = async (folder: EnvironmentThreadFolder, action: ThreadFolderParkAction) => {
+    if (action === "pin" || action === "unpin") {
+      return mutateFolder(folder, {
+        type: "folder.update",
+        folderId: folder.id,
+        pinned: action === "pin",
+      });
+    }
     const allMembers = await loadFolderMembers(folder);
     if (allMembers === null) return false;
     // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)

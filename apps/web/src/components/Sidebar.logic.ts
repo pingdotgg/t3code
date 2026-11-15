@@ -125,6 +125,7 @@ export function foldSidebarThreadFolders<T extends EnvironmentThreadShell>(input
       const all = block.threads.map((thread) => ({ thread, section: sectionOf.get(thread)! }));
       const placement = resolveThreadFolderPlacement(
         all.map((row) => (working.has(row.thread) ? "working" : row.section)),
+        { folderPinned: block.folder.pinnedAt != null },
       );
       const parked = all.filter((row) => row.section === "snoozed" || row.section === "settled");
       // Only an open folder folds its parked members; on a shelf they are the whole folder.

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -53,6 +54,8 @@ export const ThreadFolder = Schema.Struct({
   /** Whether threads created after `ruleSetAt` that match `rule` are filed here. */
   autoFile: Schema.Boolean,
   ruleSetAt: Schema.NullOr(IsoDateTime),
+  /** A pinned folder stays on top, above unpinned ones, whatever its threads are doing. */
+  pinnedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -88,6 +91,7 @@ export const ThreadFolderMutation = Schema.Union([
     icon: Schema.optional(Schema.NullOr(ProjectIconOverride)),
     rule: Schema.optional(Schema.NullOr(ThreadFolderRule)),
     autoFile: Schema.optional(Schema.Boolean),
+    pinned: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("folder.reorder"),

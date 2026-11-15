@@ -26,7 +26,8 @@ export interface ThreadFolderBlock<T> {
 }
 
 /**
- * Splits `threads` into folder blocks, in folder order, and the threads no folder holds.
+ * Splits `threads` into folder blocks, pinned folders first then folder order, and the threads
+ * no folder holds.
  * A folder keeps its place, so empty folders still render. Thread order inside a block is
  * the order of `threads`, so callers sort once.
  */
@@ -55,8 +56,13 @@ export function layoutThreadFolders<
     list.push(thread);
     threadsByFolderKey.set(folderKey, list);
   }
+  // Pinned folders lead; both groups keep folder order, so reordering works inside each.
+  const ordered = [
+    ...input.folders.filter((folder) => folder.pinnedAt != null),
+    ...input.folders.filter((folder) => folder.pinnedAt == null),
+  ];
   return {
-    blocks: input.folders.map((folder) => {
+    blocks: ordered.map((folder) => {
       const key = scopedThreadFolderKey(folder);
       return { folder, key, threads: threadsByFolderKey.get(key) ?? [] };
     }),
@@ -72,7 +78,9 @@ export type ThreadFolderPlacement = "open" | "working" | "snoozed" | "settled";
  */
 export function resolveThreadFolderPlacement(
   sections: ReadonlyArray<"pinned" | "active" | "working" | "snoozed" | "settled">,
+  options: { readonly folderPinned?: boolean } = {},
 ): ThreadFolderPlacement {
+  if (options.folderPinned === true) return "open";
   const first = sections[0];
   if (first === undefined || sections.some((section) => section !== first)) return "open";
   return first === "working" || first === "snoozed" || first === "settled" ? first : "open";

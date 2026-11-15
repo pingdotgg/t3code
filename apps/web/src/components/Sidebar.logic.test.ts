@@ -1726,6 +1726,7 @@ describe("foldSidebarThreadFolders", () => {
     rule: null,
     autoFile: false,
     ruleSetAt: null,
+    pinnedAt: null,
     threadIds: [...threadIds],
     createdAt: "2026-03-09T10:00:00Z",
     updatedAt: "2026-03-09T10:00:00Z",
@@ -1878,6 +1879,13 @@ describe("foldSidebarThreadFolders", () => {
       folders: [folder("f", [a.id])],
     }).blocks[0]!;
     expect(settled).toMatchObject({ placement: "settled", settled: true, collapsed: true });
+    // A pinned folder stays on top even when every member is settled.
+    const pinnedSettled = foldSidebarThreadFolders({
+      ...base,
+      settledThreads: [a],
+      folders: [{ ...folder("f", [a.id]), pinnedAt: "2026-03-09T10:00:00Z" }],
+    }).blocks[0]!;
+    expect(pinnedSettled).toMatchObject({ placement: "open", settled: false, collapsed: false });
     const settledOpened = foldSidebarThreadFolders({
       ...base,
       settledThreads: [a],

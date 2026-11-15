@@ -719,6 +719,7 @@ describe("folder actions", () => {
       rule: null,
       autoFile: false,
       ruleSetAt: null,
+      pinnedAt: null,
       createdAt: loaded.createdAt,
       updatedAt: loaded.updatedAt,
       threadIds: [loaded.id, old.id, active.id, ThreadId.make("archived")],
@@ -751,6 +752,7 @@ describe("folder actions", () => {
       rule: { titleKeywords: ["test"] },
       autoFile: false,
       ruleSetAt: null,
+      pinnedAt: null,
       createdAt: "2026-09-02T00:00:00.000Z",
       updatedAt: "2026-09-02T00:00:00.000Z",
     };

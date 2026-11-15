@@ -8,6 +8,7 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE thread_folders ADD COLUMN rule_json TEXT`;
   yield* sql`ALTER TABLE thread_folders ADD COLUMN auto_file INTEGER NOT NULL DEFAULT 0`;
   yield* sql`ALTER TABLE thread_folders ADD COLUMN rule_set_at TEXT`;
+  yield* sql`ALTER TABLE thread_folders ADD COLUMN pinned_at TEXT`;
   // Existing folders keep their old order: oldest first.
   yield* sql`
     UPDATE thread_folders SET sort_key = (

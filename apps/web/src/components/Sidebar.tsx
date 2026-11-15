@@ -1798,15 +1798,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       });
     },
   );
-  // Shelf folders show under their shelf, so a folder moves within its own section.
+  // Shelf folders show under their shelf and pinned folders lead the top, so a folder
+  // moves only among folders in the same section with the same pin state.
   const folderSection = (folder: EnvironmentThreadFolder) => {
     const blocks = threadFolderBlocksRef.current.filter(
       (block) => block.folder.environmentId === folder.environmentId,
     );
     const placement = blocks.find((block) => block.folder.id === folder.id)?.placement ?? "open";
+    const pinned = folder.pinnedAt != null;
     return {
       order: blocks.map((block) => block.folder.id),
-      shown: blocks.filter((block) => block.placement === placement).map((block) => block.folder),
+      shown: blocks
+        .filter(
+          (block) => block.placement === placement && (block.folder.pinnedAt != null) === pinned,
+        )
+        .map((block) => block.folder),
     };
   };
   const moveThreadFolder = (folder: EnvironmentThreadFolder, index: number) => {
@@ -2768,6 +2774,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
+            folder.pinnedAt != null
+              ? { id: "unpin", label: "Unpin folder", icon: "pin-off", disabled: !canOperate }
+              : { id: "pin", label: "Pin folder", icon: "pin", disabled: !canOperate },
             { id: "rename", label: "Rename folder", icon: "pencil", disabled: !canOperate },
             { id: "customize", label: "Customize…", icon: "folder", disabled: !canOperate },
             {
@@ -2931,6 +2940,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       switch (clicked.value) {
+        case "pin":
+        case "unpin":
+          void mutateThreadFolders(
+            folder.environmentId,
+            { type: "folder.update", folderId: folder.id, pinned: clicked.value === "pin" },
+            clicked.value === "pin" ? "Could not pin folder" : "Could not unpin folder",
+          );
+          return;
         case "rename":
           requestThreadFolderRename(scopedThreadFolderKey(folder));
           return;

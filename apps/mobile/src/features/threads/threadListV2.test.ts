@@ -1793,6 +1793,7 @@ describe("Working section beta", () => {
           rule: null,
           autoFile: false,
           ruleSetAt: null,
+          pinnedAt: null,
           createdAt: NOW,
           updatedAt: NOW,
         },
@@ -1888,6 +1889,7 @@ describe("thread folders", () => {
       rule: null,
       autoFile: false,
       ruleSetAt: null,
+      pinnedAt: null,
       createdAt: NOW,
       updatedAt: NOW,
     };
@@ -2026,6 +2028,7 @@ describe("thread folders", () => {
       rule: null,
       autoFile: false,
       ruleSetAt: null,
+      pinnedAt: null,
       createdAt: NOW,
       updatedAt: NOW,
     };

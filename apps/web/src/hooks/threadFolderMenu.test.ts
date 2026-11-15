@@ -32,6 +32,7 @@ const folder = (id: string, threadIds: string[]): EnvironmentThreadFolder => ({
   rule: null,
   autoFile: false,
   ruleSetAt: null,
+  pinnedAt: null,
   threadIds: threadIds.map((threadId) => ThreadId.make(threadId)),
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",

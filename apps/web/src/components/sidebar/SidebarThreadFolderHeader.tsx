@@ -12,6 +12,7 @@ import {
   CircleDotDashedIcon,
   FolderClosedIcon,
   FolderOpenIcon,
+  PinIcon,
   Undo2Icon,
 } from "lucide-react";
 import {
@@ -257,7 +258,7 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
       ? null
       : threadFolderWakeLabel(props.nextWakeAt, props.timestampFormat);
   const label = [
-    `${folder.name} folder`,
+    `${folder.name} folder${folder.pinnedAt != null ? ", pinned" : ""}`,
     plural(threads.length, "thread"),
     ...tally.map((entry) => `${entry.count} ${FOLDER_TALLY_LABEL[entry.status]}`),
     ...(wakeLabel === null ? [] : [`wakes ${wakeLabel}`]),
@@ -388,8 +389,16 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
             onCancel={() => requestThreadFolderRename(null)}
           />
         ) : (
-          <span className={cn("min-w-0 flex-1 truncate text-sm font-semibold", nameClassName)}>
-            {folder.name}
+          <span
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-1 text-sm font-semibold",
+              nameClassName,
+            )}
+          >
+            {folder.pinnedAt != null ? (
+              <PinIcon aria-hidden className="size-3 shrink-0 opacity-60" />
+            ) : null}
+            <span className="min-w-0 truncate">{folder.name}</span>
           </span>
         )}
         <span aria-hidden className={cn("flex shrink-0 items-center gap-2", numbersClassName)}>

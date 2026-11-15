@@ -33,6 +33,7 @@ const folder = (
   rule: null,
   autoFile: false,
   ruleSetAt: null,
+  pinnedAt: null,
   threadIds: threadIds.map((id) => ThreadId.make(id)),
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -59,6 +60,19 @@ describe("layoutThreadFolders", () => {
       "local:c",
     ]);
   });
+
+  it("puts pinned folders first, each group in folder order", () => {
+    const pinned = (id: string, at: string) => ({ ...folder(local, id, []), pinnedAt: at });
+    const layout = layoutThreadFolders({
+      threads: [],
+      folders: [
+        folder(local, "plain", []),
+        pinned("later", "2026-01-03T00:00:00.000Z"),
+        pinned("earlier", "2026-01-02T00:00:00.000Z"),
+      ],
+    });
+    expect(layout.blocks.map((block) => block.folder.id)).toEqual(["later", "earlier", "plain"]);
+  });
 });
 
 describe("resolveThreadFolderPlacement", () => {
@@ -70,6 +84,7 @@ describe("resolveThreadFolderPlacement", () => {
     expect(resolveThreadFolderPlacement(["snoozed", "active"])).toBe("open");
     expect(resolveThreadFolderPlacement(["working", "pinned"])).toBe("open");
     expect(resolveThreadFolderPlacement(["pinned", "pinned"])).toBe("open");
+    expect(resolveThreadFolderPlacement(["settled"], { folderPinned: true })).toBe("open");
   });
 });
 

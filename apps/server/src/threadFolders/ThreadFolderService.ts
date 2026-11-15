@@ -70,6 +70,7 @@ interface FolderRow {
   readonly rule_json: string | null;
   readonly auto_file: number;
   readonly rule_set_at: string | null;
+  readonly pinned_at: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -107,7 +108,7 @@ const make = Effect.gen(function* () {
 
   const readFolders = Effect.gen(function* () {
     const rows = yield* sql<FolderRow>`
-      SELECT folder_id, name, icon_json, rule_json, auto_file, rule_set_at, created_at, updated_at
+      SELECT folder_id, name, icon_json, rule_json, auto_file, rule_set_at, pinned_at, created_at, updated_at
       FROM thread_folders
       ORDER BY sort_key ASC, created_at ASC, rowid ASC
     `;
@@ -131,6 +132,7 @@ const make = Effect.gen(function* () {
       rule: row.rule_json === null ? null : Option.getOrNull(decodeRule(row.rule_json)),
       autoFile: row.auto_file !== 0,
       ruleSetAt: row.rule_set_at,
+      pinnedAt: row.pinned_at,
       threadIds: threadIdsByFolder.get(row.folder_id) ?? [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -396,6 +398,13 @@ const make = Effect.gen(function* () {
             UPDATE thread_folders
             SET icon_json = ${mutation.icon === null ? null : encodeIcon(mutation.icon)},
               updated_at = ${now}
+            WHERE folder_id = ${mutation.folderId}
+          `;
+        }
+        // Pinning again keeps the first pin time.
+        if (mutation.pinned !== undefined && mutation.pinned !== (current.pinnedAt !== null)) {
+          yield* sql`
+            UPDATE thread_folders SET pinned_at = ${mutation.pinned ? now : null}, updated_at = ${now}
             WHERE folder_id = ${mutation.folderId}
           `;
         }
