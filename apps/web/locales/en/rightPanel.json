@@ -1,54 +1,4 @@
 {
-  "surface": {
-    "browser": "Browser",
-    "terminal": "Terminal",
-    "files": "Files",
-    "diff": "Diff",
-    "pullRequest": "Pull request",
-    "pullRequests": "Linked pull requests",
-    "device": "Device",
-    "deviceDescription": "Watch an iOS Simulator or Android Emulator.",
-    "sideChat": "Side chat",
-    "sideChatDescription": "Ask a side question while this thread keeps working."
-  },
-  "disabled": {
-    "browser": "Browser previews are only available in the T3 Code desktop app.",
-    "terminal": "Terminal surfaces are only available from a project thread.",
-    "files": "Files are only available when a project is open.",
-    "diff": "Diff is only available for server threads in Git repositories.",
-    "pullRequest": "This thread's branch has no pull request yet.",
-    "pullRequests": "No linked pull requests are available for this thread.",
-    "device": "Devices are only available from a thread.",
-    "sideChat": "Side chats start after the first message."
-  },
-  "hints": {
-    "browser": "Only available in the desktop app.",
-    "terminal": "Available when a project is open.",
-    "files": "Available when a project is open.",
-    "diff": "Available for Git repositories.",
-    "pullRequest": "No pull request on this branch yet.",
-    "pullRequests": "No linked pull requests available.",
-    "device": "Available from a thread.",
-    "sideChat": "Available after the first message."
-  },
-  "tab": {
-    "unmute": "Unmute tab",
-    "mute": "Mute tab",
-    "unmuteTitle": "Unmute {{title}}",
-    "muteTitle": "Mute {{title}}",
-    "rename": "Rename",
-    "copyPath": "Copy path",
-    "close": "Close",
-    "closeOthers": "Close others",
-    "closeToRight": "Close to the right",
-    "closeAll": "Close all",
-    "scrollPanel": "Scroll panel tabs",
-    "scrollLeft": "Scroll tabs left",
-    "scrollRight": "Scroll tabs right"
-  },
-  "launcher": {
-    "openSurface": "Open a surface"
-  },
   "browser": {
     "openInProfile": "Open browser in a profile"
   },
@@ -56,9 +6,59 @@
     "hostFallback": "Device host",
     "tabName": "Device tab name"
   },
+  "disabled": {
+    "browser": "Browser previews are only available in the T3 Code desktop app.",
+    "device": "Devices are only available from a thread.",
+    "diff": "Diff is only available for server threads in Git repositories.",
+    "files": "Files are only available when a project is open.",
+    "pullRequest": "This thread's branch has no pull request yet.",
+    "pullRequests": "No linked pull requests are available for this thread.",
+    "sideChat": "Side chats start after the first message.",
+    "terminal": "Terminal surfaces are only available from a project thread."
+  },
+  "hints": {
+    "browser": "Only available in the desktop app.",
+    "device": "Available from a thread.",
+    "diff": "Available for Git repositories.",
+    "files": "Available when a project is open.",
+    "pullRequest": "No pull request on this branch yet.",
+    "pullRequests": "No linked pull requests available.",
+    "sideChat": "Available after the first message.",
+    "terminal": "Available when a project is open."
+  },
+  "launcher": {
+    "openSurface": "Open a surface"
+  },
   "panel": {
+    "addSurface": "Add panel surface",
     "workspacePanel": "Workspace panel",
-    "workspacePanelTitle": "Workspace panel: {{title}}",
-    "addSurface": "Add panel surface"
+    "workspacePanelTitle": "Workspace panel: {{title}}"
+  },
+  "surface": {
+    "browser": "Browser",
+    "device": "Device",
+    "deviceDescription": "Watch an iOS Simulator or Android Emulator.",
+    "diff": "Diff",
+    "files": "Files",
+    "pullRequest": "Pull request",
+    "pullRequests": "Linked pull requests",
+    "sideChat": "Side chat",
+    "sideChatDescription": "Ask a side question while this thread keeps working.",
+    "terminal": "Terminal"
+  },
+  "tab": {
+    "close": "Close",
+    "closeAll": "Close all",
+    "closeOthers": "Close others",
+    "closeToRight": "Close to the right",
+    "copyPath": "Copy path",
+    "mute": "Mute tab",
+    "muteTitle": "Mute {{title}}",
+    "rename": "Rename",
+    "scrollLeft": "Scroll tabs left",
+    "scrollPanel": "Scroll panel tabs",
+    "scrollRight": "Scroll tabs right",
+    "unmute": "Unmute tab",
+    "unmuteTitle": "Unmute {{title}}"
   }
 }

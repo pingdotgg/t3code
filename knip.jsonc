@@ -100,8 +100,8 @@
     "apps/web": {
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
-      "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs"],
-      // Installed for the locale extraction pipeline before its npm scripts exist.
+      "entry": ["scripts/warm-dep-cache.ts", "test/fixtures/**/*.mjs", "i18next.config.ts"],
+      // Loaded by name by the i18next-cli extract --ci gate in check:changed.
       "ignoreDependencies": ["i18next-cli"],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still

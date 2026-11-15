@@ -1,219 +1,221 @@
 {
-  "welcome": {
-    "heading": "Welcome to T3 Code",
-    "settingUp": "Setting up <0>{{label}}</1>.",
-    "thisComputer": "this computer",
-    "startWithoutAgent": "Start without an agent",
-    "setUpOneAgentToStart": "Set up one agent to start.",
-    "importing": "Importing…",
-    "starting": "Starting…",
-    "importAndStart_one": "Import {{count}} project and start",
-    "importAndStart_other": "Import {{count}} projects and start",
-    "importThreadsAndStart": "Import threads and start",
-    "start": "Start"
+  "access": {
+    "approvalRequired": {
+      "description": "Ask before commands and file changes.",
+      "label": "Supervised"
+    },
+    "auto": {
+      "description": "Supported providers approve routine actions; others still ask.",
+      "label": "Auto"
+    },
+    "autoAcceptEdits": {
+      "description": "Auto-approve edits, ask before other actions.",
+      "label": "Auto-accept edits"
+    },
+    "fullAccess": {
+      "description": "Allow commands and edits without prompts.",
+      "label": "Full access"
+    },
+    "readOnly": {
+      "description": "Read projects and threads. Cannot start, message or change anything.",
+      "label": "Read only"
+    }
   },
-  "toasts": {
-    "finishingSetup": "Finishing setup",
-    "oneMoment": "One moment.",
-    "someHistoryNotImported": "Some history was not imported",
-    "importedThreads_one": "Imported {{count}} thread",
-    "importedThreads_other": "Imported {{count}} threads",
-    "couldNotFinishSetup": "Could not finish setup",
-    "couldNotFinishSetupDescription": "Your settings could not be saved. Try again.",
-    "couldNotTurnOn": "Could not turn on {{name}}",
-    "couldNotSaveCodexSetup": "Could not save Codex setup"
+  "action": {
+    "details": "Details",
+    "genericAria": "{{action}}: {{name}}",
+    "install": "Install",
+    "setUp": "Set up",
+    "signIn": "Sign in",
+    "turnOn": "Turn on",
+    "turnOnAria": "Turn on: {{name}}",
+    "update": "Update"
+  },
+  "agents": {
+    "addMoreAgents": "Add more agents",
+    "browse": "Browse",
+    "cannotControlTerminals": "This connection cannot control terminals.",
+    "cannotManageAgents": "This connection cannot manage agents.",
+    "checking": "Checking {{label}}…",
+    "checkingShort": "Checking…",
+    "moreInAcpRegistry": "More agents in the ACP Registry",
+    "notInstalled": "Not installed",
+    "ready": "Ready",
+    "setUpAnAgent": "Set up an agent",
+    "title": "Agents"
+  },
+  "auth": {
+    "connectingDescription": "One moment while your account loads.",
+    "connectingTitle": "Connecting to T3 Connect",
+    "context": "Agent sign-in",
+    "incompleteTitle": "This sign-in link is incomplete",
+    "ownWindowDescription": "For your safety, agent sign-ins cannot be approved inside another site.",
+    "ownWindowTitle": "Open this page in its own window",
+    "signIn": "Sign in",
+    "signInToApproveDescription": "Sign in to T3 Connect with the account this environment is linked to.",
+    "signInToApproveTitle": "Sign in to approve",
+    "startAgain": "Close this page and start the sign-in again from your agent.",
+    "useAnotherAccount": "Use another account",
+    "useCodeInstead": "Use a sign-in code instead"
+  },
+  "cli": {
+    "added": "Added to {{file}}. Open a new terminal to use <0>t3</1>.",
+    "addToPath": "Add to PATH",
+    "use": "Use <0>t3</1> from any terminal. Adds one line to {{file}}."
+  },
+  "connect": {
+    "access": "Access",
+    "accessGoesTo": "Access goes to",
+    "app": "App",
+    "approveLevel": "Approve {{level}}",
+    "approving": "Approving…",
+    "beyondReadOnly": "Beyond read only, it can start, message and stop threads, and none of them can run with more than the mode you pick.",
+    "cannotContinueTitle": "This sign-in cannot continue",
+    "checkingDescription": "One moment while this environment verifies the agent's request.",
+    "checkingTitle": "Checking the sign-in request",
+    "chooseWhatItMayDo": "Choose what it may do",
+    "couldNotContinue": "The sign-in could not continue.",
+    "deny": "Deny",
+    "denying": "Denying…",
+    "description": "This agent wants to use the threads in every project on <0>{{host}}</1>.",
+    "getCode": "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or <0>t3 auth pairing create</1> on this machine.",
+    "nameSetByApp": "{{name}} <0>· name set by the app</1>",
+    "onlyApproveJustStarted": "Only approve a sign-in you just started.",
+    "onThisComputer": "on the computer that opened this page",
+    "pasteCode": "Paste a code",
+    "signInCode": "Sign-in code",
+    "title": "Connect {{name}}",
+    "unreachable": "Could not reach this environment. Try again.",
+    "unsafeRedirect": "The environment returned an address this page will not open.",
+    "whatItMayDo": "What it may do",
+    "whoeverRunsIt": "· whoever runs it gets this access"
+  },
+  "firstRun": {
+    "couldNotReadSettings": "Could not read settings",
+    "couldNotReadSettingsDescription": "Your saved settings could not be loaded.",
+    "reload": "Reload",
+    "retry": "Retry",
+    "stillConnecting": "Still connecting",
+    "stillConnectingDescription": "T3 Code could not confirm this workspace."
+  },
+  "importWarning": {
+    "couldNotImport": "Could not import thread history.",
+    "notImportedThreads_one": "{{count}} thread could not be imported.",
+    "notImportedThreads_other": "{{count}} threads could not be imported.",
+    "someNotImported": "Some thread history could not be imported."
+  },
+  "pairing": {
+    "authFailed": "Authentication failed.",
+    "backendFailed": "Pairing failed",
+    "backendPaired": "Backend paired",
+    "connectingBackend": "Connecting to this backend.",
+    "continue": "Continue",
+    "defaultEnvironmentLabel": "The environment",
+    "desktopAndOneTime": "Desktop-managed pairing and one-time pairing tokens are both accepted for this environment.",
+    "desktopManaged": "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.",
+    "enterToken": "Enter a pairing token to start a session with this environment.",
+    "environmentSaved": "{{label}} is saved in this browser.",
+    "host": "Host",
+    "missingHost": "This pairing link is missing its backend host or token.",
+    "oneTimeOnly": "This environment accepts one-time pairing tokens. Pairing links can open this page directly, or you can paste the token here.",
+    "openApp": "Open app",
+    "pairing": "Pairing...",
+    "pairingBackend": "Pairing backend",
+    "pendingDescription": "Validating the pairing link and preparing your session.",
+    "pendingTitle": "Pairing with this environment",
+    "placeholder": "Paste a one-time token or pairing secret",
+    "reloadApp": "Reload app",
+    "requestNewLink": "If the backend accepted this one-time token, request a new pairing link before retrying.",
+    "title": "Pair with this environment",
+    "tokenAlreadySubmitted": "This one-time pairing token was already submitted. Request a new pairing link.",
+    "tokenLabel": "Pairing token",
+    "trustedCredential": "This environment expects a trusted pairing credential before the app can connect.",
+    "tryAgain": "Try again",
+    "verifyReachable": "Verify the backend is reachable from this browser, supports CORS for hosted clients, and is served over HTTPS when opening this page from HTTPS."
+  },
+  "phone": {
+    "checkConnect": "Check T3 Connect",
+    "checkingConnect": "Checking T3 Connect…",
+    "connectOn": "T3 Connect is on for this computer. Sign in to the app with the same account.",
+    "connectOnUnreachable": "T3 Connect is on, but the app cannot reach this computer.",
+    "couldNotCheckConnect": "Could not check T3 Connect.",
+    "hide": "Hide",
+    "qrTitle": "T3 Code app for iPhone and Android",
+    "reachable": "Your phone can reach this computer. Sign in to the app with the same account.",
+    "scan": "Scan with your phone to get the app.",
+    "setUp": "Set up",
+    "setUpConnect": "Set up T3 Connect",
+    "signedInShare": "Signed in. Share this computer so the app can reach it.",
+    "signInButton": "Sign in to T3 Connect",
+    "signInHere": "Sign in to T3 Connect here, then in the app with the same account.",
+    "title": "Phone",
+    "use": "Use T3 Code on your phone"
+  },
+  "projects": {
+    "cannotImport": "This connection cannot import projects or thread history.",
+    "couldNotCheck": "Could not check projects. {{error}}",
+    "couldNotCheckAgain": "Could not check projects again. {{error}}",
+    "folderCount_one": "{{count}} folder",
+    "folderCount_other": "{{count}} folders",
+    "fromHistory": "From your {{sources}} history",
+    "hide": "Hide",
+    "importDefault": "Import projects and their threads",
+    "importSelected_one": "Import {{count}} project and their threads",
+    "importSelected_other": "Import {{count}} projects and their threads",
+    "looking": "Looking for projects in your {{sources}} history…",
+    "now": "now",
+    "otherFolders": "Other folders",
+    "retry": "Retry",
+    "reviewAll": "Review all {{count}}",
+    "reviewAll_one": "Review all {{count}}",
+    "reviewAll_other": "Review all {{count}}",
+    "scanLimit": "Scan limit reached. Some projects or conversations may be missing.",
+    "selectAll": "Select all",
+    "selectedOf": "{{selected}} of {{total}} selected",
+    "selectNone": "Select none",
+    "title": "Projects"
+  },
+  "providerAuth": {
+    "chatgptFailedReconnect": "Reconnect to the environment and try again.",
+    "chatgptFailedReturn": "Return to the provider and try again.",
+    "chatgptFailedTitle": "ChatGPT sign-in couldn't finish"
   },
   "telemetry": {
     "notice": "T3 Code collects anonymous usage data to improve the app.",
     "optOut": "To opt out, see the <0>privacy policy</1>.",
     "see": "See the <0>privacy policy</1>."
   },
-  "agents": {
-    "title": "Agents",
-    "checking": "Checking {{label}}…",
-    "cannotControlTerminals": "This connection cannot control terminals.",
-    "cannotManageAgents": "This connection cannot manage agents.",
-    "addMoreAgents": "Add more agents",
-    "setUpAnAgent": "Set up an agent",
-    "moreInAcpRegistry": "More agents in the ACP Registry",
-    "browse": "Browse",
-    "notInstalled": "Not installed",
-    "ready": "Ready",
-    "checkingShort": "Checking…"
-  },
-  "action": {
-    "turnOn": "Turn on",
-    "update": "Update",
-    "setUp": "Set up",
-    "signIn": "Sign in",
-    "details": "Details",
-    "install": "Install",
-    "turnOnAria": "Turn on: {{name}}",
-    "genericAria": "{{action}}: {{name}}"
-  },
   "terminal": {
-    "run": "Run <0>{{command}}</1> in this terminal.",
-    "review": "Review the command, then press Enter to run it.",
+    "close": "Close",
     "couldNotOpen": "Could not open the setup terminal.",
     "preparing": "Preparing command...",
     "retry": "Retry",
-    "close": "Close",
+    "review": "Review the command, then press Enter to run it.",
+    "run": "Run <0>{{command}}</1> in this terminal.",
     "terminalLabel": "Install {{driver}}"
   },
-  "projects": {
-    "title": "Projects",
-    "looking": "Looking for projects in your {{sources}} history…",
-    "couldNotCheck": "Could not check projects. {{error}}",
-    "couldNotCheckAgain": "Could not check projects again. {{error}}",
-    "scanLimit": "Scan limit reached. Some projects or conversations may be missing.",
-    "retry": "Retry",
-    "importSelected_one": "Import {{count}} project and their threads",
-    "importSelected_other": "Import {{count}} projects and their threads",
-    "importDefault": "Import projects and their threads",
-    "fromHistory": "From your {{sources}} history",
-    "hide": "Hide",
-    "reviewAll": "Review all {{count}}",
-    "selectedOf": "{{selected}} of {{total}} selected",
-    "selectAll": "Select all",
-    "selectNone": "Select none",
-    "cannotImport": "This connection cannot import projects or thread history.",
-    "otherFolders": "Other folders",
-    "folderCount_one": "{{count}} folder",
-    "folderCount_other": "{{count}} folders",
-    "now": "now"
+  "toasts": {
+    "couldNotFinishSetup": "Could not finish setup",
+    "couldNotFinishSetupDescription": "Your settings could not be saved. Try again.",
+    "couldNotSaveCodexSetup": "Could not save Codex setup",
+    "couldNotTurnOn": "Could not turn on {{name}}",
+    "finishingSetup": "Finishing setup",
+    "importedThreads_one": "Imported {{count}} thread",
+    "importedThreads_other": "Imported {{count}} threads",
+    "oneMoment": "One moment.",
+    "someHistoryNotImported": "Some history was not imported"
   },
-  "importWarning": {
-    "notImportedThreads_one": "{{count}} thread could not be imported.",
-    "notImportedThreads_other": "{{count}} threads could not be imported.",
-    "someNotImported": "Some thread history could not be imported.",
-    "couldNotImport": "Could not import thread history."
-  },
-  "phone": {
-    "title": "Phone",
-    "use": "Use T3 Code on your phone",
-    "hide": "Hide",
-    "setUp": "Set up",
-    "scan": "Scan with your phone to get the app.",
-    "qrTitle": "T3 Code app for iPhone and Android",
-    "checkingConnect": "Checking T3 Connect…",
-    "couldNotCheckConnect": "Could not check T3 Connect.",
-    "checkConnect": "Check T3 Connect",
-    "reachable": "Your phone can reach this computer. Sign in to the app with the same account.",
-    "connectOn": "T3 Connect is on for this computer. Sign in to the app with the same account.",
-    "connectOnUnreachable": "T3 Connect is on, but the app cannot reach this computer.",
-    "signedInShare": "Signed in. Share this computer so the app can reach it.",
-    "setUpConnect": "Set up T3 Connect",
-    "signInHere": "Sign in to T3 Connect here, then in the app with the same account.",
-    "signInButton": "Sign in to T3 Connect"
-  },
-  "cli": {
-    "added": "Added to {{file}}. Open a new terminal to use <0>t3</1>.",
-    "use": "Use <0>t3</1> from any terminal. Adds one line to {{file}}.",
-    "addToPath": "Add to PATH"
-  },
-  "firstRun": {
-    "couldNotReadSettings": "Could not read settings",
-    "stillConnecting": "Still connecting",
-    "couldNotReadSettingsDescription": "Your saved settings could not be loaded.",
-    "stillConnectingDescription": "T3 Code could not confirm this workspace.",
-    "retry": "Retry",
-    "reload": "Reload"
-  },
-  "auth": {
-    "context": "Agent sign-in",
-    "incompleteTitle": "This sign-in link is incomplete",
-    "startAgain": "Close this page and start the sign-in again from your agent.",
-    "ownWindowTitle": "Open this page in its own window",
-    "ownWindowDescription": "For your safety, agent sign-ins cannot be approved inside another site.",
-    "connectingTitle": "Connecting to T3 Connect",
-    "connectingDescription": "One moment while your account loads.",
-    "signInToApproveTitle": "Sign in to approve",
-    "signInToApproveDescription": "Sign in to T3 Connect with the account this environment is linked to.",
-    "signIn": "Sign in",
-    "useCodeInstead": "Use a sign-in code instead",
-    "useAnotherAccount": "Use another account"
-  },
-  "connect": {
-    "checkingTitle": "Checking the sign-in request",
-    "checkingDescription": "One moment while this environment verifies the agent's request.",
-    "cannotContinueTitle": "This sign-in cannot continue",
-    "title": "Connect {{name}}",
-    "description": "This agent wants to use the threads in every project on <0>{{host}}</1>.",
-    "app": "App",
-    "nameSetByApp": "{{name}} <0>· name set by the app</1>",
-    "accessGoesTo": "Access goes to",
-    "onThisComputer": "on the computer that opened this page",
-    "whoeverRunsIt": "· whoever runs it gets this access",
-    "onlyApproveJustStarted": "Only approve a sign-in you just started.",
-    "signInCode": "Sign-in code",
-    "pasteCode": "Paste a code",
-    "getCode": "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or <0>t3 auth pairing create</1> on this machine.",
-    "access": "Access",
-    "whatItMayDo": "What it may do",
-    "beyondReadOnly": "Beyond read only, it can start, message and stop threads, and none of them can run with more than the mode you pick.",
-    "couldNotContinue": "The sign-in could not continue.",
-    "approving": "Approving…",
-    "chooseWhatItMayDo": "Choose what it may do",
-    "approveLevel": "Approve {{level}}",
-    "denying": "Denying…",
-    "deny": "Deny",
-    "unsafeRedirect": "The environment returned an address this page will not open.",
-    "unreachable": "Could not reach this environment. Try again."
-  },
-  "access": {
-    "readOnly": {
-      "label": "Read only",
-      "description": "Read projects and threads. Cannot start, message or change anything."
-    },
-    "approvalRequired": {
-      "label": "Supervised",
-      "description": "Ask before commands and file changes."
-    },
-    "autoAcceptEdits": {
-      "label": "Auto-accept edits",
-      "description": "Auto-approve edits, ask before other actions."
-    },
-    "auto": {
-      "label": "Auto",
-      "description": "Supported providers approve routine actions; others still ask."
-    },
-    "fullAccess": {
-      "label": "Full access",
-      "description": "Allow commands and edits without prompts."
-    }
-  },
-  "pairing": {
-    "pendingTitle": "Pairing with this environment",
-    "pendingDescription": "Validating the pairing link and preparing your session.",
-    "title": "Pair with this environment",
-    "trustedCredential": "This environment expects a trusted pairing credential before the app can connect.",
-    "enterToken": "Enter a pairing token to start a session with this environment.",
-    "tokenLabel": "Pairing token",
-    "placeholder": "Paste a one-time token or pairing secret",
-    "pairing": "Pairing...",
-    "continue": "Continue",
-    "reloadApp": "Reload app",
-    "desktopAndOneTime": "Desktop-managed pairing and one-time pairing tokens are both accepted for this environment.",
-    "desktopManaged": "This environment is desktop-managed. Open it from the desktop app or paste a bootstrap credential if one was issued explicitly.",
-    "oneTimeOnly": "This environment accepts one-time pairing tokens. Pairing links can open this page directly, or you can paste the token here.",
-    "backendPaired": "Backend paired",
-    "backendFailed": "Pairing failed",
-    "pairingBackend": "Pairing backend",
-    "connectingBackend": "Connecting to this backend.",
-    "missingHost": "This pairing link is missing its backend host or token.",
-    "tokenAlreadySubmitted": "This one-time pairing token was already submitted. Request a new pairing link.",
-    "requestNewLink": "If the backend accepted this one-time token, request a new pairing link before retrying.",
-    "environmentSaved": "{{label}} is saved in this browser.",
-    "defaultEnvironmentLabel": "The environment",
-    "verifyReachable": "Verify the backend is reachable from this browser, supports CORS for hosted clients, and is served over HTTPS when opening this page from HTTPS.",
-    "host": "Host",
-    "tryAgain": "Try again",
-    "openApp": "Open app",
-    "authFailed": "Authentication failed."
-  },
-  "providerAuth": {
-    "chatgptFailedTitle": "ChatGPT sign-in couldn't finish",
-    "chatgptFailedReturn": "Return to the provider and try again.",
-    "chatgptFailedReconnect": "Reconnect to the environment and try again."
+  "welcome": {
+    "heading": "Welcome to T3 Code",
+    "importAndStart_one": "Import {{count}} project and start",
+    "importAndStart_other": "Import {{count}} projects and start",
+    "importing": "Importing…",
+    "importThreadsAndStart": "Import threads and start",
+    "settingUp": "Setting up <0>{{label}}</1>.",
+    "setUpOneAgentToStart": "Set up one agent to start.",
+    "start": "Start",
+    "starting": "Starting…",
+    "startWithoutAgent": "Start without an agent",
+    "thisComputer": "this computer"
   }
 }

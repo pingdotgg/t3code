@@ -87,13 +87,6 @@ export function connectionStatusText(connection: EnvironmentConnectionPresentati
   }
 }
 
-export function connectionStatusTitle(connection: EnvironmentConnectionPresentation): string {
-  if (connection.phase === "reconnecting" && connection.error) {
-    return "Failed to connect. Reconnecting...";
-  }
-  return connectionStatusText({ ...connection, error: null });
-}
-
 /**
  * The T3 Connect address wins whenever it is known: it works for agents anywhere, while the
  * connected route is often a LAN or loopback address. SSH routes ride a local forward that

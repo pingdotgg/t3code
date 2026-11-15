@@ -1,394 +1,47 @@
 {
-  "common": {
-    "retry": "Retry",
-    "tryAgain": "Try again."
-  },
-  "tabs": {
-    "summary": "Summary",
-    "guide": "Guide",
-    "timeline": "Timeline",
-    "code": "Code"
-  },
-  "state": {
-    "open": "Open",
-    "draft": "Draft",
-    "closed": "Closed",
-    "merged": "Merged"
-  },
-  "reviewDecision": {
-    "approved": "Approved",
-    "changesRequested": "Changes requested",
-    "reviewRequired": "Awaiting review"
-  },
-  "checkStatus": {
-    "pending": "Running",
-    "awaitingAction": "Awaiting action",
-    "success": "Passed",
-    "failure": "Failed",
-    "cancelled": "Cancelled",
-    "skipped": "Skipped",
-    "neutral": "Neutral",
-    "awaitingApproval": "Awaiting approval"
-  },
-  "checksState": {
-    "passing": "All checks have passed",
-    "failing": "Some checks were not successful",
-    "pending": "Some checks haven't completed yet"
-  },
-  "checks": {
-    "title": "Checks",
-    "withSummary": "Checks: {{summary}}",
-    "noChecksReported": "No checks reported",
-    "loading": "Loading checks…",
-    "openWithSummary": "Open checks: {{summary}}",
-    "outOfDate": "Check details are out of date.",
-    "showAll": "Show all",
-    "showLess": "Show less"
-  },
-  "reviewOutcome": {
-    "approved": "Approved",
-    "changesRequested": "Changes requested",
-    "dismissed": "Review dismissed",
-    "earlierChanges": "{{outcome}} earlier changes"
-  },
-  "conflict": {
-    "hasConflicts": "Has conflicts",
-    "withBranch": "Conflicts with {{branch}}"
-  },
-  "mergeMethod": {
-    "merge": "Merge",
-    "squash": "Squash and merge",
-    "rebase": "Rebase and merge"
-  },
-  "automerge": {
-    "plain": "Auto-merge",
-    "withMethod": "Auto-merge ({{method}})"
-  },
-  "issues": {
-    "open": "Open issue",
-    "closed": "Closed issue"
-  },
-  "empty": {
-    "mention": {
-      "label": "Mention a user",
-      "pending": "Searching users...",
-      "failed": "Couldn't search users on the host",
-      "none": "No matching users"
-    },
-    "reference": {
-      "label": "Reference an issue or change request",
-      "pending": "Searching...",
-      "failed": "Couldn't search the host",
-      "none": "No matching issues or change requests"
-    }
-  },
-  "badge": {
-    "stack": "Stack of {{count}} {{term}}, {{state}}",
-    "more": "{{tooltip}}, and {{count}} more linked; overall {{state}}"
-  },
-  "actions": {
-    "checkOut": "Check out",
-    "checkingOut": "Checking out...",
-    "checkOutThis": "Check out this {{term}}",
-    "preparing": "Preparing...",
-    "resolveConflicts": "Resolve conflicts",
-    "merging": "Merging...",
-    "confirmMerge": "Confirm merge?",
-    "enabling": "Enabling...",
-    "confirmAutoMerge": "Confirm auto-merge?",
-    "readyForReview": "Ready for review",
-    "approving": "Approving...",
-    "confirmApprove": "Confirm approve?",
-    "approveWorkflows": "Approve workflows to run",
-    "confirmClose": "Confirm close?",
-    "confirmRevert": "Confirm revert?",
-    "autoMergeHint": "{{label}}: the host will merge this on its own once its requirements are met"
-  },
-  "checkout": {
-    "worktree": "In a separate worktree",
-    "worktreeDetail": "Its own folder and thread. Nothing you have open moves.",
-    "local": "In this repository",
-    "localDetail": "Switches the branch you are working in."
-  },
-  "menu": {
-    "refresh": "Refresh",
-    "refreshingTerm": "Refreshing {{term}}",
-    "moreTermActions": "More {{term}} actions",
-    "opening": "Opening...",
-    "askAQuestion": "Ask a question",
-    "askAddsToComposer": "Adds the {{term}} to this thread's composer.",
-    "askOpensThread": "Opens a thread that knows which {{term}} you mean.",
-    "explainTerm": "Explain this {{term}}",
-    "explainDetail": "A walk through the diff and what to read closely.",
-    "writeGuide": "Write guide",
-    "writingGuide": "Writing guide...",
-    "rewriteGuide": "Rewrite guide",
-    "allowMaintainerEdits": "Allow edits from maintainers",
-    "allowMaintainerEditsDetail": "Maintainers can push to this branch. If your fork has workflows, this can also give access to its secrets.",
-    "saving": "Saving…",
-    "convertToDraft": "Convert to draft",
-    "mergeNow": "Merge now",
-    "enableAutoMerge": "Enable auto-merge",
-    "disableAutoMerge": "Disable auto-merge",
-    "copyLink": "Copy link",
-    "copyTermNumber": "Copy {{term}} number",
-    "termLink": "{{term}} link",
-    "termNumber": "{{term}} number",
-    "closeTerm": "Close {{term}}",
-    "reopenTerm": "Reopen {{term}}",
-    "revertChanges": "Revert changes",
-    "deleteBranch": "Delete branch",
-    "deletingBranch": "Deleting branch...",
-    "reconnectToDeleteBranch": "Reconnect to delete this branch"
-  },
-  "toasts": {
-    "addedToComposer": "Added to the composer",
-    "composerQuestion": "The question is in the composer. Read it over, then send.",
-    "composerTask": "The task is in the composer. Read it over, then send.",
-    "composerTerm": "The {{term}} is in the composer. Type your question, then send.",
-    "askedInThread": "Asked in a thread",
-    "preparingCheckout": "Preparing the {{term}} checkout...",
-    "checkedOutHere": "Checked out here",
-    "checkedOut": "Checked out",
-    "checkedOutHereDetail": "This repository is on the {{term}}'s branch, with a thread open on it.",
-    "checkedOutDetail": "The {{term}} is in its own worktree, with a thread open on it.",
-    "checkoutReady": "Checkout ready",
-    "checkedOutThreadStuck": "Checked out, but the thread stayed where it was",
-    "checkedOutThreadStuckHint": "The checkout is ready on `{{branch}}`. Point a thread at it from the branch picker, then ask again.",
-    "revertOpened": "Revert {{term}} opened",
-    "branchDeleted": "Branch deleted",
-    "copiedValue": "{{value}} copied"
-  },
-  "errors": {
-    "postComment": "Could not post the comment",
-    "openThread": "Could not open a thread",
-    "openThreadForCheckout": "Could not open a thread for the checkout",
-    "openThreadHint": "Try again from the project, or open a thread first.",
-    "prepareCheckout": "Could not prepare the {{term}} checkout",
-    "copyCheckoutCommand": "Could not copy checkout command",
-    "failedToCopy": "Failed to copy {{value}}",
-    "stackCheckFailed": "Couldn't check stack membership",
-    "stackChecking": "Checking stack membership…",
-    "updateBranchRebaseHint": "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work.",
-    "saveMaintainerAccess": "Could not save maintainer access",
-    "loadMoreComments": "More comments could not be loaded",
-    "replyNotPosted": "Reply could not be posted",
-    "commentNotSaved": "The comment could not be saved",
-    "conversationNotUpdated": "The conversation could not be updated",
-    "termNotFound": "{{term}} #{{number}} not found",
-    "termNotFoundHint": "It may be an issue rather than a {{term}}, or this account can't see it.",
-    "generic": "An error occurred.",
-    "needsTriageAccess": "The host refused it. Check that you have triage access on this repository.",
-    "openCheckDetails": "Unable to open check details",
-    "reactionNotSaved": "The reaction could not be saved",
-    "reviewNotSubmitted": "The review could not be submitted",
-    "reviewRefused": "The host refused the review. Your draft is still here to try again.",
-    "saveComment": "Could not save the comment",
-    "saveDescription": "Could not save the description",
-    "titleNotSaved": "The title could not be saved",
-    "titleRefused": "The host refused the new title."
-  },
   "actionFailure": {
+    "approveWorkflows": "Could not approve workflows",
+    "close": "Could not close this {{term}}",
+    "deleteBranch": "Could not delete this branch",
+    "disableAutoMerge": "Could not turn off auto-merge",
+    "draft": "Could not convert this to a draft",
+    "enableAutoMerge": "Could not turn on auto-merge",
     "merge": "Could not merge this {{term}}",
     "ready": "Could not mark this ready for review",
-    "draft": "Could not convert this to a draft",
-    "close": "Could not close this {{term}}",
     "reopen": "Could not reopen this {{term}}",
-    "updateBranch": "Could not update this branch",
-    "enableAutoMerge": "Could not turn on auto-merge",
-    "disableAutoMerge": "Could not turn off auto-merge",
     "revert": "Could not open a revert {{term}}",
-    "deleteBranch": "Could not delete this branch",
-    "approveWorkflows": "Could not approve workflows"
+    "updateBranch": "Could not update this branch"
   },
   "actionFailureHint": {
+    "approveWorkflows": "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
+    "close": "The host refused it. Check that you have write access, or that you opened it.",
+    "deleteBranch": "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
+    "disableAutoMerge": "The host refused it. Check that you have write access, and that the merge has not already happened.",
+    "draft": "The host refused it. Check that you have write access to this repository.",
+    "enableAutoMerge": "The host refused it. Check that this repository allows auto-merge, that you have write access, and that there is something left for it to wait on.",
     "merge": "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
     "ready": "The host refused it. Check that you have write access to this repository.",
-    "draft": "The host refused it. Check that you have write access to this repository.",
-    "close": "The host refused it. Check that you have write access, or that you opened it.",
     "reopen": "The host refused it. Check that you have write access, and that the branch still exists.",
-    "updateBranch": "The host refused it. Check that you have write access to the branch (a fork branch also needs its author to allow edits from maintainers), and that it does not conflict with the base.",
-    "enableAutoMerge": "The host refused it. Check that this repository allows auto-merge, that you have write access, and that there is something left for it to wait on.",
-    "disableAutoMerge": "The host refused it. Check that you have write access, and that the merge has not already happened.",
     "revert": "The host refused it. Check that you have write access and that this {{term}} was merged on the host.",
-    "deleteBranch": "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
-    "approveWorkflows": "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval."
+    "updateBranch": "The host refused it. Check that you have write access to the branch (a fork branch also needs its author to allow edits from maintainers), and that it does not conflict with the base."
   },
-  "confirm": {
-    "deleteBranchTitle": "Delete branch {{branch}}?",
-    "deleteBranchBody": "This deletes {{branch}} from {{repository}}. Local branches and worktrees are not changed."
-  },
-  "meta": {
-    "receivesChangesFrom": "receives changes from",
-    "prTabs": "Pull request tabs",
-    "reviewers": "Reviewers",
-    "labels": "Labels",
-    "none": "None",
-    "description": "Description",
-    "termReference": "{{term}} reference"
-  },
-  "counts": {
-    "comments_one": "{{formatted}} comment",
-    "comments_other": "{{formatted}} comments",
-    "commentsUnavailable": "Comments unavailable",
-    "commits_one": "{{formatted}} commit",
-    "commits_other": "{{formatted}} commits",
-    "commitsUnavailable": "Commits unavailable",
-    "conversation_one": "1 conversation",
-    "conversation_other": "{{formatted}} conversations",
-    "conversations_one": "1 conversation",
-    "conversations_other": "{{formatted}} conversations"
-  },
-  "files": {
-    "count_one": "{{formatted}} file",
-    "count_other": "{{formatted}} files"
-  },
-  "loading": {
-    "termDiff": "Loading {{term}} diff..."
-  },
-  "timeline": {
-    "showOldest": "Show oldest activity first",
-    "showNewest": "Show newest activity first",
-    "newestFirst": "Newest first",
-    "oldestFirst": "Oldest first",
-    "openActivityOnHost": "Open activity on host",
-    "termClosed": "{{title}} closed",
-    "termMerged": "{{title}} merged",
-    "termOpened": "{{title}} opened",
-    "untitledCommit": "Untitled commit",
-    "viewCommit": "View commit {{id}}"
-  },
-  "copy": {
-    "checkoutCommand": "Copy checkout command",
-    "checkoutCommandCopied": "Checkout command copied",
-    "termBranch": "Copy {{term}} branch",
-    "branchNameCopied": "Branch name copied"
-  },
-  "ghosts": {
-    "loadingPullRequests": "Loading pull requests",
-    "loadingTerm": "Loading {{term}}",
-    "loadingConversation": "Loading {{term}} conversation",
-    "loadingPeople": "Loading people",
-    "loadingTimeline": "Loading timeline",
-    "backToThread": "Back to this thread's pull requests",
-    "openOnHost": "Open {{term}} #{{number}} on host",
-    "actionsLoading": "{{term}} actions loading",
-    "collapsePanel": "Collapse {{term}} panel",
-    "reviewersLoading": "Reviewers loading",
-    "labelsLoading": "Labels loading",
-    "updated": "updated",
-    "checkoutCommandTarget": "{{term}} checkout command",
-    "branchName": "branch name",
-    "loadingPullRequestsEllipsis": "Loading pull requests…"
-  },
-  "list": {
-    "title": "Pull requests",
-    "search": "Search pull requests",
-    "refresh": "Refresh pull requests",
-    "breadcrumb": "Pull requests breadcrumb",
-    "scopeBreadcrumb": "Pull request scope",
-    "filterByState": "Filter by state",
-    "filterByInvolvement": "Filter by involvement",
-    "filterByHost": "Filter by host",
-    "filterByProvider": "Filter by provider",
-    "allHosts": "All",
-    "state": {
-      "all": "All",
-      "open": "Open",
-      "closed": "Closed",
-      "merged": "Merged"
-    },
-    "involvement": {
-      "all": "All",
-      "reviewing": "Reviewing",
-      "authored": "Authored"
-    },
-    "sort": {
-      "ready": "Merge readiness",
-      "blocked": "Blocked on me",
-      "updated": "Recently updated",
-      "newest": "Newest shown",
-      "oldest": "Oldest shown",
-      "largest": "Largest shown",
-      "smallest": "Smallest shown"
-    },
-    "any": "Any",
-    "anyone": "Anyone",
-    "couldNotLoad": "Could not load pull requests",
-    "filters": "Filters",
-    "group": {
-      "checks": "Checks",
-      "draft": "Draft",
-      "host": "Host",
-      "involvement": "Involvement",
-      "project": "Project",
-      "review": "Review",
-      "server": "Server",
-      "state": "State"
-    },
-    "noAuthors": "No authors found",
-    "noLabels": "No labels found",
-    "searchAuthors": "Search authors",
-    "searchAuthorsFailed": "Couldn't search authors on the host",
-    "searchLabels": "Search labels",
-    "searchLabelsFailed": "Couldn't search labels on the host",
-    "searchPlaceholder": "Search pull requests, or label:bug",
-    "selectedCount": "{{count}} selected",
-    "allServers": "All servers",
-    "allProjects": "All projects",
-    "draft": {
-      "only": "Drafts only",
-      "hide": "Hide drafts"
-    },
-    "review": {
-      "reviewRequired": "Review required",
-      "none": "No reviews"
-    },
-    "checks": {
-      "passing": "Passing",
-      "failing": "Failing"
-    }
-  },
-  "code": {
-    "changed": "Changed",
-    "changedTooltip": "This file has been pushed to since you marked it viewed.",
-    "viewed": "Viewed",
-    "fixInThread": "Fix in a thread",
-    "restOfDiffNotLoaded": "The rest of this diff could not be loaded.",
-    "loadingMoreFiles": "Loading more files...",
-    "loadMoreFiles": "Load more files",
-    "expandDiff": "Expand diff",
-    "collapseDiff": "Collapse diff",
-    "addToReview": "Add to review",
-    "addToAgent": "Add to agent",
-    "allCommits": "All commits",
-    "diffScope": "Diff scope: {{scope}}",
-    "reviewSectionTitle": "PR #{{number}} review",
-    "ticksLocalOnly": "These ticks are kept here, not on the host",
-    "ticksUnreadable": "Your ticks could not be read",
-    "partialCount": "This count covers only part of the change",
-    "diffPartiallyShown": "Some of this diff was not shown",
-    "lineCommentsFromWholeChange": "Line comments are written from the whole change",
-    "diffOptions": "Diff options",
-    "showWhitespace": "Show whitespace changes",
-    "hideWhitespace": "Hide whitespace changes",
-    "diffLayout": "Diff layout",
-    "stackedView": "Stacked diff view",
-    "splitView": "Split diff view",
-    "enableWrapping": "Enable diff line wrapping",
-    "disableWrapping": "Disable diff line wrapping",
-    "expandAllFiles": "Expand all files",
-    "collapseAllFiles": "Collapse all files",
-    "hideTestFiles": "Hide test files",
-    "showTestFiles": "Show test files",
-    "hideFileTree": "Hide file tree",
-    "showFileTree": "Show file tree",
-    "termNoChanges": "This {{term}} has no file changes.",
-    "commitNoChanges": "This commit has no file changes.",
-    "orphansCurrentDiff": "Conversations not on the current diff",
-    "orphansLoadedDiff": "Conversations not on the diff loaded so far",
-    "line": "Line {{line}}",
-    "resizeFiles": "Resize PR Code files"
+  "actions": {
+    "approveWorkflows": "Approve workflows to run",
+    "approving": "Approving...",
+    "autoMergeHint": "{{label}}: the host will merge this on its own once its requirements are met",
+    "checkingOut": "Checking out...",
+    "checkOut": "Check out",
+    "checkOutThis": "Check out this {{term}}",
+    "confirmApprove": "Confirm approve?",
+    "confirmAutoMerge": "Confirm auto-merge?",
+    "confirmClose": "Confirm close?",
+    "confirmMerge": "Confirm merge?",
+    "confirmRevert": "Confirm revert?",
+    "enabling": "Enabling...",
+    "merging": "Merging...",
+    "preparing": "Preparing...",
+    "readyForReview": "Ready for review",
+    "resolveConflicts": "Resolve conflicts"
   },
   "annotation": {
     "discard": "Discard this comment",
@@ -400,25 +53,105 @@
     "resolve": "Resolve",
     "unresolve": "Unresolve"
   },
+  "automerge": {
+    "plain": "Auto-merge",
+    "withMethod": "Auto-merge ({{method}})"
+  },
+  "badge": {
+    "more": "{{tooltip}}, and {{count}} more linked; overall {{state}}",
+    "stack": "Stack of {{count}} {{term}}, {{state}}"
+  },
   "base": {
     "behindBy": " by {{formatted}} {{count, plural, one {commit} other {commits}}}",
+    "behindBy_one": " by {{formatted}} commit",
+    "behindBy_other": " by {{formatted}} commits",
     "outOfDate": "This branch is out-of-date with {{branch}}{{behind}}.",
     "stackedOn": "Stacked on {{branch}}",
     "updateBranch": "Update branch",
-    "updateWithRebase": "Update with rebase",
-    "behindBy_one": " by {{formatted}} commit",
-    "behindBy_other": " by {{formatted}} commits"
+    "updateWithRebase": "Update with rebase"
   },
   "breakdown": {
+    "generated": "Generated",
     "loading": "Loading breakdown",
-    "total": "Total",
-    "tests": "Tests",
     "mocks": "Mocks",
-    "generated": "Generated"
+    "tests": "Tests",
+    "total": "Total"
+  },
+  "checkout": {
+    "local": "In this repository",
+    "localDetail": "Switches the branch you are working in.",
+    "worktree": "In a separate worktree",
+    "worktreeDetail": "Its own folder and thread. Nothing you have open moves."
   },
   "checkoutToast": {
-    "notConfirmedTitle": "Checked out, but not confirmed on the latest commit",
-    "notConfirmedDetail": "This checkout could not be confirmed at the {{term}}'s latest commit, so its code may differ. Local commits or uncommitted work keep a checkout where it is."
+    "notConfirmedDetail": "This checkout could not be confirmed at the {{term}}'s latest commit, so its code may differ. Local commits or uncommitted work keep a checkout where it is.",
+    "notConfirmedTitle": "Checked out, but not confirmed on the latest commit"
+  },
+  "checks": {
+    "loading": "Loading checks…",
+    "noChecksReported": "No checks reported",
+    "openWithSummary": "Open checks: {{summary}}",
+    "outOfDate": "Check details are out of date.",
+    "showAll": "Show all",
+    "showLess": "Show less",
+    "title": "Checks",
+    "withSummary": "Checks: {{summary}}"
+  },
+  "checksState": {
+    "failing": "Some checks were not successful",
+    "passing": "All checks have passed",
+    "pending": "Some checks haven't completed yet"
+  },
+  "checkStatus": {
+    "awaitingAction": "Awaiting action",
+    "awaitingApproval": "Awaiting approval",
+    "cancelled": "Cancelled",
+    "failure": "Failed",
+    "neutral": "Neutral",
+    "pending": "Running",
+    "skipped": "Skipped",
+    "success": "Passed"
+  },
+  "code": {
+    "addToAgent": "Add to agent",
+    "addToReview": "Add to review",
+    "allCommits": "All commits",
+    "changed": "Changed",
+    "changedTooltip": "This file has been pushed to since you marked it viewed.",
+    "collapseAllFiles": "Collapse all files",
+    "collapseDiff": "Collapse diff",
+    "commitNoChanges": "This commit has no file changes.",
+    "diffLayout": "Diff layout",
+    "diffOptions": "Diff options",
+    "diffPartiallyShown": "Some of this diff was not shown",
+    "diffScope": "Diff scope: {{scope}}",
+    "disableWrapping": "Disable diff line wrapping",
+    "enableWrapping": "Enable diff line wrapping",
+    "expandAllFiles": "Expand all files",
+    "expandDiff": "Expand diff",
+    "fixInThread": "Fix in a thread",
+    "hideFileTree": "Hide file tree",
+    "hideTestFiles": "Hide test files",
+    "hideWhitespace": "Hide whitespace changes",
+    "line": "Line {{line}}",
+    "lineCommentsFromWholeChange": "Line comments are written from the whole change",
+    "loadingMoreFiles": "Loading more files...",
+    "loadMoreFiles": "Load more files",
+    "orphansCurrentDiff": "Conversations not on the current diff",
+    "orphansLoadedDiff": "Conversations not on the diff loaded so far",
+    "partialCount": "This count covers only part of the change",
+    "resizeFiles": "Resize PR Code files",
+    "restOfDiffNotLoaded": "The rest of this diff could not be loaded.",
+    "reviewSectionTitle": "PR #{{number}} review",
+    "showFileTree": "Show file tree",
+    "showTestFiles": "Show test files",
+    "showWhitespace": "Show whitespace changes",
+    "splitView": "Split diff view",
+    "stackedView": "Stacked diff view",
+    "termNoChanges": "This {{term}} has no file changes.",
+    "ticksLocalOnly": "These ticks are kept here, not on the host",
+    "ticksUnreadable": "Your ticks could not be read",
+    "viewed": "Viewed"
   },
   "commentForm": {
     "closeWithComment": "Close with comment",
@@ -442,6 +175,10 @@
     "showOldest": "Show oldest comments first",
     "titleWithCount": "Comments ({{count}})"
   },
+  "common": {
+    "retry": "Retry",
+    "tryAgain": "Try again."
+  },
   "composer": {
     "close": "Close composer",
     "commentOnTerm": "Comment on {{term}}",
@@ -449,11 +186,37 @@
     "mode": "Composer mode",
     "review": "Review",
     "reviewPending": "Review {{term}}, {{count}} {{count, plural, one {comment} other {comments}}} pending",
+    "reviewPending_one": "Review {{term}}, {{count}} comment pending",
+    "reviewPending_other": "Review {{term}}, {{count}} comments pending",
     "reviewTerm": "Review {{term}}",
     "reviewWithCount": "Review ({{count}})",
-    "termComposer": "{{term}} composer",
-    "reviewPending_one": "Review {{term}}, {{count}} comment pending",
-    "reviewPending_other": "Review {{term}}, {{count}} comments pending"
+    "termComposer": "{{term}} composer"
+  },
+  "confirm": {
+    "deleteBranchBody": "This deletes {{branch}} from {{repository}}. Local branches and worktrees are not changed.",
+    "deleteBranchTitle": "Delete branch {{branch}}?"
+  },
+  "conflict": {
+    "hasConflicts": "Has conflicts",
+    "withBranch": "Conflicts with {{branch}}"
+  },
+  "copy": {
+    "branchNameCopied": "Branch name copied",
+    "checkoutCommand": "Copy checkout command",
+    "checkoutCommandCopied": "Checkout command copied",
+    "termBranch": "Copy {{term}} branch"
+  },
+  "counts": {
+    "comments_one": "{{formatted}} comment",
+    "comments_other": "{{formatted}} comments",
+    "commentsUnavailable": "Comments unavailable",
+    "commits_one": "{{formatted}} commit",
+    "commits_other": "{{formatted}} commits",
+    "commitsUnavailable": "Commits unavailable",
+    "conversation_one": "1 conversation",
+    "conversation_other": "{{formatted}} conversations",
+    "conversations_one": "1 conversation",
+    "conversations_other": "{{formatted}} conversations"
   },
   "crumbs": {
     "backToPullRequests": "Back to pull requests",
@@ -463,6 +226,20 @@
     "mode": "Markdown editor mode",
     "preview": "Preview",
     "write": "Write"
+  },
+  "empty": {
+    "mention": {
+      "failed": "Couldn't search users on the host",
+      "label": "Mention a user",
+      "none": "No matching users",
+      "pending": "Searching users..."
+    },
+    "reference": {
+      "failed": "Couldn't search the host",
+      "label": "Reference an issue or change request",
+      "none": "No matching issues or change requests",
+      "pending": "Searching..."
+    }
   },
   "emptyState": {
     "checkAgain": "Check again",
@@ -476,13 +253,71 @@
     "searchingHosts": "Searching every host for “{{query}}”",
     "widenFilters": "Widen the state, involvement or project filter to see more."
   },
+  "errors": {
+    "commentNotSaved": "The comment could not be saved",
+    "conversationNotUpdated": "The conversation could not be updated",
+    "copyCheckoutCommand": "Could not copy checkout command",
+    "failedToCopy": "Failed to copy {{value}}",
+    "generic": "An error occurred.",
+    "loadMoreComments": "More comments could not be loaded",
+    "needsTriageAccess": "The host refused it. Check that you have triage access on this repository.",
+    "openCheckDetails": "Unable to open check details",
+    "openThread": "Could not open a thread",
+    "openThreadForCheckout": "Could not open a thread for the checkout",
+    "openThreadHint": "Try again from the project, or open a thread first.",
+    "postComment": "Could not post the comment",
+    "prepareCheckout": "Could not prepare the {{term}} checkout",
+    "reactionNotSaved": "The reaction could not be saved",
+    "replyNotPosted": "Reply could not be posted",
+    "reviewNotSubmitted": "The review could not be submitted",
+    "reviewRefused": "The host refused the review. Your draft is still here to try again.",
+    "saveComment": "Could not save the comment",
+    "saveDescription": "Could not save the description",
+    "saveMaintainerAccess": "Could not save maintainer access",
+    "stackCheckFailed": "Couldn't check stack membership",
+    "stackChecking": "Checking stack membership…",
+    "termNotFound": "{{term}} #{{number}} not found",
+    "termNotFoundHint": "It may be an issue rather than a {{term}}, or this account can't see it.",
+    "titleNotSaved": "The title could not be saved",
+    "titleRefused": "The host refused the new title.",
+    "updateBranchRebaseHint": "The host refused it. A rebase stops at the first commit that does not apply cleanly; updating with a merge commit may still work."
+  },
+  "files": {
+    "count_one": "{{formatted}} file",
+    "count_other": "{{formatted}} files"
+  },
+  "ghosts": {
+    "actionsLoading": "{{term}} actions loading",
+    "backToThread": "Back to this thread's pull requests",
+    "branchName": "branch name",
+    "checkoutCommandTarget": "{{term}} checkout command",
+    "collapsePanel": "Collapse {{term}} panel",
+    "labelsLoading": "Labels loading",
+    "loadingConversation": "Loading {{term}} conversation",
+    "loadingPeople": "Loading people",
+    "loadingPullRequests": "Loading pull requests",
+    "loadingPullRequestsEllipsis": "Loading pull requests…",
+    "loadingTerm": "Loading {{term}}",
+    "loadingTimeline": "Loading timeline",
+    "openOnHost": "Open {{term}} #{{number}} on host",
+    "reviewersLoading": "Reviewers loading",
+    "updated": "updated"
+  },
   "guide": {
     "addComment": "Add a comment…",
     "alsoInStop": "Also in this stop",
     "askAgent": "Ask agent",
     "askAgentAboutLines": "Ask the agent about these lines…",
+    "attention": {
+      "accessibility": "An accessibility call",
+      "contract": "A contract to check",
+      "product": "A product call",
+      "risk": "A risk to judge",
+      "tradeoff": "A tradeoff to weigh"
+    },
     "couldNotRewrite": "Could not rewrite this guide. {{hint}}",
     "couldNotWrite": "Could not write a review guide",
+    "failureHint": "Check the review guide model in Settings → Source control.",
     "fileNotInDiff": "This file is not in the loaded diff.",
     "filesInStop": "Files in this stop",
     "loadingDiff": "Loading the diff...",
@@ -493,22 +328,18 @@
     "readingChange": "Reading the change...",
     "reviewGuideTitle": "Review guide",
     "rewritingNote": "Rewriting this guide. You will be told when the new one is ready.",
+    "tryAgain": "Try again",
     "writing": "Writing a review guide",
-    "writtenBeforePush": "Written before the latest push.",
-    "failureHint": "Check the review guide model in Settings → Source control.",
-    "attention": {
-      "tradeoff": "A tradeoff to weigh",
-      "contract": "A contract to check",
-      "product": "A product call",
-      "risk": "A risk to judge",
-      "accessibility": "An accessibility call"
-    },
-    "tryAgain": "Try again"
+    "writtenBeforePush": "Written before the latest push."
   },
   "handoff": {
     "fix": "Fix",
     "fixCheckInThread": "Fix in this thread",
     "fixFindingsInThread": "Fix findings in this thread"
+  },
+  "issues": {
+    "closed": "Closed issue",
+    "open": "Open issue"
   },
   "labels": {
     "applied": "Applied",
@@ -538,8 +369,124 @@
     "searchThreads": "Search threads or projects...",
     "untitledThread": "Untitled thread"
   },
+  "list": {
+    "allHosts": "All",
+    "allProjects": "All projects",
+    "allServers": "All servers",
+    "any": "Any",
+    "anyone": "Anyone",
+    "breadcrumb": "Pull requests breadcrumb",
+    "checks": {
+      "failing": "Failing",
+      "passing": "Passing"
+    },
+    "couldNotLoad": "Could not load pull requests",
+    "draft": {
+      "hide": "Hide drafts",
+      "only": "Drafts only"
+    },
+    "filterByHost": "Filter by host",
+    "filterByInvolvement": "Filter by involvement",
+    "filterByProvider": "Filter by provider",
+    "filterByState": "Filter by state",
+    "filters": "Filters",
+    "group": {
+      "checks": "Checks",
+      "draft": "Draft",
+      "host": "Host",
+      "involvement": "Involvement",
+      "project": "Project",
+      "review": "Review",
+      "server": "Server",
+      "state": "State"
+    },
+    "involvement": {
+      "all": "All",
+      "authored": "Authored",
+      "reviewing": "Reviewing"
+    },
+    "noAuthors": "No authors found",
+    "noLabels": "No labels found",
+    "refresh": "Refresh pull requests",
+    "review": {
+      "none": "No reviews",
+      "reviewRequired": "Review required"
+    },
+    "scopeBreadcrumb": "Pull request scope",
+    "search": "Search pull requests",
+    "searchAuthors": "Search authors",
+    "searchAuthorsFailed": "Couldn't search authors on the host",
+    "searchLabels": "Search labels",
+    "searchLabelsFailed": "Couldn't search labels on the host",
+    "searchPlaceholder": "Search pull requests, or label:bug",
+    "selectedCount": "{{count}} selected",
+    "sort": {
+      "blocked": "Blocked on me",
+      "largest": "Largest shown",
+      "newest": "Newest shown",
+      "oldest": "Oldest shown",
+      "ready": "Merge readiness",
+      "smallest": "Smallest shown",
+      "updated": "Recently updated"
+    },
+    "state": {
+      "all": "All",
+      "closed": "Closed",
+      "merged": "Merged",
+      "open": "Open"
+    },
+    "title": "Pull requests"
+  },
+  "loading": {
+    "termDiff": "Loading {{term}} diff..."
+  },
   "markdown": {
     "video": "Pull request video"
+  },
+  "menu": {
+    "allowMaintainerEdits": "Allow edits from maintainers",
+    "allowMaintainerEditsDetail": "Maintainers can push to this branch. If your fork has workflows, this can also give access to its secrets.",
+    "askAddsToComposer": "Adds the {{term}} to this thread's composer.",
+    "askAQuestion": "Ask a question",
+    "askOpensThread": "Opens a thread that knows which {{term}} you mean.",
+    "closeTerm": "Close {{term}}",
+    "convertToDraft": "Convert to draft",
+    "copyLink": "Copy link",
+    "copyTermNumber": "Copy {{term}} number",
+    "deleteBranch": "Delete branch",
+    "deletingBranch": "Deleting branch...",
+    "disableAutoMerge": "Disable auto-merge",
+    "enableAutoMerge": "Enable auto-merge",
+    "explainDetail": "A walk through the diff and what to read closely.",
+    "explainTerm": "Explain this {{term}}",
+    "mergeNow": "Merge now",
+    "moreTermActions": "More {{term}} actions",
+    "opening": "Opening...",
+    "reconnectToDeleteBranch": "Reconnect to delete this branch",
+    "refresh": "Refresh",
+    "refreshingTerm": "Refreshing {{term}}",
+    "reopenTerm": "Reopen {{term}}",
+    "revertChanges": "Revert changes",
+    "rewriteGuide": "Rewrite guide",
+    "saving": "Saving…",
+    "termLink": "{{term}} link",
+    "termNumber": "{{term}} number",
+    "writeGuide": "Write guide",
+    "writingGuide": "Writing guide..."
+  },
+  "mergeMethod": {
+    "merge": "Merge",
+    "rebase": "Rebase and merge",
+    "squash": "Squash and merge"
+  },
+  "meta": {
+    "description": "Description",
+    "labels": "Labels",
+    "none": "None",
+    "prTabs": "Pull request tabs",
+    "receivesChangesFrom": "receives changes from",
+    "reviewers": "Reviewers",
+    "termReference": "{{term}} reference"
   },
   "page": {
     "failedToCopyLink": "Failed to copy {{label}} link",
@@ -557,17 +504,17 @@
   "panel": {
     "actionsFor": "Actions for #{{number}}",
     "chainedByBase": "{{count}} {{term}} chained by base branch.",
+    "createdFromThread": "Created from this thread",
+    "dismissed": "Dismissed",
+    "foundInStack": "Found in the stack",
     "hostStack": "{{host}} stack of {{count}}: merging a layer lands the ones below it.",
+    "linkedByAgent": "Linked by the agent",
+    "linkedByYou": "Linked by you",
     "stopWatching": "Stop watching",
     "unavailable": "Linked pull requests unavailable",
     "unsupported": "This environment does not support multiple linked pull requests.",
     "waitingForHost": "Waiting for host state",
-    "watch": "Watch for changes",
-    "linkedByYou": "Linked by you",
-    "linkedByAgent": "Linked by the agent",
-    "foundInStack": "Found in the stack",
-    "dismissed": "Dismissed",
-    "createdFromThread": "Created from this thread"
+    "watch": "Watch for changes"
   },
   "picker": {
     "couldNotAsk": "Could not ask {{login}} for a review",
@@ -600,7 +547,15 @@
   "reactions": {
     "add": "Add a reaction"
   },
+  "reviewDecision": {
+    "approved": "Approved",
+    "changesRequested": "Changes requested",
+    "reviewRequired": "Awaiting review"
+  },
   "reviewForm": {
+    "approve": "Approve",
+    "comment": "Comment",
+    "requestChanges": "Request changes",
     "reviewSubmitted": "Review submitted",
     "submit": "Submit review",
     "submitting": "Submitting...",
@@ -608,19 +563,22 @@
     "summaryOptional": "Summarize your review (optional)",
     "summaryOrLineComments": "Summarize your review or add line comments",
     "summaryRequired": "Summarize your review (required to request changes)",
-    "termApproved": "{{term}} approved",
-    "comment": "Comment",
-    "approve": "Approve",
-    "requestChanges": "Request changes"
+    "termApproved": "{{term}} approved"
+  },
+  "reviewOutcome": {
+    "approved": "Approved",
+    "changesRequested": "Changes requested",
+    "dismissed": "Review dismissed",
+    "earlierChanges": "{{outcome}} earlier changes"
   },
   "speed": {
     "actionFor": "{{label}} #{{number}}",
     "actionImmediately": "{{label}} immediately",
+    "close": "Close",
     "closeHint": "Close immediately, or drag across rows to close several",
+    "merge": "Merge",
     "openToMergeStack": "Open this {{term}} to merge its stack",
     "quickActions": "Quick actions for {{term}} #{{number}}",
-    "close": "Close",
-    "merge": "Merge",
     "reopen": "Reopen"
   },
   "stack": {
@@ -634,21 +592,63 @@
     "rebasing": "Rebasing stack...",
     "retryRefresh": "Retry stack refresh"
   },
+  "state": {
+    "closed": "Closed",
+    "draft": "Draft",
+    "merged": "Merged",
+    "open": "Open"
+  },
   "summary": {
     "describeTerm": "Describe this {{term}}",
     "editDescription": "Edit description",
     "termDescription": "{{term}} description"
   },
+  "tabs": {
+    "code": "Code",
+    "guide": "Guide",
+    "summary": "Summary",
+    "timeline": "Timeline"
+  },
   "thread": {
     "open": "Open",
-    "resolved": "Resolved",
     "resolve": "Resolve",
+    "resolved": "Resolved",
     "unresolve": "Unresolve"
+  },
+  "timeline": {
+    "newestFirst": "Newest first",
+    "oldestFirst": "Oldest first",
+    "openActivityOnHost": "Open activity on host",
+    "showNewest": "Show newest activity first",
+    "showOldest": "Show oldest activity first",
+    "termClosed": "{{title}} closed",
+    "termMerged": "{{title}} merged",
+    "termOpened": "{{title}} opened",
+    "untitledCommit": "Untitled commit",
+    "viewCommit": "View commit {{id}}"
   },
   "titleEditor": {
     "editTitle": "Edit title",
     "save": "Save",
     "saving": "Saving...",
     "termTitle": "{{term}} title"
+  },
+  "toasts": {
+    "addedToComposer": "Added to the composer",
+    "askedInThread": "Asked in a thread",
+    "branchDeleted": "Branch deleted",
+    "checkedOut": "Checked out",
+    "checkedOutDetail": "The {{term}} is in its own worktree, with a thread open on it.",
+    "checkedOutHere": "Checked out here",
+    "checkedOutHereDetail": "This repository is on the {{term}}'s branch, with a thread open on it.",
+    "checkedOutThreadStuck": "Checked out, but the thread stayed where it was",
+    "checkedOutThreadStuckHint": "The checkout is ready on `{{branch}}`. Point a thread at it from the branch picker, then ask again.",
+    "checkoutReady": "Checkout ready",
+    "composerQuestion": "The question is in the composer. Read it over, then send.",
+    "composerTask": "The task is in the composer. Read it over, then send.",
+    "composerTerm": "The {{term}} is in the composer. Type your question, then send.",
+    "copiedValue": "{{value}} copied",
+    "preparingCheckout": "Preparing the {{term}} checkout...",
+    "revertOpened": "Revert {{term}} opened"
   }
 }

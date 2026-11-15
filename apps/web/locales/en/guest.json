@@ -1,21 +1,21 @@
 {
+  "attachedFiles": "Attached files",
+  "attachFiles": "Attach files",
+  "connecting": "Connecting...",
+  "filesToAttach": "Files to attach",
   "historyFailed": "Could not load earlier turns. Try again.",
+  "joinTitle": "Join a shared thread",
+  "linkEndedDetail": "The owner stopped sharing this thread.",
+  "linkEndedTitle": "This link has ended",
+  "linkInvalidDetail": "Ask the owner for a new link. Each link works in one browser.",
+  "linkInvalidTitle": "This link has ended or is not valid",
+  "message": "Message",
+  "send": "Send",
   "serverUnreachable": "Could not reach the server.",
   "somethingWrong": "Something went wrong. Try again.",
-  "connecting": "Connecting...",
-  "linkInvalidTitle": "This link has ended or is not valid",
-  "linkInvalidDetail": "Ask the owner for a new link. Each link works in one browser.",
-  "linkEndedTitle": "This link has ended",
-  "linkEndedDetail": "The owner stopped sharing this thread.",
-  "joinTitle": "Join a shared thread",
-  "attachedFiles": "Attached files",
-  "message": "Message",
-  "filesToAttach": "Files to attach",
-  "attachFiles": "Attach files",
-  "send": "Send",
   "status": {
+    "dismissed": "Not sent",
     "pending": "Waiting for approval",
-    "sent": "Sent",
-    "dismissed": "Not sent"
+    "sent": "Sent"
   }
 }

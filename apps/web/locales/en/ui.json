@@ -1,12 +1,12 @@
 {
-  "close": "Close",
-  "dismissNotification": "Dismiss notification",
-  "loading": "Loading",
-  "setupProgress": "Setup progress",
-  "stepAria": "{{step}}, step {{index}}{{summary}}",
-  "saturationPlane": "{{label}} saturation and brightness",
   "axisSlider": "{{label}} {{axis}}",
   "cancel": "Cancel",
+  "close": "Close",
   "confirm": "Confirm",
+  "dismissNotification": "Dismiss notification",
+  "loading": "Loading",
+  "saturationPlane": "{{label}} saturation and brightness",
+  "setupProgress": "Setup progress",
+  "stepAria": "{{step}}, step {{index}}{{summary}}",
   "tryAgain": "Try again"
 }

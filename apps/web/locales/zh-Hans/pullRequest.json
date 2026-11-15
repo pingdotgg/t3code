@@ -1,358 +1,47 @@
 {
-  "common": {
-    "retry": "重试",
-    "tryAgain": "请重试。"
-  },
-  "tabs": {
-    "summary": "摘要",
-    "guide": "导读",
-    "timeline": "时间线",
-    "code": "代码"
-  },
-  "state": {
-    "open": "打开",
-    "draft": "草稿",
-    "closed": "已关闭",
-    "merged": "已合并"
-  },
-  "reviewDecision": {
-    "approved": "已批准",
-    "changesRequested": "已请求修改",
-    "reviewRequired": "等待审查"
-  },
-  "checkStatus": {
-    "pending": "运行中",
-    "awaitingAction": "等待处理",
-    "success": "已通过",
-    "failure": "失败",
-    "cancelled": "已取消",
-    "skipped": "已跳过",
-    "neutral": "中性",
-    "awaitingApproval": "等待批准"
-  },
-  "checksState": {
-    "passing": "所有检查均已通过",
-    "failing": "部分检查未成功",
-    "pending": "部分检查尚未完成"
-  },
-  "checks": {
-    "title": "检查",
-    "withSummary": "检查：{{summary}}",
-    "noChecksReported": "未报告任何检查",
-    "loading": "正在加载检查…",
-    "openWithSummary": "打开检查：{{summary}}",
-    "outOfDate": "检查信息已过期。",
-    "showAll": "显示全部",
-    "showLess": "收起"
-  },
-  "reviewOutcome": {
-    "approved": "已批准",
-    "changesRequested": "已请求修改",
-    "dismissed": "审查已撤回",
-    "earlierChanges": "{{outcome}}了更早的更改"
-  },
-  "conflict": {
-    "hasConflicts": "存在冲突",
-    "withBranch": "与 {{branch}} 存在冲突"
-  },
-  "mergeMethod": {
-    "merge": "合并",
-    "squash": "压缩后合并",
-    "rebase": "变基后合并"
-  },
-  "automerge": {
-    "plain": "自动合并",
-    "withMethod": "自动合并（{{method}}）"
-  },
-  "issues": {
-    "open": "打开的议题",
-    "closed": "已关闭的议题"
-  },
-  "empty": {
-    "mention": {
-      "label": "提及用户",
-      "pending": "正在搜索用户…",
-      "failed": "无法在托管平台上搜索用户",
-      "none": "没有匹配的用户"
-    },
-    "reference": {
-      "label": "引用议题或变更请求",
-      "pending": "正在搜索…",
-      "failed": "无法搜索托管平台",
-      "none": "没有匹配的议题或变更请求"
-    }
-  },
-  "badge": {
-    "stack": "{{count}} 个 {{term}}的堆叠，{{state}}",
-    "more": "{{tooltip}}，还有 {{count}} 个已关联；整体{{state}}"
-  },
-  "actions": {
-    "checkOut": "检出",
-    "checkingOut": "检出中…",
-    "checkOutThis": "检出此{{term}}",
-    "preparing": "准备中…",
-    "resolveConflicts": "解决冲突",
-    "merging": "合并中…",
-    "confirmMerge": "确认合并？",
-    "enabling": "启用中…",
-    "confirmAutoMerge": "确认自动合并？",
-    "readyForReview": "请求审查",
-    "approving": "批准中…",
-    "confirmApprove": "确认批准？",
-    "approveWorkflows": "批准运行工作流",
-    "confirmClose": "确认关闭？",
-    "confirmRevert": "确认回退？",
-    "autoMergeHint": "{{label}}：满足条件后托管平台会自动合并"
-  },
-  "checkout": {
-    "worktree": "在独立的工作树中",
-    "worktreeDetail": "有自己的文件夹和线程。你已打开的内容不会移动。",
-    "local": "在本仓库中",
-    "localDetail": "切换你正在工作的分支。"
-  },
-  "toasts": {
-    "addedToComposer": "已加入编写区",
-    "composerQuestion": "问题已在编写区。确认内容后发送。",
-    "composerTask": "任务已在编写区。确认内容后发送。",
-    "composerTerm": "{{term}}已在编写区。输入你的问题后发送。",
-    "askedInThread": "已在线程中提问",
-    "preparingCheckout": "正在准备{{term}}的检出…",
-    "checkedOutHere": "已在此处检出",
-    "checkedOut": "已检出",
-    "checkedOutHereDetail": "本仓库已切换到该{{term}}的分支，并在线程中打开。",
-    "checkedOutDetail": "该{{term}}位于自己的工作树中，并在线程中打开。",
-    "checkoutReady": "检出就绪",
-    "checkedOutThreadStuck": "已检出，但线程仍留在原处",
-    "checkedOutThreadStuckHint": "检出已在 `{{branch}}` 就绪。从分支选择器把线程指过去，然后再试一次。",
-    "revertOpened": "已打开{{term}}的回退",
-    "branchDeleted": "分支已删除",
-    "copiedValue": "已复制 {{value}}"
-  },
-  "errors": {
-    "postComment": "无法发布评论",
-    "openThread": "无法打开线程",
-    "openThreadForCheckout": "无法为检出打开线程",
-    "openThreadHint": "请从项目页重试，或先打开一个线程。",
-    "prepareCheckout": "无法准备{{term}}的检出",
-    "copyCheckoutCommand": "无法复制检出命令",
-    "failedToCopy": "复制 {{value}} 失败",
-    "stackCheckFailed": "无法检查堆叠归属",
-    "stackChecking": "正在检查堆叠归属…",
-    "updateBranchRebaseHint": "托管平台拒绝了该操作。变基会在第一个无法干净应用的提交处停下；改用合并提交更新可能仍然可行。",
-    "saveMaintainerAccess": "无法保存维护者访问设置",
-    "loadMoreComments": "无法加载更多评论",
-    "replyNotPosted": "回复无法发布",
-    "commentNotSaved": "评论无法保存",
-    "conversationNotUpdated": "会话无法更新",
-    "termNotFound": "未找到 {{term}} #{{number}}",
-    "termNotFoundHint": "它可能是议题而不是{{term}}，或此账号无权查看。",
-    "generic": "发生错误。",
-    "needsTriageAccess": "托管平台拒绝了该操作。请检查你在此仓库有分诊权限。",
-    "openCheckDetails": "无法打开检查详情",
-    "reactionNotSaved": "表情回应无法保存",
-    "reviewNotSubmitted": "审查无法提交",
-    "reviewRefused": "托管平台拒绝了审查。你的草稿还在，可以重试。",
-    "saveComment": "无法保存评论",
-    "saveDescription": "无法保存描述",
-    "titleNotSaved": "标题无法保存",
-    "titleRefused": "托管平台拒绝了新标题。"
-  },
   "actionFailure": {
+    "approveWorkflows": "无法批准工作流",
+    "close": "无法关闭此{{term}}",
+    "deleteBranch": "无法删除此分支",
+    "disableAutoMerge": "无法关闭自动合并",
+    "draft": "无法转换为草稿",
+    "enableAutoMerge": "无法开启自动合并",
     "merge": "无法合并此{{term}}",
     "ready": "无法标记为请求审查",
-    "draft": "无法转换为草稿",
-    "close": "无法关闭此{{term}}",
     "reopen": "无法重新打开此{{term}}",
-    "updateBranch": "无法更新此分支",
-    "enableAutoMerge": "无法开启自动合并",
-    "disableAutoMerge": "无法关闭自动合并",
     "revert": "无法打开{{term}}的回退",
-    "deleteBranch": "无法删除此分支",
-    "approveWorkflows": "无法批准工作流"
+    "updateBranch": "无法更新此分支"
   },
   "actionFailureHint": {
+    "approveWorkflows": "托管平台拒绝了该操作。请检查你有 Actions 写权限，且这些工作流运行仍在等待批准。",
+    "close": "托管平台拒绝了该操作。请检查你有写权限，或它是你打开的。",
+    "deleteBranch": "托管平台拒绝了该操作。请检查你对源仓库有写权限，且分支自页面加载以来没有移动。",
+    "disableAutoMerge": "托管平台拒绝了该操作。请检查你有写权限，且合并尚未完成。",
+    "draft": "托管平台拒绝了该操作。请检查你对本仓库有写权限。",
+    "enableAutoMerge": "托管平台拒绝了该操作。请检查本仓库允许自动合并、你有写权限，且还有它在等待的条件。",
     "merge": "托管平台拒绝了合并。请检查你有写权限、它要求的检查已通过，且分支没有冲突。",
     "ready": "托管平台拒绝了该操作。请检查你对本仓库有写权限。",
-    "draft": "托管平台拒绝了该操作。请检查你对本仓库有写权限。",
-    "close": "托管平台拒绝了该操作。请检查你有写权限，或它是你打开的。",
     "reopen": "托管平台拒绝了该操作。请检查你有写权限，且分支仍然存在。",
-    "updateBranch": "托管平台拒绝了该操作。请检查你对分支有写权限（fork 分支还需其作者允许维护者修改），且它与基分支没有冲突。",
-    "enableAutoMerge": "托管平台拒绝了该操作。请检查本仓库允许自动合并、你有写权限，且还有它在等待的条件。",
-    "disableAutoMerge": "托管平台拒绝了该操作。请检查你有写权限，且合并尚未完成。",
     "revert": "托管平台拒绝了该操作。请检查你有写权限，且此{{term}}已在托管平台合并。",
-    "deleteBranch": "托管平台拒绝了该操作。请检查你对源仓库有写权限，且分支自页面加载以来没有移动。",
-    "approveWorkflows": "托管平台拒绝了该操作。请检查你有 Actions 写权限，且这些工作流运行仍在等待批准。"
+    "updateBranch": "托管平台拒绝了该操作。请检查你对分支有写权限（fork 分支还需其作者允许维护者修改），且它与基分支没有冲突。"
   },
-  "confirm": {
-    "deleteBranchTitle": "删除分支 {{branch}}？",
-    "deleteBranchBody": "将从 {{repository}} 删除 {{branch}}。本地分支和工作树不受影响。"
-  },
-  "meta": {
-    "receivesChangesFrom": "接受来自以下分支的更改",
-    "prTabs": "变更请求标签页",
-    "reviewers": "审查者",
-    "labels": "标签",
-    "none": "无",
-    "description": "描述",
-    "termReference": "{{term}}引用"
-  },
-  "counts": {
-    "commentsUnavailable": "评论不可用",
-    "commitsUnavailable": "提交不可用",
-    "comments": "{{formatted}} 条评论",
-    "commits": "{{formatted}} 个提交",
-    "conversation": "{{count}} 个会话",
-    "conversations": "{{formatted}} 个会话"
-  },
-  "files": {
-    "count": "{{formatted}} 个文件"
-  },
-  "loading": {
-    "termDiff": "正在加载{{term}}的差异…"
-  },
-  "timeline": {
-    "showOldest": "先显示最早的动态",
-    "showNewest": "先显示最新的动态",
-    "newestFirst": "最新在前",
-    "oldestFirst": "最早在前",
-    "openActivityOnHost": "在托管平台打开动态",
-    "termClosed": "{{title}}已关闭",
-    "termMerged": "{{title}}已合并",
-    "termOpened": "{{title}}已打开",
-    "untitledCommit": "未命名提交",
-    "viewCommit": "查看提交 {{id}}"
-  },
-  "copy": {
-    "checkoutCommand": "复制检出命令",
-    "checkoutCommandCopied": "检出命令已复制",
-    "termBranch": "复制{{term}}分支",
-    "branchNameCopied": "分支名已复制"
-  },
-  "ghosts": {
-    "loadingPullRequests": "正在加载变更请求",
-    "loadingTerm": "正在加载{{term}}",
-    "loadingConversation": "正在加载{{term}}会话",
-    "loadingPeople": "正在加载成员",
-    "loadingTimeline": "正在加载时间线",
-    "backToThread": "返回本线程的变更请求",
-    "openOnHost": "在托管平台打开 {{term}} #{{number}}",
-    "actionsLoading": "{{term}}操作加载中",
-    "collapsePanel": "折叠{{term}}面板",
-    "reviewersLoading": "审查者加载中",
-    "labelsLoading": "标签加载中",
-    "updated": "更新于",
-    "checkoutCommandTarget": "{{term}}检出命令",
-    "branchName": "分支名",
-    "loadingPullRequestsEllipsis": "正在加载变更请求…"
-  },
-  "list": {
-    "title": "变更请求",
-    "search": "搜索变更请求",
-    "refresh": "刷新变更请求",
-    "breadcrumb": "变更请求面包屑",
-    "scopeBreadcrumb": "变更请求范围",
-    "filterByState": "按状态筛选",
-    "filterByInvolvement": "按参与角色筛选",
-    "filterByHost": "按托管平台筛选",
-    "filterByProvider": "按托管平台筛选",
-    "allHosts": "全部",
-    "state": {
-      "all": "全部",
-      "open": "打开",
-      "closed": "已关闭",
-      "merged": "已合并"
-    },
-    "involvement": {
-      "all": "全部",
-      "reviewing": "审查中",
-      "authored": "我发起的"
-    },
-    "sort": {
-      "ready": "合并就绪度",
-      "blocked": "等待我处理",
-      "updated": "最近更新",
-      "newest": "最新在前",
-      "oldest": "最早在前",
-      "largest": "最大的在前",
-      "smallest": "最小的在前"
-    },
-    "any": "不限",
-    "anyone": "任何人",
-    "couldNotLoad": "无法加载变更请求",
-    "filters": "筛选",
-    "group": {
-      "checks": "检查",
-      "draft": "草稿",
-      "host": "托管平台",
-      "involvement": "参与角色",
-      "project": "项目",
-      "review": "审查",
-      "server": "服务器",
-      "state": "状态"
-    },
-    "noAuthors": "未找到作者",
-    "noLabels": "未找到标签",
-    "searchAuthors": "搜索作者",
-    "searchAuthorsFailed": "无法在托管平台搜索作者",
-    "searchLabels": "搜索标签",
-    "searchLabelsFailed": "无法在托管平台搜索标签",
-    "searchPlaceholder": "搜索变更请求，或 label:bug",
-    "selectedCount": "已选 {{count}} 个",
-    "allServers": "全部服务器",
-    "allProjects": "全部项目",
-    "draft": {
-      "only": "只看草稿",
-      "hide": "隐藏草稿"
-    },
-    "review": {
-      "reviewRequired": "需要审查",
-      "none": "没有审查"
-    },
-    "checks": {
-      "passing": "通过",
-      "failing": "失败"
-    }
-  },
-  "code": {
-    "changed": "有改动",
-    "changedTooltip": "自你标记为已查看后，此文件又有新的推送。",
-    "viewed": "已查看",
-    "fixInThread": "在线程中修复",
-    "restOfDiffNotLoaded": "差异的其余部分无法加载。",
-    "loadingMoreFiles": "正在加载更多文件…",
-    "loadMoreFiles": "加载更多文件",
-    "expandDiff": "展开差异",
-    "collapseDiff": "折叠差异",
-    "addToReview": "加入审查",
-    "addToAgent": "交给代理",
-    "allCommits": "所有提交",
-    "diffScope": "差异范围：{{scope}}",
-    "reviewSectionTitle": "PR #{{number}} 审查",
-    "ticksLocalOnly": "这些勾选标记只保存在本地，不在托管平台上",
-    "ticksUnreadable": "无法读取你的勾选标记",
-    "partialCount": "此计数只覆盖部分更改",
-    "diffPartiallyShown": "此差异有一部分未显示",
-    "lineCommentsFromWholeChange": "行内评论基于完整更改编写",
-    "diffOptions": "差异选项",
-    "showWhitespace": "显示空白更改",
-    "hideWhitespace": "隐藏空白更改",
-    "diffLayout": "差异布局",
-    "stackedView": "纵向堆叠视图",
-    "splitView": "左右分栏视图",
-    "enableWrapping": "开启差异换行",
-    "disableWrapping": "关闭差异换行",
-    "expandAllFiles": "展开所有文件",
-    "collapseAllFiles": "折叠所有文件",
-    "hideTestFiles": "隐藏测试文件",
-    "showTestFiles": "显示测试文件",
-    "hideFileTree": "隐藏文件树",
-    "showFileTree": "显示文件树",
-    "termNoChanges": "此{{term}}没有文件更改。",
-    "commitNoChanges": "此提交没有文件更改。",
-    "orphansCurrentDiff": "不在当前差异中的会话",
-    "orphansLoadedDiff": "不在已加载差异中的会话",
-    "line": "第 {{line}} 行",
-    "resizeFiles": "调整 PR 代码文件面板宽度"
+  "actions": {
+    "approveWorkflows": "批准运行工作流",
+    "approving": "批准中…",
+    "autoMergeHint": "{{label}}：满足条件后托管平台会自动合并",
+    "checkingOut": "检出中…",
+    "checkOut": "检出",
+    "checkOutThis": "检出此{{term}}",
+    "confirmApprove": "确认批准？",
+    "confirmAutoMerge": "确认自动合并？",
+    "confirmClose": "确认关闭？",
+    "confirmMerge": "确认合并？",
+    "confirmRevert": "确认回退？",
+    "enabling": "启用中…",
+    "merging": "合并中…",
+    "preparing": "准备中…",
+    "readyForReview": "请求审查",
+    "resolveConflicts": "解决冲突"
   },
   "annotation": {
     "discard": "丢弃此评论",
@@ -364,23 +53,104 @@
     "resolve": "标记已解决",
     "unresolve": "标记未解决"
   },
+  "automerge": {
+    "plain": "自动合并",
+    "withMethod": "自动合并（{{method}}）"
+  },
+  "badge": {
+    "more": "{{tooltip}}，还有 {{count}} 个已关联；整体{{state}}",
+    "stack": "{{count}} 个 {{term}}的堆叠，{{state}}"
+  },
   "base": {
     "behindBy": "，落后 {{formatted}} 个提交",
+    "behindBy_other": "，落后 {{formatted}} 个提交",
     "outOfDate": "此分支落后于 {{branch}}{{behind}}。",
     "stackedOn": "堆叠在 {{branch}} 之上",
     "updateBranch": "更新分支",
     "updateWithRebase": "变基更新"
   },
   "breakdown": {
+    "generated": "生成代码",
     "loading": "正在加载改动分解",
-    "total": "合计",
-    "tests": "测试",
     "mocks": "模拟",
-    "generated": "生成代码"
+    "tests": "测试",
+    "total": "合计"
+  },
+  "checkout": {
+    "local": "在本仓库中",
+    "localDetail": "切换你正在工作的分支。",
+    "worktree": "在独立的工作树中",
+    "worktreeDetail": "有自己的文件夹和线程。你已打开的内容不会移动。"
   },
   "checkoutToast": {
-    "notConfirmedTitle": "已检出，但未确认在最新提交上",
-    "notConfirmedDetail": "无法确认此检出位于该{{term}}的最新提交，代码可能有差异。本地提交或未提交的改动会让检出保持在原处。"
+    "notConfirmedDetail": "无法确认此检出位于该{{term}}的最新提交，代码可能有差异。本地提交或未提交的改动会让检出保持在原处。",
+    "notConfirmedTitle": "已检出，但未确认在最新提交上"
+  },
+  "checks": {
+    "loading": "正在加载检查…",
+    "noChecksReported": "未报告任何检查",
+    "openWithSummary": "打开检查：{{summary}}",
+    "outOfDate": "检查信息已过期。",
+    "showAll": "显示全部",
+    "showLess": "收起",
+    "title": "检查",
+    "withSummary": "检查：{{summary}}"
+  },
+  "checksState": {
+    "failing": "部分检查未成功",
+    "passing": "所有检查均已通过",
+    "pending": "部分检查尚未完成"
+  },
+  "checkStatus": {
+    "awaitingAction": "等待处理",
+    "awaitingApproval": "等待批准",
+    "cancelled": "已取消",
+    "failure": "失败",
+    "neutral": "中性",
+    "pending": "运行中",
+    "skipped": "已跳过",
+    "success": "已通过"
+  },
+  "code": {
+    "addToAgent": "交给代理",
+    "addToReview": "加入审查",
+    "allCommits": "所有提交",
+    "changed": "有改动",
+    "changedTooltip": "自你标记为已查看后，此文件又有新的推送。",
+    "collapseAllFiles": "折叠所有文件",
+    "collapseDiff": "折叠差异",
+    "commitNoChanges": "此提交没有文件更改。",
+    "diffLayout": "差异布局",
+    "diffOptions": "差异选项",
+    "diffPartiallyShown": "此差异有一部分未显示",
+    "diffScope": "差异范围：{{scope}}",
+    "disableWrapping": "关闭差异换行",
+    "enableWrapping": "开启差异换行",
+    "expandAllFiles": "展开所有文件",
+    "expandDiff": "展开差异",
+    "fixInThread": "在线程中修复",
+    "hideFileTree": "隐藏文件树",
+    "hideTestFiles": "隐藏测试文件",
+    "hideWhitespace": "隐藏空白更改",
+    "line": "第 {{line}} 行",
+    "lineCommentsFromWholeChange": "行内评论基于完整更改编写",
+    "loadingMoreFiles": "正在加载更多文件…",
+    "loadMoreFiles": "加载更多文件",
+    "orphansCurrentDiff": "不在当前差异中的会话",
+    "orphansLoadedDiff": "不在已加载差异中的会话",
+    "partialCount": "此计数只覆盖部分更改",
+    "resizeFiles": "调整 PR 代码文件面板宽度",
+    "restOfDiffNotLoaded": "差异的其余部分无法加载。",
+    "reviewSectionTitle": "PR #{{number}} 审查",
+    "showFileTree": "显示文件树",
+    "showTestFiles": "显示测试文件",
+    "showWhitespace": "显示空白更改",
+    "splitView": "左右分栏视图",
+    "stackedView": "纵向堆叠视图",
+    "termNoChanges": "此{{term}}没有文件更改。",
+    "ticksLocalOnly": "这些勾选标记只保存在本地，不在托管平台上",
+    "ticksUnreadable": "无法读取你的勾选标记",
+    "viewed": "已查看"
   },
   "commentForm": {
     "closeWithComment": "关闭并评论",
@@ -404,6 +174,10 @@
     "showOldest": "先显示最早评论",
     "titleWithCount": "评论（{{count}}）"
   },
+  "common": {
+    "retry": "重试",
+    "tryAgain": "请重试。"
+  },
   "composer": {
     "close": "关闭编写区",
     "commentOnTerm": "评论此{{term}}",
@@ -411,9 +185,36 @@
     "mode": "编写区模式",
     "review": "审查",
     "reviewPending": "审查 {{term}}，{{count}} 条评论待提交",
+    "reviewPending_other": "审查 {{term}}，{{count}} 条评论待提交",
     "reviewTerm": "审查 {{term}}",
     "reviewWithCount": "审查（{{count}}）",
     "termComposer": "{{term}}编写区"
+  },
+  "confirm": {
+    "deleteBranchBody": "将从 {{repository}} 删除 {{branch}}。本地分支和工作树不受影响。",
+    "deleteBranchTitle": "删除分支 {{branch}}？"
+  },
+  "conflict": {
+    "hasConflicts": "存在冲突",
+    "withBranch": "与 {{branch}} 存在冲突"
+  },
+  "copy": {
+    "branchNameCopied": "分支名已复制",
+    "checkoutCommand": "复制检出命令",
+    "checkoutCommandCopied": "检出命令已复制",
+    "termBranch": "复制{{term}}分支"
+  },
+  "counts": {
+    "comments": "{{formatted}} 条评论",
+    "comments_other": "{{formatted}} 条评论",
+    "commentsUnavailable": "评论不可用",
+    "commits": "{{formatted}} 个提交",
+    "commits_other": "{{formatted}} 个提交",
+    "commitsUnavailable": "提交不可用",
+    "conversation": "{{count}} 个会话",
+    "conversation_other": "{{count}} 个会话",
+    "conversations": "{{formatted}} 个会话",
+    "conversations_other": "{{formatted}} 个会话"
   },
   "crumbs": {
     "backToPullRequests": "返回变更请求",
@@ -423,6 +224,20 @@
     "mode": "Markdown 编辑器模式",
     "preview": "预览",
     "write": "编辑"
+  },
+  "empty": {
+    "mention": {
+      "failed": "无法在托管平台上搜索用户",
+      "label": "提及用户",
+      "none": "没有匹配的用户",
+      "pending": "正在搜索用户…"
+    },
+    "reference": {
+      "failed": "无法搜索托管平台",
+      "label": "引用议题或变更请求",
+      "none": "没有匹配的议题或变更请求",
+      "pending": "正在搜索…"
+    }
   },
   "emptyState": {
     "checkAgain": "再查一次",
@@ -436,13 +251,71 @@
     "searchingHosts": "正在所有托管平台搜索“{{query}}”",
     "widenFilters": "放宽状态、参与角色或项目筛选以查看更多。"
   },
+  "errors": {
+    "commentNotSaved": "评论无法保存",
+    "conversationNotUpdated": "会话无法更新",
+    "copyCheckoutCommand": "无法复制检出命令",
+    "failedToCopy": "复制 {{value}} 失败",
+    "generic": "发生错误。",
+    "loadMoreComments": "无法加载更多评论",
+    "needsTriageAccess": "托管平台拒绝了该操作。请检查你在此仓库有分诊权限。",
+    "openCheckDetails": "无法打开检查详情",
+    "openThread": "无法打开线程",
+    "openThreadForCheckout": "无法为检出打开线程",
+    "openThreadHint": "请从项目页重试，或先打开一个线程。",
+    "postComment": "无法发布评论",
+    "prepareCheckout": "无法准备{{term}}的检出",
+    "reactionNotSaved": "表情回应无法保存",
+    "replyNotPosted": "回复无法发布",
+    "reviewNotSubmitted": "审查无法提交",
+    "reviewRefused": "托管平台拒绝了审查。你的草稿还在，可以重试。",
+    "saveComment": "无法保存评论",
+    "saveDescription": "无法保存描述",
+    "saveMaintainerAccess": "无法保存维护者访问设置",
+    "stackCheckFailed": "无法检查堆叠归属",
+    "stackChecking": "正在检查堆叠归属…",
+    "termNotFound": "未找到 {{term}} #{{number}}",
+    "termNotFoundHint": "它可能是议题而不是{{term}}，或此账号无权查看。",
+    "titleNotSaved": "标题无法保存",
+    "titleRefused": "托管平台拒绝了新标题。",
+    "updateBranchRebaseHint": "托管平台拒绝了该操作。变基会在第一个无法干净应用的提交处停下；改用合并提交更新可能仍然可行。"
+  },
+  "files": {
+    "count": "{{formatted}} 个文件",
+    "count_other": "{{formatted}} 个文件"
+  },
+  "ghosts": {
+    "actionsLoading": "{{term}}操作加载中",
+    "backToThread": "返回本线程的变更请求",
+    "branchName": "分支名",
+    "checkoutCommandTarget": "{{term}}检出命令",
+    "collapsePanel": "折叠{{term}}面板",
+    "labelsLoading": "标签加载中",
+    "loadingConversation": "正在加载{{term}}会话",
+    "loadingPeople": "正在加载成员",
+    "loadingPullRequests": "正在加载变更请求",
+    "loadingPullRequestsEllipsis": "正在加载变更请求…",
+    "loadingTerm": "正在加载{{term}}",
+    "loadingTimeline": "正在加载时间线",
+    "openOnHost": "在托管平台打开 {{term}} #{{number}}",
+    "reviewersLoading": "审查者加载中",
+    "updated": "更新于"
+  },
   "guide": {
     "addComment": "添加评论…",
     "alsoInStop": "此站点的其他位置",
     "askAgent": "询问代理",
     "askAgentAboutLines": "让代理解释这些行…",
+    "attention": {
+      "accessibility": "无障碍相关的提醒",
+      "contract": "需要核对的约定",
+      "product": "产品层面的决定",
+      "risk": "需要评估的风险",
+      "tradeoff": "需要权衡的取舍"
+    },
     "couldNotRewrite": "无法重写此导读。{{hint}}",
     "couldNotWrite": "无法撰写审查导读",
+    "failureHint": "请在设置 → 源码控制中检查审查导读使用的模型。",
     "fileNotInDiff": "此文件不在已加载的差异中。",
     "filesInStop": "此站点的文件",
     "loadingDiff": "正在加载差异…",
@@ -453,22 +326,18 @@
     "readingChange": "正在阅读更改…",
     "reviewGuideTitle": "审查导读",
     "rewritingNote": "正在重写此导读。完成后会通知你。",
+    "tryAgain": "再试一次",
     "writing": "正在撰写审查导读",
-    "writtenBeforePush": "写于最新推送之前。",
-    "failureHint": "请在设置 → 源码控制中检查审查导读使用的模型。",
-    "attention": {
-      "tradeoff": "需要权衡的取舍",
-      "contract": "需要核对的约定",
-      "product": "产品层面的决定",
-      "risk": "需要评估的风险",
-      "accessibility": "无障碍相关的提醒"
-    },
-    "tryAgain": "再试一次"
+    "writtenBeforePush": "写于最新推送之前。"
   },
   "handoff": {
     "fix": "修复",
     "fixCheckInThread": "在此线程中修复",
     "fixFindingsInThread": "在此线程中修复发现的问题"
+  },
+  "issues": {
+    "closed": "已关闭的议题",
+    "open": "打开的议题"
   },
   "labels": {
     "applied": "已应用",
@@ -498,8 +367,124 @@
     "searchThreads": "搜索线程或项目…",
     "untitledThread": "未命名线程"
   },
+  "list": {
+    "allHosts": "全部",
+    "allProjects": "全部项目",
+    "allServers": "全部服务器",
+    "any": "不限",
+    "anyone": "任何人",
+    "breadcrumb": "变更请求面包屑",
+    "checks": {
+      "failing": "失败",
+      "passing": "通过"
+    },
+    "couldNotLoad": "无法加载变更请求",
+    "draft": {
+      "hide": "隐藏草稿",
+      "only": "只看草稿"
+    },
+    "filterByHost": "按托管平台筛选",
+    "filterByInvolvement": "按参与角色筛选",
+    "filterByProvider": "按托管平台筛选",
+    "filterByState": "按状态筛选",
+    "filters": "筛选",
+    "group": {
+      "checks": "检查",
+      "draft": "草稿",
+      "host": "托管平台",
+      "involvement": "参与角色",
+      "project": "项目",
+      "review": "审查",
+      "server": "服务器",
+      "state": "状态"
+    },
+    "involvement": {
+      "all": "全部",
+      "authored": "我发起的",
+      "reviewing": "审查中"
+    },
+    "noAuthors": "未找到作者",
+    "noLabels": "未找到标签",
+    "refresh": "刷新变更请求",
+    "review": {
+      "none": "没有审查",
+      "reviewRequired": "需要审查"
+    },
+    "scopeBreadcrumb": "变更请求范围",
+    "search": "搜索变更请求",
+    "searchAuthors": "搜索作者",
+    "searchAuthorsFailed": "无法在托管平台搜索作者",
+    "searchLabels": "搜索标签",
+    "searchLabelsFailed": "无法在托管平台搜索标签",
+    "searchPlaceholder": "搜索变更请求，或 label:bug",
+    "selectedCount": "已选 {{count}} 个",
+    "sort": {
+      "blocked": "等待我处理",
+      "largest": "最大的在前",
+      "newest": "最新在前",
+      "oldest": "最早在前",
+      "ready": "合并就绪度",
+      "smallest": "最小的在前",
+      "updated": "最近更新"
+    },
+    "state": {
+      "all": "全部",
+      "closed": "已关闭",
+      "merged": "已合并",
+      "open": "打开"
+    },
+    "title": "变更请求"
+  },
+  "loading": {
+    "termDiff": "正在加载{{term}}的差异…"
+  },
   "markdown": {
     "video": "变更请求视频"
+  },
+  "menu": {
+    "allowMaintainerEdits": "允许维护者修改",
+    "allowMaintainerEditsDetail": "维护者可以推送到此分支。如果你的 fork 配置了工作流，这也可能让它访问工作流的机密信息。",
+    "askAddsToComposer": "将此{{term}}添加到当前会话的输入框。",
+    "askAQuestion": "提问",
+    "askOpensThread": "打开一个知道你指的是哪个{{term}}的会话。",
+    "closeTerm": "关闭{{term}}",
+    "convertToDraft": "转为草稿",
+    "copyLink": "复制链接",
+    "copyTermNumber": "复制{{term}}编号",
+    "deleteBranch": "删除分支",
+    "deletingBranch": "正在删除分支…",
+    "disableAutoMerge": "关闭自动合并",
+    "enableAutoMerge": "开启自动合并",
+    "explainDetail": "带你过一遍这份改动，以及需要细读的地方。",
+    "explainTerm": "解释此{{term}}",
+    "mergeNow": "立即合并",
+    "moreTermActions": "更多{{term}}操作",
+    "opening": "正在打开…",
+    "reconnectToDeleteBranch": "重新连接以删除此分支",
+    "refresh": "刷新",
+    "refreshingTerm": "正在刷新{{term}}",
+    "reopenTerm": "重新打开{{term}}",
+    "revertChanges": "还原更改",
+    "rewriteGuide": "重写指南",
+    "saving": "正在保存…",
+    "termLink": "{{term}}链接",
+    "termNumber": "{{term}}编号",
+    "writeGuide": "编写指南",
+    "writingGuide": "正在编写指南…"
+  },
+  "mergeMethod": {
+    "merge": "合并",
+    "rebase": "变基后合并",
+    "squash": "压缩后合并"
+  },
+  "meta": {
+    "description": "描述",
+    "labels": "标签",
+    "none": "无",
+    "prTabs": "变更请求标签页",
+    "receivesChangesFrom": "接受来自以下分支的更改",
+    "reviewers": "审查者",
+    "termReference": "{{term}}引用"
   },
   "page": {
     "failedToCopyLink": "复制 {{label}} 链接失败",
@@ -517,17 +502,17 @@
   "panel": {
     "actionsFor": "#{{number}} 的操作",
     "chainedByBase": "{{count}} 个{{term}}通过基分支串联。",
+    "createdFromThread": "从此线程创建",
+    "dismissed": "已忽略",
+    "foundInStack": "在堆叠中发现",
     "hostStack": "{{host}}堆叠共 {{count}} 层：合并一层会连带合并其下的层。",
+    "linkedByAgent": "由代理关联",
+    "linkedByYou": "由你关联",
     "stopWatching": "停止关注",
     "unavailable": "关联的变更请求不可用",
     "unsupported": "此环境不支持多个关联的变更请求。",
     "waitingForHost": "等待托管平台状态",
-    "watch": "关注更改",
-    "linkedByYou": "由你关联",
-    "linkedByAgent": "由代理关联",
-    "foundInStack": "在堆叠中发现",
-    "dismissed": "已忽略",
-    "createdFromThread": "从此线程创建"
+    "watch": "关注更改"
   },
   "picker": {
     "couldNotAsk": "无法请 {{login}} 审查",
@@ -560,7 +545,15 @@
   "reactions": {
     "add": "添加表情回应"
   },
+  "reviewDecision": {
+    "approved": "已批准",
+    "changesRequested": "已请求修改",
+    "reviewRequired": "等待审查"
+  },
   "reviewForm": {
+    "approve": "批准",
+    "comment": "评论",
+    "requestChanges": "请求修改",
     "reviewSubmitted": "审查已提交",
     "submit": "提交审查",
     "submitting": "提交中…",
@@ -568,19 +561,22 @@
     "summaryOptional": "写一段审查摘要（可选）",
     "summaryOrLineComments": "写一段审查摘要，或添加行内评论",
     "summaryRequired": "写一段审查摘要（请求修改时必填）",
-    "termApproved": "{{term}}已批准",
-    "comment": "评论",
-    "approve": "批准",
-    "requestChanges": "请求修改"
+    "termApproved": "{{term}}已批准"
+  },
+  "reviewOutcome": {
+    "approved": "已批准",
+    "changesRequested": "已请求修改",
+    "dismissed": "审查已撤回",
+    "earlierChanges": "{{outcome}}了更早的更改"
   },
   "speed": {
     "actionFor": "{{label}} #{{number}}",
     "actionImmediately": "立即{{label}}",
+    "close": "关闭",
     "closeHint": "立即关闭，或拖过几行来关闭多个",
+    "merge": "合并",
     "openToMergeStack": "打开此{{term}}以合并其堆叠",
     "quickActions": "{{term}} #{{number}} 的快捷操作",
-    "close": "关闭",
-    "merge": "合并",
     "reopen": "重新打开"
   },
   "stack": {
@@ -594,21 +590,63 @@
     "rebasing": "正在变基堆叠…",
     "retryRefresh": "重试刷新堆叠"
   },
+  "state": {
+    "closed": "已关闭",
+    "draft": "草稿",
+    "merged": "已合并",
+    "open": "打开"
+  },
   "summary": {
     "describeTerm": "描述此{{term}}",
     "editDescription": "编辑描述",
     "termDescription": "{{term}}描述"
   },
+  "tabs": {
+    "code": "代码",
+    "guide": "导读",
+    "summary": "摘要",
+    "timeline": "时间线"
+  },
   "thread": {
     "open": "打开",
-    "resolved": "已解决",
     "resolve": "解决",
+    "resolved": "已解决",
     "unresolve": "取消解决"
+  },
+  "timeline": {
+    "newestFirst": "最新在前",
+    "oldestFirst": "最早在前",
+    "openActivityOnHost": "在托管平台打开动态",
+    "showNewest": "先显示最新的动态",
+    "showOldest": "先显示最早的动态",
+    "termClosed": "{{title}}已关闭",
+    "termMerged": "{{title}}已合并",
+    "termOpened": "{{title}}已打开",
+    "untitledCommit": "未命名提交",
+    "viewCommit": "查看提交 {{id}}"
   },
   "titleEditor": {
     "editTitle": "编辑标题",
     "save": "保存",
     "saving": "保存中…",
     "termTitle": "{{term}}标题"
+  },
+  "toasts": {
+    "addedToComposer": "已加入编写区",
+    "askedInThread": "已在线程中提问",
+    "branchDeleted": "分支已删除",
+    "checkedOut": "已检出",
+    "checkedOutDetail": "该{{term}}位于自己的工作树中，并在线程中打开。",
+    "checkedOutHere": "已在此处检出",
+    "checkedOutHereDetail": "本仓库已切换到该{{term}}的分支，并在线程中打开。",
+    "checkedOutThreadStuck": "已检出，但线程仍留在原处",
+    "checkedOutThreadStuckHint": "检出已在 `{{branch}}` 就绪。从分支选择器把线程指过去，然后再试一次。",
+    "checkoutReady": "检出就绪",
+    "composerQuestion": "问题已在编写区。确认内容后发送。",
+    "composerTask": "任务已在编写区。确认内容后发送。",
+    "composerTerm": "{{term}}已在编写区。输入你的问题后发送。",
+    "copiedValue": "已复制 {{value}}",
+    "preparingCheckout": "正在准备{{term}}的检出…",
+    "revertOpened": "已打开{{term}}的回退"
   }
 }
