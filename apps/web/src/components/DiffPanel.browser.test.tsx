@@ -265,8 +265,24 @@ it("opens a repository-relative file from a nested project without a remote", as
   useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
-      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      <div className="flex h-[600px] flex-col">
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
     </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByText(path, { exact: true }));
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+  ).toMatchObject({ activeSurfaceId: "file:back\\slash.txt" });
+  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
+  await act(() =>
+    context.registry.set(
+      context.patch,
+      AsyncResult.success({
+        ...source,
+        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
+      }),
+    ),
   );
   await userEvent.click(screen.getByText(path, { exact: true }));
   expect(
@@ -399,39 +415,6 @@ function openedFiles(threadRef: ScopedThreadRef) {
   );
 }
 
-it("opens a file from a diff in a project inside its repository", async () => {
-  using context = setup("origin/orphan");
-  // Without a remote the project has no repository identity.
-  inRepositoryFolder(context, false);
-  const path = "apps/web/src/a.ts";
-  const metadata = preview();
-  const source = {
-    ...metadata.sources[0]!,
-    files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
-  };
-  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
-  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
-  await using screen = await render(
-    <RegistryContext.Provider value={context.registry}>
-      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
-      </div>
-    </RegistryContext.Provider>,
-  );
-  await userEvent.click(screen.getByRole("button", { name: `Expand ${path}`, exact: true }));
-  await act(() =>
-    context.registry.set(
-      context.patch,
-      AsyncResult.success({
-        ...source,
-        diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
-      }),
-    ),
-  );
-  await userEvent.click(screen.getByText(path, { exact: true }));
-  await vi.waitFor(() => expect(openedFiles(context.threadRef)).toContain("file:src/a.ts"));
-});
-
 it("opens a file from a tool call's diff by the path its agent recorded", async () => {
   using context = setup("origin/orphan");
   inRepositoryFolder(context, true);
@@ -448,7 +431,7 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
   });
   await using screen = await render(
     <RegistryContext.Provider value={context.registry}>
-      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+      <div className="flex h-[600px] flex-col">
         <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
       </div>
     </RegistryContext.Provider>,
