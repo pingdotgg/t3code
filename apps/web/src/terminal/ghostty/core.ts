@@ -248,6 +248,11 @@ export class GhosttyTerminalCore {
   private cellQuery = 0;
   private scrollbar = 0;
   private rows: GhosttyRow[] = [];
+  // Defaults the cached rows resolved; Ghostty marks no row dirty when OSC 10/11 change them.
+  private rowColors: {
+    readonly foreground: GhosttyColor;
+    readonly background: GhosttyColor;
+  } | null = null;
   private disposed = false;
   private keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
 
@@ -884,8 +889,14 @@ export class GhosttyTerminalCore {
       }));
     }
 
+    const colorsChanged =
+      this.rowColors !== null &&
+      (!sameColor(this.rowColors.foreground, foreground) ||
+        !sameColor(this.rowColors.background, background));
+    this.rowColors = { foreground, background };
+
     const dirtyRows = new Set<number>();
-    if (dirty !== 0) {
+    if (dirty !== 0 || colorsChanged) {
       this.assertSuccess(
         "ghostty_render_state_get(row iterator)",
         this.runtime.call(
@@ -901,7 +912,7 @@ export class GhosttyTerminalCore {
         rowIndex < rowCount &&
         this.runtime.call("ghostty_render_state_row_iterator_next", iterator) !== 0
       ) {
-        const rowDirty = dirty === 2 || this.getRowBool(iterator, ROW_DATA.dirty);
+        const rowDirty = dirty === 2 || colorsChanged || this.getRowBool(iterator, ROW_DATA.dirty);
         if (rowDirty) {
           this.rows[rowIndex] = this.readRow(iterator, cols, foreground, background);
           dirtyRows.add(rowIndex);
