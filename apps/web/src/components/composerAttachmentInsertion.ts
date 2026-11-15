@@ -13,14 +13,21 @@ import {
 } from "../lib/composerContextReferences";
 import { markAsClipboardEdit } from "../composer-undo-grouping";
 
+const INSERTION_ORDER_META = "composerAttachmentInsertionOrder";
+let nextInsertionOrder = 0;
+
 export function captureComposerAttachmentInsertion(editor: Editor) {
+  const order = nextInsertionOrder++;
   let { from, to } = editor.state.selection;
   let lost = false;
   const track = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
-    // Keep the attachment before text typed at the paste point while its image is preparing.
     for (const tr of [transaction, ...appendedTransactions]) {
-      const start = tr.mapping.mapResult(from, -1);
-      const end = tr.mapping.mapResult(to, -1);
+      // Keep the attachment before text typed at the paste point while its image is preparing,
+      // but after the references of an earlier paste that finished first there.
+      const earlier: unknown = tr.getMeta(INSERTION_ORDER_META);
+      const assoc = typeof earlier === "number" && earlier < order ? 1 : -1;
+      const start = tr.mapping.mapResult(from, assoc);
+      const end = tr.mapping.mapResult(to, assoc);
       // A replacement spanning the paste point (such as a controlled setContent) leaves no
       // position to keep, so the caller falls back to the current caret.
       lost ||= start.deletedAcross || end.deletedAcross;
@@ -61,7 +68,7 @@ export function captureComposerAttachmentInsertion(editor: Editor) {
         flatToPm(map, markdownToFlat(map, edit.end)),
         content,
       );
-      editor.view.dispatch(markAsClipboardEdit(tr, "paste"));
+      editor.view.dispatch(markAsClipboardEdit(tr, "paste").setMeta(INSERTION_ORDER_META, order));
       return true;
     },
     dispose,
