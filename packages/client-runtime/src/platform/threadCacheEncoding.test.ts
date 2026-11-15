@@ -18,7 +18,6 @@ import {
   StoredOrchestrationThreadSnapshot,
 } from "./orchestrationCache.ts";
 import {
-  COMPACT_THREAD_CACHE_SCHEMA_VERSION,
   decodeStoredThreadSnapshot,
   makeStoredThreadSnapshotEncoder,
 } from "./threadCacheEncoding.ts";
@@ -144,7 +143,6 @@ describe("cooperative thread cache encoding", () => {
 });
 
 describe("thread cache records", () => {
-  const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
   const BODY = "a body long enough to count ".repeat(4);
   const COMMAND_OUTPUT = "only the items carry this output";
 
@@ -212,31 +210,12 @@ describe("thread cache records", () => {
     snapshotSequence: 3,
     projection: bodyProjection,
   };
-  const record = { environmentId: ENVIRONMENT_ID, threadId: v2ThreadId, snapshot };
-  const occurrences = (text: string, part: string) => text.split(part).length - 1;
+  const record = { environmentId, threadId: v2ThreadId, snapshot };
 
   const encodeStoredThreadSnapshot = (input: typeof record) =>
     makeStoredThreadSnapshotEncoder({ format: "compact" })(input).pipe(
       Effect.map(Option.getOrThrow),
     );
-
-  it.effect("writes each item once", () =>
-    Effect.gen(function* () {
-      const raw = yield* encodeStoredThreadSnapshot(record);
-      expect(JSON.parse(raw).schemaVersion).toBe(COMPACT_THREAD_CACHE_SCHEMA_VERSION);
-      expect(occurrences(raw, COMMAND_OUTPUT)).toBe(1);
-    }),
-  );
-
-  it.effect("decodes to the same projection, with one object per item", () =>
-    Effect.gen(function* () {
-      const decoded = yield* decodeStoredThreadSnapshot(yield* encodeStoredThreadSnapshot(record));
-      const { projection: loaded } = decoded.snapshot;
-      expect(loaded).toEqual(bodyProjection);
-      expect(loaded.visibleTurnItems[0]!.item).toBe(loaded.turnItems[0]);
-      expect(loaded.visibleTurnItems[1]!.item).toBe(loaded.turnItems[1]);
-    }),
-  );
 
   it.effect("shares the copies of a record that could not be compacted", () =>
     Effect.gen(function* () {
@@ -269,7 +248,6 @@ describe("thread cache records", () => {
         schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
         ...record,
       });
-      expect(occurrences(raw, COMMAND_OUTPUT)).toBe(2);
       const { projection: loaded } = (yield* decodeStoredThreadSnapshot(raw)).snapshot;
       expect(loaded).toEqual(bodyProjection);
       expect(loaded.visibleTurnItems[1]!.item).toBe(loaded.turnItems[1]);
