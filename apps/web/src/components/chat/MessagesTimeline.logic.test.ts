@@ -5817,22 +5817,63 @@ describe("turn fold endings", () => {
 });
 
 it.each([
-  [true, "updated"],
-  [true, "failed"],
-  [false, "updated"],
-  [false, "completed"],
-  [false, "failed"],
-] as const)("groups consecutive notification responses (%s, %s)", (active, outcome) => {
+  [true, "updated", false],
+  [true, "failed", false],
+  [false, "updated", false],
+  [false, "completed", false],
+  [false, "failed", false],
+  [false, "updated", true],
+] as const)("groups notification responses (%s, %s, %s)", (active, outcome, mixed) => {
   const fixture = makeStreamingTimelineFixture("Update received");
+  const returnedRunId = RunId.make("returned-task-run");
+  const visibleTurnItems = mixed
+    ? [
+        ...fixture.visibleTurnItems.slice(0, 3),
+        ...fixture.visibleTurnItems.slice(0, 3).map((row) => {
+          const id = TurnItemId.make(`${row.item.id}-returned`);
+          return {
+            ...row,
+            sourceItemId: id,
+            item: {
+              ...row.item,
+              id,
+              runId: returnedRunId,
+              ordinal: 4,
+              startedAt: DateTime.makeUnsafe(fixture.time(4)),
+              completedAt: DateTime.makeUnsafe(fixture.time(4)),
+              updatedAt: DateTime.makeUnsafe(fixture.time(4)),
+              ...(row.item.type === "assistant_message"
+                ? { messageId: MessageId.make("returned-answer"), text: "Task finished" }
+                : {}),
+            },
+          };
+        }),
+        ...fixture.visibleTurnItems.slice(3),
+      ]
+    : fixture.visibleTurnItems;
   const entries = deriveTimelineEntriesFromVisibleTurnItems({
-    visibleTurnItems: fixture.visibleTurnItems.map((row) => ({
+    visibleTurnItems: visibleTurnItems.map((row, position) => ({
       ...row,
+      position,
       item:
         row.item.type === "user_message"
           ? {
               ...row.item,
               type: "notification",
-              source: { kind: outcome === "failed" ? "monitor" : "background_task" },
+              source: mixed
+                ? row.item.runId === returnedRunId
+                  ? { kind: "delegated_task", taskIds: [NodeId.make("returned-task")] }
+                  : {
+                      kind: "monitor",
+                      pullRequest: {
+                        host: "github.com",
+                        repository: "pingdotgg/t3code",
+                        number: 28844,
+                        watchStartedAt: fixture.time(0),
+                        headSha: null,
+                      },
+                    }
+                : { kind: outcome === "failed" ? "monitor" : "background_task" },
               outcome: active && row.item.runId === fixture.runId ? "updated" : outcome,
               summary:
                 outcome === "failed" ? "#28844: checks failed" : "Background activity updated",
@@ -5866,6 +5907,33 @@ it.each([
   };
   const original = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
   const collapsed = applyBackgroundActivityGroups(original, input);
+  if (mixed) {
+    const groups = collapsed.filter((row) => row.kind === "background-activity");
+    expect(groups).toMatchObject([
+      { updateCount: 1, runIds: [fixture.historyRunId] },
+      { updateCount: 1, runIds: [fixture.runId] },
+    ]);
+    const returned = original.filter((row) =>
+      row.kind === "message" || row.kind === "assistant-meta"
+        ? row.message.runId === returnedRunId
+        : row.kind === "turn-fold"
+          ? row.runId === returnedRunId
+          : row.id.endsWith("-returned"),
+    );
+    expect(returned.length).toBeGreaterThan(2);
+    expect(
+      collapsed.slice(collapsed.indexOf(groups[0]!) + 1, collapsed.indexOf(groups[1]!)),
+    ).toEqual([
+      ...original.filter(
+        (row) =>
+          (row.kind === "message" || row.kind === "assistant-meta") &&
+          row.message.runId === fixture.historyRunId,
+      ),
+      ...returned,
+    ]);
+    expect(returned.every((row) => collapsed.includes(row))).toBe(true);
+    return;
+  }
   const answerRows = (runId: RunId, rows = original) =>
     rows.filter(
       (row) =>
@@ -5979,6 +6047,9 @@ it.each([
   "system-notice",
   "pending",
   "thread-error",
+  "delegated_task",
+  "subagent",
+  "command",
 ] as const)("keeps the original response visible for %s", (condition) => {
   const fixture = makeStreamingTimelineFixture("Response");
   const visibleTurnItems = fixture.visibleTurnItems.map((row): OrchestrationV2ProjectedTurnItem => {
@@ -5989,7 +6060,12 @@ it.each([
         item: {
           ...row.item,
           type: "notification",
-          source: { kind: "monitor" },
+          source:
+            condition === "delegated_task"
+              ? { kind: "delegated_task", taskIds: [NodeId.make("reported-task")] }
+              : condition === "subagent" || condition === "command"
+                ? { kind: condition }
+                : { kind: "monitor" },
           outcome: condition === "notification-failure" ? "failed" : "updated",
           summary: "Monitor updated",
         },
