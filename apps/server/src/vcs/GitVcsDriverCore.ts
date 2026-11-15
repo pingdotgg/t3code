@@ -4259,7 +4259,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ref === null ? result : { ...result, files: undefined, stdoutTruncated: true };
       return [
         !complete ? incomplete(dirtyRef, dirty) : dirty,
-        untracked === null ? incomplete(review.mergeBase, base) : base,
+        !complete ? incomplete(review.mergeBase, base) : base,
         unstagedIndex === null || unstagedIndex.omitted
           ? incomplete(unstagedRef, unstaged)
           : unstaged,

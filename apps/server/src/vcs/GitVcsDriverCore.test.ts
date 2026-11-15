@@ -3650,7 +3650,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.notInclude(diff, "new file mode");
           const unstaged = preview.sources.find((source) => source.kind === "unstaged")!;
           assert.deepStrictEqual(unstaged.files, [
-            { path: "removed.txt", previousPath: null, additions: 1, deletions: 0 },
+            {
+              path: "removed.txt",
+              previousPath: null,
+              changeType: "new",
+              additions: 1,
+              deletions: 0,
+            },
           ]);
           assert.include(unstaged.diff, "+remove me");
           const selected = yield* driver.getReviewDiffPreview({ cwd, sourceKind: "unstaged" });
@@ -3998,7 +4004,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ]) {
             const tracked = yield* driver.getReviewDiffPreview({ ...input, ...options });
             assert.deepStrictEqual(tracked.sources[0]!.files, [
-              { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
+              {
+                path: "README.md",
+                previousPath: null,
+                changeType: "change",
+                additions: 1,
+                deletions: 1,
+              },
             ]);
             assert.deepStrictEqual(yield* fs.readFile(indexPath), indexBytesBefore);
             assert.deepStrictEqual((yield* fs.stat(indexPath)).mtime, indexMtimeBefore);
@@ -4008,8 +4020,20 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const source = preview.sources.find((source) => source.kind === "unstaged")!;
           assert.isDefined(source);
           assert.deepStrictEqual(source.files, [
-            { path: "README.md", previousPath: null, additions: 1, deletions: 1 },
-            { path: "untracked.txt", previousPath: null, additions: 1, deletions: 0 },
+            {
+              path: "README.md",
+              previousPath: null,
+              changeType: "change",
+              additions: 1,
+              deletions: 1,
+            },
+            {
+              path: "untracked.txt",
+              previousPath: null,
+              changeType: "new",
+              additions: 1,
+              deletions: 0,
+            },
           ]);
           assert.include(source.diff, "-# staged");
           assert.include(source.diff, "+# unstaged");
@@ -4045,7 +4069,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             file: { path: "binary.dat", previousPath: null, sourceKind: "unstaged" },
           });
           assert.deepStrictEqual(binary.sources[0]!.files, [
-            { path: "binary.dat", previousPath: null, additions: 0, deletions: 0 },
+            {
+              path: "binary.dat",
+              previousPath: null,
+              changeType: "change",
+              additions: 0,
+              deletions: 0,
+            },
           ]);
           assert.include(
             binary.sources[0]!.diff,
@@ -5196,6 +5226,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const preview = yield* driver.getReviewDiffPreview({ cwd, metadataOnly: true });
 
+        const branch = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.isUndefined(branch.files);
+        assert.isUndefined(branch.patchesDeferred);
+        assert.isTrue(branch.truncated);
         const source = preview.sources.find((source) => source.kind === "working-tree")!;
         assert.isUndefined(source.files);
         assert.isUndefined(source.patchesDeferred);
