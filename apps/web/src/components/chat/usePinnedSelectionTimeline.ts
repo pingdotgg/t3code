@@ -16,6 +16,7 @@ import {
   type PinnedSelection,
 } from "../../pinnedSelections";
 import type { TimelineEntry } from "../../session-logic";
+import { revealFolded } from "./threadFindHighlights";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 interface PinnedHistoryControls {
@@ -104,6 +105,15 @@ function revealTarget(
   const message = messageElement(root, messageId);
   if (!message) return null;
   const range = pin ? resolvePinnedSelectionRange(message, pin) : null;
+  if (range && revealFolded(range, message)) return null;
+  const codeScroller = range?.startContainer.parentElement?.closest("pre");
+  if (range && codeScroller) {
+    const rect = range.getBoundingClientRect();
+    const viewport = codeScroller.getBoundingClientRect();
+    if (rect.left < viewport.left) codeScroller.scrollLeft += rect.left - viewport.left - 16;
+    else if (rect.right > viewport.right)
+      codeScroller.scrollLeft += rect.right - viewport.right + 16;
+  }
   const rect = (range ?? message).getBoundingClientRect();
   return { top: rect.top, bottom: rect.bottom, height: rect.height };
 }

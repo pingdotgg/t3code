@@ -90,7 +90,7 @@ function foldsHiding(range: Range, container: HTMLElement): Element[] {
   return folds;
 }
 
-function revealFolded(range: Range, container: HTMLElement): boolean {
+export function revealFolded(range: Range, container: HTMLElement): boolean {
   const folds = foldsHiding(range, container);
   for (const fold of folds) fold.dispatchEvent(new Event("beforematch"));
   return folds.length > 0;

@@ -12,7 +12,7 @@ import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
   type AssistantCitation,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type OrchestrationV2TurnItem,
   type RunAttemptId,
   type ServerProviderSkill,
@@ -641,7 +641,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
-  const revealedMessageId = citationRequest?.citation.messageId ?? null;
+  const pinnedReveal = usePinnedSelectionRevealStore((state) =>
+    state.reveal?.threadKey === listIdentityKey ? state.reveal : null,
+  );
+  const [lastPinnedReveal, setLastPinnedReveal] = useState(pinnedReveal);
+  if (pinnedReveal && pinnedReveal !== lastPinnedReveal) setLastPinnedReveal(pinnedReveal);
+  const pinnedMessageId =
+    pinnedReveal?.messageId ??
+    (lastPinnedReveal?.threadKey === listIdentityKey ? lastPinnedReveal.messageId : null);
+  const revealedMessageId =
+    citationRequest?.citation.messageId ??
+    (pinnedMessageId === null ? null : MessageId.make(pinnedMessageId));
   // Imported turns and post-steer work fold under synthetic keys, not the entries' run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
@@ -670,9 +680,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // The marker stops the O(entries) fold lookup once the entry is found, since
   // the href stays in the URL after the citation settles.
   const [citationExpandedFor, setCitationExpandedFor] = useState<string | null>(null);
-  const pinnedReveal = usePinnedSelectionRevealStore((state) =>
-    state.reveal?.threadKey === listIdentityKey ? state.reveal : null,
-  );
   const threadPins = useUiStateStore((state) => state.threadPinnedSelectionsById[listIdentityKey]);
   const activePinnedSelection =
     pinnedReveal === null
