@@ -6,7 +6,7 @@ import { Combobox, ComboboxSearchInput } from "./combobox";
 import { MenuSearchInput } from "./menu";
 
 it.each(["combobox", "menu"] as const)(
-  "focuses the %s search when clicking the right edge of its row",
+  "focuses the %s search when clicking anywhere in its row",
   async (kind) => {
     await using screen = await render(
       <div className="w-96" data-testid="search-row">
