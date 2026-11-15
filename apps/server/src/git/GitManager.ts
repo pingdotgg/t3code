@@ -102,6 +102,11 @@ export interface GitRunStackedActionOptions {
   readonly progressReporter?: GitActionProgressReporter;
 }
 
+export interface GitLocalStatusOptions {
+  /** Defaults to true. The branch-wide totals cost about half of a local status read. */
+  readonly includeBranchChanges?: boolean;
+}
+
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   readonly refreshMissingPullRequest?: boolean;
 }
@@ -132,6 +137,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly localStatus: (
       input: VcsStatusInput,
+      options?: GitLocalStatusOptions,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
@@ -623,10 +629,10 @@ function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
   state: "open" | "all",
-  defaultBranchHeadSelector?: string,
+  ownerHeadSelector?: string,
 ) {
   return (
-    provider.headBranchProbe?.({ headSelectors, state, defaultBranchHeadSelector }) ?? {
+    provider.headBranchProbe?.({ headSelectors, state, ownerHeadSelector }) ?? {
       headSelectors,
       limit: state === "open" ? 1 : 20,
     }
@@ -1202,9 +1208,12 @@ export const make = Effect.gen(function* () {
     behindCount: 0,
     aheadOfDefaultCount: 0,
   };
-  const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+  const readLocalStatus = Effect.fn("readLocalStatus")(function* (
+    cwd: string,
+    includeBranchChanges: boolean,
+  ) {
     const details = yield* gitCore
-      .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
+      .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges })
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
@@ -1223,13 +1232,22 @@ export const make = Effect.gen(function* () {
       ...(details.branchChanges ? { branchChanges: details.branchChanges } : {}),
     } satisfies VcsStatusLocalResult;
   });
-  const localStatusResultCache = yield* Cache.makeWith(readLocalStatus, {
-    capacity: STATUS_RESULT_CACHE_CAPACITY,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
-  });
+  const makeLocalStatusResultCache = (includeBranchChanges: boolean) =>
+    Cache.makeWith((cwd: string) => readLocalStatus(cwd, includeBranchChanges), {
+      capacity: STATUS_RESULT_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
+    });
+  // Separate entries, so a read without totals is never served to a caller that shows them.
+  const localStatusResultCache = yield* makeLocalStatusResultCache(true);
+  const localStatusWithoutBranchChangesCache = yield* makeLocalStatusResultCache(false);
   const invalidateLocalStatusResultCache = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
-      Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
+      Effect.flatMap((cacheKey) =>
+        Effect.all([
+          Cache.invalidate(localStatusResultCache, cacheKey),
+          Cache.invalidate(localStatusWithoutBranchChangesCache, cacheKey),
+        ]),
+      ),
     );
   const prLookupEpochByCwd = new Map<string, number>();
   const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
@@ -1962,9 +1980,10 @@ export const make = Effect.gen(function* () {
       | "headRepositoryOwnerLogin"
       | "isCrossRepository"
     >,
+    ownerHeadSelector?: string,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const probe = headBranchProbe(provider, headContext.headSelectors, "open");
+    const probe = headBranchProbe(provider, headContext.headSelectors, "open", ownerHeadSelector);
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -2005,6 +2024,7 @@ export const make = Effect.gen(function* () {
         ? `${headContext.headRepositoryOwnerLogin}:${defaultBranch}`
         : undefined,
     );
+    let pageWasFull = false;
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
         cwd,
@@ -2012,6 +2032,7 @@ export const make = Effect.gen(function* () {
         state: "all",
         limit: probe.limit,
       });
+      pageWasFull ||= pullRequests.length >= probe.limit;
 
       for (const pr of pullRequests.map(toPullRequestInfo)) {
         if (!matchesBranchHeadContext(pr, headContext)) {
@@ -2026,6 +2047,17 @@ export const make = Effect.gen(function* () {
     const latestOpenPr = parsed.find((pr) => pr.state === "open");
     if (latestOpenPr) {
       return latestOpenPr;
+    }
+    // Forks reusing the head name can fill the page before the branch's own open PR.
+    if (pageWasFull) {
+      const openPr = yield* findOpenPr(
+        cwd,
+        headContext,
+        headContext.headRepositoryOwnerLogin
+          ? `${headContext.headRepositoryOwnerLogin}:${headContext.headBranch}`
+          : undefined,
+      );
+      if (openPr) return openPr;
     }
     return parsed[0] ?? null;
   });
@@ -2043,16 +2075,17 @@ export const make = Effect.gen(function* () {
       hasUpstream: boolean;
     } | null = null;
 
-    if (result.action !== "commit") {
-      const finalStatus = yield* gitCore.statusDetails(cwd);
-      if (finalStatus.branch) {
-        finalBranchContext = {
-          branch: finalStatus.branch,
-          upstreamRef: finalStatus.upstreamRef,
-          hasUpstream: finalStatus.hasUpstream,
-        };
-        currentBranchIsDefault = finalStatus.isDefaultBranch;
-      }
+    const finalStatus =
+      result.action === "commit"
+        ? null
+        : yield* gitCore.statusDetails(cwd).pipe(Effect.orElseSucceed(() => null));
+    if (finalStatus?.branch) {
+      finalBranchContext = {
+        branch: finalStatus.branch,
+        upstreamRef: finalStatus.upstreamRef,
+        hasUpstream: finalStatus.hasUpstream,
+      };
+      currentBranchIsDefault = finalStatus.isDefaultBranch;
     }
 
     const explicitResultPr =
@@ -2104,6 +2137,7 @@ export const make = Effect.gen(function* () {
             }
           : (result.action === "push" || result.action === "commit_push") &&
               result.push.status === "pushed" &&
+              finalStatus !== null &&
               !currentBranchIsDefault
             ? {
                 kind: "run_action" as const,
@@ -2554,9 +2588,14 @@ export const make = Effect.gen(function* () {
   });
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
-    function* (input) {
+    function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      return yield* Cache.get(localStatusResultCache, cacheKey);
+      return yield* Cache.get(
+        options?.includeBranchChanges === false
+          ? localStatusWithoutBranchChangesCache
+          : localStatusResultCache,
+        cacheKey,
+      );
     },
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
