@@ -362,6 +362,7 @@ function CommandPaletteDialog(props: {
   readonly initialContext: CommandPaletteReturnContext | undefined;
 }) {
   const composerHandleRef = useComposerHandleContext();
+  const pendingFileFind = useRef<HTMLElement | null>(null);
 
   return (
     <CommandDialogPopup
@@ -377,6 +378,9 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
+        const findTarget = pendingFileFind.current;
+        pendingFileFind.current = null;
+        if (findTarget?.isConnected && requestMarkdownFindOpen(findTarget)) return false;
         if (restoreWorkspaceFocusFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
@@ -397,6 +401,9 @@ function CommandPaletteDialog(props: {
       ) : (
         <OpenCommandPaletteDialog
           key={props.session}
+          onFindInFile={(target) => {
+            pendingFileFind.current = target;
+          }}
           openIntent={props.openIntent}
           setOpen={props.setOpen}
           openChildSearch={props.openChildSearch}
@@ -408,6 +415,7 @@ function CommandPaletteDialog(props: {
 }
 
 function OpenCommandPaletteDialog(props: {
+  readonly onFindInFile: (target: HTMLElement) => void;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
   readonly openChildSearch: (
@@ -1377,7 +1385,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <TextSearchIcon className={ITEM_ICON_CLASS} />,
       shortcutCommand: "file.find",
       run: async () => {
-        requestMarkdownFindOpen(markdownFindTarget);
+        props.onFindInFile(markdownFindTarget);
       },
     });
   }
