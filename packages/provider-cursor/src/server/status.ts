@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import type { SDKModel, SDKUser } from "@cursor/sdk";
 import type {
   ModelCapabilities,
@@ -173,10 +174,12 @@ export function buildCursorDiscoveredModelsFromSdk(
       return [];
     }
     seen.add(slug);
+    const aliases = model.aliases?.map((alias) => alias.trim()).filter(Boolean) ?? [];
     return [
       {
         slug,
         name,
+        ...(aliases.length > 0 ? { aliases } : {}),
         isCustom: false,
         capabilities: buildCursorCapabilitiesFromSdkModel(model),
       } satisfies ServerProviderModel,
@@ -289,9 +292,19 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   }
 
   const sdkCatalog = yield* CursorSdkCatalog.CursorSdkCatalog;
-  const catalogResult = yield* sdkCatalog
-    .read(sdkApiKey)
-    .pipe(Effect.timeoutOption(CURSOR_SDK_CATALOG_TIMEOUT_MS), Effect.result);
+  const timeoutMs = resolveProviderProbeTimeoutMs(
+    "cursor",
+    CURSOR_SDK_CATALOG_TIMEOUT_MS,
+    environment,
+  );
+  const readCatalog = Effect.suspend(() => sdkCatalog.read(sdkApiKey)).pipe(
+    Effect.timeoutOption(timeoutMs),
+  );
+  // api.cursor.com latency is intermittent; one slow read should not flip the provider to error.
+  const catalogResult = yield* readCatalog.pipe(
+    Effect.filterOrElse(Option.isSome, () => readCatalog),
+    Effect.result,
+  );
 
   if (Result.isFailure(catalogResult)) {
     yield* Effect.logWarning("Cursor SDK catalog probe failed", {
@@ -336,7 +349,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
         version: null,
         status: "error",
         auth: { status: "unknown" },
-        message: `Cursor SDK catalog request timed out after ${CURSOR_SDK_CATALOG_TIMEOUT_MS}ms.`,
+        message: `Cursor SDK catalog request timed out after ${timeoutMs}ms.`,
       },
     });
   }
