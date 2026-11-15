@@ -557,7 +557,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     canSteer: props.canSteerActiveTurn,
     followUpBehavior: props.followUpBehavior,
     deliveryDeferred:
-      props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
+      !draftRunsLocally &&
+      (props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading),
   });
   const sendLabel = sendPresentation.label;
   const openUsageLimits = () => {
