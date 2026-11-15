@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -61,6 +62,15 @@ const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceCo
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
+
+export class CliArchiveLinuxArm64PageError extends Schema.TaggedError<CliArchiveLinuxArm64PageError>()(
+  "CliArchiveLinuxArm64PageError",
+  { executablePath: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `${this.executablePath} is not page-compatible with Linux arm64.`;
+  }
+}
 
 export class CliArchiveCommandFailedError extends Schema.TaggedError<CliArchiveCommandFailedError>()(
   "CliArchiveCommandFailedError",
@@ -321,16 +331,99 @@ const MacSigningConfig = Config.all({
   appleApiIssuer: Config.String("APPLE_API_ISSUER").pipe(Config.option),
 });
 
+export class CliArchiveNotarizationRejectedError extends Schema.TaggedError<CliArchiveNotarizationRejectedError>()(
+  "CliArchiveNotarizationRejectedError",
+  { submissionId: Schema.String, status: Schema.String },
+) {
+  override get message(): string {
+    return `Apple notarization ${this.submissionId} is ${this.status}, not Accepted.`;
+  }
+}
+
+const NotarySubmission = Schema.Struct({
+  id: Schema.NonEmptyString,
+  status: Schema.optional(Schema.String),
+});
+// Final failures from Apple's Notary API. "In Progress" is pending and has no log yet.
+const rejectedNotaryStatuses: ReadonlySet<string> = new Set(["Invalid", "Rejected"]);
+const decodeNotarySubmission = Schema.decodeEffect(Schema.fromJsonString(NotarySubmission));
+
+/** Notarization runs only for a Developer ID identity with all three App Store Connect key values. */
+const resolveNotaryCredentials = Effect.fn("resolveNotaryCredentials")(function* () {
+  const signing = yield* MacSigningConfig;
+  const identity = Option.getOrUndefined(signing.identity)?.trim() || "-";
+  const key = Option.getOrUndefined(signing.appleApiKey);
+  const keyId = Option.getOrUndefined(signing.appleApiKeyId);
+  const issuer = Option.getOrUndefined(signing.appleApiIssuer);
+  const credentials =
+    identity !== "-" && key && keyId && issuer
+      ? Option.some(["--key", key, "--key-id", keyId, "--issuer", issuer])
+      : Option.none<ReadonlyArray<string>>();
+  return { identity, credentials };
+});
+
+const notarytool = Effect.fn("notarytool")(function* (
+  args: ReadonlyArray<string>,
+  credentials: ReadonlyArray<string>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(
+    ChildProcess.make("xcrun", ["notarytool", ...args, ...credentials, "--output-format", "json"], {
+      stdout: "pipe",
+      stderr: "inherit",
+    }),
+  );
+  const [stdout, exitCode] = yield* Effect.all(
+    [Stream.mkString(Stream.decodeText(child.stdout)), child.exitCode],
+    { concurrency: "unbounded" },
+  );
+  const submission = yield* decodeNotarySubmission(stdout).pipe(Effect.option);
+  const status = Option.getOrUndefined(submission)?.status;
+  // A finished submission reports its status even when notarytool exits non-zero for it.
+  if (Option.isSome(submission) && status !== undefined && rejectedNotaryStatuses.has(status)) {
+    yield* runCommand(
+      ChildProcess.make("xcrun", ["notarytool", "log", submission.value.id, ...credentials]),
+      "notarytool log",
+    ).pipe(Effect.ignore);
+    return yield* new CliArchiveNotarizationRejectedError({
+      submissionId: submission.value.id,
+      status,
+    });
+  }
+  if (Number(exitCode) !== 0 || Option.isNone(submission)) {
+    return yield* new CliArchiveCommandFailedError({
+      command: `notarytool ${args[0]}`,
+      exitCode: Number(exitCode),
+    });
+  }
+  return submission.value;
+}, Effect.scoped);
+
+const requireAccepted = Effect.fn("requireAccepted")(function* (
+  submission: typeof NotarySubmission.Type,
+) {
+  if (submission.status !== "Accepted") {
+    return yield* new CliArchiveNotarizationRejectedError({
+      submissionId: submission.id,
+      status: submission.status ?? "without a status",
+    });
+  }
+  yield* Effect.log(`[cli-archive] Notarized t3 (${submission.id}).`);
+});
+
 /** Apple Silicon requires signed binaries; notarization's hardened runtime also requires every native addon signed. */
-const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (input: {
+export const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (input: {
   readonly repoRoot: string;
   readonly contentDir: string;
   readonly executablePath: string;
+  readonly notarySubmissionFile: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const signing = yield* MacSigningConfig;
-  const identity = Option.getOrUndefined(signing.identity)?.trim() || "-";
+  const { identity, credentials } = yield* resolveNotaryCredentials();
+  const deferred = Option.getOrUndefined(input.notarySubmissionFile);
+  // A stale id would let await-notarization approve bytes from an earlier build.
+  if (deferred !== undefined) yield* fs.remove(deferred, { force: true });
 
   const entitlements = path.join(input.repoRoot, "apps/server/resources/cli-entitlements.plist");
   const libraries = (yield* fs.readDirectory(input.contentDir, { recursive: true }))
@@ -360,11 +453,7 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
     yield* Effect.log("[cli-archive] Signed ad hoc (no T3CODE_CLI_MAC_SIGN_IDENTITY).");
     return;
   }
-
-  const apiKey = Option.getOrUndefined(signing.appleApiKey);
-  const apiKeyId = Option.getOrUndefined(signing.appleApiKeyId);
-  const apiIssuer = Option.getOrUndefined(signing.appleApiIssuer);
-  if (!apiKey || !apiKeyId || !apiIssuer) {
+  if (Option.isNone(credentials)) {
     yield* Effect.logWarning(
       "[cli-archive] Developer ID signed but not notarized (missing APPLE_API_KEY*).",
     );
@@ -376,22 +465,46 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
     ChildProcess.make("ditto", ["-c", "-k", "--keepParent", input.executablePath, notarizeZip]),
     "ditto (notarization zip)",
   );
-  yield* runCommand(
-    ChildProcess.make("xcrun", [
-      "notarytool",
-      "submit",
-      notarizeZip,
-      "--key",
-      apiKey,
-      "--key-id",
-      apiKeyId,
-      "--issuer",
-      apiIssuer,
-      "--wait",
-    ]),
-    "notarytool submit",
+  const submission = yield* notarytool(
+    ["submit", notarizeZip, ...(deferred === undefined ? ["--wait"] : [])],
+    credentials.value,
   ).pipe(Effect.ensuring(fs.remove(notarizeZip, { force: true }).pipe(Effect.ignore)));
-  yield* Effect.log("[cli-archive] Notarized t3.");
+  if (deferred === undefined) {
+    yield* requireAccepted(submission);
+    return;
+  }
+  // The ticket lives with Apple, not in the archive, so the archive bytes are final before approval.
+  yield* fs.writeFileString(deferred, submission.id);
+  yield* Effect.log(
+    `[cli-archive] Submitted t3 for notarization (${submission.id}). Run await-notarization before publishing.`,
+  );
+});
+
+/** Publication gate for a deferred submission: fails unless Apple accepted it. */
+export const awaitCliNotarization = Effect.fn("awaitCliNotarization")(function* (
+  submissionFile: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const { credentials } = yield* resolveNotaryCredentials();
+  const submitted = yield* fs.exists(submissionFile);
+  if (Option.isNone(credentials)) {
+    if (submitted) {
+      return yield* new CliArchiveInputMissingError({
+        inputPath: "T3CODE_CLI_MAC_SIGN_IDENTITY and APPLE_API_KEY*",
+        hint: `${submissionFile} names a submission, but its credentials are not set.`,
+      });
+    }
+    yield* Effect.log("[cli-archive] No notarization to await (signing or APPLE_API_KEY* unset).");
+    return;
+  }
+  if (!submitted) {
+    return yield* new CliArchiveInputMissingError({
+      inputPath: submissionFile,
+      hint: "Notarization is configured, but build-cli-archive recorded no submission.",
+    });
+  }
+  const id = (yield* fs.readFileString(submissionFile)).trim();
+  yield* requireAccepted(yield* notarytool(["wait", id], credentials.value));
 });
 
 const WindowsSigningConfig = Config.all({
@@ -477,6 +590,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly version: string;
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
+  readonly notarySubmissionFile: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -537,10 +651,18 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   // TEMPORARY one-time Node fix. Remove when fixed: https://github.com/nodejs/node/issues/67048
   if (input.platform === "linux" && input.arch === "arm64") {
     const bytes = yield* fs.readFile(executablePath);
-    yield* Effect.try(() => assertLinuxArm64PageCompatibility(bytes));
+    yield* Effect.try({
+      try: () => assertLinuxArm64PageCompatibility(bytes),
+      catch: (cause) => new CliArchiveLinuxArm64PageError({ executablePath, cause }),
+    });
   }
   if (input.platform === "mac") {
-    yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
+    yield* signMacArchiveContents({
+      repoRoot,
+      contentDir,
+      executablePath,
+      notarySubmissionFile: input.notarySubmissionFile,
+    });
   } else if (input.platform === "win") {
     yield* signWindowsExecutable(executablePath);
   }
@@ -603,9 +725,28 @@ const command = Command.make(
       ),
       Flag.optional,
     ),
+    notarySubmissionFile: Flag.String("notary-submission-file").pipe(
+      Flag.withDescription(
+        "macOS: submit for notarization without waiting and write the submission id here. Publish only after await-notarization succeeds.",
+      ),
+      Flag.optional,
+    ),
   },
   (input) => buildCliArchive(input).pipe(Effect.scoped),
-).pipe(Command.withDescription("Package the t3 single-executable into a per-platform archive."));
+).pipe(
+  Command.withDescription("Package the t3 single-executable into a per-platform archive."),
+  Command.withSubcommands([
+    Command.make(
+      "await-notarization",
+      { submissionFile: Flag.String("submission-file") },
+      (input) => awaitCliNotarization(input.submissionFile),
+    ).pipe(
+      Command.withDescription(
+        "Wait for a --notary-submission-file submission; fail unless Accepted.",
+      ),
+    ),
+  ]),
+);
 
 if (import.meta.main) {
   Command.run(command, { version: "0.0.0" }).pipe(
