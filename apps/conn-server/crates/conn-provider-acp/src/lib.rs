@@ -63,7 +63,22 @@ const TERMINATE_GRACE: Duration = Duration::from_secs(1);
 
 /// Ends an agent as T3 ends one it owns in a detached process group.
 async fn stop_process(mut process: Process, kind: session::StopKind) {
-    #[cfg(unix)]
+    // On Linux T3's runtime owns the agent's descendants (`ownDescendantProcessGroups`): it
+    // ends the process tree from `/proc`, descendants first, not the agent's group.
+    #[cfg(target_os = "linux")]
+    {
+        use conn_provider_support::process_tree::terminate_tree;
+        match kind {
+            // The scope's close (`terminatePosixProcessTree(0)`): the end of input, then
+            // SIGTERM down the tree and SIGKILL at once.
+            session::StopKind::Kill => {
+                process.end_input(END_INPUT_WAIT).await;
+                terminate_tree(process.pid, Duration::ZERO).await;
+            }
+            session::StopKind::Terminate => terminate_tree(process.pid, TERMINATE_GRACE).await,
+        }
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
     {
         use conn_provider_support::process::signal_group;
         use rustix::process::Signal;
@@ -108,6 +123,9 @@ pub(crate) async fn initialize_probe(
     let drain = tokio::spawn(async move { while incoming.recv().await.is_some() {} });
     let params = session::initialize_params(flavor, "t3-code-provider-probe", "0.0.0", false);
     let result = tokio::time::timeout(timeout, connection.call("initialize", params)).await;
+    // The connection holds the writer: dropped, it lets the stop end the agent's input first,
+    // as T3's writer stream completes before the scope closes.
+    drop(connection);
     (spawned.stop)(session::StopKind::Kill).await;
     drain.abort();
     match result {

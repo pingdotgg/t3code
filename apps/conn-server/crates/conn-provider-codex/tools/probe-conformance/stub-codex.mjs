@@ -8,8 +8,7 @@
 //
 //   --version       prints `version.stdout` and exits with `version.code`; `version.hang`
 //                   waits for a signal.
-//   app-server      `appServer.exit`: prints `appServer.stderr` and exits with that code at
-//                   once (a CLI without app-server). `hang`: reads, never answers. Otherwise
+//   app-server      `hang`: reads, never answers. Otherwise
 //                   it answers `initialize`, `account/read`, `skills/list`, `model/list`
 //                   (one page per call, in order), `config/read` and
 //                   `account/rateLimits/read` from the behaviour: a value is the result,
@@ -48,9 +47,6 @@ if (argv.includes("--version")) {
     save();
     process.exit(version.code ?? 0);
   }
-} else if (behaviour.appServer?.exit !== undefined) {
-  if (behaviour.appServer.stderr) process.stderr.write(behaviour.appServer.stderr);
-  process.exit(behaviour.appServer.exit);
 } else {
   const codexHome = process.env.CODEX_HOME || path.join(process.env.HOME ?? "/", ".codex");
   if (behaviour.refreshCache === true) {

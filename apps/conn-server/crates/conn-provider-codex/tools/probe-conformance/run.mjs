@@ -111,12 +111,6 @@ const SCENARIOS = [
   { name: "disabled", instance: { driver: "codex", enabled: false, config: { customModels: ["my-model"] } }, binary: "stub", behaviour: signedIn() },
   { name: "missing-cli", instance: { driver: "codex" }, binary: "missing", behaviour: {} },
   { name: "missing-on-path", instance: { driver: "codex", config: { binaryPath: "codex" } }, binary: "bare", behaviour: {} },
-  {
-    name: "old-cli",
-    instance: { driver: "codex" },
-    binary: "stub",
-    behaviour: { appServer: { exit: 2, stderr: "error: unexpected argument 'app-server' found\n\nUsage: codex [OPTIONS]\n" }, version: { code: 0, stdout: "codex-cli 0.40.0\n" } },
-  },
   { name: "hangs", instance: { driver: "codex" }, binary: "stub", behaviour: { hang: true, version: { code: 0, stdout: "codex-cli 0.166.0\n" } } },
   { name: "init-fails", instance: { driver: "codex" }, binary: "stub", behaviour: { ...signedIn(), init: "error", version: { code: 1, stdout: "codex-cli 0.166.0\n" } } },
   {

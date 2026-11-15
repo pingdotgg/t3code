@@ -22,7 +22,11 @@ const index = fs.readdirSync(records).filter((f) => f.endsWith(".json")).length;
 const recordPath = path.join(records, `${String(index).padStart(3, "0")}.json`);
 const argv = process.argv.slice(2);
 const record = { argv, env: { ...process.env }, cwd: process.cwd(), stdin: [], signals: [] };
-const save = () => fs.writeFileSync(recordPath, `${JSON.stringify(record, null, 1)}\n`);
+// Written aside, then renamed: a run killed mid-write keeps its last whole record.
+const save = () => {
+  fs.writeFileSync(`${recordPath}.tmp`, `${JSON.stringify(record, null, 1)}\n`);
+  fs.renameSync(`${recordPath}.tmp`, recordPath);
+};
 save();
 
 for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {

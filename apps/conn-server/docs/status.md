@@ -30,6 +30,18 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
   creation and take a `scheduledTaskId` filter (#27716). See
   `crates/conn-provider-claude/README.md`, "Known differences".
 - The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
+- **CI on Linux** (PR #95): `methods.json` names a digest of the contract inputs
+  (`contractDigest`, sha256 over the tracked files) instead of a commit id, which a shallow
+  checkout cannot give and a squash merge rewrites. `parity.mjs` seals the T3 server's `PATH`.
+  ACP agents stop on Linux as in T3 (`terminatePosixOwnedProcessTree`, in
+  `conn-provider-support/src/process_tree.rs`): descendants first, then the root; the probe
+  closes stdin before the stop. The Claude stubs save their records atomically. The Codex
+  `old-cli` probe scenario is gone: only the latest CLIs matter (Nick, 2026-11-15), and its
+  result was a race in T3 on Linux.
+- **Open:** `claude_background_subagent_after_root/claudeAgent` fails on Linux. T3 holds the
+  root turn's effects while a background-capable item runs; we capture at the terminal, so a
+  fast git capture beats the provider's continuation request. A hold in the engine
+  deadlocked three fixtures and was reverted.
 
 ## Why it was parked for a day, and what that means
 
@@ -1510,11 +1522,11 @@ commands. The README's "Status probe" lists every request, limit and failure.
   `instances-flow.mjs` and `effect-client.mjs` turn it on with stubs only.
 - **Proof:** `crates/conn-provider-codex/tools/probe-conformance/run.mjs` (in `tools/check.sh`):
   T3's own `checkCodexProviderStatus`, with `CodexDriver`'s settings, environment, home layout,
-  catalog and identity, and ours, against a stub `codex` in 17 scenarios (disabled, missing
-  binary by path and by name, an old CLI, a hang, a failed `initialize`, signed out with and
+  catalog and identity, and ours, against a stub `codex` in 16 scenarios (disabled, missing
+  binary by path and by name, a hang, a failed `initialize`, signed out with and
   without a home, ChatGPT with and without the cache refresh, an API key with custom models,
   Orbit's router, a failed `skills/list`, a model list that never answers, a failed usage read,
-  instance settings with a `~` binary and launch arguments from the environment): 17 of 17
+  instance settings with a `~` binary and launch arguments from the environment): 16 of 16
   SAME, entry and every run (argv, environment, folder, stdin lines with the concurrent reads
 grouped by method, and signals). A first full run showed two timing races, both fixed: our
 concurrent reads now poll in T3's order (`biased`), so a failed `skills/list` ends the model

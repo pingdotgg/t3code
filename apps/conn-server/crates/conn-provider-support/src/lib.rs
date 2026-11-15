@@ -19,5 +19,8 @@ pub mod lines;
 pub mod notification;
 pub mod probe;
 pub mod process;
+// Reads `/proc`; on other Unix hosts it finds no tree and does nothing.
+#[cfg(unix)]
+pub mod process_tree;
 pub mod redact;
 pub mod sdk_host;
