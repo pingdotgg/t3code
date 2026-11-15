@@ -138,6 +138,7 @@ monorepo_checks=(
   "webhook-diff"
   "limits-diff"
   "parity"
+  "idle-diff"
   "codex instructions --check"
   "codex conformance"
   "claude catalog --check"
@@ -194,6 +195,8 @@ else
   run "limits-diff" node crates/conn-server/tools/limits-diff.mjs
   run "parity" \
     node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
+  # Orbit's idle check: the shell route in 14 states on both servers, Codex on a stub (no model).
+  run "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
   run "codex instructions --check" \
     node crates/conn-provider-codex/tools/gen-instructions.mjs --check
   run "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs

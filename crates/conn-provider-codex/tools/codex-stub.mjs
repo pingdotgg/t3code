@@ -30,6 +30,9 @@
 //   for each label in `config.gates`, the stub stops before it emits the first recorded
 //   frame with that label, writes `<gateDir>/gate-<label>.reached` and waits for
 //   `<gateDir>/gate-<label>.release`. Frames the client sends meanwhile wait too.
+// - Probe mode (`config.probes`, for a whole server such as `idle-diff.mjs`): a provider status
+//   probe's own app-server process is answered from canned replies and moves no cursor. See
+//   `PROBE_REPLIES` below. `config.version` answers `codex --version`.
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
 
@@ -39,12 +42,19 @@ const argv = process.argv.slice(configIndex + 2);
 const log = (entry) =>
   NodeFS.appendFileSync(config.log, `${JSON.stringify({ t: Date.now(), ...entry })}\n`);
 
-log({ kind: "start", argv, env: { ...process.env }, cwd: process.cwd(), pid: process.pid });
+// `config.logEnv: false` keeps the environment out of the log (a check that needs no env diff).
+log({ kind: "start", argv, env: config.logEnv === false ? undefined : { ...process.env }, cwd: process.cwd(), pid: process.pid });
 
 // Text generation (`CodexTextGeneration.ts`) runs short CLI commands, not the app-server:
 // - `mcp list --json` prints `config.mcpServers` (default: none);
 // - `exec … -` reads the prompt on stdin, records it and the `--output-schema` file, and
 //   writes `config.execOutput` (default `{"title":"Stub title"}`) to `--output-last-message`.
+// `--version` (T3's `probeCodexCliVersion`) prints `config.version` when the config names one;
+// otherwise the stub stays silent, as before.
+if (argv[0] === "--version" && typeof config.version === "string") {
+  process.stdout.write(`codex-cli ${config.version}\n`);
+  process.exit(0);
+}
 if (argv.includes("mcp") && argv.includes("list")) {
   log({ kind: "mcp-list" });
   process.stdout.write(JSON.stringify(config.mcpServers ?? []));
@@ -175,6 +185,8 @@ const emitUntilExpectation = () => {
     delete frame.emittedAtMs;
     if (frame.method === undefined && frame.id !== undefined && responseIds.has(frame.id)) {
       frame.id = responseIds.get(frame.id);
+      // Probe mode answered this request already, before it knew the process replays.
+      if (answeredIds.delete(frame.id)) continue;
     }
     send(frame);
   }
@@ -285,7 +297,55 @@ for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"]) {
   process.on(signal, () => beginShutdown(signal));
 }
 
-emitUntilExpectation();
+// Probe mode (`config.probes`): a server's provider status probe (T3's
+// `probeCodexAppServerProvider`) starts its own `codex app-server` and sends `initialize`, then
+// `account/read`. That process must not move the replay cursor. So the stub answers
+// `initialize` at once with the first recorded reply and holds the frames until the first
+// other request: `account/read` makes the process a probe, answered with canned replies and
+// logged as `probe`; anything else replays the held frames (the recorded `initialize` reply is
+// not sent twice).
+const PROBE_REPLIES = {
+  "account/read": { account: { type: "apiKey" }, requiresOpenaiAuth: false },
+  "skills/list": { data: [] },
+  "model/list": { data: [], nextCursor: null },
+  "config/read": { config: {}, origins: {} },
+};
+const answeredIds = new Set();
+let mode = config.probes ? "undecided" : "replay";
+const undecided = [];
+const recordedInitialize = entries.find(
+  (entry) => entry.type === "emit_inbound" && entry.label === "initialize" && entry.frame?.result !== undefined,
+)?.frame.result;
+const onInput = (frame) => {
+  if (mode === "replay") return onFrame(frame);
+  if (mode === "probe") {
+    log({ kind: "probe", method: frame.method ?? "<reply>" });
+    if (frame.method !== undefined && frame.id !== undefined) {
+      send({ id: frame.id, result: PROBE_REPLIES[frame.method] ?? {} });
+    }
+    return;
+  }
+  if (frame.method === "initialize" || frame.method === "initialized" || frame.method === undefined) {
+    undecided.push(frame);
+    if (frame.method === "initialize" && frame.id !== undefined) {
+      answeredIds.add(frame.id);
+      send({ id: frame.id, result: recordedInitialize ?? {} });
+    }
+    return;
+  }
+  if (frame.method === "account/read") {
+    mode = "probe";
+    log({ kind: "probe", method: "initialize" });
+    onInput(frame);
+    return;
+  }
+  mode = "replay";
+  emitUntilExpectation();
+  for (const early of undecided.splice(0)) onFrame(early);
+  onFrame(frame);
+};
+
+if (mode === "replay") emitUntilExpectation();
 const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   if (line.trim() === "") return;
@@ -297,7 +357,7 @@ lines.on("line", (line) => {
     return;
   }
   log({ kind: "in", frame });
-  onFrame(frame);
+  onInput(frame);
 });
 lines.on("close", () => beginShutdown("stdin-end"));
 }
