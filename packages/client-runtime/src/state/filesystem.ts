@@ -5,6 +5,7 @@ import {
   sessionGrantsScope,
   type SessionGrantInput,
 } from "@t3tools/contracts";
+import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
 import type {
@@ -74,15 +75,57 @@ export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
 ) {
+  // macOS Finder stores names decomposed (NFD), while typed text is composed (NFC).
+  const normalizedQuery = query.normalize("NFC");
   const lowerQuery = query.toLowerCase();
+  const lowerNormalizedQuery = normalizedQuery.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
-      (showHidden || !entry.name.startsWith(".")),
+  const candidates = entries.filter((entry) => showHidden || !entry.name.startsWith("."));
+  const visibleEntries =
+    lowerQuery.length === 0
+      ? candidates
+      : candidates
+          .map((entry) => {
+            const options = {
+              // Position penalties stay under 1000 for 255-character names, so tiers never overlap.
+              query: lowerNormalizedQuery,
+              exactBase: 0,
+              prefixBase: 1000,
+              boundaryBase: 2000,
+              includesBase: 3000,
+              fuzzyBase: 4000,
+              boundaryMarkers: [" ", "-", "_", "."],
+            };
+            const rawScore = scoreQueryMatch({
+              ...options,
+              value: entry.name.toLowerCase(),
+              query: lowerQuery,
+            });
+            const normalizedScore = scoreQueryMatch({
+              ...options,
+              value: entry.name.normalize("NFC").toLowerCase(),
+            });
+            const score =
+              rawScore === null
+                ? normalizedScore
+                : normalizedScore === null
+                  ? rawScore
+                  : Math.min(rawScore, normalizedScore);
+            return { entry, score };
+          })
+          .filter((match): match is { entry: FilesystemBrowseEntry; score: number } => {
+            return match.score !== null;
+          })
+          .sort((left, right) => left.score - right.score)
+          .map((match) => match.entry);
+  const normalizedMatches = visibleEntries.filter(
+    (entry) => entry.name.normalize("NFC") === normalizedQuery,
   );
   const exactEntry =
-    query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
+    query.length > 0
+      ? (visibleEntries.find((entry) => entry.name === query) ??
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
+      : null;
 
   return { visibleEntries, exactEntry };
 }
@@ -150,9 +193,10 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     browse: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:browse",
       tag: WS_METHODS.filesystemBrowse,
-      // A listing kept alive while unread is never revalidated, so reopening the browser
-      // would show folders as they were. Keep it only long enough for a prefetch to land.
+      // A listing mirrors a directory that can change outside the app, so reopening a picker
+      // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
+      staleTimeMs: 0,
     }),
   };
 }
