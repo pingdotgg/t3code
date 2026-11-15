@@ -73,7 +73,7 @@ const callTool = <Name extends keyof AipmTools>(
       ),
     );
     const results = yield* toolkit
-      .handle(name, params)
+      .handle(name, params as Parameters<typeof toolkit.handle<Name>>[1])
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
     return results.at(-1)?.result as Record<string, unknown>;
   });

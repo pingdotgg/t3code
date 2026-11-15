@@ -373,6 +373,12 @@ export function summarizeT3ToolCalls(
     case "skills-restore":
       label = phrase("Restored", "restore", `skills ${times}`);
       break;
+    case "theme-read":
+      label = phrase("Checked", "check", `themes ${times}`);
+      break;
+    case "theme-set":
+      label = phrase("Set", "set", `the theme ${times}`);
+      break;
     case "environment-links":
       label = phrase("Listed", "list", `linked environments ${times}`);
       break;
@@ -501,6 +507,9 @@ export function summarizeT3ToolCalls(
       break;
     case "mcp-servers":
       label = phrase("Used", "use", quantity(selected.length, "MCP server tool"));
+      break;
+    case "send-to-user":
+      label = phrase("Sent", "send", quantity(selected.length, "message"));
       break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);

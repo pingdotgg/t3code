@@ -1,4 +1,5 @@
 import { Link, useSearch } from "@tanstack/react-router";
+import { msg, useMessages } from "gt-react";
 
 import {
   WorkspaceBreadcrumb,
@@ -7,10 +8,12 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
 
+const SETTINGS_LABEL = msg("Settings");
+
 const SETTINGS_BREADCRUMB_LABELS: Readonly<Record<string, string>> = {
   ...SETTINGS_SECTION_LABELS,
-  "/settings/diagnostics": "Diagnostics",
-  "/settings/open-source-licenses": "Open source licenses",
+  "/settings/diagnostics": msg("Diagnostics"),
+  "/settings/open-source-licenses": msg("Open source licenses"),
 };
 
 function settingsBreadcrumbLabel(pathname: string): string | null {
@@ -25,6 +28,7 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
  * `SettingsScopeSentence`.
  */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
   const skill = useSearch({ strict: false, select: (search) => search.skill });
   const server = useSearch({ strict: false, select: (search) => search.server });
@@ -35,7 +39,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
     <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
       {sectionLabel ? (
         <>
-          <WorkspaceBreadcrumbItem>Settings</WorkspaceBreadcrumbItem>
+          <WorkspaceBreadcrumbItem>{m(SETTINGS_LABEL)}</WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
@@ -47,16 +51,16 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
               to="/settings/tools"
               search={skill === undefined && server !== undefined ? { tab: "mcp" } : {}}
               replace
-              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             >
-              {sectionLabel}
+              {m(sectionLabel)}
             </Link>
           </WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator />
         </>
       ) : null}
       <WorkspaceBreadcrumbItem current className="truncate">
-        {page ?? sectionLabel ?? "Settings"}
+        {page ?? m(sectionLabel ?? SETTINGS_LABEL)}
       </WorkspaceBreadcrumbItem>
     </WorkspaceBreadcrumb>
   );

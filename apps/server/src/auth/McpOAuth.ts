@@ -54,8 +54,12 @@ import { requestUrl } from "../requestUrl.ts";
 const SIGNING_SECRET_NAME = "mcp-oauth-signing-key";
 const AUTHORIZATION_CODE_TTL_MS = 60_000;
 const MAX_CLIENT_NAME_LENGTH = 100;
-const MAX_REDIRECT_URIS = 5;
+const MAX_REDIRECT_URIS = 10;
 const MAX_REDIRECT_URI_LENGTH = 512;
+// The client_id rides in the authorize URL. Past the original five-URI limit, cap it to leave room
+// under Node's 16 KB header cap for an encoded redirect_uri and state.
+const MAX_UNBOUNDED_CLIENT_ID_REDIRECT_URIS = 5;
+const MAX_CLIENT_ID_LENGTH = 10_240;
 const DEFAULT_CLIENT_NAME = "MCP client";
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -130,9 +134,11 @@ export const redirectMatches = (registered: string, presented: string): boolean 
 
 const sameResource = (urls: McpOAuthUrls, presented: string | undefined): boolean => {
   if (presented === undefined) return true;
+  // URL.hash misses empty fragments, which RFC 8707 §2 also forbids.
+  if (presented.includes("#")) return false;
   try {
     const url = new URL(presented);
-    return url.hash === "" && `${url.origin}${url.pathname.replace(/\/+$/u, "")}` === urls.resource;
+    return `${url.origin}${url.pathname.replace(/\/+$/u, "")}` === urls.resource;
   } catch {
     return false;
   }
@@ -206,7 +212,8 @@ export class McpOAuth extends Context.Service<
       readonly urls: McpOAuthUrls;
       readonly request: AuthMcpAuthorizationRequest;
     }) => Effect.Effect<AuthorizationRequest, McpOAuthPageError | McpOAuthRedirectError>;
-    readonly approvingBrowserSession: (
+    /** A browser cookie session, or a T3 Connect session from the hosted app, that may approve. */
+    readonly approvingSession: (
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
@@ -306,11 +313,11 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(false);
 
-  const csrfToken = (sessionId: string, authorization: AuthorizationRequest) =>
+  const csrfToken = (holder: string, authorization: AuthorizationRequest) =>
     sign(
       "mcp-csrf",
       JSON.stringify([
-        sessionId,
+        holder,
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
@@ -347,8 +354,18 @@ const make = Effect.gen(function* () {
             "Linked environments is off on that machine. Turn it on in its Settings → Labs.",
         });
       }
+      const clientId = yield* signClientId(name, redirectUris, peerLink);
+      if (
+        redirectUris.length > MAX_UNBOUNDED_CLIENT_ID_REDIRECT_URIS &&
+        clientId.length > MAX_CLIENT_ID_LENGTH
+      ) {
+        return yield* new AuthMcpRegistrationError({
+          error: "invalid_redirect_uri",
+          error_description: "Redirect URIs are too long to fit in an authorization request.",
+        });
+      }
       return {
-        clientId: yield* signClientId(name, redirectUris, peerLink),
+        clientId,
         name,
         redirectUris,
         peerLink,
@@ -406,18 +423,19 @@ const make = Effect.gen(function* () {
     } satisfies AuthorizationRequest;
   });
 
-  const approvingBrowserSession: McpOAuth["Service"]["approvingBrowserSession"] = (
-    request,
-    authorization,
-  ) =>
-    environmentAuth.authenticateBrowserSession(request).pipe(
+  const approvingSession: McpOAuth["Service"]["approvingSession"] = (request, authorization) =>
+    environmentAuth.authenticateHttpRequest(request).pipe(
       Effect.flatMap((session) =>
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          ? csrfToken(session.sessionId, authorization).pipe(
-              Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })),
-            )
+          ? // The hosted app may get a fresh credential per call, all bound to one browser key.
+            csrfToken(
+              session.proofKeyThumbprint === undefined
+                ? session.sessionId
+                : `dpop:${session.proofKeyThumbprint}`,
+              authorization,
+            ).pipe(Effect.map((token) => ({ csrfToken: token, scopes: session.scopes })))
           : Effect.undefined,
       ),
       Effect.orElseSucceed(() => undefined),
@@ -470,7 +488,7 @@ const make = Effect.gen(function* () {
         ),
       );
     } else {
-      const session = yield* approvingBrowserSession(input.request, input.authorization);
+      const session = yield* approvingSession(input.request, input.authorization);
       if (
         session === undefined ||
         !timingSafeEqualBase64Url(decision.csrfToken, session.csrfToken) ||
@@ -574,7 +592,7 @@ const make = Effect.gen(function* () {
         : { organization: managedPolicy.organization, maxRuntimeMode },
     register,
     validateAuthorization,
-    approvingBrowserSession,
+    approvingSession,
     approve,
     deny,
     exchangeCode,

@@ -1,11 +1,10 @@
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { Check, Copy } from "lucide";
+import { CheckIcon, CopyIcon } from "lucide-react";
 import { AlertTriangleIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { MorphIcon } from "../MorphIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -27,8 +26,7 @@ const SkillFiles = lazy(() => import("./SkillFiles"));
 
 /**
  * One skill: what it says, which agents load it, and its files. The settings
- * header names it and leads back to the list. Adapted from the skill page in
- * #17513.
+ * header names it and leads back to the list.
  */
 export function SkillDetail({
   row,
@@ -225,7 +223,7 @@ export function SkillDetail({
                   />
                 }
               >
-                <MorphIcon className="size-3.5" icon={isCopied ? Check : Copy} />
+                {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
               </TooltipTrigger>
               <TooltipPopup side="top">{isCopied ? "Copied" : "Copy path"}</TooltipPopup>
             </Tooltip>

@@ -90,6 +90,7 @@ const BRANDED_FILES = [
   "apps/server/src/serviceLauncher.ts",
   "apps/server/src/startupAccess.ts",
   "apps/web/index.html",
+  "apps/web/vite.config.ts",
   "apps/web/public/manifest.webmanifest",
   "packages/client-runtime/src/connection/compatibility.ts",
   "packages/client-runtime/src/connection/outdatedHostUpdate.ts",
@@ -197,16 +198,12 @@ const EDITS: ReadonlyArray<Edit> = [
     replace:
       'environment.branding.stageLabel === "Beta" ? environment.branding.baseName : `${environment.branding.baseName} ${environment.branding.stageLabel}`,',
   },
-  {
-    file: "apps/web/index.html",
-    find: `<title>${BRAND_NAME} (Beta)</title>`,
-    replace: `<title>${BRAND_NAME}</title>`,
-  },
   // formatAppDisplayName drops the suffix for "Latest", the hosted stable channel's label.
+  // vite.config.ts stamps index.html's title through the same function.
   {
-    file: "apps/web/src/branding.ts",
-    find: '(import.meta.env.DEV ? "Dev" : "Beta")',
-    replace: '(import.meta.env.DEV ? "Dev" : "Latest")',
+    file: "apps/web/src/branding.logic.ts",
+    find: '(input.development ? "Dev" : "Beta")',
+    replace: '(input.development ? "Dev" : "Latest")',
   },
   {
     file: "apps/mobile/src/components/BrandMark.tsx",

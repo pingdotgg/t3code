@@ -42,9 +42,9 @@ describe("fork-brand", () => {
   it("names stable builds without the Beta stage", () => {
     const { branded } = planForkBranding();
     assert.include(branded.get("apps/desktop/package.json"), `"productName": "${BRAND_NAME}"`);
-    assert.include(branded.get("apps/web/index.html"), `<title>${BRAND_NAME}</title>`);
+    assert.include(branded.get("apps/web/vite.config.ts"), `baseName: "${BRAND_NAME}"`);
     assert.include(branded.get("apps/desktop/scripts/electron-launcher.mjs"), `: "${BRAND_NAME}";`);
-    assert.include(branded.get("apps/web/src/branding.ts"), `"Dev" : "Latest"`);
+    assert.include(branded.get("apps/web/src/branding.logic.ts"), `"Dev" : "Latest"`);
     assert.include(
       branded.get("apps/desktop/src/app/DesktopEnvironment.ts"),
       'stageLabel === "Beta" ? APP_BASE_NAME',
