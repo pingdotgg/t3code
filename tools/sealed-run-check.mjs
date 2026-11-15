@@ -6,8 +6,8 @@
 //    marker variables, a stand-in SHELL and marker CLIs (codex, gh, ...) first on PATH in the
 //    outer environment, and no CARGO_TARGET_*_RUNNER: the test must see another HOME (gone
 //    after the run), none of the markers, a PATH without the marker CLIs, no global git
-//    configuration, and `codex` must not be found (the planted case of 2026-11-15); no marker
-//    CLI ran.
+//    configuration, the outside network gate on (CONN_NETWORK_LOG), and `codex` must not be
+//    found (the planted case of 2026-11-15); no marker CLI ran.
 // 2. The same with CONN_UNSEALED=1: the runner prints its warning and the test sees the decoy.
 // 3. CONN_UNSEALED=2: the runner refuses.
 // 4. CARGO_TARGET_<HOST>_RUNNER in the environment wins over the config file's runner.
@@ -78,7 +78,10 @@ const MARKERS = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_HOME", "GH_TOKEN"
 const cargoHome = process.env.CARGO_HOME ?? NodePath.join(NodeOS.homedir(), ".cargo");
 const rustupHome = process.env.RUSTUP_HOME ?? NodePath.join(NodeOS.homedir(), ".rustup");
 const outer = Object.fromEntries(
-  Object.entries(process.env).filter(([name]) => !/^CARGO_TARGET_\w+_RUNNER$/.test(name) && name !== "CONN_UNSEALED"),
+  // Not the canary's network log either: the runner must set its own.
+  Object.entries(process.env).filter(
+    ([name]) => !/^CARGO_TARGET_\w+_RUNNER$/.test(name) && !["CONN_UNSEALED", "CONN_NETWORK_LOG", "CONN_CANARY_ROOT"].includes(name),
+  ),
 );
 const base = {
   ...outer,
@@ -96,13 +99,11 @@ function probe(name, extra) {
   const tmp = NodePath.join(root, `tmp-${name}`);
   NodeFS.mkdirSync(tmp);
   NodeFS.writeFileSync(NodePath.join(tmp, "conn-sealed-probe.request"), `${token}\n`);
-  const started = Date.now();
   const run = NodeChildProcess.spawnSync(
     "cargo",
     ["test", "--quiet", "-p", "conn-support", "--lib", "sealed_probe::sealed_environment_report"],
     { cwd: repo, env: { ...base, TMPDIR: tmp, ...extra }, encoding: "utf8" },
   );
-  const ms = Date.now() - started;
   let report = {};
   const names = [];
   const markers = [];
@@ -118,7 +119,7 @@ function probe(name, extra) {
   } catch {
     report = undefined;
   }
-  return { run, report, names, markers, ms };
+  return { run, report, names, markers };
 }
 
 const cliRuns = () => (NodeFS.existsSync(cliLog) ? NodeFS.readFileSync(cliLog, "utf8").split("\n").filter(Boolean) : []);
@@ -140,6 +141,7 @@ if (sealed.report) {
   expect(r.SHELL !== shell, `sealed run: SHELL is the outer one`);
   expect(r.GIT_CONFIG_GLOBAL === "/dev/null", `sealed run: GIT_CONFIG_GLOBAL is ${r.GIT_CONFIG_GLOBAL}`);
   expect(r.codex === "not found", `sealed run: codex ${r.codex}`);
+  expect(sealed.names.includes("CONN_NETWORK_LOG"), "sealed run: the outside network gate (CONN_NETWORK_LOG) is off");
   expect(!/WARNING/.test(sealed.run.stderr), "sealed run: the runner warned");
 }
 expect(cliRuns().length === 0, `sealed run: a marker CLI ran: ${cliRuns().join("; ")}`);
@@ -169,6 +171,14 @@ expect(viaEnv.run.status === 0, `env runner: cargo test exited ${viaEnv.run.stat
 expect(NodeFS.existsSync(NodePath.join(root, "env-runner.log")), "env runner: CARGO_TARGET_<HOST>_RUNNER did not run");
 expect(viaEnv.report?.HOME === decoyHome, "env runner: the config file's runner ran as well (HOME was sealed)");
 
+// What the runner adds per binary (it runs once per test binary, not per test).
+const timed = (argv) => {
+  const started = process.hrtime.bigint();
+  for (let i = 0; i < 10; i += 1) NodeChildProcess.spawnSync(argv[0], argv.slice(1), { env: { ...base, TMPDIR: root } });
+  return Number(process.hrtime.bigint() - started) / 1e7;
+};
+const added = timed([NodePath.join(repo, "tools/cargo-runner"), "/usr/bin/true"]) - timed(["/usr/bin/true"]);
+
 if (failures.length > 0) {
   for (const failure of failures) console.error(`sealed-run: ${failure}`);
   process.exit(1);
@@ -178,5 +188,5 @@ console.log(
     `${HOST_CLIS.length} marker CLIs unseen; codex not found; no marker CLI ran); CONN_UNSEALED=1 warns; ` +
     `a wrong value is refused; CARGO_TARGET_<HOST>_RUNNER wins over the config file; ` +
     `HOST_CLIS equal; ${read.size} variables the code reads all classified. ` +
-    `One run: ${sealed.ms} ms sealed, ${viaEnv.ms} ms with a plain runner.`,
+    `The runner adds ${added.toFixed(0)} ms per binary.`,
 );

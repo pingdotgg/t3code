@@ -4,7 +4,8 @@
 //
 // The binary gets `sealedRunEnv` (tools/sealed-env.mjs): a fresh HOME, a stand-in SHELL, only
 // the variables it needs, a PATH without provider or host CLIs, no global git configuration,
-// the status probes and the model manifest fetch off. The temp folder is removed when the
+// the status probes and the model manifest fetch off, and our server's HTTP client refuses
+// hosts outside loopback (CONN_NETWORK_LOG; the run then fails). The temp folder is removed when the
 // binary ends; one left by a killed runner is removed by the next run.
 //
 // The way out, for runs that need the real environment on purpose (the live tests with
@@ -56,6 +57,7 @@ function sweep(tmp) {
 
 let dir;
 let env;
+let networkLog;
 if (unsealed === "1") {
   console.error(
     `cargo-runner: WARNING: CONN_UNSEALED=1: ${NodePath.basename(program)} runs UNSEALED, with this shell's ` +
@@ -67,7 +69,23 @@ if (unsealed === "1") {
   sweep(tmp);
   dir = NodeFS.mkdtempSync(NodePath.join(tmp, `${RUN_DIR_PREFIX}${process.pid}-`));
   env = sealedRunEnv(dir);
+  // Our server's HTTP client refuses and names any host outside loopback while this is set
+  // (conn_source_control::http). The canary's own log, when it runs us, takes precedence.
+  if (env.CONN_NETWORK_LOG === undefined) {
+    networkLog = NodePath.join(dir, "network.log");
+    env.CONN_NETWORK_LOG = networkLog;
+  }
 }
+
+/** Hosts outside loopback that our code tried and the gate refused, if any. */
+const refusedHosts = () => {
+  if (networkLog === undefined) return [];
+  try {
+    return NodeFS.readFileSync(networkLog, "utf8").split("\n").filter(Boolean);
+  } catch {
+    return [];
+  }
+};
 
 const cleanup = () => {
   if (dir !== undefined) NodeFS.rmSync(dir, { recursive: true, force: true });
@@ -91,7 +109,12 @@ child.on("error", (error) => {
   process.exit(127);
 });
 child.on("exit", (code, signal) => {
+  const refused = refusedHosts();
   cleanup();
+  if (refused.length > 0) {
+    console.error(`cargo-runner: ${NodePath.basename(program)} tried hosts outside loopback (refused): ${refused.join(", ")}`);
+    if (signal === null && code === 0) process.exit(1);
+  }
   if (signal !== null) {
     for (const s of SIGNALS) process.removeAllListeners(s);
     process.kill(process.pid, signal);
