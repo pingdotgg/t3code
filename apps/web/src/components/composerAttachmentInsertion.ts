@@ -22,8 +22,7 @@ export function captureComposerAttachmentInsertion(editor: Editor) {
   let lost = false;
   const track = ({ transaction, appendedTransactions }: EditorEvents["transaction"]) => {
     for (const tr of [transaction, ...appendedTransactions]) {
-      // Keep the attachment before text typed at the paste point while its image is preparing,
-      // but after the references of an earlier paste that finished first there.
+      // Stay before text typed at the paste point, but after an earlier capture's references.
       const earlier: unknown = tr.getMeta(INSERTION_ORDER_META);
       const assoc = typeof earlier === "number" && earlier < order ? 1 : -1;
       const start = tr.mapping.mapResult(from, assoc);

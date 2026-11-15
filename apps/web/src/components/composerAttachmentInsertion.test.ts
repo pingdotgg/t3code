@@ -144,3 +144,30 @@ it("keeps a pending image reference as text inside a code block", () => {
     editor.destroy();
   }
 });
+
+it.each(["first", "second"] as const)(
+  "keeps two pastes at one caret in paste order when the %s image prepares first",
+  (finishesFirst) => {
+    const editor = createEditor({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Before " }] }],
+    });
+    try {
+      using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
+      editor.view.dispatch(editor.state.tr.setSelection(TextSelection.atEnd(editor.state.doc)));
+      const firstImage = { ...image, contextId: "image_first", label: "first.png" };
+      const secondImage = { ...image, contextId: "image_second", label: "second.png" };
+      const first = captureComposerAttachmentInsertion(editor);
+      const second = captureComposerAttachmentInsertion(editor);
+      if (finishesFirst === "second") expect(second.insert([secondImage])).toBe(true);
+      expect(first.insert([firstImage])).toBe(true);
+      if (finishesFirst === "first") expect(second.insert([secondImage])).toBe(true);
+
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(
+        `Before ${formatInlineContextReference(firstImage)} ${formatInlineContextReference(secondImage)} `,
+      );
+    } finally {
+      editor.destroy();
+    }
+  },
+);

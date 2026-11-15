@@ -8,16 +8,12 @@ import {
 } from "./image-compression-hold.ts";
 import { test, WEB } from "./t3.ts";
 
-/**
- * Copies a PNG wider than the 2000 px attachment limit, so pasting it compresses. `noise` makes
- * it far larger than a solid one.
- */
+/** Copies a PNG over the 2000 px limit, so pasting it compresses; noise keeps it large. */
 const copyWidePng = (browser: Browser, noise: boolean) =>
   browser.evaluate(async (noisy: boolean) => {
     const canvas = new OffscreenCanvas(2200, noisy ? 200 : 20);
     const context = canvas.getContext("2d")!;
     const pixels = context.createImageData(canvas.width, canvas.height);
-    // xorshift noise barely compresses, unlike the solid fill.
     let seed = 1;
     for (let index = 0; index < pixels.data.length; index++) {
       seed ^= seed << 13;
