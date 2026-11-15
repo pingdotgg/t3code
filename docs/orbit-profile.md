@@ -167,6 +167,18 @@ Codex"].
 | `401 invalid_mcp_credential` | Correct for T3: `M/apps/server/src/mcp/McpHttpServer.ts:132,288`. Orbit's docs only say "refused". |
 | Everything else (gate file, `model.env`, state path, label, ports, hourly renewal, two users, the AI router, the cloned files) | Confirmed in code. |
 
+**A container that freezes and wakes** [tests, `docs/status.md` "Timers after a clock
+jump"]. Every timer was tried on jumps of 10 minutes, 2 hours and 3 days. Under Orbit's cgroup
+freezer the monotonic clock runs on, so each deadline fires once at the thaw. Fixed: two
+periodic checks (the socket revocation check, the desktop parent watch) caught up with
+thousands of ticks at once; client activity leases and `/mcp` credential liveness counted only
+monotonic time. A turn that was running stays running at the thaw; whether it ends is the
+CLI's choice, as in T3.
+
+**The checks touch nothing of the host** [check, `R/tools/canary.mjs`, the last check of
+`tools/check.sh`]: no read of a provider, `gh` or `git` setting or credential, no real provider
+or host CLI, no connection outside loopback. See `docs/status.md`, "The canary".
+
 **The idle check, proven against T3** [check, `R/crates/conn-server/tools/idle-diff.mjs`, in
 `tools/check.sh`]. Orbit's idle sleep reads `status`, `activityRunStatus`,
 `blockedOnThreadWait`, `pendingBackgroundTasks`, `pendingRuntimeRequest` (`createdAt`,

@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -1041,6 +1041,25 @@ error text is ours (T3's error classes carry the same facts) and never holds the
 Not proven: a live turn on a configured instance; the instances on Linux and in a real
 Orbit container; a change while a session is open beyond reading T3's code (the flow changes
 the settings between sessions).
+
+## Orbit's idle answer (2026-11-14)
+
+`crates/conn-server/tools/idle-diff.mjs` (in `tools/check.sh`, about 30 s) brings the T3 server
+and this server into the same states on the Codex stub and compares what Orbit reads from
+`GET /api/orchestration/shell`. The fields and the states are in `docs/orbit-profile.md`
+("The idle check, proven against T3"). The answers are the same in all states but one. Fixed
+on the way:
+- `thread_shell` showed `running` where T3 shows `queued` behind a running turn
+  (`conn-engine/src/shell.rs`, after T3's `latestUnheldRun`);
+- a SIGTERM stored a running Codex turn as interrupted, where T3 continues it on the next
+  start. That was a wrong "idle" after a restart (`conn-engine/src/runner.rs`, `pump`).
+
+**Known difference:** after a Codex subagent ends, T3 wakes the agent with a new turn;
+`conn-provider-codex` does not, so Orbit reads idle there where T3 reads active. It is a
+provider feature, listed in the check's `KNOWN` list. **Reported, not counted:** a missing
+protocol header answers 400 with JSON here and with an empty body in T3; Orbit always sends
+`2`. Not proven: Claude and Grok through these states, a message typed by a person,
+`blockedOnThreadWait`, a non-blocking question, archived threads, and a crash (SIGKILL).
 
 ## The canary: no check reads the home or the shell's secrets (2026-11-14)
 
