@@ -81,6 +81,9 @@ import {
   ProviderSetupError,
   RelayClientInstallFailedError,
   type RelayClientInstallProgressEvent,
+  OllamaError,
+  type OllamaInstallEvent,
+  type OllamaPullEvent,
   type ServerConfig as ClientServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
@@ -244,6 +247,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import { commandFeatureUsage, featureUsage } from "./telemetry/FeatureUsage.ts";
 import type { TelemetryOwner } from "./telemetry/Identify.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as OllamaService from "./ollama/OllamaService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -1498,6 +1502,7 @@ export const layerWsRpc = (
               Effect.orElseSucceed(() => null),
             );
       const usage = yield* UsageService.UsageService;
+      const ollama = yield* OllamaService.OllamaService;
       const usageLimitSources = yield* UsageLimitSources.UsageLimitSources;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -2690,6 +2695,34 @@ export const layerWsRpc = (
           resourceTelemetry.readHistory(input),
         [WS_METHODS.serverGetUsageSummary]: (input) => usage.readSummary(input),
         [WS_METHODS.serverRefreshUsageRates]: (_input) => usage.refreshRates,
+        [WS_METHODS.ollamaGetOverview]: (_input) => ollama.overview,
+        [WS_METHODS.ollamaInstall]: (_input) =>
+          Stream.callback<OllamaInstallEvent, OllamaError>((queue) =>
+            ollama
+              .installWithProgress((event) => Queue.offer(queue, event).pipe(Effect.asVoid))
+              .pipe(
+                Effect.flatMap((status) => Queue.offer(queue, { type: "complete", status })),
+                Effect.catchTags({ OllamaError: (error) => Queue.fail(queue, error) }),
+                Effect.andThen(Queue.end(queue)),
+                Effect.forkScoped,
+              ),
+          ),
+        [WS_METHODS.ollamaStart]: (_input) => ollama.start,
+        [WS_METHODS.ollamaPullModel]: (input) =>
+          Stream.callback<OllamaPullEvent, OllamaError>((queue) =>
+            ollama
+              .pullWithProgress(input.model, (event) =>
+                Queue.offer(queue, event).pipe(Effect.asVoid),
+              )
+              .pipe(
+                Effect.catchTags({ OllamaError: (error) => Queue.fail(queue, error) }),
+                Effect.andThen(Queue.end(queue)),
+                Effect.forkScoped,
+              ),
+          ),
+        [WS_METHODS.ollamaDeleteModel]: (input) => ollama.deleteModel(input.model),
+        [WS_METHODS.ollamaSetAgentIntegration]: (input) =>
+          ollama.setAgentIntegration(input.enabled),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),

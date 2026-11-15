@@ -67,3 +67,26 @@ export const codexExecLaunchArgs = (launchArgs?: string) =>
 
 export const codexMcpListLaunchArgs = (launchArgs?: string) =>
   filterLaunchArgs(launchArgs, MCP_LIST_FILTER);
+
+const LOCAL_MODEL_PROVIDERS = new Set(["ollama", "lmstudio", "oss"]);
+
+/**
+ * The local model provider an instance's launch arguments select, if any. Codex still answers
+ * `model/list` with OpenAI's catalog then, so those instances list only their custom models.
+ */
+export const codexLocalModelProvider = (launchArgs?: string): string | null => {
+  const args = codexLaunchArgv(launchArgs);
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!;
+    if (arg === "--oss") return "ollama";
+    const value =
+      arg === "-c" || arg === "--config"
+        ? args[index + 1]
+        : arg.startsWith("-c=") || arg.startsWith("--config=")
+          ? arg.slice(arg.indexOf("=") + 1)
+          : undefined;
+    const match = value === undefined ? null : /^model_provider\s*=\s*"?([\w-]+)"?$/.exec(value);
+    if (match && LOCAL_MODEL_PROVIDERS.has(match[1]!)) return match[1]!;
+  }
+  return null;
+};

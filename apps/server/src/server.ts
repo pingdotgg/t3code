@@ -208,6 +208,7 @@ import { MuseUsageHome } from "@t3tools/provider-muse/server";
 import * as CursorAccountReader from "@t3tools/provider-cursor/server/CursorAccountReader";
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as OllamaService from "./ollama/OllamaService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -796,6 +797,15 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
+  Layer.provideMerge(
+    OllamaService.layer.pipe(
+      Layer.provide(layerServerSettings),
+      // Layers memoize by reference, so this is the same Codex runtime the providers use.
+      Layer.provide(
+        CodexInstallation.CodexInstallation.layer.pipe(Layer.provide(ModelManifest.layer)),
+      ),
+    ),
+  ),
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
   Layer.provideMerge(TraceDiagnostics.layer),

@@ -5,6 +5,7 @@ import { describe, it } from "vite-plus/test";
 import {
   codexAppServerArgs,
   codexExecLaunchArgs,
+  codexLocalModelProvider,
   codexMcpListLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
@@ -71,5 +72,19 @@ describe("codex exec and mcp list launch args", () => {
       "--enable",
       "foo",
     ]);
+  });
+});
+
+describe("codexLocalModelProvider", () => {
+  it("detects instances that run on a local model server", () => {
+    NodeAssert.equal(codexLocalModelProvider("-c model_provider=ollama"), "ollama");
+    NodeAssert.equal(codexLocalModelProvider('--config model_provider="lmstudio"'), "lmstudio");
+    NodeAssert.equal(
+      codexLocalModelProvider("--strict-config --oss --local-provider ollama"),
+      "ollama",
+    );
+    NodeAssert.equal(codexLocalModelProvider("-c model_provider=openai"), null);
+    NodeAssert.equal(codexLocalModelProvider("-c model=gpt-5"), null);
+    NodeAssert.equal(codexLocalModelProvider(undefined), null);
   });
 });

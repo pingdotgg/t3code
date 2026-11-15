@@ -413,6 +413,16 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  OllamaDeleteModelInput,
+  OllamaError,
+  OllamaInstallEvent,
+  OllamaOverview,
+  OllamaPullEvent,
+  OllamaPullInput,
+  OllamaSetAgentIntegrationInput,
+  OllamaStatus,
+} from "./ollama.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -551,6 +561,13 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  ollamaGetOverview: "ollama.getOverview",
+  ollamaInstall: "ollama.install",
+  ollamaStart: "ollama.start",
+  ollamaPullModel: "ollama.pullModel",
+  ollamaDeleteModel: "ollama.deleteModel",
+  ollamaSetAgentIntegration: "ollama.setAgentIntegration",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -1026,6 +1043,45 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
   payload: UsageSummaryInput,
   success: UsageSummary,
   error: Schema.Union([EnvironmentAuthorizationError, UsageReadError]),
+});
+
+const OllamaRpcError = Schema.Union([OllamaError, EnvironmentAuthorizationError]);
+
+const WsOllamaGetOverviewRpc = Rpc.make(WS_METHODS.ollamaGetOverview, {
+  payload: Schema.Struct({}),
+  success: OllamaOverview,
+  error: OllamaRpcError,
+});
+
+const WsOllamaInstallRpc = Rpc.make(WS_METHODS.ollamaInstall, {
+  payload: Schema.Struct({}),
+  success: OllamaInstallEvent,
+  error: OllamaRpcError,
+  stream: true,
+});
+
+const WsOllamaStartRpc = Rpc.make(WS_METHODS.ollamaStart, {
+  payload: Schema.Struct({}),
+  success: OllamaStatus,
+  error: OllamaRpcError,
+});
+
+const WsOllamaPullModelRpc = Rpc.make(WS_METHODS.ollamaPullModel, {
+  payload: OllamaPullInput,
+  success: OllamaPullEvent,
+  error: OllamaRpcError,
+  stream: true,
+});
+
+const WsOllamaDeleteModelRpc = Rpc.make(WS_METHODS.ollamaDeleteModel, {
+  payload: OllamaDeleteModelInput,
+  error: OllamaRpcError,
+});
+
+const WsOllamaSetAgentIntegrationRpc = Rpc.make(WS_METHODS.ollamaSetAgentIntegration, {
+  payload: OllamaSetAgentIntegrationInput,
+  success: OllamaStatus,
+  error: OllamaRpcError,
 });
 
 const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
@@ -2171,6 +2227,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerPrepareTriageRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
+  WsOllamaGetOverviewRpc,
+  WsOllamaInstallRpc,
+  WsOllamaStartRpc,
+  WsOllamaPullModelRpc,
+  WsOllamaDeleteModelRpc,
+  WsOllamaSetAgentIntegrationRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,

@@ -25,12 +25,14 @@ import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcStreamFailure,
   type EnvironmentRpcStreamValue,
+  type EnvironmentStreamCommandRpcTag,
   type EnvironmentSubscriptionRpcTag,
   type EnvironmentUnaryRpcTag,
   EnvironmentRpcUnavailableError,
   request,
   requestGuarded,
   RpcPermissionGuard,
+  runStreamGuarded,
   subscribe,
 } from "../rpc/client.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -1114,6 +1116,51 @@ export function createEnvironmentRpcCommand<
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );
     },
+  });
+  return {
+    ...command,
+    requiredScopes: permissions.requiredScopes,
+    permissionAtom: permissions.permissionAtom,
+  };
+}
+
+export interface EnvironmentRpcStreamCommandInput<TTag extends EnvironmentStreamCommandRpcTag> {
+  readonly input: EnvironmentRpcInput<TTag>;
+  readonly onEvent: (event: EnvironmentRpcStreamValue<TTag>) => void;
+}
+
+/** createEnvironmentRpcCommand for streaming RPCs: the same guard, each event reaches `onEvent`. */
+export function createEnvironmentRpcStreamCommand<
+  R,
+  ER,
+  TTag extends EnvironmentStreamCommandRpcTag,
+>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: {
+    readonly label: string;
+    readonly tag: TTag;
+    readonly concurrency?: AtomCommandConcurrency<{
+      readonly environmentId: EnvironmentIdType;
+      readonly input: EnvironmentRpcStreamCommandInput<TTag>;
+    }>;
+  },
+) {
+  const permissions = createCommandPermissions(runtime, options.tag);
+  const command = createEnvironmentCommand(runtime, {
+    label: options.label,
+    ...(options.concurrency === undefined ? {} : { concurrency: options.concurrency }),
+    execute: (command: EnvironmentRpcStreamCommandInput<TTag>, registry, environmentId) =>
+      permissions.authorize(registry, environmentId, command.input).pipe(
+        Effect.andThen(() =>
+          runStreamGuarded(options.tag, command.input).pipe(
+            Stream.runForEach((event) => Effect.sync(() => command.onEvent(event))),
+          ),
+        ),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, payload) =>
+            createCommandPermissions(runtime, method).authorize(registry, id, payload),
+        }),
+      ),
   });
   return {
     ...command,

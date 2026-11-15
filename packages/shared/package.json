@@ -574,6 +574,10 @@
     "./speech": {
       "types": "./src/speech.ts",
       "import": "./src/speech.ts"
+    },
+    "./ollamaCatalog": {
+      "types": "./src/ollamaCatalog.ts",
+      "import": "./src/ollamaCatalog.ts"
     }
   },
   "scripts": {

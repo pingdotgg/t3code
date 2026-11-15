@@ -27,6 +27,7 @@ export type SettingsPath =
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
+  | "/settings/local-models"
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
@@ -102,6 +103,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/keybindings": msg("Keybindings"),
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
+  "/settings/local-models": msg("Local models"),
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
@@ -141,6 +143,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: msg("Agents"),
     paths: [
       "/settings/providers",
+      "/settings/local-models",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
@@ -334,6 +337,30 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Glass opacity",
     to: "/settings/appearance",
     searchTerms: ["transparent transparency solid menus dialogs composer"],
+  },
+  {
+    id: "setting-ollama-runtime",
+    title: "Ollama",
+    to: "/settings/local-models",
+    searchTerms: ["ollama local models offline install llama qwen gpt-oss download"],
+  },
+  {
+    id: "setting-ollama-agents",
+    title: "Use local models in agents",
+    to: "/settings/local-models",
+    searchTerms: ["ollama agent tool calling codex local model picker"],
+  },
+  {
+    id: "setting-ollama-hardware",
+    title: "Hardware for local models",
+    to: "/settings/local-models",
+    searchTerms: ["gpu vram memory ram cpu compatibility"],
+  },
+  {
+    id: "setting-ollama-custom-model",
+    title: "Download a model by name",
+    to: "/settings/local-models",
+    searchTerms: ["ollama pull model library"],
   },
   {
     // Prefixed because the slider control owns the `window-opacity` id.
@@ -1385,6 +1412,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
+  "/settings/local-models": null,
   "/settings/projects": "project",
   "/settings/general": null,
   "/settings/voice": null,

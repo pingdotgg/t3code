@@ -78,6 +78,12 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  // Installing Ollama and pulling models download gigabytes and change the agents on offer.
+  [WS_METHODS.ollamaInstall]: AuthProvidersManageScope,
+  [WS_METHODS.ollamaStart]: AuthProvidersManageScope,
+  [WS_METHODS.ollamaPullModel]: AuthProvidersManageScope,
+  [WS_METHODS.ollamaDeleteModel]: AuthProvidersManageScope,
+  [WS_METHODS.ollamaSetAgentIntegration]: AuthProvidersManageScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
