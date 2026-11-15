@@ -83,9 +83,18 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("does not treat quoted prose as a path", () => {
-    expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
-    expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
+  it.each([
+    'error: "something went wrong"',
+    'error: "something went wrong."',
+    "see README.md, Node.js v22 on 127.0.0.1:3000",
+    "README.md(42,7): see details",
+    "main.cs(42,7): error CS1002: expected semicolon",
+    "Connecting to api.example.com:443...",
+    "dial tcp: lookup db.internal:5432: no such host",
+    "redis.local:6379> PING",
+    "postgres@db.internal:5432",
+  ])("does not treat prose or unsupported locations as a path: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
   });
 
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
@@ -125,6 +134,20 @@ describe("extractTerminalLinks", () => {
   });
 
   it.each([
+    ["https://example.com/a(b)c)", "https://example.com/a(b)c"],
+    ["https://example.com/(docs)", "https://example.com/(docs)"],
+    ["https://example.com/docs)}])", "https://example.com/docs)"],
+    ["https://example.com/docs):", "https://example.com/docs):"],
+    ["/tmp/a[b]c]", "/tmp/a[b]c"],
+    ["/tmp/docs)}])", "/tmp/docs)"],
+    ["/tmp/docs):", "/tmp/docs"],
+  ])("trims only unbalanced closing delimiters from %s", (raw, text) => {
+    expect(extractTerminalLinks(`see ${raw}`)).toEqual([
+      { kind: isTerminalUrl(text) ? "url" : "path", text, start: 4, end: 4 + text.length },
+    ]);
+  });
+
+  it.each([
     "src/żółć.ts:12:7",
     "żółć/main.ts:12",
     String.raw`żółć\main.ts:12`,
@@ -139,6 +162,11 @@ describe("extractTerminalLinks", () => {
     "src/foo$contact@support.ts:12:3",
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
+    "main.c:1:25",
+    "page.test.tsx:5:3",
+    "foo$bar.ts:12:3",
+    "+page.svelte:12:4",
+    "contact@support.ts:12:3",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },

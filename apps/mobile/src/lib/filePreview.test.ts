@@ -113,6 +113,7 @@ vi.mock("../components/ui/Button", () => ({
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
 vi.mock("expo", () => ({
+  requireNativeModule: () => ({ is24HourFormat: () => true }),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -240,6 +241,7 @@ vi.mock("../components/ui/Menu", () => ({
 }));
 vi.mock("../components/ui/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
+  useFilePreviewGallery: () => (source: unknown) => source,
 }));
 vi.mock("../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string } | null }) =>
