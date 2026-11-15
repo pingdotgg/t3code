@@ -17,6 +17,7 @@ const {
   execFileSyncMock,
   readFileSyncMock,
   existsSyncMock,
+  symlinkSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
   execFileSyncMock: vi.fn(),
   readFileSyncMock: vi.fn(),
   existsSyncMock: vi.fn(),
+  symlinkSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
@@ -54,6 +56,7 @@ vi.mock("node:fs", () => ({
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
   existsSync: existsSyncMock,
+  symlinkSync: symlinkSyncMock,
 }));
 
 vi.mock("node:child_process", () => ({
@@ -76,6 +79,7 @@ describe("DesktopPreReadyPlatform", () => {
     execFileSyncMock.mockReset();
     readFileSyncMock.mockReset().mockReturnValue("{}");
     existsSyncMock.mockReset().mockReturnValue(false);
+    symlinkSyncMock.mockReset();
   });
 
   it.effect.each([
@@ -255,6 +259,47 @@ describe("DesktopPreReadyPlatform", () => {
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
+
+  it.effect.each([
+    { relaunchedByUpdater: "true", restored: true },
+    { relaunchedByUpdater: "", restored: false },
+  ])(
+    "restores the versioned AppImage path an update removed (updater relaunch: $relaunchedByUpdater)",
+    ({ relaunchedByUpdater, restored }) => {
+      vi.stubEnv("VITE_DEV_SERVER_URL", "");
+      getSwitchValueMock.mockReturnValue("");
+      const entryPath = "/xdg/applications/com.t3tools.T3Code.desktop";
+      const files = new Map([[entryPath, "Exec=/Applications/T3-Code-0.1.8-x86_64.AppImage %U\n"]]);
+      readFileSyncMock.mockImplementation((path: string) => files.get(path) ?? "{}");
+      writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+        files.set(path, String(contents));
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, "linux")),
+              Layer.provide(
+                DesktopConfig.layerTest({
+                  XDG_DATA_HOME: "/xdg",
+                  APPIMAGE: "/Applications/T3-Code-x86_64.AppImage",
+                  APPIMAGE_SILENT_INSTALL: relaunchedByUpdater,
+                }),
+              ),
+            ),
+          );
+          assert.deepEqual(
+            symlinkSyncMock.mock.calls,
+            restored
+              ? [["T3-Code-x86_64.AppImage", "/Applications/T3-Code-0.1.8-x86_64.AppImage"]]
+              : [],
+          );
+          assert.include(files.get(entryPath), "Exec=/Applications/T3-Code-x86_64.AppImage %U");
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+    },
+  );
 
   it.effect("points the early portal entry at a configured distribution launcher", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
