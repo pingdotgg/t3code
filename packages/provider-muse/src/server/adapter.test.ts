@@ -30,6 +30,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -42,6 +43,7 @@ import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
@@ -573,6 +575,39 @@ describe("MuseAdapterV2", () => {
       Effect.scoped,
       Effect.provide(testLayer),
     ),
+  );
+
+  it.effect("keeps a turn with several phone photos under Muse's 10 MiB inbound frame limit", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { attachmentsDir } = (yield* ProviderHost.ProviderHost).paths;
+      // The issue's three photos: 4.4 + 2.9 + 2.1 MB, each within T3's per-image limit.
+      const photos = [4_400_000, 2_900_000, 2_100_000].map((sizeBytes, index) => ({
+        type: "image" as const,
+        id: `photo-${index}`,
+        name: `photo-${index}.jpg`,
+        mimeType: "image/jpeg",
+        sizeBytes,
+      }));
+      for (const photo of photos)
+        yield* fileSystem.writeFile(
+          `${attachmentsDir}/${photo.id}`,
+          new Uint8Array(photo.sizeBytes).fill(0xff),
+        );
+      const input = yield* turnInput(harness.providerThread, 1, harness.policy);
+      yield* Effect.exit(
+        harness.runtime.startTurn({
+          ...input,
+          message: { ...input.message, attachments: photos },
+        }),
+      );
+      for (const call of fake.calls.filter((call) => call.method === "turn/start")) {
+        const frame = JSON.stringify({ jsonrpc: "2.0", id: call.commandId, ...call });
+        assert.isAtMost(Buffer.byteLength(frame), 10_485_760);
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("pins sessions and turns to native canonical case", () =>
