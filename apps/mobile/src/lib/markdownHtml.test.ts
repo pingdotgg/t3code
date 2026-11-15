@@ -28,7 +28,7 @@ describe("HTML in native Markdown", () => {
     ).toBe("[![Review](<https://example.com/banner.svg>)](<https://example.com>)");
   });
 
-  it("keeps only the text of icon-sized HTML images so bot headings stay compact", () => {
+  it("keeps only the text of icon-sized HTML images that start a line", () => {
     expect(
       markdownWithHtml(
         '<details>\n<summary><strong><picture><img src="https://example.com/cog.png" width="16" height="16" alt=""></picture> Run configuration</strong></summary>\n\nBody\n\n</details>',
@@ -36,9 +36,9 @@ describe("HTML in native Markdown", () => {
     ).toContain("**Run configuration**");
     expect(
       markdownHtmlContent(
-        'Checks: <img src="https://example.com/ok.png" width="14" alt="Passed"> 3 and <img width="900" src="https://example.com/shot.png" alt="Shot">',
+        '<img src="https://example.com/ok.png" width="14" alt="Passed"> 3 and <img width="16" src="https://example.com/ok.png" alt="Passed">',
       ),
-    ).toBe("Checks: Passed 3 and ![Shot](<https://example.com/shot.png>)");
+    ).toBe("Passed 3 and ![Passed](<https://example.com/ok.png>)");
   });
 
   it("keeps the alt text of SVG images the native renderer would draw as empty boxes", () => {
@@ -72,9 +72,11 @@ describe("HTML in native Markdown", () => {
     const markdown =
       'Intro <summary><img src="https://example.com/c.png" width="16" height="16" alt=""> Title</summary> tail';
     expect(markdownWithHtml(markdown)).toContain("**Title**");
-    expect(markdownWithHtml('a<img src="https://example.com/c.png" width="16" alt=""> b')).toBe(
-      "a b",
-    );
+    expect(
+      markdownWithHtml(
+        'Status: <img src="https://example.com/ok.png" width="16" alt="Passed"> ready',
+      ),
+    ).toBe("Status: ![Passed](<https://example.com/ok.png>) ready");
   });
 
   it("keeps alt text that looks like block Markdown literal", () => {
@@ -105,7 +107,10 @@ describe("HTML in native Markdown", () => {
       markdownForNativeRendering(`a![ b ][badge]c\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
     ).toContain("a b c");
     expect(
-      markdownWithHtml('foo\\_<img src="https://example.com/i.png" width="16" alt=""> bar'),
+      markdownForNativeRendering(
+        "foo\\_![](https://example.com/i.svg) bar",
+        ENRICHED_INLINE_FILE_LINK_REGEX,
+      ),
     ).toBe("foo\\_ bar");
   });
 

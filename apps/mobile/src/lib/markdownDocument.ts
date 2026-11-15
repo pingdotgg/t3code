@@ -184,7 +184,12 @@ export function markdownHtmlTags(content: string): RegExpExecArray[] {
  */
 export function markdownHtmlContent(
   content: string,
-  options: { readonly anchors?: AnchorState; readonly inTableCell?: boolean } = {},
+  options: {
+    readonly anchors?: AnchorState;
+    readonly inTableCell?: boolean;
+    /** Rendered text before `content`; defaults to the start of a line. */
+    readonly before?: string;
+  } = {},
 ): string {
   const tags = markdownHtmlTags(content);
   const anchors =
@@ -202,7 +207,10 @@ export function markdownHtmlContent(
   };
   for (const match of tags) {
     result += nextText(content.slice(end, match.index));
-    const replacement = htmlTagMarkdown(match[0], anchors, options);
+    const replacement = htmlTagMarkdown(match[0], anchors, {
+      inTableCell: options.inTableCell,
+      lineStart: atLineStart((options.before ?? "\n") + result),
+    });
     if (replacement) dropSpace = false;
     else if (/^<img\b/i.test(match[0])) dropSpace = endsWithOpener(result);
     if (replacement === "[" && bangBefore(result, result.length))
@@ -240,6 +248,11 @@ function markdownText(text: string): string {
     );
 }
 
+/** Native draws an image as a block when nothing but emphasis delimiters precede it on its line. */
+function atLineStart(text: string): boolean {
+  return /(?:^|\n)[ \t*_]*$/.test(text);
+}
+
 /**
  * True when a space after `text` is removable: whitespace, or an emphasis delimiter that opens.
  * A delimiter touching the end of a word closes it, and an escaped one is literal.
@@ -252,7 +265,7 @@ function endsWithOpener(text: string): boolean {
 function htmlTagMarkdown(
   tag: string,
   anchors: AnchorState,
-  options: { readonly inTableCell?: boolean },
+  options: { readonly inTableCell?: boolean; readonly lineStart: boolean },
 ): string {
   if (tag.startsWith("<!--")) return "";
   if (ANCHOR_TAG.test(tag)) {
@@ -264,8 +277,8 @@ function htmlTagMarkdown(
   if (/^<img\b/i.test(tag)) {
     const src = attribute(tag, "src");
     if (!src) return "";
-    // Native draws an image that starts a line as a 200pt block, so icons keep only their text.
-    if (iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
+    // Native draws an image that starts a line as a 200pt block, so those icons keep only their text.
+    if (options.lineStart && iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
@@ -313,20 +326,20 @@ export function markdownWithHtml(markdown: string): string {
           let content = linkLabel ? escapeLinkLabel(source) : source;
           if (dropSpace) content = content.replace(/^[ \t]/, "");
           if (content !== source) edits.push({ start, end, content });
-          previous = content || previous;
+          previous += content;
         }
         dropSpace = false;
         continue;
       }
       if (child.type !== "html") {
-        previous = "x";
+        previous += "x";
         dropSpace = false;
         visit(child, inTableCell, linkLabel);
         continue;
       }
-      const content = markdownHtmlContent(child.value, { anchors, inTableCell });
+      const content = markdownHtmlContent(child.value, { anchors, inTableCell, before: previous });
       if (content) {
-        previous = content;
+        previous += content;
         dropSpace = false;
       } else if (/^<img\b/i.test(child.value)) dropSpace = endsWithOpener(previous);
       if (start === undefined || end === undefined) continue;
