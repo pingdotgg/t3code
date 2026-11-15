@@ -744,8 +744,8 @@ export const make = Effect.gen(function* () {
           `--target-branch=${branch(input.target?.refName ?? input.baseBranch)}`,
           `--source-branch=${branch(SourceControlProvider.sourceBranch(input))}`,
           title.arg,
-          "--description",
-          `@${input.bodyFile}`,
+          // Joined: az expands a separate `@file` value again, so a body of `@path` read that file.
+          `--description=@${input.bodyFile}`,
         ],
         ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
       }).pipe(Effect.asVoid);

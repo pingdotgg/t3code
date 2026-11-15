@@ -311,6 +311,8 @@ describe("AzureDevOpsCli.layer", () => {
         expect(mockRun.mock.calls.at(-1)?.[0].stdin).toBe(
           title.startsWith("@") ? title : undefined,
         );
+        // az expands a separate `@file` value a second time, so a body of `@notes.txt` read notes.txt.
+        expect(mockRun.mock.calls.at(-1)?.[0].args).toContain("--description=@/tmp/body.md");
       }
     }).pipe(Effect.provide(layer)),
   );
