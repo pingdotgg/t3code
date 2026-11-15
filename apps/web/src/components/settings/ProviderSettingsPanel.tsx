@@ -198,7 +198,11 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
     <span>
       {lastCheckedRelative.suffix ? (
         <>
-          Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
+          {/* leading-none: mono metrics would otherwise grow the line box and nudge the text. */}
+          Checked{" "}
+          <span className="font-mono leading-none tabular-nums">
+            {lastCheckedRelative.value}
+          </span>{" "}
           {lastCheckedRelative.suffix}
         </>
       ) : (
@@ -997,8 +1001,8 @@ export function EnvironmentProviderSettings({
           ) : null
         }
         headerAction={
-          // The ghost button's padding would inset its label, so pull the text to the card edge.
-          <div className="-me-2 flex min-w-0 items-center gap-2">
+          // The ghost button's padding would inset its icon, so pull the icon to the card edge.
+          <div className="-me-1.5 flex min-w-0 items-center gap-2">
             <ProviderUpdatesAction />
             <Tooltip>
               <TooltipTrigger
@@ -1010,7 +1014,6 @@ export function EnvironmentProviderSettings({
                     aria-busy={isRefreshingProviders}
                     onClick={() => void refreshProviders()}
                   >
-                    <RefreshIcon refreshing={isRefreshingProviders} />
                     <span className="sr-only">Refresh provider status</span>
                     <span className="hidden min-w-0 truncate sm:inline">
                       {isRefreshingProviders ? (
@@ -1019,6 +1022,8 @@ export function EnvironmentProviderSettings({
                         <ProviderLastChecked environmentId={environmentId} />
                       )}
                     </span>
+                    {/* Last, so the icon holds the card edge while the label changes length. */}
+                    <RefreshIcon refreshing={isRefreshingProviders} />
                   </Button>
                 }
               />
