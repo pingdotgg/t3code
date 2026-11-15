@@ -242,6 +242,7 @@ interface CreateManagerOptions {
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
+  foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   registerTerminalProcesses?: Parameters<
@@ -293,6 +294,8 @@ const createManager = (
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
+        // Fixture pids are not real processes; default to a shell idle at its prompt.
+        foregroundProcessGroup: options.foregroundProcessGroup ?? ((pid) => Effect.succeed(pid)),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -940,6 +943,51 @@ it.layer(
           false,
           true,
         ]);
+      }),
+  );
+
+  it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: "node" }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
+  it.effect.each([
+    { label: "idle prompt", platform: "linux", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "linux", foregroundProcessGroup: 100, killed: false },
+    {
+      label: "unknown foreground group",
+      platform: "linux",
+      foregroundProcessGroup: null,
+      killed: false,
+    },
+    { label: "idle prompt", platform: "darwin", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "darwin", foregroundProcessGroup: 100, killed: false },
+  ] as const)(
+    "settles a shell with a childless shell-named child by its foreground group: $label ($platform)",
+    ({ platform, foregroundProcessGroup, killed }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/bash",
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "bash" },
+            { pid: 100, ppid: 9000, name: "bash" },
+          ]),
+          foregroundProcessGroup: () => Effect.succeed(foregroundProcessGroup),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes[0]?.killed).toBe(killed);
       }),
   );
 
