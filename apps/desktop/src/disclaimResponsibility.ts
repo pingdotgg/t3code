@@ -38,10 +38,10 @@ if (!executable.endsWith(" Helper")) {
     const setCloseOnExec = (request: number) => {
       for (let fd = 0; fd < 8; fd++) call(I32, "ioctl", [I32, I64], [fd, request]);
     };
-    setCloseOnExec(0x20006602);
     const [argv] = unwrapPointer([call(External, "_NSGetArgv", [], [])]);
     const [environment] = unwrapPointer([call(External, "_NSGetEnviron", [], [])]);
     try {
+      setCloseOnExec(0x20006602);
       check(
         "posix_spawn",
         [I64, DataType.String, I64, External, External, External],
