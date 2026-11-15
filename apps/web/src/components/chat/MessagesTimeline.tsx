@@ -645,6 +645,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
+  const turnWorkFold = useClientSettings((settings) => settings.turnWorkFoldEnabled);
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
   // Find the fold that hides the match: imported turns have no run id but still
   // fold under a synthetic key, so the match's own run id cannot open them.
@@ -658,6 +659,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           runlessWorkActive,
           toolCallVisibility,
           revealedMessageId,
+          turnWorkFold,
         })
       : null)();
   const activeFindFold = activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
@@ -723,6 +725,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     toolCallVisibility,
     revealedMessageId,
     slashCommands: slashCommandCatalog,
+    turnWorkFold,
   });
   // A find match or citation inside the running turn needs its rows, not the window that replaces them.
   const [windowlessCitationKey, setWindowlessCitationKey] = useState<string | null>(null);
@@ -744,6 +747,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
+    turnWorkFold,
   });
   const revealFoldRows = (opening: boolean) =>
     setFoldRevealBaseIds(
@@ -821,6 +825,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runlessWorkActive,
       toolCallVisibility,
       revealedMessageId,
+      turnWorkFold,
     }).get(entryId);
     const runs = fold ? withTurnFoldOpen(expandedRunIds, fold) : expandedRunIds;
     const groups = runId
@@ -1572,6 +1577,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isWorking,
     runlessWorkActive,
     toolCallVisibility,
+    turnWorkFold,
     rows,
     contentInsetEndAdjustment,
   });
