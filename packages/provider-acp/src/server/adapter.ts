@@ -5067,8 +5067,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
           const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
+          // Chunks carry no task id: while an unpolled completion awaits its report, keep them.
           const isInTurnHandledAgentChatter =
             handledInTurnCount > 0 &&
+            (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size === 0 &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk");
           // Grok re-prompts for each post-settle monitor event; retaining them would replay the whole burst.
@@ -5399,6 +5401,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             context !== null &&
             context.finalized &&
             (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size > 0 &&
+            (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size === 0 &&
             (update.sessionUpdate === "agent_message_chunk" ||
               update.sessionUpdate === "agent_thought_chunk")
           ) {

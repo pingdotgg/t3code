@@ -9461,9 +9461,9 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect(
-    "staggered pre-settle completion waits for native wake output after the last background task ends",
-    () =>
+  it.effect.each(["unpolled", "polled"] as const)(
+    "staggered pre-settle completion waits for native wake output when task B is %s",
+    (taskB) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -9615,6 +9615,16 @@ describe("AcpAdapterV2", () => {
           0,
           "pre-settle unhandled completion must not offer while the turn is active",
         );
+        if (taskB === "polled") {
+          yield* sessionUpdateHandler!({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "tool-call-monitor-b",
+              status: "completed",
+            },
+          });
+        }
 
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         const providerTurnId = idAllocator.derive.providerTurn({
@@ -9632,30 +9642,32 @@ describe("AcpAdapterV2", () => {
         assert.lengthOf(
           continuationRequests,
           0,
-          "finalize must not offer while B is still running",
+          "finalize must not offer without native wake output",
         );
 
-        const bEndNotice = {
-          sessionId: "mock-session-1",
-          update: {
-            sessionUpdate: "user_message_chunk" as const,
-            content: {
-              type: "text" as const,
-              text: 'Monitor "task-monitor-b" ended: [monitor ended: exit 0]',
+        if (taskB === "unpolled") {
+          const bEndNotice = {
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "user_message_chunk" as const,
+              content: {
+                type: "text" as const,
+                text: 'Monitor "task-monitor-b" ended: [monitor ended: exit 0]',
+              },
             },
-          },
-        };
-        assert.isFalse(
-          acpPostSettleWakeEvidence(bEndNotice, {
-            extractBackgroundToolMutation: (text) =>
-              text.includes('Monitor "task-monitor-b" ended')
-                ? [{ taskId: "task-monitor-b", status: "completed", appendOutput: "" }]
-                : [],
-          }),
-          "mutation-only end-notice must not count as post-settle wake evidence",
-        );
-        yield* sessionUpdateHandler!(bEndNotice);
-        assert.lengthOf(continuationRequests, 0, "a task end notice alone cannot start a wake");
+          };
+          assert.isFalse(
+            acpPostSettleWakeEvidence(bEndNotice, {
+              extractBackgroundToolMutation: (text) =>
+                text.includes('Monitor "task-monitor-b" ended')
+                  ? [{ taskId: "task-monitor-b", status: "completed", appendOutput: "" }]
+                  : [],
+            }),
+            "mutation-only end-notice must not count as post-settle wake evidence",
+          );
+          yield* sessionUpdateHandler!(bEndNotice);
+          assert.lengthOf(continuationRequests, 0, "a task end notice alone cannot start a wake");
+        }
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
         yield* sessionUpdateHandler!({
           sessionId: "mock-session-1",
