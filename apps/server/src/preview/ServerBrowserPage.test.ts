@@ -835,6 +835,30 @@ describe("server browser action timeout", () => {
 
     expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
   });
+
+  it("gives the select's option read and selection one shared timeout", async () => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const page = {
+      locator: () => ({
+        // Reading the options takes 7 of the 9 seconds.
+        evaluate: async (_probe: unknown, _arg: unknown, options: StepOptions) => {
+          steps.push(`evaluate ${options.timeout}`);
+          now += 7_000;
+          return [{ value: "a", label: "A" }];
+        },
+        selectOption: async (values: Array<string>, options: StepOptions) => {
+          steps.push(`selectOption ${options.timeout}`);
+          return values;
+        },
+      }),
+    } as unknown as Page;
+
+    await ServerBrowserPage.select(page, { selector: "#s", values: ["a"], timeoutMs: 9_000 });
+
+    expect(steps).toEqual(["evaluate 9000", "selectOption 2000"]);
+  });
 });
 
 describe("server browser click", () => {

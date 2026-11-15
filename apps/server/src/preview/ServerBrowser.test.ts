@@ -4214,3 +4214,63 @@ it.live("a page's title change without navigation reaches its session", () =>
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.scoped),
 );
+
+it.effect("an action queued behind another on its tab gets only what is left of its timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const cdp = contexts[0]!.sessions[0]!;
+      const send = cdp.send.getMockImplementation()!;
+      let seconds = 0;
+      const stopped: Array<number> = [];
+      cdp.send.mockImplementation((method: string, input?: unknown) => {
+        if (
+          method === "Runtime.evaluate" &&
+          (input as { expression?: string }).expression === "hang"
+        )
+          return new Promise(() => {});
+        if (method === "Runtime.terminateExecution") stopped.push(seconds);
+        return send(method, input);
+      });
+      const evaluate = (timeoutMs: number) =>
+        broker
+          .invoke({ scope, tabId, operation: "evaluate", input: { expression: "hang" }, timeoutMs })
+          .pipe(Effect.exit, Effect.forkScoped);
+      yield* evaluate(7_000);
+      yield* evaluate(9_000);
+      for (; seconds < 20; seconds++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      }
+      // Both were sent together; the second waited 7 s for the first, so 2 s of its 9 s were left.
+      expect(stopped).toEqual([stopped[0], stopped[0]! + 2]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a viewer whose screencast never pauses does not hold the tab's snapshots", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      const viewerSession = contexts[0]!.sessions.at(-1)!;
+      const send = viewerSession.send.getMockImplementation()!;
+      const stalled = Promise.withResolvers<Record<string, unknown>>();
+      viewerSession.send.mockImplementation((method: string, input?: unknown) =>
+        method === "Page.stopScreencast" ? stalled.promise : send(method, input),
+      );
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Effect.addFinalizer(() => Effect.sync(() => stalled.resolve({})));
+      for (let seconds = 0; seconds < 16; seconds++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+      }
+      // The 15 s request budget covers pausing viewers; a pause that never answers fails the snapshot.
+      expect(snapshotting.pollUnsafe()).toBeDefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
