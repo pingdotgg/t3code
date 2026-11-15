@@ -1,9 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off - tests serve a fake Wayland compositor on a real Unix socket.
+// @effect-diagnostics nodeBuiltinImport:off - tests serve a fake Wayland compositor over real IPC.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeWorkerThreads from "node:worker_threads";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   probeWaylandOutputCount,
@@ -52,7 +53,10 @@ const withFakeCompositor = async (
   run: (socketPath: string) => void,
 ) => {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-wayland-"));
-  const socketPath = NodePath.join(directory, "wayland-1");
+  const socketPath =
+    HostProcess.Platform.defaultValue() === "win32"
+      ? "\\\\.\\pipe\\" + NodePath.basename(directory)
+      : NodePath.join(directory, "wayland-1");
   const worker = new NodeWorkerThreads.Worker(FAKE_COMPOSITOR_SOURCE, {
     eval: true,
     workerData: { socketPath, globals: options.globals ?? [], silent: options.silent ?? false },
