@@ -25,11 +25,14 @@ export function scopeProjectSettingsGroup(
 }
 
 export function projectGroupTitleNeedsUpdate(
-  memberTitles: ReadonlyArray<string>,
+  members: ReadonlyArray<Pick<Project, "title" | "hasCustomTitle">>,
   nextTitle: string,
   wasEdited: boolean,
 ): boolean {
-  return wasEdited && memberTitles.some((title) => title !== nextTitle);
+  return (
+    wasEdited &&
+    members.some((member) => member.title !== nextTitle || member.hasCustomTitle !== true)
+  );
 }
 
 export function defaultProjectIcon(project: Pick<Project, "isScratch">) {
