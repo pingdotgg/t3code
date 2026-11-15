@@ -9,6 +9,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import * as BlindEvaluation from "./blindEvaluation.ts";
 
 const GENERATION_TIMEOUT = "3 minutes";
 
@@ -178,7 +179,13 @@ function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): str
 
 export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration")(function* (
   openCodeSettings: OpenCodeSettings,
+  options: {
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly directory?: string;
+  } = {},
 ) {
+  const processEnvironment = options.environment ?? process.env;
+  const processDirectory = options.directory ?? process.cwd();
   const host = yield* ProviderHost.ProviderHost;
   const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
   const serverOwner = yield* OpenCodeServerOwner.OpenCodeServerOwner;
@@ -186,6 +193,13 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   const runOpenCodeJson = Effect.fn("runOpenCodeJson")(function* <S extends Schema.Top>(
     input: TextGenerationOperations.Request<S>,
   ) {
+    const blindEvaluation = input.operation === "generateModelEvaluation";
+    if (blindEvaluation) {
+      yield* BlindEvaluation.validateBlindEvaluationSelection(
+        input.modelSelection,
+        input.operation,
+      );
+    }
     const parsedModel = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
     if (!parsedModel) {
       return yield* new TextGenerationError({
@@ -216,10 +230,11 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             client.session.create(
               {
                 title: `T3 Code ${input.operation}`,
-                // OpenCode Zen refuses free-model requests that carry no tools, so keep read.
                 permission: [
                   { permission: "*", pattern: "*", action: "deny" },
-                  { permission: "read", pattern: "*", action: "allow" },
+                  ...(!blindEvaluation
+                    ? [{ permission: "read", pattern: "*", action: "allow" as const }]
+                    : []),
                 ],
               },
               { signal },
@@ -243,11 +258,21 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Warn" })),
         );
         const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
+        const requestedVariant = getModelSelectionStringOptionValue(
+          input.modelSelection,
+          "variant",
+        );
         const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
           client,
           parsedModel,
-          getModelSelectionStringOptionValue(input.modelSelection, "variant"),
+          requestedVariant,
         );
+        if (blindEvaluation && selectedVariant !== requestedVariant) {
+          return yield* new TextGenerationError({
+            operation: input.operation,
+            detail: "OpenCode does not support the requested model variant for blind evaluation.",
+          });
+        }
         const promptContext = {
           operation: input.operation,
           cwd: input.cwd,
@@ -303,7 +328,25 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             cause: promptError,
           });
         }
+        const responseInfo = result.data?.info;
+        if (
+          blindEvaluation &&
+          (responseInfo?.providerID !== parsedModel.providerID ||
+            responseInfo.modelID !== parsedModel.modelID ||
+            (requestedVariant !== undefined && responseInfo.variant !== requestedVariant))
+        ) {
+          return yield* new TextGenerationError({
+            operation: input.operation,
+            detail: "OpenCode executed blind evaluation with a different model or variant.",
+          });
+        }
         const responseParts = result.data?.parts ?? [];
+        if (blindEvaluation && BlindEvaluation.hasBlindEvaluationPartActivity(responseParts)) {
+          return yield* new TextGenerationError({
+            operation: input.operation,
+            detail: "OpenCode reported tool activity during blind evaluation.",
+          });
+        }
         const rawText = getOpenCodeTextResponse(responseParts);
         if (rawText.length === 0) {
           return yield* new OpenCodeTextGenerationEmptyOutputError({
@@ -359,8 +402,23 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       }),
     );
 
-    const serverOutput =
-      openCodeSettings.serverUrl.length > 0
+    const isolatedOutput = Effect.gen(function* () {
+      const environment = yield* BlindEvaluation.makeBlindEvaluationEnvironment({
+        generation: "v1",
+        operation: input.operation,
+        directory: processDirectory,
+        environment: processEnvironment,
+      });
+      const server = yield* openCodeRuntime.startOpenCodeServerProcess({
+        binaryPath: openCodeSettings.binaryPath,
+        directory: input.cwd,
+        environment,
+      });
+      return yield* runAgainstServer(server);
+    }).pipe(Effect.scoped);
+    const serverOutput = blindEvaluation
+      ? isolatedOutput
+      : openCodeSettings.serverUrl.length > 0
         ? openCodeRuntime
             .connectToOpenCodeServer({
               binaryPath: openCodeSettings.binaryPath,
@@ -400,5 +458,6 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
 
   return TextGenerationOperations.fromRunner("OpenCodeTextGeneration", runOpenCodeJson, {
     supportsInvestigation: false,
+    supportsBlindEvaluation: openCodeSettings.serverUrl.trim().length === 0,
   });
 });

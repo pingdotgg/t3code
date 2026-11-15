@@ -84,6 +84,13 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
   )(
     function* (input) {
       const { operation, prompt, modelSelection } = input;
+      const evaluating = operation === "generateModelEvaluation";
+      if (evaluating && ["", "auto", "default"].includes(modelSelection.model.trim())) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Cursor evaluation requires an explicit model. Choose a named judge model.",
+        });
+      }
 
       const apiKey = yield* resolveCursorApiKey(operation);
       const sdkFailure = (detail: string) => (cause: unknown) =>
@@ -118,13 +125,14 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         apiKey,
         mode: "plan",
         model: cursorSdkModelSelection(modelSelection),
+        ...(evaluating ? { tools: [] } : {}),
         local: {
           cwd,
           store,
           autoReview: false,
           sandboxOptions: { enabled: true },
           settingSources: [],
-          enableAgentRetries: true,
+          enableAgentRetries: !evaluating,
         },
       } satisfies AgentOptions;
       const createCursorAgent = (sandboxEnabled: boolean) =>
@@ -151,7 +159,10 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         // Empty cwd and setting sources isolate the run from user projects even if sandboxing fails.
         const agent = yield* Effect.acquireRelease(
           createCursorAgent(true).pipe(
-            Effect.catchIf(cursorSandboxUnsupported, () => createCursorAgent(false)),
+            Effect.catchIf(
+              (cause) => !evaluating && cursorSandboxUnsupported(cause),
+              () => createCursorAgent(false),
+            ),
           ),
           (agent) =>
             Effect.tryPromise({
@@ -176,6 +187,31 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               }).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }))
             : Effect.void,
         );
+        if (evaluating) {
+          yield* Effect.tryPromise({
+            try: async () => {
+              for await (const event of run.stream()) {
+                if (
+                  event.type === "tool_call" ||
+                  event.type === "request" ||
+                  event.type === "task" ||
+                  (event.type === "system" && (event.tools?.length ?? 0) > 0) ||
+                  (event.type === "assistant" &&
+                    event.message.content.some((block) => block.type === "tool_use"))
+                ) {
+                  throw new TextGenerationError({
+                    operation,
+                    detail: "Cursor attempted tool work or user input during model evaluation.",
+                  });
+                }
+              }
+            },
+            catch: (cause) =>
+              isTextGenerationError(cause)
+                ? cause
+                : sdkFailure("Cursor evaluation event stream failed.")(cause),
+          });
+        }
         return yield* Effect.tryPromise({
           try: () => run.wait(),
           catch: sdkFailure("Cursor SDK run failed."),
@@ -206,6 +242,22 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
 
+      if (
+        evaluating &&
+        (promptResult.model?.id !== agentOptions.model.id ||
+          agentOptions.model.params?.some(
+            (requested) =>
+              !promptResult.model?.params?.some(
+                (actual) => actual.id === requested.id && actual.value === requested.value,
+              ),
+          ))
+      ) {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Cursor did not confirm the selected model and options for evaluation.",
+        });
+      }
+
       return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
     },
     (effect, input) => {
@@ -229,5 +281,6 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
   return TextGenerationOperations.fromRunner("CursorTextGeneration", runCursorJson, {
     supportsInvestigation: false,
+    supportsBlindEvaluation: true,
   });
 });

@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   resolveProjectProviderInstanceEnabled,
+  textGeneratorForSelection,
   type EnvironmentId,
   type ModelEvaluationGuidance,
   type ProjectId,
@@ -19,12 +20,12 @@ import { useState } from "react";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import { providerInstanceEntriesFor } from "../../providerInstances";
 import { useProjects } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { modelEvaluations } from "../../state/modelEvaluations";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
+import { useTextGenerationTargets } from "../../textGenerators";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -56,14 +57,18 @@ export function ModelEvaluationSettings() {
   const providers =
     (environment ? providersByEnvironment.get(environment.environmentId) : undefined) ??
     EMPTY_SERVER_PROVIDERS;
-  const judgeProviders = providers.filter(isModelEvaluationJudge);
   const selection = settings.modelEvaluationModelSelection ?? settings.textGenerationModelSelection;
-  const entries = providerInstanceEntriesFor(judgeProviders, settings, null, [
-    selection.instanceId,
-  ]);
+  const judgeTargets = useTextGenerationTargets({
+    environmentId: environment?.environmentId ?? null,
+    settings,
+    providers: providers.filter(isModelEvaluationJudge),
+    projectId: null,
+    selections: [selection],
+  });
+  const entries = judgeTargets.entries;
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
-    judgeProviders,
+    judgeTargets.providers,
     selection.instanceId,
     selection.model,
   );
@@ -86,6 +91,8 @@ export function ModelEvaluationSettings() {
   const unavailableEnvironments = targets.flatMap((target) => {
     const judge =
       target.settings.modelEvaluationModelSelection ?? target.settings.textGenerationModelSelection;
+    const generator = textGeneratorForSelection(target.settings, judge.instanceId);
+    if (generator !== undefined) return generator.enabled ? [] : [target.label];
     const provider = providersByEnvironment
       .get(target.environmentId)
       ?.find(

@@ -389,6 +389,9 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
+    const openCode2Client = yield* OpenCode2Client.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
     const openCode2Server = yield* OpenCode2Server.make({
       binaryPath: effectiveConfig.binaryPath,
       serverUrl: effectiveConfig.serverUrl,
@@ -397,10 +400,7 @@ export const OpenCodeDriver: ProviderDriver<
       environment: processEnv,
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-      Effect.provideService(
-        OpenCode2Client.OpenCode2Client,
-        yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
-      ),
+      Effect.provideService(OpenCode2Client.OpenCode2Client, openCode2Client),
     );
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
@@ -464,11 +464,18 @@ export const OpenCodeDriver: ProviderDriver<
     });
     const textGeneration = selectOpenCodeRuntimeTextGeneration(
       resolveRuntime,
-      yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      ),
-      yield* OpenCode2TextGeneration.make().pipe(
+      yield* makeOpenCodeTextGeneration(effectiveConfig, {
+        environment: processEnv,
+        directory: host.paths.cwd,
+      }).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner)),
+      yield* OpenCode2TextGeneration.make({
+        binaryPath: effectiveConfig.binaryPath,
+        serverUrl: effectiveConfig.serverUrl,
+        environment: processEnv,
+        directory: host.paths.cwd,
+      }).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
+        Effect.provideService(OpenCode2Client.OpenCode2Client, openCode2Client),
       ),
     );
 

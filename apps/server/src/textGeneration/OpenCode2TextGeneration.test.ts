@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeURL from "node:url";
 import { ChatAttachmentId, ChatImageAttachment, ProviderInstanceId } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -7,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { TestClock } from "effect/testing";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -14,9 +16,18 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
 import * as OpenCode2TextGeneration from "@t3tools/provider-opencode/server/v2/textGeneration";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
+import * as OpenCodeRuntime from "@t3tools/provider-opencode/server/OpenCodeRuntime";
+import * as OpenCodeServerLedger from "@t3tools/provider-opencode/server/OpenCodeServerLedger";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
 
-const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
+const layer = Layer.mergeAll(
+  TestProviderHost.layer(),
+  OpenCodeRuntime.layer.pipe(Layer.provide(OpenCodeServerLedger.layerTest)),
+  OpenCode2Client.layer,
+).pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
+);
 
 it.layer(layer)("OpenCode2TextGeneration", (it) => {
   it.effect.each([false, true] as const)(

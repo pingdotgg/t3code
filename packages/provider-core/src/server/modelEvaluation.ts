@@ -10,6 +10,8 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { toJsonSchemaObject } from "./textGenerationUtils.ts";
+
 export const MODEL_EVALUATION_RUBRIC_VERSION = "1";
 const decodeModelEvaluationVerdict = Schema.decodeUnknownOption(ModelEvaluationVerdict, {
   onExcessProperty: "error",
@@ -410,6 +412,7 @@ export function buildModelEvaluationPrompt(packet: BlindModelEvaluationPacket) {
       "rationale and each observation have text (at most 600 characters) and citations (up to 5 refs from this packet). Cite evidence for every observation; never invent refs. Each of strengths, weaknesses, promptAdvice has at most 3 observations.",
       "Describe what worked or failed in this observed task. Prompt advice must follow from concrete evidence, such as a missed constraint or a successful explicit acceptance check. Do not invent model capacity, token limits, preferred prompt length, latency, cost, general ability, or comparative rankings from one sample.",
       "Return only JSON, without markdown fences.",
+      `Required JSON Schema: ${JSON.stringify(toJsonSchemaObject(ModelEvaluationVerdict))}`,
       JSON.stringify(packet),
     ].join("\n\n"),
   };

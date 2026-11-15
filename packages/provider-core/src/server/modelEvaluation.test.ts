@@ -174,6 +174,9 @@ it("separates identities from evidence and preserves tool outcomes and task data
   ]) {
     expect(prompt.toLowerCase()).not.toContain(identity.toLowerCase());
   }
+  expect(prompt).toContain('"taskCategory"');
+  expect(prompt).toContain('"scores"');
+  expect(prompt).toContain('"additionalProperties":false');
   expect(prompt).toContain("2 tests failed");
   expect(prompt).toContain('\\"exitCode\\":1');
   expect(result.packet.evidence.map((entry) => entry.ref)).toEqual(["E1", "E2", "E3"]);

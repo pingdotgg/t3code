@@ -188,12 +188,20 @@ export const make = Effect.gen(function* () {
     );
   });
   return TextGeneration.of({
-    generateModelEvaluation: Effect.fn("TextGeneration.generateModelEvaluation")(function (input) {
-      return resolveInstance(
-        registry,
-        "generateModelEvaluation",
-        input.modelSelection.instanceId,
-      ).pipe(Effect.flatMap((textGeneration) => textGeneration.generateModelEvaluation(input)));
+    generateModelEvaluation: Effect.fn("TextGeneration.generateModelEvaluation")(function* (input) {
+      const textGenerator = yield* textGenerators.runner(input.modelSelection.instanceId);
+      const judge =
+        textGenerator === undefined
+          ? yield* resolveInstance(
+              registry,
+              "generateModelEvaluation",
+              input.modelSelection.instanceId,
+            )
+          : TextGenerationOperations.fromRunner("TextGenerator", textGenerator, {
+              supportsInvestigation: false,
+              supportsBlindEvaluation: true,
+            });
+      return yield* judge.generateModelEvaluation(input);
     }),
     generateCommitMessage: Effect.fn("TextGeneration.generateCommitMessage")(function (input) {
       return generate(

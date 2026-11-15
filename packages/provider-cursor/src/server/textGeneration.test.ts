@@ -1,4 +1,4 @@
-import type { RunResult } from "@cursor/sdk";
+import type { AgentOptions, RunResult, SDKMessage } from "@cursor/sdk";
 import { ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
 import { CursorSettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
@@ -13,7 +13,8 @@ import { makeCursorTextGeneration } from "./textGeneration.ts";
 import * as CursorSdk from "./CursorSdk.ts";
 
 const cursorSdkMock = vi.hoisted(() => ({
-  create: vi.fn<(options: unknown) => Promise<unknown>>(),
+  messages: [] as SDKMessage[],
+  create: vi.fn<(options: AgentOptions) => Promise<unknown>>(),
   send: vi.fn<(prompt: string) => Promise<unknown>>(),
   close: vi.fn(),
   cancel: vi.fn(async () => {}),
@@ -47,15 +48,20 @@ const cursorSettings = decodeCursorSettings({ enabled: true });
 
 beforeEach(() => {
   hasCustomPolicy = false;
+  cursorSdkMock.messages = [];
   cursorSdkMock.create.mockReset();
   cursorSdkMock.send.mockReset();
   cursorSdkMock.create.mockImplementation(async (options) => {
     cursorSdkMock.send.mockImplementation(async (prompt) => ({
       status: "running",
       cancel: cursorSdkMock.cancel,
+      stream: async function* () {
+        yield* cursorSdkMock.messages;
+      },
       wait: () => cursorSdkMock.prompt(prompt, options),
     }));
     return {
+      model: options.model,
       close: cursorSdkMock.close,
       [Symbol.asyncDispose]: async () => {
         cursorSdkMock.close();
@@ -77,7 +83,152 @@ beforeEach(() => {
   });
 });
 
+const evaluationInput = {
+  cwd: "/isolated-evaluator",
+  modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2", [
+    { id: "fastMode", value: false },
+  ]),
+  packet: {
+    scope: "turn" as const,
+    runOutcome: "completed" as const,
+    request: { ref: "U1" as const, text: "Repair the issue." },
+    context: [],
+    evidence: [{ ref: "E1", kind: "assistant" as const, text: "Fixed." }],
+    truncated: false,
+    omittedItems: 0,
+    missingArtifacts: false,
+  },
+};
+const evaluationVerdict = {
+  outcome: "insufficient_evidence",
+  taskCategory: "other",
+  confidence: "low",
+  scores: {
+    taskCompletion: null,
+    correctness: null,
+    instructionFollowing: null,
+    verification: null,
+  },
+  rationale: { text: "No verifiable outcome.", citations: ["E1"] },
+  strengths: [],
+  weaknesses: [],
+  promptAdvice: [],
+};
+const evaluationResult: RunResult = {
+  id: "run-evaluation",
+  status: "finished",
+  model: { id: "composer-2", params: [{ id: "fast", value: "false" }] },
+  result: JSON.stringify(evaluationVerdict),
+};
+
 describe("CursorTextGeneration", () => {
+  it.effect("evaluates with the selected model, no tools, and no ambient settings", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt.mockResolvedValueOnce(evaluationResult);
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      expect(generation.supportedOperations).toContain("generateModelEvaluation");
+      expect(yield* generation.generateModelEvaluation(evaluationInput)).toEqual(evaluationVerdict);
+      expect(cursorSdkMock.create).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          model: evaluationResult.model,
+          tools: [],
+          local: expect.objectContaining({
+            cwd: "/isolated-text-generation",
+            settingSources: [],
+            sandboxOptions: { enabled: true },
+            enableAgentRetries: false,
+          }),
+        }),
+      );
+      expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["auto", "default", ""])(
+    "rejects the unpinned judge model %s before starting Cursor",
+    (model) =>
+      Effect.gen(function* () {
+        const generation = yield* makeCursorTextGeneration(cursorSettings, {
+          CURSOR_API_KEY: "key",
+        });
+        const error = yield* generation
+          .generateModelEvaluation({
+            ...evaluationInput,
+            modelSelection: { ...evaluationInput.modelSelection, model },
+          })
+          .pipe(Effect.flip);
+        expect(error.detail).toContain("explicit model");
+        expect(cursorSdkMock.create).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    undefined,
+    { id: "different-model" },
+    { id: "composer-2", params: [{ id: "fast", value: "true" }] },
+    { id: "composer-2" },
+  ])("rejects an evaluation without confirmation of the exact model and options (%j)", (model) =>
+    Effect.gen(function* () {
+      const result = { ...evaluationResult };
+      if (model) result.model = model;
+      else delete result.model;
+      cursorSdkMock.prompt.mockResolvedValueOnce(result);
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const error = yield* generation.generateModelEvaluation(evaluationInput).pipe(Effect.flip);
+      expect(error.detail).toContain("selected model and options");
+      expect(cursorSdkMock.create).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      type: "tool_call",
+      agent_id: "agent-1",
+      run_id: "run-1",
+      name: "read",
+      call_id: "tool-1",
+      status: "running",
+    },
+    {
+      type: "assistant",
+      agent_id: "agent-1",
+      run_id: "run-1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tool-1", name: "read", input: {} }],
+      },
+    },
+    { type: "request", agent_id: "agent-1", run_id: "run-1", request_id: "request-1" },
+    { type: "task", agent_id: "agent-1", run_id: "run-1", status: "running" },
+    { type: "system", agent_id: "agent-1", run_id: "run-1", tools: ["read"] },
+  ] satisfies SDKMessage[])("rejects forbidden evaluation activity (%j)", (event) =>
+    Effect.gen(function* () {
+      cursorSdkMock.messages = [event];
+      cursorSdkMock.prompt.mockResolvedValueOnce(evaluationResult);
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const error = yield* generation.generateModelEvaluation(evaluationInput).pipe(Effect.flip);
+      expect(error.detail).toContain("tool");
+      expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+      expect(cursorSdkMock.cancel).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.close).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("does not retry a judge without sandboxing", () =>
+    Effect.gen(function* () {
+      cursorSdkMock.create.mockRejectedValueOnce(new Error("sandboxing is not supported"));
+      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
+      const error = yield* generation.generateModelEvaluation(evaluationInput).pipe(Effect.flip);
+      expect(error.detail).toContain("could not be created");
+      expect(cursorSdkMock.create).toHaveBeenCalledOnce();
+      expect(cursorSdkMock.send).not.toHaveBeenCalled();
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("resolves the browser credential for every request after an account change", () =>
     Effect.gen(function* () {
       let apiKey = "first-browser-key";

@@ -47,10 +47,7 @@ export function useScopedModelDisabledReason(
       const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
       const generator = textGeneratorForSelection(candidate.settings, instanceId);
       if (shownGenerator !== undefined || generator !== undefined) {
-        if (
-          requiredOperations.includes("generateReviewGuide") ||
-          requiredOperations.includes("generateModelEvaluation")
-        )
+        if (requiredOperations.includes("generateReviewGuide"))
           return "Choose a coding agent for this setting.";
         // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
         if (

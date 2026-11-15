@@ -48,12 +48,14 @@ interface FakeCodexInput {
   output: string;
   lifecycle?: { port: number; command: "exec" | "mcp list" };
   exitCode?: number;
+  events?: ReadonlyArray<unknown>;
   stderr?: string;
   requireImage?: boolean;
   requireServiceTier?: string;
   requireReasoningEffort?: string;
   forbidReasoningEffort?: boolean;
   requireArg?: string;
+  requiredArgs?: ReadonlyArray<string>;
   forbidArg?: string;
   disabledFeatures?: ReadonlyArray<string>;
   stdinMustContain?: string;
@@ -61,6 +63,7 @@ interface FakeCodexInput {
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
   requiredCwd?: string;
   requireInstructions?: string;
+  requireIsolatedHome?: boolean;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -70,6 +73,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     requireReasoningEffort: input.requireReasoningEffort ?? null,
     forbidReasoningEffort: input.forbidReasoningEffort ?? false,
     requireArg: input.requireArg ?? null,
+    requiredArgs: input.requiredArgs ?? [],
     forbidArg: input.forbidArg ?? null,
     disabledFeatures: input.disabledFeatures ?? [],
     stdinMustContain: input.stdinMustContain ?? null,
@@ -77,8 +81,10 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     mcpServers: input.mcpServers ?? [],
     requiredCwd: input.requiredCwd ?? null,
     requireInstructions: input.requireInstructions ?? null,
+    requireIsolatedHome: input.requireIsolatedHome ?? false,
     stderr: input.stderr ?? null,
     output: input.output,
+    events: input.events ?? [],
     exitCode: input.exitCode ?? 0,
   });
   return Effect.gen(function* () {
@@ -130,6 +136,16 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  const last = args.filter(arg => arg.startsWith("features." + name + "=")).at(-1);',
         '  if (last !== "features." + name + "=false") fail("feature not disabled: " + name, 8);',
         "}",
+        "if (check.requireIsolatedHome) {",
+        "  const home = process.env.CODEX_HOME;",
+        '  if (NodeFS.existsSync(home + "/AGENTS.md")) fail("inherited global instructions", 12);',
+        '  const config = NodeFS.readFileSync(home + "/config.toml", "utf8");',
+        '  if (!config.includes(\'model_provider = "private"\') || !config.includes(\'base_url = "http://127.0.0.1:1/v1"\') || config.includes("developer_instructions")) fail("incorrect isolated routing", 13);',
+        '  if (!NodeFS.lstatSync(home + "/auth.json").isSymbolicLink() || !NodeFS.lstatSync(home + "/auth.lock").isSymbolicLink()) fail("credential identity was split", 14);',
+        '  const auth = NodeFS.realpathSync(home + "/auth.json");',
+        '  NodeFS.writeFileSync(auth + ".new", "rotated-login");',
+        '  NodeFS.renameSync(auth + ".new", auth);',
+        "}",
         "const chunks = [];",
         "for await (const chunk of process.stdin) chunks.push(chunk);",
         'const stdinContent = Buffer.concat(chunks).toString("utf8");',
@@ -139,6 +155,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
         'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
+        'for (const arg of check.requiredArgs) if (!originalArgs.includes(` ${arg} `)) fail("missing arg: " + arg, 8);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
         "}",
@@ -169,6 +186,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         'if (check.stderr !== null) process.stderr.write(check.stderr + "\\n");',
         'if (outputPath !== null) NodeFS.writeFileSync(outputPath, check.output + "\\n");',
+        'for (const event of check.events) process.stdout.write(JSON.stringify(event) + "\\n");',
         "process.exitCode = check.exitCode;",
         "",
       ].join("\n"),
@@ -185,6 +203,7 @@ function withFakeCodexEnv<A, E, R>(
     defaultModel?: string;
     customModels?: ReadonlyArray<string>;
     managedRuntime?: boolean;
+    configToml?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -192,15 +211,19 @@ function withFakeCodexEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
+    if (input.configToml !== undefined)
+      yield* fs.writeFileString(`${tempDir}/config.toml`, input.configToml);
     const config = decodeCodexSettings({
       binaryPath: codexPath,
       launchArgs: input.launchArgs,
       setupMode: input.resolvedRuntime ?? (input.managedRuntime ? "managed" : "existing"),
       customModels: input.customModels,
     });
+    yield* fs.writeFileString(`${tempDir}/AGENTS.md`, "Unrelated user instructions.");
+    yield* fs.writeFileString(`${tempDir}/auth.json`, "original-login");
     const textGeneration = yield* makeCodexTextGeneration(
       config,
-      input.environment === undefined ? undefined : { ...process.env, ...input.environment },
+      { ...process.env, CODEX_HOME: tempDir, ...input.environment },
       Effect.succeed(
         (input.models ?? []).map((slug) => ({
           slug,
@@ -213,12 +236,15 @@ function withFakeCodexEnv<A, E, R>(
       input.resolvedRuntime || input.managedRuntime
         ? Effect.succeed({
             config,
-            environment: input.environment ?? process.env,
+            environment: { ...process.env, CODEX_HOME: tempDir, ...input.environment },
             revision: "test",
           })
         : undefined,
     );
-    return yield* effectFn(textGeneration);
+    const result = yield* effectFn(textGeneration);
+    if (input.requireIsolatedHome)
+      expect(yield* fs.readFileString(`${tempDir}/auth.json`)).toBe("rotated-login");
+    return result;
   }).pipe(Effect.scoped);
 }
 
@@ -297,6 +323,132 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           }),
       ),
   );
+
+  it.effect.each([
+    "valid verdict",
+    "unquoted CLI routing",
+    "quoted CLI routing",
+    "spaced CLI routing",
+    "missing CLI routing value",
+    "tool activity",
+    "MCP discovery unavailable",
+    "extra field",
+  ] as const)("uses an isolated exact Codex judge (%s)", (state) => {
+    const cliRouting =
+      state === "unquoted CLI routing" ||
+      state === "quoted CLI routing" ||
+      state === "spaced CLI routing";
+    const verdict = {
+      outcome: "insufficient_evidence",
+      taskCategory: "other",
+      confidence: "low",
+      scores: {
+        taskCompletion: null,
+        correctness: null,
+        instructionFollowing: null,
+        verification: null,
+      },
+      rationale: { text: "No execution evidence was supplied.", citations: ["U1"] },
+      strengths: [],
+      weaknesses: [],
+      promptAdvice: [],
+    };
+    return withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          ...verdict,
+          ...(state === "extra field" ? { invented: true } : {}),
+        }),
+        models: ["other-default-model"],
+        defaultModel: "other-default-model",
+        requireArg: "--model selected-judge",
+        configToml: `profile = "private"\nmodel_provider = "wrong"\ndeveloper_instructions = "Do not inherit"\n[profiles.private]\nmodel_provider = "private"\n[model_providers.private]\nbase_url = "http://127.0.0.1:${cliRouting ? 2 : 1}/v1"\nwire_api = "responses"\n`,
+        ...(cliRouting || state === "missing CLI routing value"
+          ? {
+              launchArgs:
+                state === "missing CLI routing value"
+                  ? "-c model_provider"
+                  : state === "unquoted CLI routing"
+                    ? "-c model_provider=private --config=model_providers.private.base_url=http://127.0.0.1:1/v1"
+                    : state === "spaced CLI routing"
+                      ? '-c " model_provider = private " --config " model_providers.private.base_url = http://127.0.0.1:1/v1 "'
+                      : `-c 'model_provider="private"' --config 'model_providers.private.base_url="http://127.0.0.1:1/v1"'`,
+            }
+          : {}),
+        requireIsolatedHome: state !== "missing CLI routing value",
+        requireReasoningEffort: "high",
+        requireServiceTier: "priority",
+        disabledFeatures: [
+          "plugins",
+          "apps",
+          "shell_tool",
+          "unified_exec",
+          "hooks",
+          "multi_agent",
+          "view_image",
+          "image_generation",
+          "browser_use",
+          "computer_use",
+          "skill_search",
+          "tool_suggest",
+          "sleep_tool",
+        ],
+        mcpServers: state === "MCP discovery unavailable" ? 2 : [],
+        events:
+          state === "tool activity"
+            ? [
+                {
+                  type: "item.completed",
+                  item: { type: "command_execution", command: "cat /secret" },
+                },
+              ]
+            : [
+                {
+                  type: "item.completed",
+                  item: { type: "agent_message", text: JSON.stringify(verdict) },
+                },
+              ],
+      },
+      (runtime) =>
+        Effect.gen(function* () {
+          const exit = yield* runtime
+            .generateModelEvaluation({
+              cwd: process.cwd(),
+              modelSelection: createModelSelection(
+                ProviderInstanceId.make("codex"),
+                "selected-judge",
+                [
+                  { id: "reasoningEffort", value: "high" },
+                  { id: "serviceTier", value: "priority" },
+                ],
+              ),
+              packet: {
+                scope: "turn",
+                runOutcome: "completed",
+                request: { ref: "U1", text: "Explain the fix." },
+                context: [],
+                evidence: [],
+                truncated: false,
+                omittedItems: 0,
+                missingArtifacts: true,
+              },
+            })
+            .pipe(Effect.exit);
+          if (state === "valid verdict" || state === "MCP discovery unavailable" || cliRouting) {
+            expect(Exit.isSuccess(exit) ? exit.value : exit).toEqual(verdict);
+          } else {
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "").toContain(
+              state === "missing CLI routing value"
+                ? "Failed to isolate"
+                : state === "tool activity"
+                  ? "tool activity"
+                  : "invalid structured output",
+            );
+          }
+        }),
+    );
+  });
 
   it.effect("preserves a service tier when an existing runtime resolves its executable", () =>
     withFakeCodexEnv(
