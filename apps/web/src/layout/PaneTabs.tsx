@@ -162,14 +162,14 @@ function createPaneStrip(): PaneStrip {
   strip.className =
     "relative flex min-w-0 items-center gap-1 overflow-x-auto overscroll-x-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
   // The joined tab: two caps (corner, side, ear, rim) and a middle that
-  // scales, so it moves by transform alone; the pill shows it unfocused.
+  // scales, so it moves by transform alone.
   const join = document.createElement("span");
   join.dataset.paneJoin = "";
   join.setAttribute("aria-hidden", "true");
   join.hidden = true;
   const body = joinPiece("data-jb");
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
-  join.append(body, joinPiece("data-jp"));
+  join.append(body);
   strip.append(join);
   const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
   stripEntries.set(strip, entry);

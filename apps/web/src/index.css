@@ -6330,10 +6330,10 @@ body {
 }
 
 /* ── Connected pane tabs ──
-   Each pane's top is a bar in the chrome's color; the focused pane's active
+   Each pane's top is a bar in the chrome's color; the active
    tab is a piece of the pane rising into it, joined by concave ears, with
    one lit rim from its top round the ears and out along the pane's edge,
-   where it fades. An unfocused pane's active tab is a soft pill on the bar.
+   where it fades. An unfocused pane keeps the shape with a quieter rim.
    [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
    slides to the active tab. Light, black chrome keeps the notch instead. */
 [data-slot="sidebar-inset"] {
@@ -6504,7 +6504,7 @@ body {
       }
     }
 
-    /* An unfocused pane's tab sits on the bar, in the bar's colors. */
+    /* Keep the unfocused tab's existing label and icon contrast. */
     & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-bar-fg);
       --contrast-strong-foreground: var(--pane-bar-fg);
@@ -6660,29 +6660,16 @@ body {
         background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
       }
 
-      /* An unfocused pane's active tab: a soft pill on the bar. */
-      & [data-jp] {
-        inset-block-start: var(--pane-join-rise);
-        height: 1.75rem;
-        width: var(--jw);
-        translate: var(--jx) 0;
-        border-radius: var(--radius-control);
-        background: color-mix(in srgb, currentColor 10%, transparent);
-        opacity: 0;
-      }
-
-      /* Focus moving between panes cross-fades the joined tab and the pill. */
-      & :is([data-jb], [data-jp]) {
+      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jm]::after {
         transition: opacity var(--panel-animation-duration, 150ms) ease-out;
       }
     }
 
     & [data-pane-notch-unfocused] [data-pane-join] {
-      & [data-jb] {
-        opacity: 0;
-      }
-      & [data-jp] {
-        opacity: 1;
+      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jm]::after {
+        opacity: 0.45;
       }
     }
   }
