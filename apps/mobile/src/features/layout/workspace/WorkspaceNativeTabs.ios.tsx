@@ -21,6 +21,7 @@ import {
 } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
+import type { NavigationTab } from "./navigation-tab-order";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
   workspaceTabForNativeSlot,
@@ -46,8 +47,12 @@ const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
   readonly slot: string;
+  readonly tab: NavigationTab;
   readonly active: boolean;
+  /** Mount the header of a slot that hasn't been shown yet. */
+  readonly prewarm: boolean;
   readonly setMountedSlots: Dispatch<SetStateAction<ReadonlySet<string>>>;
+  readonly setPrewarmRequests: Dispatch<SetStateAction<ReadonlyMap<string, number>>>;
   readonly children: ReactNode;
 }) {
   const workspace = useWorkspaceTabs()!;
@@ -58,9 +63,25 @@ function RetainedWorkspaceTab(props: {
     activeRef.current = props.active;
   }, [props.active]);
   const isActive = () => activeRef.current;
+  const [content, setContent] = useState(
+    props.active ? { workspace, children: props.children, headerOnly: false } : null,
+  );
+  if (props.active && (content?.workspace !== workspace || content?.children !== props.children))
+    setContent({ workspace, children: props.children, headerOnly: false });
+  else if (!props.active && props.prewarm && content === null)
+    setContent({
+      workspace: {
+        ...workspace,
+        settingsOpen: props.slot === "settings",
+        state: { ...workspace.state, selectedTab: props.tab },
+      },
+      children: props.children,
+      headerOnly: true,
+    });
   const activity = {
     active: props.active,
     isActive,
+    headerOnly: content?.headerOnly === true,
   };
   const [optionsByRoute, setOptionsByRoute] = useState<ReadonlyMap<string, object>>(new Map());
   // Stable, so writers and the cleanups that depend on them don't re-run on every write.
@@ -69,13 +90,9 @@ function RetainedWorkspaceTab(props: {
       new Map(current).set(routeKey, { ...current.get(routeKey), ...options }),
     );
   const slotOptions = { byRoute: optionsByRoute, set: setRouteOptions };
-  const [content, setContent] = useState(
-    props.active ? { workspace, children: props.children } : null,
-  );
-  if (props.active && (content?.workspace !== workspace || content?.children !== props.children))
-    setContent({ workspace, children: props.children });
-  const mounted = content !== null;
-  const { slot, setMountedSlots } = props;
+  const mounted = content !== null && !content.headerOnly;
+  const headerOnly = content?.headerOnly === true;
+  const { slot, setMountedSlots, setPrewarmRequests } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which holds the switch until then
   useEffect(() => {
     if (!mounted) return;
@@ -94,6 +111,14 @@ function RetainedWorkspaceTab(props: {
       });
     };
   }, [mounted, slot, setMountedSlots]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks UIKit to prewarm a hidden header after each write, since bar items it rebuilds fade in on their own first entry
+  useEffect(() => {
+    if (!headerOnly || optionsByRoute.size === 0) return;
+    const frame = requestAnimationFrame(() =>
+      setPrewarmRequests((current) => new Map(current).set(slot, (current.get(slot) ?? 0) + 1)),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [headerOnly, optionsByRoute, slot, setPrewarmRequests]);
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
       <WorkspaceSlotOptionsContext value={slotOptions}>
@@ -108,6 +133,8 @@ export function WorkspaceNativeTabs(props: {
   readonly hidden: boolean;
   /** The sidebar column draws the tabs itself, so they leave with it. */
   readonly tabsInSidebarColumn?: boolean;
+  /** Every slot renders the pushed routes too, so prewarming waits until none are. */
+  readonly detailOpen: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
@@ -139,6 +166,19 @@ export function WorkspaceNativeTabs(props: {
   const [shownScreenKey, setShownScreenKey] = useState(selectedScreenKey);
   if (shownScreenKey !== selectedScreenKey && mountedSlots.has(selectedScreenKey))
     setShownScreenKey(selectedScreenKey);
+  // Once the first tab is up, the others mount their headers for UIKit to put in the window
+  // once: iOS 26 fades bar items in the first time they enter it, which a first visit would show.
+  const [prewarm, setPrewarm] = useState(false);
+  const [prewarmRequests, setPrewarmRequests] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  );
+  const prewarmReady = mountedSlots.size > 0 && !props.detailOpen;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- waits for the JS thread to go idle after the first tab mounts
+  useEffect(() => {
+    if (!prewarmReady || prewarm) return;
+    const handle = requestIdleCallback(() => setPrewarm(true), { timeout: 2_000 });
+    return () => cancelIdleCallback(handle);
+  }, [prewarmReady, prewarm]);
   const request = { selectedScreenKey: shownScreenKey, baseProvenance: provenance };
   return (
     <View style={{ flex: 1 }}>
@@ -182,6 +222,7 @@ export function WorkspaceNativeTabs(props: {
               title=""
               tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
               ios={{
+                prewarmRequest: prewarmRequests.get(slot) ?? 0,
                 icon: settings
                   ? { type: "sfSymbol", name: "gearshape" }
                   : tab === "pullRequests"
@@ -196,7 +237,10 @@ export function WorkspaceNativeTabs(props: {
             >
               <RetainedWorkspaceTab
                 slot={slot}
+                tab={tab}
+                prewarm={prewarm}
                 setMountedSlots={setMountedSlots}
+                setPrewarmRequests={setPrewarmRequests}
                 active={settings ? selectedSlot === -1 : selectedSlot === index}
               >
                 {props.children}
