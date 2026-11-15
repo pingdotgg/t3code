@@ -546,8 +546,10 @@ function useFileLineReveal(
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
 
     if (phase === "unmount") {
+      // A view torn down before its restore ran never showed the saved offset, so keep it.
+      const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
-      if (scrollContainer) state.scrollTop = scrollContainer.scrollTop;
+      if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
       state.scrollContainer = null;
       return;
     }

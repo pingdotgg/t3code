@@ -1,7 +1,7 @@
 import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
@@ -279,10 +279,13 @@ describe("source file scroll", () => {
     const sourceFile = (relativePath: string, lines: number) => {
       const contents = Array.from({ length: lines }, (_, i) => `const line${i} = ${i};`).join("\n");
       state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      // The app mounts under StrictMode, whose remount must not wipe the saved offset.
       return (
-        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
-          {filePreview(relativePath)}
-        </div>
+        <StrictMode>
+          <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+            {filePreview(relativePath)}
+          </div>
+        </StrictMode>
       );
     };
     const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
