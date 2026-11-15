@@ -130,10 +130,16 @@ final class T3NativeImageViewer: NSObject {
     let previous = decodeQueue
     let task = Task { @MainActor [self] in
       await previous?.value
-      defer { decodes[index] = nil }
+      var settled = false
+      defer {
+        decodes[index] = nil
+        // Paged away and back while this run waited: it was cancelled, so the page asks again.
+        if !settled, !finished, isNearCurrent(index), !decoded.contains(index) { decode(index) }
+      }
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
+      settled = true
       // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
       let isSVG = file.pathExtension.lowercased() == "svg"
       if let image = image ?? (isSVG ? source.flatMap(Self.render(_:)) : nil) {
