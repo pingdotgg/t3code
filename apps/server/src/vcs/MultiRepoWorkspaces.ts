@@ -28,6 +28,7 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import {
+  copyCloneCommit,
   keepWorklerCloneRefs,
   mapWorklerError,
   sanitizeWorklerWorkspaceName,
@@ -71,10 +72,10 @@ export class MultiRepoWorkspaces extends Context.Service<
       members: ReadonlyArray<string>,
     ) => Effect.Effect<ReadonlyArray<string>>;
     /**
-     * Creates a workspace on `newRefName`. Each member starts from its own
-     * remote default branch (`origin/HEAD`), since the repositories of a group
-     * rarely share a base; from its current branch when any member has none.
-     * With a `path`, recreates that missing workspace on `refName`.
+     * Creates a workspace on `newRefName`. Members start at `options.memberBaseCommits`,
+     * else at their own `origin/HEAD` (group repositories rarely share a base), or at
+     * their current branch when any member has none. With a `path`, recreates that
+     * missing workspace on `refName`.
      */
     readonly createWorkspace: (
       input: VcsCreateWorktreeInput,
@@ -88,6 +89,23 @@ export class MultiRepoWorkspaces extends Context.Service<
     readonly removeWorkspace: (
       input: VcsRemoveWorktreeInput,
     ) => Effect.Effect<void, GitCommandError>;
+    /**
+     * The HEAD commit of each member of the group at `root`, as checked out in
+     * `checkout` (the group or one of its workspaces). Copies commits only
+     * `checkout` has into the group's repositories, without refs, so that new
+     * workspaces can start there.
+     */
+    readonly checkoutMemberCommits: (input: {
+      readonly root: string;
+      readonly checkout: string;
+    }) => Effect.Effect<Record<string, string>, GitCommandError>;
+    /** Deletes `refName` in every member of the group at `cwd` that has it, such as after a workspace is removed. */
+    readonly deleteBranch: (input: {
+      readonly cwd: string;
+      readonly members: ReadonlyArray<string>;
+      readonly refName: string;
+      readonly force?: boolean;
+    }) => Effect.Effect<void, GitCommandError>;
     /** Renames the branch in every member of the workspace at `cwd`; finishes or rolls back even if interrupted. */
     readonly renameBranch: (input: {
       readonly cwd: string;
@@ -334,6 +352,7 @@ export const make = Effect.gen(function* () {
   )(function* (input, options) {
     const root = path.resolve(input.cwd);
     const workspacesDir = path.join(root, WORKSPACES_DIR);
+    const startCommits = options?.memberBaseCommits ?? {};
     let branch = input.newRefName ?? input.refName;
     // Upstream's temporary namespace may be blocked in any member. Use one
     // flattened name for the entire group rather than probing its non-Git root.
@@ -427,6 +446,31 @@ export const make = Effect.gen(function* () {
       Effect.uninterruptible,
     );
     for (const member of (yield* members(created.path)) ?? []) {
+      const baseCommit =
+        input.newRefName !== undefined && Object.hasOwn(startCommits, member)
+          ? startCommits[member]
+          : undefined;
+      // The branch is new, but Workler already applied its copy and link rules: `--keep` refuses to overwrite them.
+      if (baseCommit !== undefined) {
+        yield* git
+          .execute({
+            operation: "MultiRepoWorkspaces.createWorkspace.memberBase",
+            cwd: path.join(created.path, member),
+            args: ["reset", "--keep", "--quiet", `${baseCommit}^{commit}`],
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "MultiRepoWorkspaces.createWorkspace",
+                  command: "git reset",
+                  cwd: input.cwd,
+                  detail: `Could not start multi-repo member '${member}' at commit ${baseCommit}.`,
+                  cause,
+                }),
+            ),
+          );
+      }
       yield* initializeWorkspaceSubmodules({
         cwd: path.join(created.path, member),
         fileSystem,
@@ -492,6 +536,79 @@ export const make = Effect.gen(function* () {
           mapWorklerError("MultiRepoWorkspaces.removeWorkspace", input.cwd, error),
         ),
       );
+  });
+
+  const checkoutMemberCommits: MultiRepoWorkspaces["Service"]["checkoutMemberCommits"] = Effect.fn(
+    "MultiRepoWorkspaces.checkoutMemberCommits",
+  )(function* (input) {
+    const root = path.resolve(input.root);
+    const checkout = path.resolve(input.checkout);
+    const failure = (detail: string, cause?: unknown) =>
+      new GitCommandError({
+        operation: "MultiRepoWorkspaces.checkoutMemberCommits",
+        command: "git",
+        cwd: checkout,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    const rootMembers = yield* members(root);
+    const checkoutMembers = checkout === root ? rootMembers : yield* members(checkout);
+    if (rootMembers === null || checkoutMembers === null) {
+      return yield* failure(`${checkout} is not a workspace of the multi-repo project at ${root}.`);
+    }
+    // Entries, not assignment: a member folder may be named `__proto__`.
+    const commits: Array<readonly [string, string]> = [];
+    const shared = rootMembers.filter((name) => checkoutMembers.includes(name));
+    if (rootMembers.length > 0 && shared.length === 0) {
+      return yield* failure(`${checkout} is not a workspace of the multi-repo project at ${root}.`);
+    }
+    // A member the group listed after this workspace was made keeps its default base.
+    for (const member of shared) {
+      const clone = path.join(checkout, member);
+      const head = yield* git
+        .execute({
+          operation: "MultiRepoWorkspaces.checkoutMemberCommits.head",
+          cwd: clone,
+          args: ["rev-parse", "--verify", "HEAD^{commit}"],
+        })
+        .pipe(
+          Effect.mapError((cause) =>
+            failure(
+              `Could not read the checked out commit of multi-repo member '${member}'.`,
+              cause,
+            ),
+          ),
+        );
+      const commit = head.stdout.trim();
+      commits.push([member, commit]);
+      if (checkout === root) continue;
+      const repository = path.join(root, member);
+      yield* copyCloneCommit(git, { source: repository, clone, commit }).pipe(
+        Effect.mapError((cause) =>
+          failure(
+            `Could not copy commit ${commit} of multi-repo member '${member}' into ${repository}.`,
+            cause,
+          ),
+        ),
+      );
+    }
+    return Object.fromEntries(commits);
+  });
+
+  const deleteBranch: MultiRepoWorkspaces["Service"]["deleteBranch"] = Effect.fn(
+    "MultiRepoWorkspaces.deleteBranch",
+  )(function* (input) {
+    // Removal copies a branch back only where its commits are new, so some members may lack it.
+    for (const member of input.members) {
+      const cwd = path.join(input.cwd, member);
+      if ((yield* git.listLocalBranchNames(cwd)).includes(input.refName)) {
+        yield* git.deleteLocalBranch({
+          cwd,
+          refName: input.refName,
+          ...(input.force === undefined ? {} : { force: input.force }),
+        });
+      }
+    }
   });
 
   const renameBranch: MultiRepoWorkspaces["Service"]["renameBranch"] = Effect.fn(
@@ -564,6 +681,8 @@ export const make = Effect.gen(function* () {
     fetchMembers,
     createWorkspace,
     removeWorkspace,
+    checkoutMemberCommits,
+    deleteBranch,
     renameBranch,
   });
 });

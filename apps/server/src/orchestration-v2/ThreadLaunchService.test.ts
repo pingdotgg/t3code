@@ -1028,6 +1028,33 @@ it.effect("launches a worktree request for Scratch at the root, in its own folde
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("persists member base commits on the run and passes them to worktree creation", () => {
+  const memberBaseCommits = { api: "a".repeat(40), web: "b".repeat(40) };
+  const harness = makeHarness({ multiRepo: { members: () => Effect.succeed(["api", "web"]) } });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:member-bases",
+        thread: "thread:launch:member-bases",
+        message: "Review the change",
+        workspace: { type: "worktree", baseRef: "HEAD", startFromOrigin: false, memberBaseCommits },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.deepEqual(projection.runs[0]?.workspacePreparation, {
+      type: "worktree",
+      baseRef: "HEAD",
+      startFromOrigin: false,
+      memberBaseCommits,
+    });
+    assert.deepEqual(
+      harness.createWorktree.mock.calls[0]?.[1]?.memberBaseCommits,
+      memberBaseCommits,
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("stores a Scratch scheduled task at the root and keeps worktrees elsewhere", () => {
   const harness = scratchHarness();
   return Effect.gen(function* () {

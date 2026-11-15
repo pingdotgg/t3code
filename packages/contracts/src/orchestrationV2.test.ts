@@ -15,6 +15,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2WorkspacePreparation,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -624,6 +625,19 @@ describe("background work kinds from older or newer servers", () => {
         pendingBackgroundTasks: [{ taskId: "", kind: "command" }],
       }),
     ).toThrow();
+  });
+});
+
+describe("OrchestrationV2WorkspacePreparation memberBaseCommits", () => {
+  const decode = Schema.decodeUnknownSync(OrchestrationV2WorkspacePreparation);
+  const strategy = { type: "worktree", baseRef: "HEAD", startFromOrigin: false } as const;
+
+  it("round-trips full SHAs and rejects ref-like or option-like values", () => {
+    const memberBaseCommits = { api: "a".repeat(40), web: "0123456789abcdef".repeat(4) };
+    expect(decode({ ...strategy, memberBaseCommits })).toEqual({ ...strategy, memberBaseCommits });
+    for (const value of ["main", "HEAD", "a".repeat(7), "--upload-pack=touch pwn"]) {
+      expect(() => decode({ ...strategy, memberBaseCommits: { api: value } })).toThrow();
+    }
   });
 });
 

@@ -7,7 +7,8 @@ export const WorktreeMcpHandoffInput = Schema.Struct({
   branch: TrimmedNonEmptyString,
   baseRef: Schema.optional(
     TrimmedNonEmptyString.annotate({
-      description: "Default: checked-out branch.",
+      description:
+        "Default: checked-out branch. Ignored in multi-repo projects: each member starts at its checked-out commit, or at its remote default with `startFromOrigin`.",
     }),
   ),
   startFromOrigin: Schema.optional(

@@ -214,7 +214,9 @@ const make = Effect.gen(function* () {
       );
     }
 
-    let baseRef = input.baseRef ?? (members !== null ? "HEAD" : undefined);
+    // A group's members share no ref, so `baseRef` is ignored there: each member starts
+    // at its checked-out commit, or with `startFromOrigin` at its remote default branch.
+    let baseRef = members !== null ? "HEAD" : input.baseRef;
     if (baseRef === undefined) {
       if (localStatus.refName === null) {
         return yield* failure(
@@ -231,6 +233,12 @@ const make = Effect.gen(function* () {
     let worktreeBaseRef = baseRef;
     let baseRefName = baseRef;
     let startedFromOrigin = false;
+    const memberBaseCommits =
+      members !== null && Option.isSome(multiRepo) && !startFromOrigin
+        ? yield* multiRepo.value
+            .checkoutMemberCommits({ root: projectCwd, checkout: projectCwd })
+            .pipe(asOperationFailed("Unable to read the members' checked-out commits"))
+        : undefined;
     if (startFromOrigin && members !== null && Option.isSome(multiRepo)) {
       const failed = yield* multiRepo.value.fetchMembers(projectCwd, members);
       if (failed.length > 0)
@@ -255,16 +263,44 @@ const make = Effect.gen(function* () {
     // Mask interruption after worktree creation through setup; binding can detach and interrupt the caller.
     return yield* Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
+        const removeWorktree = (path: string, branch: string) =>
+          Effect.suspend(() =>
+            gitWorkflow.removeWorktree({ cwd: projectCwd, path, force: true }),
+          ).pipe(
+            Effect.andThen(
+              Effect.suspend(() =>
+                gitWorkflow.deleteLocalBranch({ cwd: projectCwd, refName: branch, force: true }),
+              ),
+            ),
+            Effect.ignoreCause({ log: true }),
+          );
+        // A group workspace can fail after its clones exist, e.g. on a clash with a Workler rule.
+        let claimedPath: string | null = null;
         const worktree = yield* restore(
           gitWorkflow
-            .createWorktree({
-              cwd: projectCwd,
-              refName: worktreeBaseRef,
-              newRefName: input.branch,
-              baseRefName,
-              path: null,
-            })
+            .createWorktree(
+              {
+                cwd: projectCwd,
+                refName: worktreeBaseRef,
+                newRefName: input.branch,
+                baseRefName,
+                path: null,
+              },
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      claimedPath = path;
+                    }),
+                },
+                ...(memberBaseCommits === undefined ? {} : { memberBaseCommits }),
+              },
+            )
             .pipe(asOperationFailed("Unable to create the worktree")),
+        ).pipe(
+          Effect.onError(() =>
+            claimedPath === null ? Effect.void : removeWorktree(claimedPath, input.branch),
+          ),
         );
         const worktreePath = worktree.worktree.path;
 
@@ -278,19 +314,7 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as({ status: "failed", detail } as const));
           });
 
-        const removeCreatedWorktree = Effect.suspend(() =>
-          gitWorkflow.removeWorktree({ cwd: projectCwd, path: worktreePath, force: true }).pipe(
-            Effect.andThen(
-              Effect.suspend(() =>
-                gitWorkflow.deleteLocalBranch({
-                  cwd: projectCwd,
-                  refName: worktree.worktree.refName,
-                  force: true,
-                }),
-              ),
-            ),
-          ),
-        ).pipe(Effect.ignoreCause({ log: true }));
+        const removeCreatedWorktree = removeWorktree(worktreePath, worktree.worktree.refName);
 
         const recheckAndBind = Effect.gen(function* () {
           // A concurrent UI binding may have landed during git work; do not orphan a second worktree.

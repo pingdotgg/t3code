@@ -515,8 +515,12 @@ export const make = Effect.gen(function* () {
       );
     }),
     deleteLocalBranch: Effect.fn("GitWorkflowService.deleteLocalBranch")(function (input) {
-      return ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
-        Effect.andThen(git.deleteLocalBranch(input)),
+      return unlessMultiRepo(
+        input.cwd,
+        (service, members) => service.deleteBranch({ ...input, members }),
+        ensureGitCommand("GitWorkflowService.deleteLocalBranch", input.cwd).pipe(
+          Effect.andThen(git.deleteLocalBranch(input)),
+        ),
       );
     }),
     createRef: Effect.fn("GitWorkflowService.createRef")(function (input) {

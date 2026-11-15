@@ -24,6 +24,7 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
+  type OrchestrationV2WorkspacePreparation,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -56,6 +58,9 @@ import {
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as MultiRepoWorkspaces from "../vcs/MultiRepoWorkspaces.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as ServerConfig from "../config.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
@@ -1946,6 +1951,203 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(request.modelSelection.instanceId, altInstanceId);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
+  );
+
+  // Delegates one worktree-isolated task from a parent checkout; returns the dispatched strategy.
+  const delegateIsolatedTask = <ROut extends GitVcsDriver.GitVcsDriver, E>(input: {
+    readonly workspaceRoot: string;
+    readonly worktreePath: string | null;
+    readonly vcs: Layer.Layer<ROut, E>;
+  }) =>
+    Effect.gen(function* () {
+      const dispatched = yield* Ref.make<
+        ReadonlyArray<{ readonly workspaceStrategy?: OrchestrationV2WorkspacePreparation }>
+      >([]);
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Review the change.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const parent = parentProjection([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? {
+                    ...parent,
+                    thread: { ...parent.thread, worktreePath: input.worktreePath },
+                    subagents: delegated ? [task] : [],
+                  }
+                : childProjection,
+            ) as never,
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command as never]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeedSome({
+              id: projectId,
+              title: "Project",
+              workspaceRoot: input.workspaceRoot,
+            } as never),
+        }),
+        input.vcs,
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest(),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Review the change.",
+          isolation: "worktree",
+          mode: "async",
+          clientRequestId: "delegate-isolated-worktree-1",
+        });
+      }).pipe(
+        Effect.provide(
+          OrchestratorMcpService.layer.pipe(
+            Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
+            Layer.provide(layerDependencies),
+          ),
+        ),
+      );
+      return (yield* Ref.get(dispatched))[0]?.workspaceStrategy;
+    });
+
+  it.effect(
+    "worktree isolation in a multi-repo project starts each member at the parent's commit",
+    () =>
+      Effect.gen(function* () {
+        const read = yield* Ref.make<ReadonlyArray<unknown>>([]);
+        const root = "/projects/group";
+        const parentWorkspace = `${root}/.worktrees/parent`;
+        const strategy = yield* delegateIsolatedTask({
+          workspaceRoot: root,
+          worktreePath: parentWorkspace,
+          vcs: Layer.mergeAll(
+            // The group root is no repository, so a HEAD lookup there would fail.
+            Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+            Layer.mock(MultiRepoWorkspaces.MultiRepoWorkspaces)({
+              members: (cwd) => Effect.succeed(cwd === root ? ["api", "web"] : null),
+              checkoutMemberCommits: (input) =>
+                Ref.update(read, (inputs) => [...inputs, input]).pipe(
+                  Effect.as({ api: "a".repeat(40), web: "b".repeat(40) }),
+                ),
+            }),
+          ),
+        });
+        assert.deepEqual(yield* Ref.get(read), [{ root, checkout: parentWorkspace }]);
+        assert.deepEqual(strategy, {
+          type: "worktree",
+          baseRef: "HEAD",
+          startFromOrigin: false,
+          memberBaseCommits: { api: "a".repeat(40), web: "b".repeat(40) },
+        });
+      }),
+  );
+
+  it.effect("worktree isolation copies a commit made in a Workler clone into the project", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const vcs = GitVcsDriver.layer.pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-delegate-" })),
+        Layer.provideMerge(VcsProcess.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      );
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        GitVcsDriver.GitVcsDriver.use((driver) =>
+          driver.execute({ operation: "test", cwd, args, timeoutMs: 10_000 }),
+        ).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.provide(vcs),
+        );
+      const commit = (cwd: string) =>
+        git(cwd, [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@test.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          cwd,
+        ]);
+      const root = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-delegate-clone-" }),
+      );
+      yield* git(root, ["init", "--initial-branch=main"]);
+      yield* commit(root);
+      const clone = `${root}/.worktrees/parent`;
+      const other = `${root}/.worktrees/other`;
+      for (const checkout of [clone, other]) {
+        yield* git(root, ["clone", "--quiet", "--local", root, checkout]);
+        yield* commit(checkout);
+      }
+      // Workler records the project it cloned; an unrelated checkout records nothing.
+      yield* git(clone, ["config", "workler.root", root]);
+      const head = yield* git(clone, ["rev-parse", "HEAD"]);
+
+      const strategy = yield* delegateIsolatedTask({
+        workspaceRoot: root,
+        worktreePath: clone,
+        vcs,
+      });
+      assert.deepEqual(strategy, { type: "worktree", baseRef: head, startFromOrigin: false });
+      assert.equal(yield* git(root, ["cat-file", "-t", head]), "commit");
+
+      const refused = yield* delegateIsolatedTask({
+        workspaceRoot: root,
+        worktreePath: other,
+        vcs,
+      }).pipe(Effect.flip);
+      assert.include(refused.message, "does not contain the parent checkout's commit");
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect(

@@ -659,25 +659,47 @@ export const OrchestrationV2RunBackgroundWorkCancelled = Schema.Struct({
 export type OrchestrationV2RunBackgroundWorkCancelled =
   typeof OrchestrationV2RunBackgroundWorkCancelled.Type;
 
+const RootWorkspaceStrategy = Schema.Struct({
+  type: Schema.Literal("root"),
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
+const ExistingWorktreeWorkspaceStrategy = Schema.Struct({
+  type: Schema.Literal("existing_worktree"),
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.optional(TrimmedNonEmptyString),
+});
+const worktreeWorkspaceStrategyFields = {
+  type: Schema.Literal("worktree"),
+  baseRef: TrimmedNonEmptyString,
+  branch: Schema.optional(TrimmedNonEmptyString),
+  startFromOrigin: Schema.optional(Schema.Boolean),
+};
+
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
-  Schema.Struct({
-    type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("existing_worktree"),
-    worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
-    startFromOrigin: Schema.optional(Schema.Boolean),
-  }),
+  RootWorkspaceStrategy,
+  ExistingWorktreeWorkspaceStrategy,
+  Schema.Struct(worktreeWorkspaceStrategyFields),
 ]);
 export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
   typeof OrchestrationV2ThreadLaunchWorkspaceStrategy.Type;
+
+/** A launch strategy as runs record it. Agent launch tools take the plain strategy above. */
+export const OrchestrationV2WorkspacePreparation = Schema.Union([
+  RootWorkspaceStrategy,
+  ExistingWorktreeWorkspaceStrategy,
+  Schema.Struct({
+    ...worktreeWorkspaceStrategyFields,
+    /** Multi-repo worktrees: the commit each listed member starts at, instead of its default base. */
+    // Clients can send this, and the server passes it to Git: full object IDs only.
+    memberBaseCommits: Schema.optional(
+      Schema.Record(
+        TrimmedNonEmptyString,
+        TrimmedNonEmptyString.check(Schema.isPattern(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/)),
+      ),
+    ),
+  }),
+]);
+export type OrchestrationV2WorkspacePreparation = typeof OrchestrationV2WorkspacePreparation.Type;
 
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
 
@@ -713,7 +735,7 @@ export const OrchestrationV2Run = Schema.Struct({
     }),
   ),
   delegatedCompletion: Schema.optional(OrchestrationV2DelegatedCompletionCohort),
-  workspacePreparation: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  workspacePreparation: Schema.optional(OrchestrationV2WorkspacePreparation),
   /** Starts a new provider conversation; earlier runs stay visible but never reach the provider. */
   freshContext: Schema.optional(Schema.Boolean),
 });
@@ -3218,7 +3240,7 @@ export const OrchestrationV2Command = Schema.Union([
     dispatchMode: Schema.Union([
       Schema.Struct({
         type: Schema.Literal("defer_start"),
-        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+        workspaceStrategy: Schema.optional(OrchestrationV2WorkspacePreparation),
       }),
       Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
       Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
@@ -3370,7 +3392,7 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
-    workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    workspaceStrategy: Schema.optional(OrchestrationV2WorkspacePreparation),
     // Defaults to settled_only; fire-and-forget wakes require always.
     completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
     createdAt: Schema.optional(Schema.DateTimeUtc),

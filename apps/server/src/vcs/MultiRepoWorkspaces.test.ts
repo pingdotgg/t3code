@@ -322,8 +322,16 @@ it.layer(TestLayer)("MultiRepoWorkspaces", (it) => {
       for (const member of ["api", "web"]) {
         // Removing keeps the branch in the project, as a linked worktree would.
         yield* git(path.join(group, member), ["rev-parse", "--verify", "refs/heads/feature/login"]);
-        yield* git(path.join(group, member), ["branch", "-D", "feature/login"]);
       }
+      // Members that lack the branch are skipped, so a failed launch can drop it everywhere.
+      yield* git(path.join(group, "api"), ["branch", "-D", "feature/login"]);
+      yield* workspaces.deleteBranch({
+        cwd: group,
+        members: ["api", "web"],
+        refName: "feature/login",
+        force: true,
+      });
+      assert.notInclude(yield* git(path.join(group, "web"), ["branch"]), "feature/login");
 
       // A branch gone everywhere (its workspace deleted by hand) isn't made up from HEAD.
       const missing = yield* workspaces
@@ -346,6 +354,143 @@ it.layer(TestLayer)("MultiRepoWorkspaces", (it) => {
       });
       assert.equal(recreated.worktree.path, workspace);
       assert.deepEqual(yield* currentBranches(workspace), ["feature/login", "feature/login"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["web", "__proto__", "constructor"])(
+    "starts a new workspace at the members' commits in another workspace (%s)",
+    (webMember) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaces = yield* MultiRepoWorkspaces.MultiRepoWorkspaces;
+        const group = yield* makeGroup;
+        // Member folders may be named like Object.prototype keys.
+        if (webMember !== "web") {
+          yield* fileSystem.rename(path.join(group, "web"), path.join(group, webMember));
+          yield* fileSystem.writeFileString(
+            path.join(group, ".workler"),
+            `project api\nproject ${webMember}\n`,
+          );
+        }
+        const parent = (yield* workspaces.createWorkspace({
+          cwd: group,
+          refName: "HEAD",
+          newRefName: "feature/parent",
+          path: null,
+        })).worktree.path;
+        // Members may sit on different branches; each commit exists only in the parent's clone.
+        const parentApi = path.join(parent, "api");
+        const parentWeb = path.join(parent, webMember);
+        yield* git(parentWeb, ["switch", "-c", "feature/web-only"]);
+        for (const repo of [parentApi, parentWeb]) {
+          yield* fileSystem.writeFileString(path.join(repo, "change.txt"), "committed\n");
+          yield* git(repo, ["add", "."]);
+          yield* git(repo, [
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "parent work",
+          ]);
+        }
+        yield* fileSystem.writeFileString(path.join(parentApi, "draft.txt"), "uncommitted\n");
+        const rootRefs = yield* git(path.join(group, "api"), ["for-each-ref"]);
+
+        const commits = yield* workspaces.checkoutMemberCommits({ root: group, checkout: parent });
+        assert.deepEqual(commits, {
+          api: yield* git(parentApi, ["rev-parse", "HEAD"]),
+          [webMember]: yield* git(parentWeb, ["rev-parse", "HEAD"]),
+        });
+        // The project's repositories get the objects, never a ref.
+        assert.equal(yield* git(path.join(group, "api"), ["for-each-ref"]), rootRefs);
+
+        const child = (yield* workspaces.createWorkspace(
+          { cwd: group, refName: "HEAD", newRefName: "feature/child", path: null },
+          { memberBaseCommits: commits },
+        )).worktree.path;
+        for (const member of ["api", webMember]) {
+          assert.equal(
+            yield* git(path.join(child, member), ["branch", "--show-current"]),
+            "feature/child",
+          );
+          assert.equal(
+            yield* git(path.join(child, member), ["rev-parse", "HEAD"]),
+            commits[member],
+          );
+        }
+        assert.isFalse(yield* fileSystem.exists(path.join(child, "api", "draft.txt")));
+        assert.deepEqual(
+          yield* workspaces.checkoutMemberCommits({ root: group, checkout: group }),
+          {
+            api: yield* git(path.join(group, "api"), ["rev-parse", "HEAD"]),
+            [webMember]: yield* git(path.join(group, webMember), ["rev-parse", "HEAD"]),
+          },
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps Workler links when a parent commit would overwrite them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaces = yield* MultiRepoWorkspaces.MultiRepoWorkspaces;
+      const group = yield* makeGroup;
+      const api = path.join(group, "api");
+      yield* fileSystem.makeDirectory(path.join(api, "config"));
+      yield* fileSystem.writeFileString(path.join(api, "config", "local"), "local configuration");
+      yield* fileSystem.writeFileString(path.join(api, ".workler"), "link config\n");
+      const parent = (yield* workspaces.createWorkspace({
+        cwd: group,
+        refName: "HEAD",
+        newRefName: "feature/parent",
+        path: null,
+      })).worktree.path;
+      const member = path.join(parent, "api");
+      yield* fileSystem.remove(path.join(member, "config"));
+      yield* fileSystem.makeDirectory(path.join(member, "config"));
+      yield* fileSystem.writeFileString(path.join(member, "config", "tracked"), "parent work");
+      yield* git(member, ["add", "-f", "config"]);
+      yield* git(member, [
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@test.com",
+        "commit",
+        "-m",
+        "track config",
+      ]);
+      const commits = yield* workspaces.checkoutMemberCommits({ root: group, checkout: parent });
+      const error = yield* workspaces
+        .createWorkspace(
+          { cwd: group, refName: "HEAD", newRefName: "feature/child", path: null },
+          { memberBaseCommits: commits },
+        )
+        .pipe(Effect.flip);
+      assert.include(error.detail, "Could not start multi-repo member 'api'");
+      const config = path.join(group, ".worktrees", "feature-child", "api", "config");
+      assert.equal((yield* fileSystem.lstat(config)).type, "SymbolicLink");
+      assert.equal(
+        yield* fileSystem.readFileString(path.join(config, "local")),
+        "local configuration",
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses member commits from a checkout that is not this group's workspace", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const workspaces = yield* MultiRepoWorkspaces.MultiRepoWorkspaces;
+      const group = yield* makeGroup;
+      const foreign = yield* makeGroup;
+      // Distinct from the group's commits, which two makeGroup calls can share.
+      yield* git(path.join(foreign, "api"), ["commit", "--allow-empty", "-m", "foreign only"]);
+      const refused = yield* Effect.flip(
+        workspaces.checkoutMemberCommits({ root: group, checkout: foreign }),
+      );
+      assert.include(refused.detail, "Could not copy commit");
     }).pipe(Effect.scoped),
   );
 

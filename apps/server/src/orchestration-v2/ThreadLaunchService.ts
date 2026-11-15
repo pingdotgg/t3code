@@ -67,6 +67,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
+      readonly memberBaseCommits?: Readonly<Record<string, string>> | undefined;
     };
 
 export interface ThreadLaunchInitialMessage {
@@ -469,6 +470,9 @@ const make = Effect.gen(function* () {
             {
               submodules: resolveProjectSettings(yield* serverSettings.getSettings, input.projectId)
                 .settings.worktreeSubmodules,
+              ...(input.workspaceStrategy.memberBaseCommits === undefined
+                ? {}
+                : { memberBaseCommits: input.workspaceStrategy.memberBaseCommits }),
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {

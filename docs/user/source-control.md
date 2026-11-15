@@ -389,6 +389,10 @@ machine.
 
 A new workspace clones every member onto the same branch, starting from each
 repository's own remote default branch. If any member has no usable remote default,
-the group falls back to its members' current local branches. Git actions at the group
+the group falls back to its members' current local branches. A delegated task's own
+workspace instead starts each member at the commit its parent agent has checked out, so it
+sees committed work but not uncommitted changes. An agent moving its thread from the group
+root into a workspace does the same unless it starts from the remote (the server default).
+A base branch it names is ignored, since the members share no branch. Git actions at the group
 root are hidden: run repository-specific Git operations in a member folder. Group membership lives in the folder's `.workler`
 file, so it travels with the project rather than being tied to one machine's database.

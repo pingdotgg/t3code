@@ -150,6 +150,8 @@ export interface CreateWorktreeOptions {
   readonly worktreesDirectory?: string;
   /** Clone the checkout from the macOS worktree checkout cache. */
   readonly fastCheckout?: boolean;
+  /** Multi-repo workspaces: the commit each listed member's new branch starts at. */
+  readonly memberBaseCommits?: Readonly<Record<string, string>>;
 }
 
 export interface GitCommitProgress {

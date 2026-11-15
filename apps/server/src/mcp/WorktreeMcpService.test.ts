@@ -113,6 +113,7 @@ interface HarnessOptions {
   readonly projectReadFails?: boolean;
   readonly existingBranchWorktreePath?: string | null;
   readonly createWorktreeFails?: boolean;
+  readonly createWorktreeFailsAfterClaim?: boolean;
   readonly fetchWorktreeBaseFails?: boolean;
   readonly worktreeBaseMissing?: boolean;
   readonly removeWorktreeFails?: boolean;
@@ -120,6 +121,8 @@ interface HarnessOptions {
   readonly createWorktreeGate?: Effect.Effect<void>;
   readonly existsFails?: boolean;
 }
+
+const groupHeads = { api: "a".repeat(40), web: "b".repeat(40) };
 
 const makeHarness = (options: HarnessOptions = {}) => {
   const thread = options.thread === undefined ? {} : options.thread;
@@ -224,19 +227,27 @@ const makeHarness = (options: HarnessOptions = {}) => {
         : Effect.succeed({ commitSha: "abc123", remoteRefName: "origin/dev" }),
   );
   const createWorktree = vi.fn(
-    (input: { readonly newRefName?: string | undefined; readonly path: string | null }) =>
+    (
+      input: { readonly newRefName?: string | undefined; readonly path: string | null },
+      createOptions?: GitVcsDriver.CreateWorktreeOptions,
+    ) =>
       options.createWorktreeFails
         ? (Effect.fail("simulated worktree creation failure") as never)
-        : (options.createWorktreeGate ?? Effect.void).pipe(
-            Effect.andThen(
-              Effect.succeed({
-                worktree: {
-                  path: input.path ?? `/worktrees/project/${input.newRefName}`,
-                  refName: input.newRefName ?? "detached",
-                },
-              }),
+        : options.createWorktreeFailsAfterClaim
+          ? ((
+              createOptions?.progress?.onWorktreeClaimed?.("/worktrees/project/claimed") ??
+              Effect.void
+            ).pipe(Effect.andThen(Effect.fail("simulated failure after the claim"))) as never)
+          : (options.createWorktreeGate ?? Effect.void).pipe(
+              Effect.andThen(
+                Effect.succeed({
+                  worktree: {
+                    path: input.path ?? `/worktrees/project/${input.newRefName}`,
+                    refName: input.newRefName ?? "detached",
+                  },
+                }),
+              ),
             ),
-          ),
   );
   const listRefs = vi.fn((input: { readonly cwd: string; readonly query?: string | undefined }) =>
     Effect.succeed({
@@ -300,6 +311,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(MultiRepoWorkspaces.MultiRepoWorkspaces)({
           members: () => Effect.succeed(options.multiRepo ? ["api", "web"] : null),
           fetchMembers: () => Effect.succeed([]),
+          checkoutMemberCommits: ({ root, checkout }) =>
+            root === checkout ? Effect.succeed(groupHeads) : Effect.die("not the group root"),
         }),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
@@ -549,6 +562,7 @@ describe("t3_worktree_handoff", () => {
       });
       expect(harness.createWorktree).toHaveBeenCalledWith(
         expect.objectContaining({ refName: "dev", baseRefName: "dev" }),
+        expect.anything(),
       );
       expect(result.startedFromOrigin).toBe(false);
     });
@@ -664,11 +678,49 @@ describe("t3_worktree_handoff", () => {
         const result = yield* runHandoff(harness, input);
         expect(harness.createWorktree).toHaveBeenCalledWith(
           expect.objectContaining({ path: null }),
+          expect.anything(),
         );
         expect(result.worktreePath).toBe("/worktrees/project/feature/elsewhere");
       });
     },
   );
+
+  it.effect.each([
+    { startFromOrigin: false, baseRef: undefined, options: { memberBaseCommits: groupHeads } },
+    { startFromOrigin: true, baseRef: undefined, options: undefined },
+    { startFromOrigin: false, baseRef: "main", options: { memberBaseCommits: groupHeads } },
+  ])(
+    "starts a group's members at their checked-out commits, ignoring baseRef (%o)",
+    ({ startFromOrigin, baseRef, options }) => {
+      const harness = makeHarness({ multiRepo: true, notARepo: true });
+      return Effect.gen(function* () {
+        const result = yield* runHandoff(harness, {
+          branch: "feature/group",
+          startFromOrigin,
+          ...(baseRef === undefined ? {} : { baseRef }),
+        });
+        expect(harness.createWorktree.mock.calls[0]?.[1]?.memberBaseCommits).toEqual(
+          options?.memberBaseCommits,
+        );
+        expect(result.baseRef).toBe("HEAD");
+      });
+    },
+  );
+
+  it.effect("removes a workspace that fails after it was claimed", () => {
+    const harness = makeHarness({ createWorktreeFailsAfterClaim: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(runHandoff(harness, { branch: "feature/clash" }));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.removeWorktree).toHaveBeenCalledWith(
+        expect.objectContaining({ path: "/worktrees/project/claimed", force: true }),
+      );
+      expect(harness.deleteLocalBranch).toHaveBeenCalledWith(
+        expect.objectContaining({ refName: "feature/clash", force: true }),
+      );
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
 
   it.effect("releases the per-thread guard after a failed handoff", () => {
     const harness = makeHarness({

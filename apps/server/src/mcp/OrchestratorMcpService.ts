@@ -11,7 +11,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  type OrchestrationV2WorkspacePreparation,
   type OrchestrationV2TurnItem,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesInput,
@@ -104,6 +104,8 @@ import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartB
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as MultiRepoWorkspaces from "../vcs/MultiRepoWorkspaces.ts";
+import { copyCloneCommit } from "../vcs/WorklerGitWorkspaceDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -1037,6 +1039,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
+  const multiRepo = yield* Effect.serviceOption(MultiRepoWorkspaces.MultiRepoWorkspaces);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
 
@@ -1053,6 +1056,58 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  // The child's checkout starts at the parent's committed HEAD; uncommitted edits stay out.
+  const delegatedWorktreeStrategy = Effect.fn("OrchestratorMcpService.delegatedWorktreeStrategy")(
+    function* (
+      parentThread: Pick<OrchestrationV2ThreadProjection["thread"], "projectId" | "worktreePath">,
+    ): Effect.fn.Return<OrchestrationV2WorkspacePreparation, OrchestratorMcpFailure> {
+      const project = yield* requireProject(parentThread.projectId);
+      const checkout = parentThread.worktreePath ?? project.workspaceRoot;
+      if (
+        Option.isSome(multiRepo) &&
+        (yield* multiRepo.value.members(project.workspaceRoot)) !== null
+      ) {
+        // Each member starts at its own commit, so the shared base ref only names the parent's HEAD.
+        const memberBaseCommits = yield* multiRepo.value
+          .checkoutMemberCommits({ root: project.workspaceRoot, checkout })
+          .pipe(
+            Effect.mapError((error) =>
+              failure(
+                "invalid_request",
+                `Isolation "worktree" could not start the child checkout from the parent checkout: ${error.detail} Use isolation "shared" to work in the parent's checkout.`,
+              ),
+            ),
+          );
+        return { type: "worktree", baseRef: "HEAD", startFromOrigin: false, memberBaseCommits };
+      }
+      const base = yield* gitDriver
+        .resolveCommit({ cwd: checkout, revision: "HEAD" })
+        .pipe(
+          Effect.mapError(() =>
+            failure("invalid_request", "Unable to resolve the parent checkout commit."),
+          ),
+        );
+      // Launch preparation creates the worktree from the project root. Commits
+      // made in a Workler clone of the project are copied there; a checkout of
+      // another repository (such as a Git folder inside Scratch) is refused.
+      if (parentThread.worktreePath !== null) {
+        yield* copyCloneCommit(gitDriver, {
+          source: project.workspaceRoot,
+          clone: checkout,
+          commit: base.commitSha,
+        }).pipe(
+          Effect.mapError((error) =>
+            failure(
+              "invalid_request",
+              `Isolation "worktree" creates the child checkout in project "${project.title}" (${project.workspaceRoot}), which does not contain the parent checkout's commit (${error.detail}). Use isolation "shared" to work in the parent's checkout.`,
+            ),
+          ),
+        );
+      }
+      return { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+    },
+  );
 
   // No model was chosen, so the default profile may pick it, as in the composer.
   const projectDefaultModelSelection = (
@@ -2427,36 +2482,10 @@ const make = Effect.gen(function* () {
         parent.thread.interactionMode,
         input.interactionMode,
       );
-      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
-      if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
-        const project = yield* requireProject(parent.thread.projectId);
-        const base = yield* gitDriver
-          .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
-            revision: "HEAD",
-          })
-          .pipe(
-            Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
-            ),
-          );
-        // Launch preparation creates the worktree from the project root, so a
-        // parent checkout in another repository (such as a Git folder inside
-        // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
-          yield* gitDriver
-            .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
-            .pipe(
-              Effect.mapError(() =>
-                failure(
-                  "invalid_request",
-                  `Isolation "worktree" creates the child checkout in project "${project.title}" (${project.workspaceRoot}), which does not contain the parent checkout's commit. Use isolation "shared" to work in the parent's checkout.`,
-                ),
-              ),
-            );
-        }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
-      }
+      const workspaceStrategy =
+        input.isolation === "worktree" && !isRetryOfAcceptedDelegation
+          ? yield* delegatedWorktreeStrategy(parent.thread)
+          : undefined;
       // ThreadManagementService.dispatch is the chokepoint for this command
       // type's own enablement check, using the same command id and its
       // receipt-replay exemption, so no separate assert runs here.
