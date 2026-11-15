@@ -248,7 +248,15 @@ export const makeDrainExecutor = (deps: DrainDependencies): DrainExecutorShape =
                 back !== null &&
                 back.body === prior.body &&
                 back.snapshotSequence === prior.snapshotSequence &&
-                JSON.stringify(back.attachments) === JSON.stringify(prior.attachments) &&
+                back.attachments?.length === prior.attachments.length &&
+                back.attachments.every((entry, index) => {
+                  const expected = prior.attachments?.[index];
+                  return (
+                    entry.name === expected?.name &&
+                    entry.hash === expected.hash &&
+                    entry.size === expected.size
+                  );
+                }) &&
                 back.attachmentsSkipped === prior.attachmentsSkipped
               ) {
                 copiedSequences.set(thread.threadId, prior.snapshotSequence);
