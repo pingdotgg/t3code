@@ -15,6 +15,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["validates the input", "/repo/src/example.ts:12", false],
     ["example.ts:12", "/repo/src/example.ts:12", true],
     ["example.ts:99", "/repo/src/example.ts:12", false],
+    ["example.ts:12-20", "/repo/src/example.ts:12-20", true],
+    ["example.ts:12-20", "/repo/src/example.ts:12", false],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -25,6 +27,8 @@ describe("inlineCodeFilePathCandidate", () => {
   it.each([
     ["src\\main.ts", "src/main.ts"],
     ["allocator.cc:217", "allocator.cc:217"],
+    ["src/http.ts:42-64", "src/http.ts:42-64"],
+    ["http.ts:42-64", "http.ts:42-64"],
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
@@ -36,6 +40,13 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/tmp/.../scratchpad/notes.md", null],
     ["~/projects/…/notes.md", null],
     ["src/.../main.ts", null],
+    // regression: #22181 a `:line` suffix does not make an extensionless basename a file
+    ["I/W217:220", null],
+    ["bin/run:12", null],
+    ["docs/README:12", "docs/README:12"],
+    ["./bin/run:12", "./bin/run:12"],
+    ["src/資料.備份:12", "src/資料.備份:12"],
+    ["src/foo.c++:12", "src/foo.c++:12"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -76,6 +87,9 @@ describe("parseMarkdownFileLink", () => {
     "me@example.com",
     "foo(bar)",
     "$HOME",
+    "/tmp/claude-1000/...",
+    "/tmp/claude-1000/....:12",
+    "/tmp/claude-1000/%2E%2E%2E",
     "\\foo.ts",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
@@ -99,6 +113,19 @@ describe("parseMarkdownFileLink", () => {
     expect(parseMarkdownFileLink("Makefile")).toEqual({ path: "Makefile" });
     expect(parseMarkdownFileLink("Dockerfile:8")).toEqual({ path: "Dockerfile", line: 8 });
     expect(parseMarkdownFileLink("/srv/app/Makefile")).toEqual({ path: "/srv/app/Makefile" });
+  });
+
+  it("reads line ranges and opens them at their first line", () => {
+    expect(parseMarkdownFileLink("/repo/src/http.ts:42-64")).toEqual({
+      path: "/repo/src/http.ts",
+      line: 42,
+      endLine: 64,
+    });
+    expect(parseMarkdownFileLink("/repo/src/http.ts#L42-L64")).toEqual({
+      path: "/repo/src/http.ts",
+      line: 42,
+      endLine: 64,
+    });
   });
 
   it("reads positions from suffixes and line anchors", () => {
@@ -131,7 +158,23 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [`See ${serializeComposerFileLink("pages/posts/[id].tsx")} now`, ["pages/posts/%5Bid%5D.tsx"]],
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
+
+  it.each([
+    [
+      "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
+      ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
+    ],
+    ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
+    ["[a](x\\)y) [b](x\\(y)", ["x\\)y", "x\\(y"]],
+    ["[a](unclosed(paren) [b](ok)", ["ok"]],
+    ["[a](" + "(".repeat(32) + "x" + ")".repeat(32) + ")", ["(".repeat(32) + "x" + ")".repeat(32)]],
+    ["[a](" + "(".repeat(33) + "x" + ")".repeat(33) + ") [b](ok)", ["ok"]],
+  ])("keeps balanced parentheses in a destination like the parser: %s", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
 });
@@ -155,7 +198,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 
   it("keeps a backslash in a relative link that already names a file", () => {
-    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/./foo\\bar.ts");
+    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/foo\\bar.ts");
   });
 
   it("does not treat filename line references as external schemes", () => {
