@@ -20,6 +20,7 @@ pub mod mapper;
 pub mod network_gate;
 pub mod protocol;
 pub mod session;
+pub mod status;
 pub mod text_generation;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
@@ -55,25 +56,12 @@ pub struct CodexProvider {
     config: CodexConfig,
     server: Arc<client::AppServer>,
     models: Arc<Mutex<Vec<(String, String)>>>,
-    /// The instance's `enabled`, `displayName` and `accentColor` (`withInstanceIdentity`).
-    identity: Identity,
-}
-
-#[derive(Clone, Debug)]
-struct Identity {
-    enabled: bool,
-    display_name: Option<String>,
-    accent_color: Option<String>,
-}
-
-impl Default for Identity {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            display_name: None,
-            accent_color: None,
-        }
-    }
+    /// The instance's `enabled`, `displayName`, `accentColor` and `customModels`.
+    settings: status::StatusSettings,
+    /// The `ServerProvider` entry: T3's pending one until the first probe ends.
+    status: Mutex<Value>,
+    /// One probe at a time.
+    probing: tokio::sync::Mutex<()>,
 }
 
 impl std::fmt::Debug for CodexProvider {
@@ -105,36 +93,83 @@ impl CodexProvider {
                 .or_else(|| std::env::var(key).ok())
         });
         let server = client::AppServer::with_gate(spec, Some(gate));
+        let settings = status::StatusSettings {
+            enabled: true,
+            ..status::StatusSettings::default()
+        };
+        let pending = pending_status(&instance_id, &config, &settings);
         Self {
             instance_id,
             config,
             server,
             models,
-            identity: Identity::default(),
+            settings,
+            status: Mutex::new(pending),
+            probing: tokio::sync::Mutex::new(()),
         }
     }
 
     /// The provider for one `providerInstances` entry (`None`: the default instance with no
-    /// entry), over the server's base configuration. An enabled instance whose binary is not
-    /// installed is not offered, as [`Self::detect`]; a disabled one is listed disabled, as
-    /// T3 lists it, and starts nothing.
+    /// entry), over the server's base configuration. Every instance is listed, as T3 lists
+    /// it: until the first probe with T3's pending entry, then with what the probe found (a
+    /// missing binary is an error entry). A disabled one is listed disabled and starts
+    /// nothing. It may read Codex's model cache: the caller runs it on a blocking thread.
     pub fn for_instance(
         instance_id: ProviderInstanceId,
         base: CodexConfig,
         entry: Option<&Value>,
-    ) -> Option<Self> {
-        let envelope = conn_provider_support::instance::InstanceEnvelope::parse(entry, true);
+    ) -> Self {
         let config = base.with_instance(entry);
-        if envelope.enabled {
-            config.find_binary()?;
-        }
         let mut provider = Self::new(instance_id, config);
-        provider.identity = Identity {
-            enabled: envelope.enabled,
-            display_name: envelope.display_name,
-            accent_color: envelope.accent_color,
+        provider.settings = status::StatusSettings::from_instance(entry);
+        *crate::lock(&provider.status) =
+            pending_status(&provider.instance_id, &provider.config, &provider.settings);
+        provider
+    }
+
+    /// One probe with this instance's settings (`checkCodexProviderStatus`). With `defer`, a
+    /// failed check over a ready entry keeps that entry and asks for a recheck (`true`).
+    async fn probe(&self, defer: bool) -> bool {
+        let _one = self.probing.lock().await;
+        let cwd = match &self.config.status_cwd {
+            Some(cwd) => cwd.clone(),
+            None => std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("/")),
         };
-        Some(provider)
+        let input = status::ProbeInput {
+            instance_id: self.instance_id.as_str(),
+            config: &self.config,
+            settings: &self.settings,
+            host_env: conn_support::login_env::child_env(),
+            cwd,
+            checked_at: conn_support::time::now_iso(),
+        };
+        let entry = status::check(input).await;
+        let mut current = crate::lock(&self.status);
+        if defer
+            && entry["status"] == "error"
+            && entry["auth"]["status"] != "unauthenticated"
+            && current["enabled"] == true
+            && current["status"] == "ready"
+        {
+            return true;
+        }
+        // Titles pick from the models the probe listed (T3 passes the snapshot's models).
+        let listed: Vec<(String, String)> = entry["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| {
+                Some((
+                    m["slug"].as_str()?.to_owned(),
+                    m["name"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        if !listed.is_empty() {
+            *crate::lock(&self.models) = listed;
+        }
+        *current = entry;
+        false
     }
 
     /// A provider for the configured binary, or `None` when it is not installed.
@@ -225,47 +260,50 @@ impl Provider for CodexProvider {
         })
     }
 
-    fn server_provider_entry(&self, checked_at: &str) -> Option<Value> {
-        let mut entry = if self.identity.enabled {
-            let models = crate::lock(&self.models).clone();
-            server_provider_entry(
-                self.instance_id.as_str(),
-                checked_at,
-                self.server.version(),
-                &models,
-            )
-        } else {
-            disabled_entry(self.instance_id.as_str(), checked_at)
-        };
-        if let Some(name) = &self.identity.display_name {
-            entry["displayName"] = json!(name);
-        }
-        if let Some(color) = &self.identity.accent_color {
-            entry["accentColor"] = json!(color);
-        }
-        Some(entry)
+    fn server_provider_entry(&self, _checked_at: &str) -> Option<Value> {
+        Some(crate::lock(&self.status).clone())
+    }
+
+    /// `checkCodexProviderStatus`: starts the instance's `app-server` for the probe and stops
+    /// it after. A disabled instance spawns nothing; with the probe off the entry stays
+    /// pending. The instance is rebuilt on a settings change, so its own settings apply.
+    fn refresh_status(&self, _instance: Option<Value>) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if self.config.status_probe || !self.settings.enabled {
+                self.probe(false).await;
+            }
+        })
+    }
+
+    fn refresh_status_on_interval(
+        &self,
+        _instance: Option<Value>,
+        defer: bool,
+    ) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            // `shouldRefreshOnInterval`: a disabled instance has nothing to probe.
+            if !self.settings.enabled || !self.config.status_probe {
+                return false;
+            }
+            self.probe(defer).await
+        })
     }
 }
 
-/// T3's snapshot of a disabled Codex instance (`checkCodexProviderStatus`): no probe, the
-/// custom models only (none are read here).
-pub fn disabled_entry(instance_id: &str, checked_at: &str) -> Value {
-    json!({
-        "instanceId": instance_id,
-        "driver": DRIVER,
-        "displayName": "Codex",
-        "enabled": false,
-        "installed": false,
-        "version": null,
-        "status": "disabled",
-        "auth": {"status": "unknown"},
-        "setup": {"canAuthenticate": false, "canInstall": false},
-        "checkedAt": checked_at,
-        "message": "Codex is disabled in T3 Code settings.",
-        "models": [],
-        "slashCommands": [],
-        "skills": [],
-    })
+/// T3's pending entry for these settings (`makePendingCodexProvider`, the catalog applied,
+/// the instance stamped).
+fn pending_status(
+    instance_id: &ProviderInstanceId,
+    config: &CodexConfig,
+    settings: &status::StatusSettings,
+) -> Value {
+    status::pending_entry(
+        instance_id.as_str(),
+        config,
+        settings,
+        &[("HOME".to_owned(), std::env::var("HOME").unwrap_or_default())],
+        &conn_support::time::now_iso(),
+    )
 }
 
 /// `CodexProviderCapabilitiesV2` with what this crate does not do switched off: snapshots,
@@ -399,47 +437,25 @@ pub fn cached_models(path: &std::path::Path) -> Option<Vec<(String, String)>> {
     (!models.is_empty()).then_some(models)
 }
 
-/// The `ServerProvider` entry a client needs to offer Codex and enable Send: enabled,
-/// installed, `status: "ready"`.
-pub fn server_provider_entry(
-    instance_id: &str,
-    checked_at: &str,
-    version: Option<String>,
-    models: &[(String, String)],
-) -> Value {
-    json!({
-        "instanceId": instance_id,
-        "driver": DRIVER,
-        "displayName": "Codex",
-        "enabled": true,
-        "installed": true,
-        "version": version,
-        "status": "ready",
-        "auth": {"status": "unknown"},
-        "checkedAt": checked_at,
-        "models": models
-            .iter()
-            .map(|(slug, name)| json!({"slug": slug, "name": name, "isCustom": false, "capabilities": null}))
-            .collect::<Vec<_>>(),
-        "slashCommands": [],
-        "skills": [],
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Before its first probe the entry is T3's pending one (`makePendingCodexProvider`).
     #[test]
-    fn registers_as_a_dyn_provider_with_a_ready_entry() {
+    fn registers_as_a_dyn_provider_with_a_pending_entry() {
         let provider: Box<dyn Provider> =
             Box::new(CodexProvider::new("codex".into(), CodexConfig::default()));
         assert_eq!(provider.driver(), "codex");
         let entry = provider
             .server_provider_entry("2026-11-13T00:00:00.000Z")
             .unwrap();
-        assert_eq!(entry["status"], "ready");
-        assert!(!entry["models"].as_array().unwrap().is_empty());
+        assert_eq!(entry["status"], "warning");
+        assert_eq!(entry["installed"], false);
+        assert_eq!(
+            entry["message"],
+            "Codex provider status has not been checked in this session yet."
+        );
         let _: conn_contract::ServerProvidersItemItem = from_json(entry).unwrap();
         let _: ProviderCapabilities = from_json(capabilities()).unwrap();
     }
@@ -461,12 +477,26 @@ mod tests {
         assert_eq!(models, [("a".into(), "A".into()), ("b".into(), "B".into())]);
     }
 
-    #[test]
-    fn a_missing_binary_is_not_offered() {
+    /// T3 lists an enabled instance whose binary is missing, with an error entry.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_missing_binary_is_listed_with_an_error() {
         let config = CodexConfig {
             binary: "/nonexistent/codex".into(),
             ..CodexConfig::default()
         };
-        assert!(CodexProvider::detect("codex".into(), config).is_none());
+        assert!(CodexProvider::detect("codex".into(), config.clone()).is_none());
+        let provider = CodexProvider::for_instance("codex".into(), config, None);
+        provider.refresh_status(None).await;
+        let entry = provider.server_provider_entry("").unwrap();
+        assert_eq!(entry["status"], "error");
+        assert_eq!(entry["installed"], false);
+        assert!(
+            entry["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("Could not start Codex CLI (`/nonexistent/codex`)."),
+            "{entry}"
+        );
+        let _: conn_contract::ServerProvidersItemItem = from_json(entry).unwrap();
     }
 }

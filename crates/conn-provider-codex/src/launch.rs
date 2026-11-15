@@ -51,6 +51,12 @@ pub struct CodexConfig {
     /// How long the session waits for the answer to a `turn/start` that Stop abandoned after
     /// it was written (the request's own limit, 60 s). Tests shorten it.
     pub abandoned_start_timeout: std::time::Duration,
+    /// Whether the status probe runs (`checkCodexProviderStatus`). Checks turn it off, so no
+    /// check runs this machine's `codex`; the entry then stays T3's pending one.
+    pub status_probe: bool,
+    /// The folder the probe runs in: the server's working folder (T3's `process.cwd()`).
+    /// `None`: this process's working folder.
+    pub status_cwd: Option<PathBuf>,
 }
 
 impl Default for CodexConfig {
@@ -63,6 +69,8 @@ impl Default for CodexConfig {
             attachments_dir: None,
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
             abandoned_start_timeout: crate::client::REQUEST_TIMEOUT,
+            status_probe: true,
+            status_cwd: None,
         }
     }
 }
