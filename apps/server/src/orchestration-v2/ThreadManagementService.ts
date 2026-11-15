@@ -70,8 +70,8 @@ import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimi
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
+import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 

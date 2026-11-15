@@ -82,8 +82,8 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
-import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
+import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
 import {
@@ -991,11 +991,19 @@ function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   const queued = queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true);
+  const next = queued[0];
   // Retained sessions stay busy until their buffered output is consumed.
   const bufferedMessageIds = new Set(
     projection.messages.filter(isBufferedProviderNotification).map((message) => message.id),
   );
-  return queued.find((run) => bufferedMessageIds.has(run.userMessageId)) ?? queued[0];
+  if (next === undefined || bufferedMessageIds.has(next.userMessageId)) return next;
+  return (
+    queued.find(
+      (run) =>
+        run.providerInstanceId !== next.providerInstanceId &&
+        bufferedMessageIds.has(run.userMessageId),
+    ) ?? next
+  );
 }
 
 // Delegated completions, monitor notifications and unpinned scheduled deliveries never choose a
@@ -2636,7 +2644,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const bufferedContinuation = isBufferedProviderNotification(queuedMessage);
       const followsCurrent = followsCurrentConversation(queuedMessage);
       const freshContext = queuedRun.freshContext === true;
-      const selectedProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
+      const selectedProviderThread = dispatchProviderThread(
+        projection,
+        queuedMessage,
+        freshContext,
+      );
       const activeProviderThread =
         selectedProviderThread !== undefined &&
         providerThreadPredatesBoundary(selectedProviderThread, contextBoundaryOrdinal(projection))
@@ -7463,10 +7475,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const activeProviderThread =
       continuationProviderThread ??
       (selectedProviderThread !== undefined &&
-      providerThreadPredatesBoundary(
-        selectedProviderThread,
-        contextBoundaryOrdinal(projection),
-      )
+      providerThreadPredatesBoundary(selectedProviderThread, contextBoundaryOrdinal(projection))
         ? rootProviderThreadsForProvider(projection, projection.thread.providerInstanceId)[0]
         : selectedProviderThread);
     const activeRun = projection.runs.find(isActiveRun);
@@ -16030,30 +16039,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadReactions.run(
         stored.event.threadId,
         Effect.gen(function* () {
-        const childThreadId = stored.event.threadId;
-        // Commands already promote their queues; only unsolicited settlement needs this retry.
-        if (
-          stored.commandId === null &&
-          (yield* projectionStore.canStartQueuedRun(childThreadId))
-        ) {
-          yield* threadDispatch.withLock(childThreadId, startNextQueuedRun(childThreadId));
-        }
-        if (!settlesChild) return;
-        const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
-        if (parentThreadId === undefined) return;
-        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning(
-            "Failed to resume a queue or finalize a delegated child after its work settled",
-            {
-              threadId: stored.event.threadId,
-              sequence: stored.sequence,
-              cause,
-            },
+          const childThreadId = stored.event.threadId;
+          // Commands already promote their queues; only unsolicited settlement needs this retry.
+          if (
+            stored.commandId === null &&
+            (yield* projectionStore.canStartQueuedRun(childThreadId))
+          ) {
+            yield* threadDispatch.withLock(childThreadId, startNextQueuedRun(childThreadId));
+          }
+          if (!settlesChild) return;
+          const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
+          if (parentThreadId === undefined) return;
+          yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning(
+              "Failed to resume a queue or finalize a delegated child after its work settled",
+              {
+                threadId: stored.event.threadId,
+                sequence: stored.sequence,
+                cause,
+              },
+            ),
           ),
         ),
-      ),
       ),
     ),
     Effect.forkScoped,
