@@ -672,6 +672,8 @@ export class GhosttyTerminalSurface {
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.installEvents();
+    // The input is mounted before the core loads, so focus can land before the listeners.
+    this.focused = document.activeElement === input;
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);

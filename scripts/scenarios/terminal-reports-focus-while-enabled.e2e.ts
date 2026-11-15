@@ -6,26 +6,40 @@ import * as FileSystem from "effect/FileSystem";
 
 import { runPromise, test, WEB } from "./t3.ts";
 
-// DECRQM replies only after the terminal applied each mode, so the files mark when the browser
-// has 1004 on or off. Raw reads keep the shell's line editor from swallowing the reports.
-const PROBE = `cd "$(dirname "$0")"
-stty -icanon -echo min 1 time 0
-printf '\\033[?1004h\\033[?1004$p'
-dd bs=1 count=11 of=enabled-reply 2>/dev/null
-dd bs=1 count=6 of=reports 2>/dev/null
-printf '\\033[?1004l\\033[?1004$p'
-dd bs=1 count=11 of=disabled-reply 2>/dev/null
-dd bs=1 count=1 of=after 2>/dev/null
-stty sane
+// One raw-mode process logs every byte the terminal sends to `received` and steps on exact
+// input: DECRQM replies mark when 1004 is on or off, and `x` ends it.
+const PROBE = String.raw`import { appendFileSync, writeFileSync } from "node:fs";
+
+const log = new URL("received", import.meta.url);
+const ENABLED = "\x1b[?1004;1$y";
+const REPORTS = "\x1b[O\x1b[I";
+const DISABLED = "\x1b[?1004;2$y";
+let received = "";
+
+writeFileSync(log, "");
+process.stdin.setRawMode(true);
+process.stdin.on("data", (chunk) => {
+  appendFileSync(log, chunk);
+  received += chunk.toString("latin1");
+  if (received === ENABLED + REPORTS) process.stdout.write("\x1b[?1004l\x1b[?1004$p");
+  if (received === ENABLED + REPORTS + DISABLED + "x") {
+    process.stdin.setRawMode(false);
+    process.exit(0);
+  }
+});
+process.stdout.write("\x1b[?1004h\x1b[?1004$p");
 `;
+
+const ENABLED = "\x1b[?1004;1$y";
+const REPORTS = "\x1b[O\x1b[I";
+const DISABLED = "\x1b[?1004;2$y";
 
 test(
   "The web terminal reports focus changes only while a program enables DEC 1004",
   WEB,
   async ({ t3, app, browser, screen }) => {
-    const project = await t3.project("demo", { "focus-probe.sh": PROBE });
+    const project = await t3.project("demo", { "focus-probe.mjs": PROBE });
     const thread = await t3.thread({ project, title: "Focus", messages: ["hello"] });
-    // Each probe file fills only once its reply or report arrives.
     const read = (file: string) =>
       runPromise(
         Effect.gen(function* () {
@@ -42,7 +56,7 @@ test(
 
     await screen.getByRole("button", "Toggle terminal drawer").tap();
     const terminal = screen.getByLabel("Terminal input");
-    const blur = () => screen.getByRole("textbox", "Message Focus").tap();
+    const composer = screen.getByRole("textbox", "Message Focus");
 
     // Input sent before the shell runs is dropped, so retype until it lands.
     await expect
@@ -58,20 +72,23 @@ test(
       .toBe("ready\n");
 
     await terminal.focus();
-    await browser.keyboard.type(`sh '${project}/focus-probe.sh'`);
+    await browser.keyboard.type(`'${process.execPath}' '${project}/focus-probe.mjs'`);
     await browser.keyboard.press("Enter");
-    await expect.poll(() => read("enabled-reply"), { timeout: 15_000 }).toBe("\x1b[?1004;1$y");
+    await expect.poll(() => read("received"), { timeout: 15_000 }).toBe(ENABLED);
 
-    await blur();
+    await composer.tap();
     await terminal.focus();
     await app.screenshot("enabled");
-    await expect.poll(() => read("reports"), { timeout: 10_000 }).toBe("\x1b[O\x1b[I");
+    await expect
+      .poll(() => read("received"), { timeout: 10_000 })
+      .toBe(ENABLED + REPORTS + DISABLED);
 
-    await expect.poll(() => read("disabled-reply"), { timeout: 15_000 }).toBe("\x1b[?1004;2$y");
-    await blur();
+    await composer.tap();
     await terminal.focus();
     await browser.keyboard.type("x");
     await app.screenshot("disabled");
-    await expect.poll(() => read("after"), { timeout: 10_000 }).toBe("x");
+    await expect
+      .poll(() => read("received"), { timeout: 10_000 })
+      .toBe(ENABLED + REPORTS + DISABLED + "x");
   },
 );

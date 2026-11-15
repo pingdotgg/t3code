@@ -89,6 +89,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       width = 300;
       height = 150;
       value = "";
+      children: TerminalTestElement[] = [];
       private readonly captures = new Set<number>();
 
       setAttribute() {}
@@ -96,6 +97,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         for (const child of children) child.parentElement = this;
       }
       replaceChildren(...children: TerminalTestElement[]) {
+        this.children = children;
         this.append(...children);
       }
       remove() {
@@ -105,6 +107,7 @@ describe("GhosttyTerminalSurface visibility", () => {
         return context;
       }
       focus() {
+        fakeDocument.activeElement = this;
         this.dispatchEvent(new Event("focus"));
       }
       setPointerCapture(pointerId: number) {
@@ -142,10 +145,12 @@ describe("GhosttyTerminalSurface visibility", () => {
         actualBoundingBoxDescent: 3,
       }),
     };
-    vi.stubGlobal("document", {
+    const fakeDocument = {
+      activeElement: null as TerminalTestElement | null,
       createElement: (tag: string) => (tag === "canvas" ? canvas : new TerminalTestElement()),
       fonts: Object.assign(new EventTarget(), { load: async () => [], add() {} }),
-    });
+    };
+    vi.stubGlobal("document", fakeDocument);
     vi.stubGlobal(
       "window",
       Object.assign(new EventTarget(), {
@@ -419,6 +424,18 @@ describe("GhosttyTerminalSurface visibility", () => {
     surface.focus();
     blur();
     expect(reports()).toEqual([]);
+  });
+
+  it("reports the blur of an input focused while the surface was still loading", async () => {
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    const harness = createHarness();
+    const pending = harness.create();
+    harness.mount.children[1]?.focus();
+    const surface = await pending;
+
+    surface.write("\x1b[?1004h");
+    surface.input.dispatchEvent(new Event("blur"));
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["\x1b[O"]);
   });
 
   it("honors host interception, IME candidates, and AltGr before local shortcuts", async () => {
