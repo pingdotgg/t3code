@@ -96,7 +96,6 @@ function InlineAudio(
       // oxlint-disable-next-line react/set-state-in-effect -- Native completion and fullscreen takeover invalidate the pending playback request.
       requestPlayback(false);
     }
-    // Playback that ran to completion (or failed) no longer needs keep-alive.
     if (status.didJustFinish || status.error) onPlaybackActivityChange?.(false);
     if (fullscreenVideoOpen) pauseAudioPlayer(player);
   }, [
@@ -255,10 +254,10 @@ function VisibleFilePreview(
 export function ThreadInlineFilePreview(props: PreviewProps) {
   const visible = useContext(ThreadMediaVisibleContext);
   const focused = useIsFocused();
-  // Once playback has started, keep the player mounted off-screen:
-  // unmounting disposes the native player and stops playback.
-  // The keep-alive latches on play and releases on finish or error.
+  // Unmounting disposes the native player, so a started player stays mounted off-screen
+  // until it finishes or fails. Leaving the screen disposes it, so the latch resets too.
   const [playbackActive, setPlaybackActive] = useState(false);
+  if (!focused && playbackActive) setPlaybackActive(false);
   return (
     <View
       className="my-1 overflow-hidden rounded-xl border border-border bg-card"
