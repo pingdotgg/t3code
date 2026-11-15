@@ -832,8 +832,6 @@ const make = Effect.gen(function* () {
         reply.text === undefined ? "failed" : "completed",
         reply.text ?? "The thread in the linked environment has no run to follow.",
         "ran-out",
-        undefined,
-        reply.executedModel,
       );
       return yield* settled(parentThreadId, taskId);
     }
