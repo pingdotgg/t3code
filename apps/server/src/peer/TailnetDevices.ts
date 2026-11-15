@@ -50,6 +50,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Fiber from "effect/Fiber";
 import * as FiberSet from "effect/FiberSet";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
@@ -75,6 +76,8 @@ import { APP_NAME } from "@t3tools/shared/branding";
 const CHALLENGE_TTL = Duration.minutes(2);
 const PROBE_TIMEOUT = Duration.millis(2500);
 const PROBE_CONCURRENCY = 4;
+/** How long a scan holds its linking for members that have not answered the roster push. */
+const GOSSIP_GRACE = PROBE_TIMEOUT;
 /** Each handshake whoises and dials out; an unauthenticated caller must not run many at once. */
 const HANDSHAKE_CONCURRENCY = 4;
 /** An issuer's whole answer, including its own handshake to link back. */
@@ -1831,22 +1834,23 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => Option.none<PeerLink>()),
   );
 
-  /** The first probe URL of `peer` that answers as a T3 server. */
+  /** The first probe URL of `peer`, in their order, that answers as a T3 server; all are dialed at once. */
   const probe = (urls: ReadonlyArray<string>) =>
-    Effect.findFirst(urls, (url) =>
-      describe(new URL(url).origin, PROBE_TIMEOUT).pipe(Effect.map(Option.isSome)),
-    ).pipe(
-      Effect.flatMap((url) =>
-        Option.isNone(url)
-          ? Effect.succeed(
-              Option.none<{ origin: string; descriptor: ExecutionEnvironmentDescriptor }>(),
-            )
-          : describe(new URL(url.value).origin, PROBE_TIMEOUT).pipe(
-              Effect.map(
-                Option.map((descriptor) => ({ origin: new URL(url.value).origin, descriptor })),
-              ),
-            ),
-      ),
+    Effect.scoped(
+      Effect.gen(function* () {
+        const dialed = yield* Effect.forEach(urls, (url) => {
+          const origin = new URL(url).origin;
+          return describe(origin, PROBE_TIMEOUT).pipe(
+            Effect.map(Option.map((descriptor) => ({ origin, descriptor }))),
+            Effect.forkScoped,
+          );
+        });
+        for (const fiber of dialed) {
+          const answer = yield* Fiber.join(fiber);
+          if (Option.isSome(answer)) return answer;
+        }
+        return Option.none<{ origin: string; descriptor: ExecutionEnvironmentDescriptor }>();
+      }),
     );
 
   /** A machine upgraded from the device policy is a full-access member until a real write says otherwise. */
@@ -1965,9 +1969,15 @@ const make = Effect.gen(function* () {
         ),
       { concurrency: PROBE_CONCURRENCY, discard: true },
     );
-    // Gossip first: a linked member may know addresses the scan cannot guess.
-    yield* push;
+    // Gossip first: a linked member may know addresses the scan cannot guess. A member that is
+    // off answers nothing for its whole link timeout, so linking waits only this long for it,
+    // and runs again once the late answers are in.
+    const gossip = yield* FiberSet.run(background, push);
+    const settled = yield* Fiber.await(gossip).pipe(Effect.timeoutOption(GOSSIP_GRACE));
     yield* linkMembers;
+    if (Option.isNone(settled)) {
+      yield* FiberSet.run(background, Fiber.await(gossip).pipe(Effect.andThen(linkMembers)));
+    }
   }).pipe(Effect.withSpan("TailnetDevices.scan"));
 
   const start: TailnetDevices["Service"]["start"] = Effect.gen(function* () {

@@ -26,6 +26,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as TestClock from "effect/testing/TestClock";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -202,6 +203,9 @@ const serveDeviceOn = (
     const grants = yield* Ref.make(0);
     const descriptorReads = yield* Ref.make(0);
     const bearerRequests = yield* Ref.make(0);
+    const asleep = yield* Ref.make(false);
+    const unanswered = yield* Queue.unbounded<void>();
+    const wake = yield* Deferred.make<void>();
     const context = yield* TailnetDevices.layer.pipe(
       Layer.provideMerge(PeerLinks.layer),
       Layer.provideMerge(EnvironmentAuth.layer),
@@ -266,6 +270,11 @@ const serveDeviceOn = (
           }
           if (request.url.startsWith("/.well-known/t3/environment")) {
             yield* Ref.update(descriptorReads, (count) => count + 1);
+            if (yield* Ref.get(asleep)) {
+              yield* Queue.offer(unanswered, undefined);
+              yield* Deferred.await(wake);
+              return yield* Effect.die("the device was closed while asleep");
+            }
           }
           return yield* httpEffect;
         }),
@@ -280,6 +289,8 @@ const serveDeviceOn = (
       ),
       { disableListenLog: true, disableLogger: true },
     ).pipe(Layer.fresh, Layer.build);
+    // An unanswered request would hold the server open past the test.
+    yield* Effect.addFinalizer(() => Deferred.succeed(wake, undefined));
     const address = (yield* HttpServer.HttpServer).address;
     if (address._tag === "UnixPathAddress") return yield* Effect.die("expected a TCP address");
     const origin = `http://127.0.0.1:${address.port}`;
@@ -322,6 +333,10 @@ const serveDeviceOn = (
       grants,
       /** Descriptor reads this device answered, each one a probe of it. */
       descriptorReads,
+      /** While set, its descriptor never answers, as a machine that is switched off. */
+      asleep,
+      /** One entry per descriptor request it left unanswered while asleep. */
+      unanswered,
       /** Link requests that reached this device carrying someone's token. */
       bearerRequests,
       /** Sessions this device issued to other devices. */
@@ -2546,6 +2561,50 @@ describe("limits and the live snapshot", () => {
       );
       yield* a.devices.setLimit(studio.environmentId, null);
       expect((yield* a.authenticate(token)).access).toBe("full-access");
+    }),
+  );
+
+  it.effect("a scan dials a found machine's addresses at once, and keeps their order", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      // Two addresses that never answer, ahead of the one that does.
+      const silent = yield* serveDevice(box, tailnet);
+      const alsoSilent = yield* serveDevice(descriptorOf("env-spare", "Spare"), tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* Ref.set(silent.asleep, true);
+      yield* Ref.set(alsoSilent.asleep, true);
+      yield* tailnet.announce("studio", () => [silent.url, alsoSilent.url, b.url]);
+
+      const scanning = yield* a.devices.scan.pipe(Effect.forkScoped);
+      yield* Queue.take(silent.unanswered);
+      yield* Queue.take(alsoSilent.unanswered);
+      yield* TestClock.adjust("2500 millis");
+      yield* Fiber.join(scanning);
+
+      const found = (yield* a.devices.list()).devices.find(
+        (device) => device.environmentId === studio.environmentId,
+      );
+      expect(found?.urls).toEqual([b.url]);
+    }),
+  );
+
+  it.effect("a scan does not wait out a member that is switched off", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* admit(tailnet, a, b);
+
+      yield* Ref.set(b.asleep, true);
+      const scanning = yield* a.devices.scan.pipe(Effect.forkScoped);
+      yield* Queue.take(b.unanswered);
+      yield* TestClock.adjust("2500 millis");
+      yield* Fiber.join(scanning);
     }),
   );
 
