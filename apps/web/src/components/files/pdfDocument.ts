@@ -1,6 +1,7 @@
 import { getDocument, GlobalWorkerOptions, PDFDataRangeTransport, PDFWorker } from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import fallbackUrl from "pdfjs-dist/wasm/openjpeg_nowasm_fallback.js?url";
+import { readBoundedBody } from "./readBoundedDocument";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -46,13 +47,14 @@ async function readRange(src: string, begin: number, end: number, signal: AbortS
   });
   const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
   const size = Number(match?.[3]);
-  const bytes = response.status === 206 && match ? await response.arrayBuffer() : null;
-  if (
-    !bytes ||
-    Number(match![1]) !== begin ||
-    Number(match![2]) !== Math.min(end, size) - 1 ||
-    bytes.byteLength !== Math.min(end, size) - begin
-  ) {
+  const length = Math.min(end, size) - begin;
+  const valid =
+    response.status === 206 &&
+    match &&
+    Number(match[1]) === begin &&
+    Number(match[2]) === begin + length - 1;
+  const bytes = valid ? await readBoundedBody(response, length).catch(() => null) : null;
+  if (!bytes || bytes.byteLength !== length) {
     void response.body?.cancel().catch(() => undefined);
     throw new Error("Invalid PDF range response.");
   }
