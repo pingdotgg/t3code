@@ -27,6 +27,10 @@
       "types": "./src/composerModelMentions.ts",
       "default": "./src/composerModelMentions.ts"
     },
+    "./locales": {
+      "types": "./src/locales.ts",
+      "default": "./src/locales.ts"
+    },
     "./model-search": {
       "types": "./src/modelSearch.ts",
       "default": "./src/modelSearch.ts"
@@ -82,6 +86,10 @@
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
+    },
+    "./scheduled-task-time-zone": {
+      "types": "./src/scheduledTaskTimeZone.ts",
+      "default": "./src/scheduledTaskTimeZone.ts"
     },
     "./connection": {
       "types": "./src/connection/index.ts",
@@ -243,6 +251,10 @@
       "types": "./src/state/environmentHttpAuth.ts",
       "default": "./src/state/environmentHttpAuth.ts"
     },
+    "./state/connectMcpApproval": {
+      "types": "./src/state/connectMcpApproval.ts",
+      "default": "./src/state/connectMcpApproval.ts"
+    },
     "./state/peerPairingCode": {
       "types": "./src/state/peerPairingCode.ts",
       "default": "./src/state/peerPairingCode.ts"
@@ -322,6 +334,10 @@
     "./state/threads": {
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
+    },
+    "./state/thread-activity-announcement": {
+      "types": "./src/state/threadActivityAnnouncement.ts",
+      "default": "./src/state/threadActivityAnnouncement.ts"
     },
     "./state/subagent-display": {
       "types": "./src/state/subagentDisplay.ts",
@@ -418,6 +434,10 @@
     "./work-log/command-label": {
       "types": "./src/work-log/commandLabel.ts",
       "default": "./src/work-log/commandLabel.ts"
+    },
+    "./work-log/embedded-scripts": {
+      "types": "./src/work-log/embeddedScripts.ts",
+      "default": "./src/work-log/embeddedScripts.ts"
     },
     "./work-log/scroll-anchor": {
       "types": "./src/work-log/scrollAnchor.ts",
@@ -570,10 +590,15 @@
     "@t3tools/source-control-definitions": "workspace:*",
     "effect": "catalog:",
     "jszip": "3.10.1",
-    "three": "0.180.0"
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "three": "0.180.0",
+    "unbash": "^5.0.0",
+    "unified": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/mdast": "^4.0.4",
     "@types/three": "0.180.0",
     "vite-plus": "catalog:"
   }
