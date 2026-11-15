@@ -290,8 +290,12 @@ function CommandPaletteResultRow(props: {
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteResultItem) => void;
 }) {
+  // Terminal-only keys (splits) have no binding outside a terminal; show the terminal's.
   const shortcutLabel = props.item.shortcutCommand
-    ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
+    ? (shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand) ??
+      shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand, {
+        context: { terminalFocus: true },
+      }))
     : null;
 
   return (
