@@ -86,7 +86,7 @@ import { AsyncResult } from "effect/reactivity";
 import { cn } from "../../lib/cn";
 import { formatBytes } from "../../lib/formatBytes";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentProjectCloneListAtom, setProjectFilesCopying } from "../../state/projectClones";
+import { setProjectFilesCopying } from "../../state/projectClones";
 import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
@@ -1656,14 +1656,17 @@ export function AddProjectDestinationScreen(props: {
         const cloneRef = { environmentId: environment.environmentId, projectId };
         setProjectFilesCopying(cloneRef, true);
         void writeProjectFilesAfterClone(appAtomRegistry, projectEnvironment, {
-          clonesAtom: environmentProjectCloneListAtom(environment.environmentId),
+          clonesAtom: sourceControlEnvironment.projectClones({
+            environmentId: environment.environmentId,
+            input: {},
+          }),
           ...cloneRef,
           cwd: startResult.value.cwd,
           subdirectory: stringParam(props.sourceSubdirectory) ?? "",
           reads,
         }).then((failed) => {
           setProjectFilesCopying(cloneRef, false);
-          if (failed?.length) {
+          if (failed.length > 0) {
             Dialog.alert(
               `Could not copy ${failed.length} ${failed.length === 1 ? "file" : "files"} to ${environment.label}`,
               failed.join("\n"),
@@ -1683,7 +1686,8 @@ export function AddProjectDestinationScreen(props: {
       } else {
         let draftId: string | undefined;
         if (movedDraftId) {
-          await waitForComposerDraftsLoaded();
+          // A failed hydration is already logged; still open the new project.
+          await waitForComposerDraftsLoaded().catch(() => undefined);
           draftId = movedDraftId;
         } else if (prompt) {
           draftId = await draftWithPrompt(environment.environmentId, projectId, prompt).catch(

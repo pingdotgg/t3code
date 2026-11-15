@@ -9,7 +9,7 @@ import { create } from "zustand";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
-import { environmentProjectClonesAtom, silenceProjectCloneToasts } from "../state/projectClones";
+import { silenceProjectCloneToasts } from "../state/projectClones";
 import { projectEnvironment } from "../state/projects";
 import { sourceControlEnvironment } from "../state/sourceControl";
 
@@ -107,7 +107,10 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   if (reads.length === 0) return projectId;
 
   void writeProjectFilesAfterClone(appAtomRegistry, projectEnvironment, {
-    clonesAtom: environmentProjectClonesAtom(input.target.environmentId),
+    clonesAtom: sourceControlEnvironment.projectClones({
+      environmentId: input.target.environmentId,
+      input: {},
+    }),
     environmentId: input.target.environmentId,
     projectId,
     cwd: started.value.cwd,
@@ -116,7 +119,7 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   }).then((failed) =>
     setFileCopy(
       copyKey,
-      failed === null || failed.length === 0
+      failed.length === 0
         ? null
         : {
             phase: "failed",

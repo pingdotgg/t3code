@@ -41,6 +41,9 @@ describe("projectSubdirectory", () => {
   it("is the project's path below its repository root", () => {
     expect(projectSubdirectory("/repo", "/repo/apps/web")).toBe("apps/web");
     expect(projectSubdirectory("C:\\repo\\", "C:\\repo\\apps\\web")).toBe("apps/web");
+    expect(projectSubdirectory("C:/repo", "C:\\repo\\apps\\web")).toBe("apps/web");
+    expect(projectSubdirectory("C:/Repo", "c:\\repo\\apps\\Web")).toBe("apps/Web");
+    expect(projectSubdirectory("/Repo", "/repo/apps/web")).toBe("");
     expect(projectSubdirectory("/repo", "/repo")).toBe("");
     expect(projectSubdirectory("/repo", "/repo-other/apps")).toBe("");
     expect(projectSubdirectory(undefined, "/repo/apps/web")).toBe("");
@@ -48,12 +51,14 @@ describe("projectSubdirectory", () => {
 });
 
 describe("copying files to a cloned project", () => {
-  const clone = (phase: ProjectCloneSnapshot["phase"]) =>
-    [{ projectId, phase }] as unknown as ReadonlyArray<ProjectCloneSnapshot>;
+  type Clones = AsyncResult.AsyncResult<ReadonlyArray<ProjectCloneSnapshot>, unknown>;
+  const list = (clones: ReadonlyArray<unknown>): Clones =>
+    AsyncResult.success(clones as ReadonlyArray<ProjectCloneSnapshot>);
+  const clone = (phase: ProjectCloneSnapshot["phase"]) => list([{ projectId, phase }]);
 
   function setup() {
     const registry = AtomRegistry.make();
-    const clonesAtom = Atom.make<ReadonlyArray<ProjectCloneSnapshot>>([]);
+    const clonesAtom = Atom.make<Clones>(AsyncResult.initial());
     const writes: Array<ProjectWriteFileInput> = [];
     const writeFile = {
       label: "write",
@@ -125,13 +130,20 @@ describe("copying files to a cloned project", () => {
     ]);
   });
 
-  it("copies nothing when the clone is removed before it finishes", async () => {
+  it("keeps waiting while the clone list is unavailable, and reports every file once the clone is gone", async () => {
     const { registry, clonesAtom, writes, copy } = setup();
     const copied = copy("");
     registry.set(clonesAtom, clone("running"));
-    registry.set(clonesAtom, []);
+    registry.set(clonesAtom, AsyncResult.failure(Cause.fail(new Error("disconnected"))));
+    registry.set(clonesAtom, AsyncResult.initial());
+    registry.set(clonesAtom, clone("running"));
+    registry.set(clonesAtom, list([]));
 
-    expect(await copied).toBeNull();
+    expect(await copied).toEqual([
+      ".env: The clone was gone before this file could be copied.",
+      "huge: The clone was gone before this file could be copied.",
+      "locked: The clone was gone before this file could be copied.",
+    ]);
     expect(writes).toEqual([]);
   });
 });
