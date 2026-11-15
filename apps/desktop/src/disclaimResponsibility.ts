@@ -35,15 +35,23 @@ if (!executable.endsWith(" Helper")) {
     // A private libSystem export. On a macOS without it this throws before anything changes.
     check("responsibility_spawnattrs_setdisclaim", [External, I32], [attributes, 1]);
     // Node marks inherited descriptors close-on-exec at startup. FIONCLEX keeps stdio and the
-    // desktop app's pipes (descriptors 0-7, see DesktopBackendConfiguration) open across the exec.
-    for (let fd = 0; fd < 8; fd++) call(I32, "ioctl", [I32, I64], [fd, 0x20006602]);
+    // desktop app's pipes (descriptors 0-7, see DesktopBackendConfiguration) open across the exec;
+    // FIOCLEX puts the flag back when the exec fails and this process carries on.
+    const setCloseOnExec = (request: number) => {
+      for (let fd = 0; fd < 8; fd++) call(I32, "ioctl", [I32, I64], [fd, request]);
+    };
+    setCloseOnExec(0x20006602);
     const [argv] = unwrapPointer([call(External, "_NSGetArgv", [], [])]);
     const [environment] = unwrapPointer([call(External, "_NSGetEnviron", [], [])]);
-    check(
-      "posix_spawn",
-      [I64, DataType.String, I64, External, External, External],
-      [0, helper, 0, attributes, argv, environment],
-    );
+    try {
+      check(
+        "posix_spawn",
+        [I64, DataType.String, I64, External, External, External],
+        [0, helper, 0, attributes, argv, environment],
+      );
+    } finally {
+      setCloseOnExec(0x20006601);
+    }
   } catch (cause) {
     console.warn(`macOS will file processes the backend starts under T3 Code: ${String(cause)}`);
   }
