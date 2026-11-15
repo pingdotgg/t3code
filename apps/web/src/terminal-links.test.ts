@@ -83,9 +83,10 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("does not treat quoted prose as a path", () => {
+  it("does not treat prose as a path", () => {
     expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
     expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
+    expect(extractTerminalLinks("see README.md, Node.js v22 on 127.0.0.1:3000")).toEqual([]);
   });
 
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
@@ -153,6 +154,10 @@ describe("extractTerminalLinks", () => {
     "src/foo$contact@support.ts:12:3",
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
+    "main.c:1:25",
+    "main.c:10",
+    "żółć.ts:12:7",
+    "page.test.tsx:5:3",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },
@@ -314,6 +319,7 @@ describe("resolvePathLinkTarget", () => {
   });
 
   it.each([
+    ["main.ts", "/repo/main.ts"],
     ["src/main.ts", "/repo/src/main.ts"],
     ["/repo/src/main.ts", "/repo/src/main.ts"],
     [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
