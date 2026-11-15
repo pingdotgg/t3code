@@ -3263,6 +3263,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   </ul>
                 </DndContext>
               </TooltipProvider>
+            ) : !threadSearch.isPending &&
+              (threadSearch.failed ||
+                (connectedEnvironmentIds.length === 0 && environmentLabelById.size > 0)) ? (
+              <div
+                role="status"
+                className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
+              >
+                Couldn't reach the server to search messages
+                <Button size="xs" variant="outline" onClick={threadSearch.retry}>
+                  Try again
+                </Button>
+              </div>
             ) : (
               <p
                 role="status"

@@ -60,6 +60,7 @@ const EMPTY_THREAD_SEARCH_MATCHES: ReadonlyArray<EnvironmentThreadSearchMatch> =
 const EMPTY_THREAD_SEARCH_ATOM = Atom.make<ThreadSearchResultsState>({
   matches: EMPTY_THREAD_SEARCH_MATCHES,
   isLoading: false,
+  failed: false,
   rows: [],
 }).pipe(Atom.withLabel("web:thread-search:empty"));
 
@@ -114,6 +115,9 @@ export function useThreadSearch(
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly query: string;
   readonly isPending: boolean;
+  /** No environment answered the search, so empty `matches` does not mean nothing matched. */
+  readonly failed: boolean;
+  readonly retry: () => void;
 } {
   // A pasted wall of text searches by its start rather than failing the request.
   const normalizedQuery = query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH).trim();
@@ -167,6 +171,10 @@ export function useThreadSearch(
     matches: visible.matches,
     query: visible.query,
     isPending,
+    failed: settledQuery !== null && result.failed,
+    retry: () => {
+      if (searchKey !== null) appAtomRegistry.refresh(threadSearch.results(searchKey));
+    },
   };
 }
 

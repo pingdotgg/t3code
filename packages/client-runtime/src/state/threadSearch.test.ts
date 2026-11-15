@@ -64,8 +64,8 @@ it("ignores invalid search keys", () => {
     const state = registry.get(searchAtom(makeThreadSearchKey([envA], "a".repeat(201))));
     const malformedState = registry.get(searchAtom("not json{{"));
 
-    expect(state).toEqual({ matches: [], isLoading: false, rows: [] });
-    expect(malformedState).toEqual({ matches: [], isLoading: false, rows: [] });
+    expect(state).toEqual({ matches: [], isLoading: false, failed: false, rows: [] });
+    expect(malformedState).toEqual({ matches: [], isLoading: false, failed: false, rows: [] });
     expect(searchCount).toBe(0);
   } finally {
     registry.dispose();
@@ -101,6 +101,7 @@ it("merges successful environments and silently ignores failures", () => {
   expect(state).toEqual({
     matches: [{ ...result.matches[0], environmentId: envA }],
     isLoading: false,
+    failed: false,
     rows: [],
   });
   expect(threadSearchMatchKey(state.matches[0]!)).toBe('["env-a","thread-a"]');
@@ -109,23 +110,32 @@ it("merges successful environments and silently ignores failures", () => {
 });
 
 it("says a search failed when no environment answered, so it does not read as no results", () => {
+  let searches = 0;
+  const failing = Atom.make(() => {
+    searches += 1;
+    return AsyncResult.failure<OrchestrationSearchThreadsResult, Error>(
+      Cause.fail(new Error("interrupted")),
+    );
+  });
   const searchAtom = createThreadSearchResultsAtomFamily<Error>({
-    getSearchAtom: () =>
-      Atom.make(
-        AsyncResult.failure<OrchestrationSearchThreadsResult, Error>(
-          Cause.fail(new Error("interrupted")),
-        ),
-      ),
+    getSearchAtom: () => failing,
     labelPrefix: "test:thread-search",
   }).results;
   const registry = AtomRegistry.make();
+  const key = makeThreadSearchKey([envA], "headlamp");
+  const unmount = registry.mount(searchAtom(key));
 
   try {
-    const state = registry.get(searchAtom(makeThreadSearchKey([envA], "headlamp")));
+    const state = registry.get(searchAtom(key));
     expect(state.matches).toEqual([]);
     expect(state.isLoading).toBe(false);
     expect(state).toHaveProperty("failed", true);
+    // Retrying runs the failed search again.
+    registry.refresh(searchAtom(key));
+    registry.get(searchAtom(key));
+    expect(searches).toBe(2);
   } finally {
+    unmount();
     registry.dispose();
   }
 });

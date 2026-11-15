@@ -52,6 +52,8 @@ export interface EnvironmentThreadSearchMatch extends OrchestrationThreadSearchM
 export interface ThreadSearchResultsState {
   readonly matches: ReadonlyArray<EnvironmentThreadSearchMatch>;
   readonly isLoading: boolean;
+  /** No environment answered: every search failed, so no matches does not mean none were found. */
+  readonly failed: boolean;
   /** Rows of matching older settled threads, which shells that omit them do not hold. */
   readonly rows: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
@@ -117,29 +119,35 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
   readonly olderSettledBefore?: (environmentId: EnvironmentId) => Atom.Atom<string | null>;
   readonly labelPrefix: string;
 }) {
-  const results = Atom.family((key: string) =>
-    Atom.make((get): ThreadSearchResultsState => {
-      const parsedKey = parseThreadSearchKey(key);
-      if (Option.isNone(parsedKey)) {
-        return { matches: [], isLoading: false, rows: EMPTY_SEARCH_ROWS };
-      }
+  const results = Atom.family((key: string) => {
+    // Refreshing the results re-runs the searches they last read, so a failed search can retry.
+    let searchAtoms: ReadonlyArray<Atom.Atom<unknown>> = [];
+    return Atom.readable(
+      (get): ThreadSearchResultsState => {
+        const parsedKey = parseThreadSearchKey(key);
+        if (Option.isNone(parsedKey)) {
+          searchAtoms = [];
+          return { matches: [], isLoading: false, failed: false, rows: EMPTY_SEARCH_ROWS };
+        }
 
-      const [environmentIds, query, scope = {}] = parsedKey.value;
-      // The server needs a word of three or more letters to match messages.
-      const searchMessages =
-        scope.titlesOnly !== true && messageSearchTokens(query).long.length > 0;
-      const matches: EnvironmentThreadSearchMatch[] = [];
-      const rows: Array<ThreadSearchResultsState["rows"][number]> = [];
-      let isLoading = false;
+        const [environmentIds, query, scope = {}] = parsedKey.value;
+        // The server needs a word of three or more letters to match messages.
+        const searchMessages =
+          scope.titlesOnly !== true && messageSearchTokens(query).long.length > 0;
+        const matches: EnvironmentThreadSearchMatch[] = [];
+        const rows: Array<ThreadSearchResultsState["rows"][number]> = [];
+        const read: Array<Atom.Atom<unknown>> = [];
+        let isLoading = false;
+        let answered = false;
+        let anyFailed = false;
 
-      for (const environmentId of environmentIds) {
-        const before = options.olderSettledBefore
-          ? get(options.olderSettledBefore(environmentId))
-          : null;
-        if (!searchMessages && before === null) continue;
-        const label = scope.environmentLabels?.[environmentId];
-        const result = get(
-          options.getSearchAtom(environmentId, {
+        for (const environmentId of environmentIds) {
+          const before = options.olderSettledBefore
+            ? get(options.olderSettledBefore(environmentId))
+            : null;
+          if (!searchMessages && before === null) continue;
+          const label = scope.environmentLabels?.[environmentId];
+          const searchAtom = options.getSearchAtom(environmentId, {
             query,
             ...(before === null
               ? {}
@@ -149,24 +157,37 @@ export function createThreadSearchResultsAtomFamily<E>(options: {
                   ...(label === undefined ? {} : { environmentLabel: label }),
                   ...(searchMessages ? {} : { titlesOnly: true }),
                 }),
-          }),
-        );
-        isLoading ||= result.waiting;
-        const value = AsyncResult.getOrElse(result, () => null);
-        if (value !== null) {
-          matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
-          if (value.threads !== undefined && value.threads.length > 0) {
-            rows.push({
-              environmentId,
-              read: { snapshotSequence: value.snapshotSequence ?? 0, threads: value.threads },
-            });
+          });
+          read.push(searchAtom);
+          const result = get(searchAtom);
+          isLoading ||= result.waiting;
+          if (AsyncResult.isFailure(result)) anyFailed = true;
+          const value = AsyncResult.getOrElse(result, () => null);
+          if (value !== null) {
+            answered = true;
+            matches.push(...value.matches.map((match) => ({ ...match, environmentId })));
+            if (value.threads !== undefined && value.threads.length > 0) {
+              rows.push({
+                environmentId,
+                read: { snapshotSequence: value.snapshotSequence ?? 0, threads: value.threads },
+              });
+            }
           }
         }
-      }
 
-      return { matches, isLoading, rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows };
-    }).pipe(Atom.withLabel(`${options.labelPrefix}:${key}`)),
-  );
+        searchAtoms = read;
+        return {
+          matches,
+          isLoading,
+          failed: anyFailed && !answered && !isLoading,
+          rows: rows.length === 0 ? EMPTY_SEARCH_ROWS : rows,
+        };
+      },
+      (refresh) => {
+        for (const searchAtom of searchAtoms) refresh(searchAtom);
+      },
+    ).pipe(Atom.withLabel(`${options.labelPrefix}:${key}`));
+  });
   const rowsAtom = Atom.family((rowsKey: string) => {
     const [key, environmentId] = JSON.parse(rowsKey) as [string, EnvironmentId];
     let previous = EMPTY_READS;
