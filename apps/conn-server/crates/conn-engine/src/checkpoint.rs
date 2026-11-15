@@ -366,6 +366,7 @@ impl Inner {
             (Some(checkpoints), Some(ctx)) => Some(self.capture_git(checkpoints, ctx).await),
             _ => None,
         };
+        self.events_stored(&thread_id).await;
         let (tid, rid) = (thread_id.clone(), run_id.clone());
         let effects = self
             .write(move |tx| {

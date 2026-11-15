@@ -1361,17 +1361,26 @@ done
     }
 
     fn provider_with(config: CodexConfig) -> CodexProvider {
-        let dir = std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("codex");
-        std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // Written once: a test rewriting it while another runs it fails on Linux with
+        // ETXTBSY ("Text file busy").
+        static SCRIPT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+        let script = SCRIPT
+            .get_or_init(|| {
+                let dir =
+                    std::env::temp_dir().join(format!("conn-codex-fake-{}", std::process::id()));
+                std::fs::create_dir_all(&dir).unwrap();
+                let script = dir.join("codex");
+                std::fs::write(&script, format!("#!/bin/sh\n{FAKE}")).unwrap();
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+                script
+            })
+            .clone();
         CodexProvider::new(
             "codex".into(),
             CodexConfig {
+                home_path: script.parent().map(std::path::Path::to_path_buf),
                 binary: script,
-                home_path: Some(dir),
                 ..config
             },
         )

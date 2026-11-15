@@ -38,10 +38,41 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
   closes stdin before the stop. The Claude stubs save their records atomically. The Codex
   `old-cli` probe scenario is gone: only the latest CLIs matter (Nick, 2026-11-15), and its
   result was a race in T3 on Linux.
-- **Open:** `claude_background_subagent_after_root/claudeAgent` fails on Linux. T3 holds the
-  root turn's effects while a background-capable item runs; we capture at the terminal, so a
-  fast git capture beats the provider's continuation request. A hold in the engine
-  deadlocked three fixtures and was reverted.
+- **Continuations and the checkpoint follow T3's order** (`conn-engine/src/runner.rs`).
+  `claude_background_subagent_after_root` failed 5 of 5 on Linux: the wake turn started
+  before the subagent's report was stored. T3's own replay of it shows two things. Its
+  adapters offer a continuation to a queue apart from their events, which is dispatched at
+  once; the engine now reads the events already in the channel and dispatches a continuation
+  among them first. And its capture completes the run after the events the adapter had
+  already sent; a capture here now waits until the pump stored the events waiting when it
+  finished (never for later ones, so running background work holds nothing: T3 completes a
+  run while another subagent still runs). A hold until background items settled broke
+  `idle-diff` and three fixtures and was dropped.
+- **`turn_interrupt` under load:** the replay driver's `await_run_steerable` also waits for
+  the start to be accepted (`Engine::run_start_accepted`). T3 stores a provider turn only
+  after acceptance; ours can show Claude's turn before ("Stop during a turn start"), and a
+  Stop then took the before-start branch.
+- **Proof:** the fixture replay, every result as expected (Claude 34 of 34) in 6 runs on
+  Linux and 3 on macOS; `idle-diff` no difference on both.
+- The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
+- **CI on Linux** (PR #95): `methods.json` names a digest of the contract inputs
+  (`contractDigest`, sha256 over the tracked files) instead of a commit id, which a shallow
+  checkout cannot give and a squash merge rewrites. `parity.mjs` seals the T3 server's `PATH`.
+  ACP agents stop on Linux as in T3 (`terminatePosixOwnedProcessTree`, in
+  `conn-provider-support/src/process_tree.rs`): descendants first, then the root; the probe
+  closes stdin before the stop. The Claude stubs save their records atomically. The Codex
+  `old-cli` probe scenario is gone: only the latest CLIs matter (Nick, 2026-11-15), and its
+  result was a race in T3 on Linux.
+- **The checkpoint waits for background items** (`end_run_holding` in
+  `conn-engine/src/runner.rs`). T3's root event stream keeps the thread's effect lane while a
+  background-capable item of the run (command, dynamic tool, subagent) runs, so its
+  `checkpoint.capture` waits. We captured at the terminal, and on Linux a fast git capture
+  completed the run before Claude's continuation request queued the next one
+  (`claude_background_subagent_after_root` failed 5 of 5). Now the capture waits until those
+  items settle and the provider's pending events are read, or until a message is queued on
+  the thread (then nothing waits on a run the capture holds). Only the capture waits; stop,
+  steer and answers keep their lane. Proof: the fixture replay, 34 of 34 Claude fixtures in
+  4 runs on Linux and 3 on macOS.
 
 ## Why it was parked for a day, and what that means
 

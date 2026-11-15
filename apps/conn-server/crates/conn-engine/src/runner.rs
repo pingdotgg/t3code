@@ -18,7 +18,7 @@ use conn_provider::{
 };
 use serde_json::{Value, json};
 use tokio::{
-    sync::mpsc,
+    sync::{mpsc, oneshot},
     time::{Instant, sleep_until},
 };
 
@@ -40,6 +40,9 @@ pub(crate) struct LiveThread {
     /// Ends the event pump. The pump holds this thread, whose session may hold the event
     /// sender, so a closed channel alone would never end it.
     closed: tokio::sync::Notify,
+    /// Waiters for the pump to store the events already sent ([`Inner::events_stored`]).
+    stored_waiters: Mutex<Vec<oneshot::Sender<()>>>,
+    stored_wanted: tokio::sync::Notify,
     /// Since when background work has kept this idle session open.
     held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
@@ -68,6 +71,8 @@ struct LiveState {
 /// At most this many provider turns are tracked as having background work; a provider that
 /// never clears them cannot grow the set without bound.
 const MAX_BACKGROUND_TURNS: usize = 64;
+/// How many waiting events the pump reads ahead for continuation requests: one channel's worth.
+const LOOKAHEAD: usize = 256;
 
 #[derive(Clone)]
 struct ActiveRun {
@@ -282,6 +287,22 @@ impl Inner {
         }
     }
 
+    /// Waits until the thread's event pump stored every event its session had sent when this
+    /// was called. T3's adapters run ahead of its store, and a capture there completes the run
+    /// after the events already sent (`claude_background_subagent_after_root`). It never
+    /// waits for an event not sent yet.
+    pub(crate) async fn events_stored(&self, thread_id: &str) {
+        let Some(live) = self.live_thread(thread_id) else {
+            return;
+        };
+        let (done, stored) = oneshot::channel();
+        lock(&live.stored_waiters).push(done);
+        live.stored_wanted.notify_one();
+        drop(live);
+        // A pump that ended drops the sender.
+        let _ = stored.await;
+    }
+
     pub(crate) fn live_thread(&self, thread_id: &str) -> Option<Arc<LiveThread>> {
         lock(&self.live).get(thread_id).cloned()
     }
@@ -459,6 +480,8 @@ impl Inner {
                 state: Mutex::new(LiveState::default()),
                 last_used: Mutex::new(self.clock.now_millis()),
                 closed: tokio::sync::Notify::new(),
+                stored_waiters: Mutex::new(Vec::new()),
+                stored_wanted: tokio::sync::Notify::new(),
                 held_since: Mutex::new(None),
                 provider_session_id: provider_session["id"]
                     .as_str()
@@ -936,6 +959,12 @@ impl Inner {
         let mut streaming = AssistantStreaming::new(lock(&live.state).streaming_mode);
         // Held turn items whose position is taken (T3's `reservedHeldTurnItemIds`).
         let mut reserved: Vec<(String, String)> = Vec::new();
+        // Events read ahead of the one being stored, to find continuation requests among them.
+        let mut ahead: std::collections::VecDeque<ProviderEvent> =
+            std::collections::VecDeque::new();
+        // Events taken so far, and who waits for the count to reach a mark.
+        let mut taken: u64 = 0;
+        let mut marks: Vec<(u64, oneshot::Sender<()>)> = Vec::new();
         loop {
             // A held snapshot is stored once its message was idle long enough. The timer
             // only runs on a clock that moves by itself; on a `ManualClock` a snapshot comes
@@ -947,10 +976,21 @@ impl Inner {
                     let wait = at.saturating_sub(self.clock.now_millis());
                     (at, Instant::now() + Duration::from_millis(wait))
                 });
-            let event = match wake {
-                Some((at, when)) => tokio::select! {
+            // Every event before the mark is stored: its waiter goes on.
+            for (_, waiter) in marks.extract_if(.., |(mark, _)| *mark <= taken) {
+                let _ = waiter.send(());
+            }
+            let event = match (ahead.pop_front(), wake) {
+                (Some(event), _) => Some(event),
+                (None, Some((at, when))) => tokio::select! {
                     event = events.recv() => event,
                     () = live.closed.notified() => None,
+                    () = live.stored_wanted.notified() => {
+                        let waiting = (ahead.len() + events.len()) as u64;
+                        let new = std::mem::take(&mut *lock(&live.stored_waiters));
+                        marks.extend(new.into_iter().map(|w| (taken + waiting, w)));
+                        continue;
+                    }
                     () = sleep_until(when) => {
                         // The timer slept until `at`; the clock may read a little earlier.
                         let now = self.clock.now_millis().max(at);
@@ -958,12 +998,46 @@ impl Inner {
                         continue;
                     }
                 },
-                None => tokio::select! {
+                (None, None) => tokio::select! {
                     event = events.recv() => event,
                     () = live.closed.notified() => None,
+                    () = live.stored_wanted.notified() => {
+                        let waiting = (ahead.len() + events.len()) as u64;
+                        let new = std::mem::take(&mut *lock(&live.stored_waiters));
+                        marks.extend(new.into_iter().map(|w| (taken + waiting, w)));
+                        continue;
+                    }
                 },
             };
             let Some(event) = event else { break };
+            taken += 1;
+            // T3's adapters offer a continuation to `ProviderContinuationRequests`, a queue apart
+            // from their event stream, and `ProviderContinuationService` dispatches it at once:
+            // ahead of the events the adapter sent before it that are not stored yet. Those
+            // are the ones already in the channel.
+            while ahead.len() < LOOKAHEAD
+                && let Ok(next) = events.try_recv()
+            {
+                ahead.push_back(next);
+            }
+            if !self.shutting_down() {
+                let mut kept = std::collections::VecDeque::with_capacity(ahead.len());
+                for next in ahead.drain(..) {
+                    match next {
+                        ProviderEvent::ContinuationRequested(request) => {
+                            self.request_continuation(
+                                &thread_id,
+                                request.detail,
+                                request.notification,
+                                request.delivery,
+                            )
+                            .await;
+                        }
+                        other => kept.push_back(other),
+                    }
+                }
+                ahead = kept;
+            }
             // Once shutdown began, nothing a closing session reports is stored: T3 writes
             // nothing after its runtime is interrupted, and the next start recovers the live
             // run (`restart.rs`). Stored, the close's turn end would end the run here.

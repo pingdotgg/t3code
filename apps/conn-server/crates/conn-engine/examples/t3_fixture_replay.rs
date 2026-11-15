@@ -263,8 +263,17 @@ impl Run {
                             t["runAttemptId"] == run["activeAttemptId"] && t["status"] == "running"
                         })
                 })
-                .await
-                .map(drop)
+                .await?;
+                // T3 stores a provider turn only after the start was accepted; ours can show
+                // Claude's turn before (`docs/status.md`, "Stop during a turn start").
+                let deadline = tokio::time::Instant::now() + WAIT;
+                while !self.engine.run_start_accepted(&rid).await {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!("await_run_steerable:{rid}: start not accepted"));
+                    }
+                    tokio::time::sleep(POLL).await;
+                }
+                Ok(())
             }
             "await_run_status" => {
                 let rid = run_id()?.to_owned();

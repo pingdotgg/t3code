@@ -398,6 +398,22 @@ impl SqliteEngine {
             .db(move |store| store.stored_events_after(after, limit))
             .await
     }
+
+    /// Whether the provider accepted the run's turn start (`Session::start_turn` returned).
+    /// The fixture replay waits for it where T3's harness waits for a running provider turn,
+    /// which T3 stores only after the start was accepted.
+    pub async fn run_start_accepted(&self, run_id: &str) -> bool {
+        let run_id = run_id.to_owned();
+        self.inner
+            .db(move |store| -> Result<bool, String> {
+                let tx = store.tx()?;
+                let accepted = tx.start_accepted(&run_id);
+                tx.rollback();
+                Ok(accepted)
+            })
+            .await
+            .unwrap_or(false)
+    }
 }
 
 pub(crate) enum DispatchError {
