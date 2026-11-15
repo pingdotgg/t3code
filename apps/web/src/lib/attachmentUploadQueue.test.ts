@@ -238,6 +238,66 @@ describe("attachmentUploadQueue", () => {
     expect(uploaded?.[1]?.id).toBe("pending-second");
   });
 
+  it("reuploads only the damaged inline document among same-named files", async () => {
+    const files = [makeFile("first-document"), makeFile("second-document")].map((file) => ({
+      ...file,
+      name: "report.txt",
+    }));
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        "first-document": {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-first",
+        },
+        "second-document": {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-second",
+        },
+      },
+    });
+    mocks.executeAtomQuery.mockImplementation(
+      async (_registry, target: { input: { resource: { attachmentId: string } } }) => ({
+        _tag: "Success",
+        value: { sizeBytes: target.input.resource.attachmentId === "pending-second" ? 4 : 3 },
+      }),
+    );
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: files,
+    });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    const uploaded = getUploadedAttachments({ environmentId: firstEnvironment, images: files });
+    expect(uploaded?.[0]?.id).toBe("pending-first");
+    expect(uploaded?.[1]?.id).not.toBe("pending-second");
+  });
+
+  it("keeps a damaged inline document failed when its replacement upload fails", async () => {
+    const file = makeFile("document-reupload-failure");
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-original",
+        },
+      },
+    });
+    mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: { sizeBytes: 4 } });
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [file],
+    });
+    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
+    TestXmlHttpRequest.requests[0]!.complete(500);
+    await refresh;
+    expect(readAttachmentUpload(file.id)).toMatchObject({ status: "failed" });
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })).toBeNull();
+  });
+
   it("marks a damaged restored document as failed when local bytes are unavailable", async () => {
     const file = { ...makeFile("restored-damaged"), file: null };
     useAttachmentUploadStore.setState({
