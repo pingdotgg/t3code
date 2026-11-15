@@ -120,7 +120,11 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.optional,
 );
 const advertiseUrlFlag = Flag.String("advertise-url").pipe(
-  Flag.withSchema(AdvertisedUrlsFromString),
+  Flag.mapEffect((value) =>
+    Schema.decodeUnknownEffect(AdvertisedUrlsFromString)(value).pipe(
+      Effect.mapError((error) => new CliError.ValidationError({ message: error.message })),
+    ),
+  ),
   Flag.withDescription(
     "HTTPS address that clients and linked environments reach this server at, such as a reverse proxy in front of it. Repeat for several, most preferred first (equivalent to T3CODE_ADVERTISE_URL, comma-separated).",
   ),
