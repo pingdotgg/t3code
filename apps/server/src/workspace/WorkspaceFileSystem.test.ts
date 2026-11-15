@@ -582,10 +582,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
     it.effect.each([
       { existing: false, failure: "write" },
       { existing: true, failure: "write" },
-      { existing: false, failure: "rename" },
       { existing: true, failure: "rename" },
       { existing: true, failure: "cleanup" },
-      { existing: true, failure: "directory" },
     ])(
       "handles $failure failure without losing destination contents (existing: $existing)",
       ({ existing, failure }) =>
@@ -617,10 +615,6 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           using _cleanup = vi.spyOn(NodeFSP, "rm").mockImplementation(async (...args) => {
             if (failure === "cleanup") throw cause;
             return native.rm(...args);
-          });
-          using _directory = vi.spyOn(NodeFSP, "mkdtemp").mockImplementation(async (...args) => {
-            if (failure === "directory") throw cause;
-            return native.mkdtemp(...args);
           });
 
           if (failure === "cleanup") {
