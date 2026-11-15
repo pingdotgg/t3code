@@ -423,6 +423,10 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
   ],
 ]);
 
+export const HUB_DRIVERS: ReadonlySet<string> = new Set(
+  [...HUB_PROVIDERS.values()].map((provider) => provider.driver),
+);
+
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const clock = yield* Clock.Clock;

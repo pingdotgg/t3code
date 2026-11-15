@@ -212,6 +212,9 @@ it.effect.each(["listing", "quota", "changed-account"] as const)(
       yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["cursor"]));
       expect(requests).toBe(beforeHiddenRefresh);
       expect((yield* sources.current)[0]).toEqual(prior);
+      yield* sources.refresh.pipe(Effect.provideService(UsageProviderFilter, ["grok"]));
+      expect(requests).toBe(beforeHiddenRefresh + 1);
+      expect((yield* sources.current)[0]).toEqual(prior);
       yield* TestClock.adjust("5 minutes");
       fail = true;
       yield* sources.refresh;
@@ -616,4 +619,91 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
     yield* TestClock.adjust("5 seconds");
     expect(yield* Fiber.join(stalled)).toBeNull();
   }),
+);
+
+it.effect("publishes Antigravity's Google account fingerprint and withholds routing ones", () =>
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources.make;
+    const [source] = yield* sources.streamChanges.pipe(
+      Stream.filter((next) => next.some((source) => source.accounts.length > 0)),
+      Stream.runHead,
+      Effect.flatMap(Effect.fromOption),
+    );
+    const fingerprints = Object.fromEntries(
+      source!.accounts.map((account) => [
+        account.driver,
+        account.usageLimits.credentialFingerprint,
+      ]),
+    );
+    expect(fingerprints).toEqual({
+      claudeAgent: undefined,
+      // sha256("google-account\0google-42"), as a local Antigravity probe reports it.
+      antigravity: "136d4952771fd67a3600053f37492cbd05828712e0b1c89ebab03d4c22ab6554",
+    });
+  }).pipe(
+    Effect.provide([
+      ServerSettings.layerTest({
+        usageLimitSources: {
+          [UsageLimitSourceId.make("hub")]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: "key",
+            enabled: true,
+          },
+        },
+      }),
+      Layer.succeed(SecretResolver.SecretResolver, {
+        label: (provider) => Effect.succeed(provider),
+        read: () => Effect.succeed([]),
+        invalidate: () => Effect.void,
+      }),
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.url.endsWith("/auth-files"))
+              return HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  files: [
+                    { id: "claude", auth_index: "claude", provider: "claude" },
+                    {
+                      id: "antigravity",
+                      auth_index: "g",
+                      provider: "antigravity",
+                      project_id: "project-7",
+                    },
+                  ],
+                }),
+              );
+            const input = decodeSourceRequest(
+              request.body._tag === "Uint8Array"
+                ? new TextDecoder().decode(request.body.body)
+                : "{}",
+            );
+            const body = input.url.endsWith("/userinfo")
+              ? { id: "google-42" }
+              : input.auth_index === "g"
+                ? {
+                    buckets: [
+                      {
+                        bucketId: "gemini-weekly",
+                        window: "weekly",
+                        remainingFraction: 0.75,
+                        resetTime: "2099-01-01T00:00:00Z",
+                      },
+                    ],
+                  }
+                : { five_hour: { utilization: 20, resets_at: null } };
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ status_code: 200, body: encodeSourceBody(body) }),
+            );
+          }),
+        ),
+      ),
+      NodeCrypto.layer,
+    ]),
+    Effect.scoped,
+  ),
 );

@@ -28,7 +28,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
-import { makeCliproxyApi } from "./cliproxyApi.ts";
+import { HUB_DRIVERS, makeCliproxyApi } from "./cliproxyApi.ts";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -153,9 +153,11 @@ export const make = Effect.gen(function* () {
     next: ReadonlyArray<UsageLimitSourceSnapshot>,
   ) {
     // Hub routing fingerprints identify local retention ownership, not a shared credential.
+    // Antigravity's is the Google account's, which pools it with the local provider's reading.
     const snapshots = next.map((source) => ({
       ...source,
       accounts: source.accounts.map((account) => {
+        if (account.driver === "antigravity") return account;
         const { credentialFingerprint: _credentialFingerprint, ...usageLimits } =
           account.usageLimits;
         return { ...account, usageLimits };
@@ -171,11 +173,7 @@ export const make = Effect.gen(function* () {
   const refreshLock = yield* Semaphore.make(1);
   const refresh = Effect.gen(function* () {
     const providers = yield* UsageProviderFilter;
-    if (
-      providers !== undefined &&
-      !providers.some((driver) => driver === "codex" || driver === "claudeAgent")
-    )
-      return;
+    if (providers !== undefined && !providers.some((driver) => HUB_DRIVERS.has(driver))) return;
     const settings = yield* settingsService.getSettings.pipe(
       Effect.orElseSucceed((): ServerSettings | null => null),
     );

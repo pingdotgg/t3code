@@ -38,6 +38,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
+import { UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { stripUnservedToolOutputImageBytes } from "./toolOutputImageBytes.ts";
 import { boundFileChangeForStorage } from "./WireProjection.ts";
@@ -789,7 +790,9 @@ export const layer: Layer.Layer<
                     return;
                   const instance = yield* instances.getInstance(input.providerInstanceId);
                   if (!instance?.snapshot.refreshUsage) return;
+                  // The limit makes the cached reading stale, so the cooldown must not hold it.
                   yield* instance.snapshot.refreshUsage.pipe(
+                    Effect.provideService(UsageAfterReset, true),
                     Effect.ignoreCause({ log: true }),
                     Effect.forkIn(scope, { startImmediately: true }),
                   );
