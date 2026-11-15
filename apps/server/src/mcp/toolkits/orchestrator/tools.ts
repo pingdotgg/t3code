@@ -218,7 +218,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
-    "Create new top-level threads. Not delegation. Each inherits your project, branch, and worktree, unless its `target.projectId` names another project: then it starts on that project's root checkout. Each result gives its `projectId`. A new worktree or a linked environment: `t3_thread_launch`.",
+    "Create new top-level threads. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit; another `target.projectId` starts on its root.",
   parameters: OrchestratorMcpCreateThreadsInput,
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
