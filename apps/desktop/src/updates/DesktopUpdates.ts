@@ -429,16 +429,17 @@ export const make = Effect.gen(function* () {
   const updateStateEffect = Effect.fn("desktop.updates.updateState")(function* (
     f: (state: DesktopUpdateState) => Effect.Effect<DesktopUpdateState>,
   ) {
-    const state = yield* stateMutex.withPermits(1)(
+    const { state, changed } = yield* stateMutex.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* Ref.get(updateStateRef);
         const next = yield* f(current);
+        if (next === current) return { state: current, changed: false };
         yield* Ref.set(updateStateRef, next);
         yield* PubSub.publish(stateChanges, next);
-        return next;
+        return { state: next, changed: true };
       }),
     );
-    yield* emitState;
+    if (changed) yield* emitState;
     return state;
   });
 

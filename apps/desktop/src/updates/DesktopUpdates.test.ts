@@ -82,6 +82,16 @@ describe("DesktopUpdates", () => {
     Effect.gen(function* () {
       const timestampRequested = yield* Deferred.make<void>();
       const releaseTimestamp = yield* Deferred.make<void>();
+      const availabilityHandled = yield* Deferred.make<void>();
+      const progressHandled = yield* Deferred.make<void>();
+      const logger = Logger.make(({ message }) => {
+        if (Array.isArray(message) && message.includes("update available")) {
+          Deferred.doneUnsafe(availabilityHandled, Effect.void);
+        }
+        if (Array.isArray(message) && message.includes("download progress")) {
+          Deferred.doneUnsafe(progressHandled, Effect.void);
+        }
+      });
       const clock = yield* Clock.Clock;
       let pauseNextTimestamp = false;
       const callbackClock: Clock.Clock = {
@@ -110,21 +120,28 @@ describe("DesktopUpdates", () => {
           const downloaded = Option.getOrThrow(yield* Stream.runHead(changes));
           assert.equal(downloaded.status, "downloaded");
 
-          const { changes: resumedChanges } = yield* updates.subscribe;
+          const sentStates = harness.sentStates.length;
           yield* Deferred.succeed(releaseTimestamp, undefined);
-          const resumed = Option.getOrThrow(yield* Stream.runHead(resumedChanges));
+          yield* Deferred.await(availabilityHandled);
+          const resumed = yield* updates.getState;
+          assert.equal(harness.sentStates.length, sentStates);
           assert.equal(resumed.status, "downloaded");
           assert.equal(resumed.downloadedVersion, "1.2.4");
           assert.equal(resumed.downloadPercent, 100);
 
-          const { changes: progressChanges } = yield* updates.subscribe;
           harness.emit("download-progress", { percent: 80 });
-          const afterProgress = Option.getOrThrow(yield* Stream.runHead(progressChanges));
+          yield* Deferred.await(progressHandled);
+          const afterProgress = yield* updates.getState;
+          assert.equal(harness.sentStates.length, sentStates);
           assert.equal(afterProgress.status, "downloaded");
           assert.equal(afterProgress.downloadedVersion, "1.2.4");
           assert.equal(afterProgress.downloadPercent, 100);
         }),
-      ).pipe(Effect.provide(harness.layer));
+      ).pipe(
+        Effect.provide(
+          Layer.merge(harness.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
     }),
   );
 
