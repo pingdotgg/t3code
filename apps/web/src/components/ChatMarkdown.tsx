@@ -263,11 +263,11 @@ interface ChatMarkdownProps {
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
-  /** Text written on a source control host reads only the host's dollar math. */
+  /** Text people write (forge text, user messages) reads only dollar math, as forges do. */
   mathSyntax?: MarkdownMathSyntax | undefined;
 }
 
-export type MarkdownMathSyntax = "chat" | "sourceControl";
+export type MarkdownMathSyntax = "chat" | "dollar";
 
 export interface ChatMarkdownContextReference {
   kind: string;
@@ -1771,7 +1771,7 @@ const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
   off: { plain: CHAT_MARKDOWN_REMARK_PLUGINS, breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS },
   chat: withMath([remarkMath, { singleDollarTextMath: true }]),
   // Forges typeset only dollar math; there `\[` and `\(` are CommonMark escapes.
-  sourceControl: withMath([remarkMath, { singleDollarTextMath: true, texDelimiters: false }]),
+  dollar: withMath([remarkMath, { singleDollarTextMath: true, texDelimiters: false }]),
 } satisfies Record<string, Record<"plain" | "breaks", PluggableList>>;
 
 const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();

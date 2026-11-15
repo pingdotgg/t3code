@@ -189,7 +189,7 @@ export function PullRequestMarkdown({
   environmentId,
   threadRef,
   lineBreaks,
-  mathSyntax = "sourceControl",
+  mathSyntax = "dollar",
   className,
   onTaskListChange,
 }: {

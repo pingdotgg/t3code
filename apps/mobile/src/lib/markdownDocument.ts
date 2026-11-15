@@ -487,6 +487,32 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const TEX_OPENER_ENTITIES: Record<string, string> = { "\\[": "&#91;", "\\(": "&#40;" };
+
+/**
+ * md4c's math reads `\[` and `\(` as TeX delimiters, but text people write (forge text, user
+ * messages) means CommonMark escapes there, as forges do. Entities keep the literal bracket.
+ */
+export function markdownWithLiteralTexEscapes(markdown: string): string {
+  if (!/\\[[(]/.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  function record(
+    this: { sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    const entity = TEX_OPENER_ENTITIES[this.sliceSerialize(token)];
+    if (entity) edits.push({ start: token.start.offset, end: token.end.offset, content: entity });
+  }
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({ exit: { characterEscape: record } });
+    })
+    .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
