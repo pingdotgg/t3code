@@ -1670,16 +1670,20 @@ describe("MessagesTimeline citations", () => {
       .toBeVisible();
   });
 
-  it("lands a citation present at mount under StrictMode", async () => {
+  it.each(["passage", "response"] as const)("lands a %s target under StrictMode", async (scope) => {
     await using _screen = await renderElement(
       <StrictMode>
         <MessagesTimeline
           {...baseProps()}
           timelineEntries={[
             message("A question", {}, "question"),
-            message("the cited answer", { role: "assistant" }, "cited"),
+            message(
+              "the cited answer\n\nAnother paragraph.\n\n- A list item\n\n```ts\nconst value = 1;\n```\n\n| header |\n| --- |\n| cell |",
+              { role: "assistant" },
+              "cited",
+            ),
           ]}
-          citationRequest={CITATION_REQUEST}
+          citationRequest={{ ...CITATION_REQUEST, scope }}
           citationHistory={{ _tag: "found" }}
         />
       </StrictMode>,
@@ -1692,9 +1696,23 @@ describe("MessagesTimeline citations", () => {
         "the cited answer",
       ),
     );
+    const source = document.querySelector<HTMLElement>("[data-citation-highlighted]")!;
+    if (scope === "response") {
+      expect(source.dataset.citationHighlighted).toBe("response");
+      expect(getComputedStyle(source, "::after").content).toBe('""');
+      expect(source.querySelector("p")?.textContent).toBe("the cited answer");
+      expect(source.querySelector("li")?.textContent).toBe("A list item");
+      expect(source.querySelector("pre")?.textContent).toContain("const value = 1;");
+      expect(source.querySelector("td")?.textContent).toBe("cell");
+    } else {
+      expect([...CSS.highlights.get("t3-assistant-citation")!][0]?.toString()).toBe(
+        "the cited answer",
+      );
+      expect(getComputedStyle(source, "::after").content).toBe("none");
+    }
   });
 
-  it("opens the superseded attempt that folds the cited response", async () => {
+  it("opens the superseded attempt that folds the replied-to response", async () => {
     const runId = RunId.make("run-steered");
     const attempt = (id: string, ordinal: number, status: "superseded" | "running") => ({
       id: RunAttemptId.make(id),
@@ -1720,7 +1738,7 @@ describe("MessagesTimeline citations", () => {
       ],
       {
         latestRun: { runId, status: "running", startedAt: CREATED_AT, completedAt: null },
-        citationRequest: CITATION_REQUEST,
+        citationRequest: { ...CITATION_REQUEST, scope: "response" },
         citationHistory: { _tag: "found" },
       },
     );
@@ -2960,7 +2978,7 @@ describe("MessagesTimeline work rows", () => {
     expect(screen.buttons("Snooze")).toHaveLength(0);
   });
 
-  it("expands every background group for a cited run and allows collapsing them again", async () => {
+  it("expands every background group for a replied-to run and allows collapsing them again", async () => {
     const fixture = makeStreamingTimelineFixture("Cited response after the second update.");
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: fixture.visibleTurnItems
@@ -2995,6 +3013,7 @@ describe("MessagesTimeline work rows", () => {
     const props = { ...baseProps(), timelineEntries };
     const citationRequest = {
       key: "second-background-group",
+      scope: "response" as const,
       citation: {
         version: 1 as const,
         environmentId: ENVIRONMENT_ID,
