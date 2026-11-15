@@ -130,8 +130,8 @@ let baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
 // A server only leaves threads out of the shell when it serves their families.
 const serverConfig = (): ServerConfig =>
   threads.some((thread) => thread.olderSettled)
-    ? { ...baseServerConfig, keybindings, shellThreadFamilies: true }
-    : { ...baseServerConfig, keybindings };
+    ? { ...baseServerConfig, shellThreadFamilies: true }
+    : baseServerConfig;
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -409,7 +409,6 @@ let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null 
 let threads: ReadonlyArray<FakeThread> = [];
 let dispatched: OrchestrationV2Command[] = [];
 let acceptCommands = false;
-let keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
 let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
 let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
 let pendingDispatches: Array<{
@@ -572,8 +571,10 @@ export function installFakeEnvironment(
   },
 ): Disposable {
   threads = fixtures;
-  baseServerConfig = makeServerConfig(options?.providers ?? [CODEX_PROVIDER]);
-  keybindings = options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
+  baseServerConfig = {
+    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER]),
+    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+  };
   dispatched = [];
   acceptCommands = options?.acceptCommands === true;
   projects = [
@@ -609,7 +610,6 @@ export function installFakeEnvironment(
       baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
       acceptCommands = false;
-      keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
       projects = [project];
       holdCommand = () => false;
       pendingDispatches = [];

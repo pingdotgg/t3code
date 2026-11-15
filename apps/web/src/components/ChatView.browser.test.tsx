@@ -2,6 +2,10 @@ import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  compileResolvedKeybindingsConfig,
+  mergeWithDefaultKeybindings,
+} from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
@@ -475,4 +479,38 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   // The thread keeps its latest structure, and the timeline may remember the one before it.
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
+});
+
+it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
+  await page.viewport(1280, 800);
+  const thread = threadWithHistory("thread-panel-shortcut", 1);
+  using _environment = installFakeEnvironment([thread], {
+    keybindings: mergeWithDefaultKeybindings(
+      compileResolvedKeybindingsConfig([
+        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+        { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
+      ]),
+    ),
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const composer = page.getByTestId("composer-editor");
+  const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await page.getByRole("button", { name: /^Files/ }).click();
+  await composer.click();
+  await userEvent.keyboard("{Control>}t{/Control}");
+  await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
 });
