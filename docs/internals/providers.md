@@ -49,6 +49,18 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
+A fixed MCP tool schema does not reach every stored Antigravity conversation. Before a turn in a
+long conversation, `agy` runs context summarization with the tool declarations stored with that
+conversation's last generation, not with the live MCP tool list. Only the last `gen_metadata` row of
+`conversations/<id>.db` in the agent's app folder holds the full request; `agy` shrinks the earlier
+rows when it stores a new one. If that row declares a schema Gemini rejects, every later turn fails
+with the same 400, logged by `agy` as `pre-invocation hook: context summarization:`, and stores no
+new generation, so the conversation never recovers. A short conversation recovers on its next turn,
+which skips summarization. While no turn can start on the thread, a SQLite `.backup` of the file and
+then deleting that one row heals it, however many turns failed; the transcript in `steps` stays.
+Keep advertised schemas within what Gemini accepts, as [the advertised schema
+transform](../../apps/server/src/mcp/advertisedJsonSchema.ts) does.
+
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
