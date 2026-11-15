@@ -2054,15 +2054,6 @@ code {
   vertical-align: -0.125em;
 }
 
-.chat-markdown-file-link > [data-app-bundle-icon] {
-  position: relative;
-  display: inline-block;
-  width: 1em;
-  height: 1em;
-  margin-inline-end: 0.2em;
-  vertical-align: calc((1cap - 1em) / 2);
-}
-
 .chat-markdown-file-link > [data-slot="context-chip-label"] {
   display: inline;
 }

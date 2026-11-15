@@ -433,7 +433,11 @@ function AppBundleIcon(props: { environmentId: EnvironmentId | null; path: strin
   const url = asset._tag === "Success" && asset.url !== failedUrl ? asset.url : null;
   const loaded = url !== null && loadedUrl === url;
   return (
-    <span data-app-bundle-icon="" aria-hidden="true">
+    <span
+      data-app-bundle-icon=""
+      aria-hidden="true"
+      className="relative me-[0.2em] inline-block size-[1em] align-[calc((1cap-1em)/2)]"
+    >
       <FolderIcon className={cn("size-full text-icon-muted", loaded && "invisible")} />
       {url !== null && (
         <img
