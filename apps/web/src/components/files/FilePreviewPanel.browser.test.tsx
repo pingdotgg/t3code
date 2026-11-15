@@ -268,6 +268,38 @@ describe("source file focus", () => {
   });
 });
 
+describe("source file scroll", () => {
+  it("returns a file tab to where it was scrolled after another file was shown", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const sourceFile = (relativePath: string, lines: number) => {
+      const contents = Array.from({ length: lines }, (_, i) => `const line${i} = ${i};`).join("\n");
+      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      return (
+        <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+          {filePreview(relativePath)}
+        </div>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using screen = await render(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    scroller()!.scrollTop = 4200;
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+
+    await screen.rerender(sourceFile("b.ts", 1500));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(0));
+    await screen.rerender(sourceFile("a.ts", 2000));
+
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+  });
+});
+
 describe("rendered Markdown task saves", () => {
   it("keeps a truncated read read-only without queuing a replacement", async () => {
     using _settings = setup();
