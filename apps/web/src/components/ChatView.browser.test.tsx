@@ -901,4 +901,10 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
+
+  // Shift+F6 goes straight back to the main chat; its tab, already showing, brings the box back.
+  await userEvent.keyboard("{Shift>}{F6}{/Shift}");
+  await expect.element(mainEditor).toHaveFocus();
+  await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
+  await expect.element(sideEditor).toHaveFocus();
 });
