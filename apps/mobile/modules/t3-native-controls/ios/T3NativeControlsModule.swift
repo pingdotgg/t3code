@@ -89,8 +89,21 @@ public final class T3NativeControlsModule: Module {
       else {
         throw URLError(.badURL)
       }
-      try self.presentImages(urls: urls, titles: titles, selectedIndex: selectedIndex,
-                             sourceIdentifiers: sourceIdentifiers, identifier: identifier, promise: promise)
+      // A viewer still animating closed must not block the next one, as Quick Look's error alert did.
+      self.imageViewer?.finishImmediately()
+      guard self.filePresentation == nil, self.videoPresentation == nil,
+        let presenter = self.appContext?.utilities?.currentViewController()
+      else { throw URLError(.cannotLoadFromNetwork) }
+      let viewer = T3NativeImageViewer(
+        identifier: identifier, sources: self.presentationSources, sourceIdentifiers: sourceIdentifiers,
+        onFinish: { [weak self] in self?.setFinishedFilePreview(identifier) },
+        completion: { [weak self] error in
+          if self?.imageViewer?.identifier == identifier { self?.imageViewer = nil }
+          if let error { promise.reject(error) } else { promise.resolve(nil) }
+        }
+      )
+      self.imageViewer = viewer
+      viewer.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
     }.runOnQueue(.main)
 
     // A tap can reach JS before the old viewer's close does; this tells it whether that viewer is gone.
@@ -294,25 +307,6 @@ public final class T3NativeControlsModule: Module {
 
   private func dismissVideoPresentation(identifier: String) {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
-  }
-
-  private func presentImages(urls: [URL?], titles: [String], selectedIndex: Int, sourceIdentifiers: [String],
-                             identifier: String, promise: Promise) throws {
-    // A viewer still animating closed must not block the next one, as Quick Look's error alert did.
-    imageViewer?.finishImmediately()
-    guard filePresentation == nil, videoPresentation == nil,
-      let presenter = appContext?.utilities?.currentViewController()
-    else { throw URLError(.cannotLoadFromNetwork) }
-    let viewer = T3NativeImageViewer(
-      identifier: identifier, sources: presentationSources, sourceIdentifiers: sourceIdentifiers,
-      onFinish: { [weak self] in self?.setFinishedFilePreview(identifier) },
-      completion: { [weak self] error in
-        if self?.imageViewer?.identifier == identifier { self?.imageViewer = nil }
-        if let error { promise.reject(error) } else { promise.resolve(nil) }
-      }
-    )
-    imageViewer = viewer
-    viewer.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
   }
 
   private func makeFilePresentation(sourceIdentifier: String, identifier: String,

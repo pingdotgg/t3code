@@ -33,7 +33,7 @@ final class T3NativeImageViewer: NSObject {
     files = Array(repeating: nil, count: urls.count)
     let viewer = T3ImageViewerController(titles: titles, selectedIndex: selectedIndex)
     viewer.sourceView = { [weak self] index in self?.sourceView(index) }
-    viewer.fileForPage = { [weak self] index in self?.files[safe: index] ?? nil }
+    viewer.fileForPage = { [weak self] index in self?.file(at: index) }
     viewer.onRetry = { [weak self] index in self?.load(index, retry: true) }
     viewer.onDismissed = { [weak self] in self?.finish() }
     controller = viewer
@@ -71,13 +71,17 @@ final class T3NativeImageViewer: NSObject {
     finish()
   }
 
+  private func file(at index: Int) -> URL? {
+    files.indices.contains(index) ? files[index] : nil
+  }
+
   private func sourceView(_ index: Int) -> UIView? {
     guard sourceIdentifiers.indices.contains(index), !sourceIdentifiers[index].isEmpty else { return nil }
     return sources?.view(for: sourceIdentifiers[index])
   }
 
   private func load(_ index: Int, retry: Bool) {
-    guard !finished, let url = urls[safe: index] ?? nil, loads[index] == nil else { return }
+    guard !finished, urls.indices.contains(index), let url = urls[index], loads[index] == nil else { return }
     if retry { controller?.setLoading(at: index) }
     let title = titles[index]
     let source = sourceView(index)
@@ -162,11 +166,16 @@ final class T3NativeImageViewer: NSObject {
       kCGImageSourceShouldCacheImmediately: true,
       kCGImageSourceThumbnailMaxPixelSize: 4096,
     ]
-    if count > 1, count <= 300 {
-      var frames: [UIImage] = []
-      var duration = 0.0
-      for index in 0..<count {
-        guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else { continue }
+    var animationOptions = options
+    animationOptions[kCGImageSourceThumbnailMaxPixelSize] = 1024
+    animationOptions[kCGImageSourceShouldCacheImmediately] = nil
+    // Every frame stays decoded while it plays, so an animation over this budget shows its first frame.
+    if count > 1, let first = CGImageSourceCreateThumbnailAtIndex(source, 0, animationOptions as CFDictionary),
+      first.bytesPerRow * first.height * count <= animationByteBudget {
+      var frames = [UIImage(cgImage: first)]
+      var duration = frameDuration(source, 0)
+      for index in 1..<count {
+        guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, animationOptions as CFDictionary) else { continue }
         frames.append(UIImage(cgImage: frame))
         duration += frameDuration(source, index)
       }
@@ -188,6 +197,8 @@ final class T3NativeImageViewer: NSObject {
     return delay < 0.011 ? 0.1 : delay
   }
 }
+
+private let animationByteBudget = 64 * 1024 * 1024
 
 private extension Array {
   subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
