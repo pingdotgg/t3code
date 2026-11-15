@@ -9,6 +9,16 @@ import { translateDynamic } from "../../i18nCore";
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`shell:${key}`, options);
 
+const ACCESS_LABEL_KEYS: Record<AuthMcpClientAccess, string> = {
+  "read-only": "readOnly",
+  "approval-required": "approvalRequired",
+  "auto-accept-edits": "autoAcceptEdits",
+  auto: "auto",
+  "full-access": "fullAccess",
+};
+const accessText = (access: AuthMcpClientAccess, field: "label" | "description") =>
+  translateDynamic(`onboarding:access.${ACCESS_LABEL_KEYS[access]}.${field}`);
+
 /** What agents here may do in an environment being linked, with what that does not allow. */
 export function LinkAccessPicker({
   value,
@@ -21,7 +31,7 @@ export function LinkAccessPicker({
 }) {
   const labelId = useId();
   const selected = accessConfig[value];
-  const selectedLabel = td(selected.label);
+  const selectedLabel = accessText(value, "label");
   return (
     <div className="space-y-1.5">
       <span id={labelId} className="block text-xs font-medium">
@@ -44,15 +54,17 @@ export function LinkAccessPicker({
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
           {AuthMcpClientAccess.literals.map((option) => {
-            const { label, description, icon: Icon } = accessConfig[option];
+            const { icon: Icon } = accessConfig[option];
             return (
               <SelectItem key={option} value={option} hideIndicator>
                 <span className="grid min-w-0 gap-0.5 py-0.5">
                   <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-                    {td(label)}
+                    {accessText(option, "label")}
                   </span>
-                  <span className="text-xs leading-4 text-muted-foreground">{td(description)}</span>
+                  <span className="text-xs leading-4 text-muted-foreground">
+                    {accessText(option, "description")}
+                  </span>
                 </span>
               </SelectItem>
             );
@@ -60,7 +72,7 @@ export function LinkAccessPicker({
         </SelectPopup>
       </Select>
       <p className="text-xs text-muted-foreground">
-        {td(selected.description)} {td("accessPickerNote")}
+        {accessText(value, "description")} {td("accessPickerNote")}
       </p>
     </div>
   );
