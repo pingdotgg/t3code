@@ -135,8 +135,10 @@ function KeybindingsSearchInput({
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
           event.preventDefault();
-          if (query.length > 0) onChange("");
-          else event.currentTarget.blur();
+          if (query.length > 0) {
+            event.stopPropagation();
+            onChange("");
+          } else event.currentTarget.blur();
         }}
         placeholder="Search keybindings"
         aria-label="Search keybindings"
@@ -819,6 +821,7 @@ function KeybindingKeyControl({
     setDraft,
     save,
     captureKeybinding,
+    whenDraftExpression,
     pillRef,
   } = editor;
   const showPill = !isRecording && keyDraft === row.key && row.key.length > 0 && !isDirty;
@@ -834,7 +837,7 @@ function KeybindingKeyControl({
           {isSaving ? "Saving" : "Save"}
         </Button>
       ) : null}
-      {isRecording && row.source === "Default" ? (
+      {row.source === "Default" ? (
         <Button
           type="button"
           variant="destructive"
@@ -877,7 +880,14 @@ function KeybindingKeyControl({
           className="w-44"
           onFocus={() => setDraft({ isRecording: true })}
           onBlur={() => setDraft({ isRecording: false })}
-          onChange={(event) => setDraft({ keyDraft: event.currentTarget.value })}
+          onChange={(event) =>
+            setDraft({
+              keyDraft: event.currentTarget.value,
+              ...(row.isUnassigned && whenDraftExpression === "false"
+                ? { whenDraft: parseKeybindingWhenExpression(row.defaultWhen) ?? undefined }
+                : {}),
+            })
+          }
           onKeyDown={captureKeybinding}
         />
       )}

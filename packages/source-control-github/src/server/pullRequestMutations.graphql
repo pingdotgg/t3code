@@ -1,5 +1,29 @@
-# Writes to a pull request and the remarks on it. None reads its answer back beyond what GitHub
-# requires a mutation to select.
+# Writes to a pull request and the remarks on it. Only pull request actions read their answer back,
+# so clients can show the result without another read.
+
+fragment PullRequestActionSummary on PullRequest {
+  number
+  title
+  url
+  headRefName
+  baseRefName
+  state
+  isDraft
+  updatedAt
+  mergedAt
+  closedAt
+  headRefOid
+  author {
+    login
+    avatarUrl
+    ... on User {
+      name
+    }
+  }
+  autoMergeRequest {
+    mergeMethod
+  }
+}
 
 mutation AddReviewThreadReply($threadId: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
@@ -105,19 +129,25 @@ mutation SetFileViewed($pullRequestId: ID!, $path: String!, $viewed: Boolean!) {
 
 mutation MergePullRequest($input: MergePullRequestInput!) {
   mergePullRequest(input: $input) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation EnablePullRequestAutoMerge($input: EnablePullRequestAutoMergeInput!) {
   enablePullRequestAutoMerge(input: $input) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation DisablePullRequestAutoMerge($pullRequestId: ID!) {
   disablePullRequestAutoMerge(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
@@ -133,31 +163,41 @@ mutation UpdatePullRequestBranch(
       updateMethod: $updateMethod
     }
   ) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation MarkPullRequestReadyForReview($pullRequestId: ID!) {
   markPullRequestReadyForReview(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation ConvertPullRequestToDraft($pullRequestId: ID!) {
   convertPullRequestToDraft(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation ClosePullRequest($pullRequestId: ID!) {
   closePullRequest(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 
 mutation ReopenPullRequest($pullRequestId: ID!) {
   reopenPullRequest(input: { pullRequestId: $pullRequestId }) {
-    clientMutationId
+    pullRequest {
+      ...PullRequestActionSummary
+    }
   }
 }
 

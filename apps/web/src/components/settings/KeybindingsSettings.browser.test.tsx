@@ -113,7 +113,7 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
-it("shows Unassign only while recording and keeps it clickable without blurring the recorder", async () => {
+it("keeps Unassign keyboard accessible and clickable while recording", async () => {
   const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
   await vi.mocked(atomCommands.useAtomCommand).withImplementation(
     () => mutate as never,
@@ -123,12 +123,14 @@ it("shows Unassign only while recording and keeps it clickable without blurring 
       const field = screen.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" });
       const pill = screen.getByRole("button", { name: /^Edit shortcut for Sidebar: Toggle:/ });
 
-      await expect.element(remove).not.toBeInTheDocument();
+      await expect.element(remove).toBeVisible();
+      await remove.element().focus();
+      await expect.element(remove).toHaveFocus();
       await pill.click();
       await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
       await expect.element(remove).toBeVisible();
       await userEvent.keyboard("{Escape}");
-      await expect.element(remove).not.toBeInTheDocument();
+      await expect.element(remove).toBeVisible();
       await pill.click();
       await remove.click();
 
@@ -161,6 +163,25 @@ it("shows Unassign only while recording and keeps it clickable without blurring 
       });
     },
   );
+});
+
+it("Esc in the keybindings search clears the query without closing Settings", async () => {
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogTitle>Settings</DialogTitle>
+        <KeybindingsSettingsPanel />
+      </DialogPopup>
+    </Dialog>,
+  );
+  const search = page.getByRole("searchbox", { name: "Search keybindings" });
+  await search.fill("sidebar");
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(search).toHaveValue("");
+  expect(onOpenChange).not.toHaveBeenCalled();
 });
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
