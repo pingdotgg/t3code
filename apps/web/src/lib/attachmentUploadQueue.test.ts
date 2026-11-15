@@ -212,7 +212,10 @@ describe("attachmentUploadQueue", () => {
   });
 
   it("reuploads a size-mismatched image before sending, keeping the other upload", async () => {
-    const images = [makeImage("first"), makeImage("second")];
+    const images = [makeImage("first"), makeImage("second")].map((image) => ({
+      ...image,
+      name: "image.png",
+    }));
     useAttachmentUploadStore.setState({
       uploadsByImageId: {
         first: { status: "ready", environmentId: firstEnvironment, attachmentId: "pending-first" },
@@ -236,43 +239,6 @@ describe("attachmentUploadQueue", () => {
     const uploaded = getUploadedAttachments({ environmentId: firstEnvironment, images });
     expect(uploaded?.[0]?.id).not.toBe("pending-first");
     expect(uploaded?.[1]?.id).toBe("pending-second");
-  });
-
-  it("reuploads only the damaged inline document among same-named files", async () => {
-    const files = [makeFile("first-document"), makeFile("second-document")].map((file) => ({
-      ...file,
-      name: "report.txt",
-    }));
-    useAttachmentUploadStore.setState({
-      uploadsByImageId: {
-        "first-document": {
-          status: "ready",
-          environmentId: firstEnvironment,
-          attachmentId: "pending-first",
-        },
-        "second-document": {
-          status: "ready",
-          environmentId: firstEnvironment,
-          attachmentId: "pending-second",
-        },
-      },
-    });
-    mocks.executeAtomQuery.mockImplementation(
-      async (_registry, target: { input: { resource: { attachmentId: string } } }) => ({
-        _tag: "Success",
-        value: { sizeBytes: target.input.resource.attachmentId === "pending-second" ? 4 : 3 },
-      }),
-    );
-    const refresh = refreshExpiredAttachmentUploads({
-      environmentId: firstEnvironment,
-      images: files,
-    });
-    await vi.waitFor(() => expect(TestXmlHttpRequest.requests).toHaveLength(1));
-    TestXmlHttpRequest.requests[0]!.complete();
-    await refresh;
-    const uploaded = getUploadedAttachments({ environmentId: firstEnvironment, images: files });
-    expect(uploaded?.[0]?.id).toBe("pending-first");
-    expect(uploaded?.[1]?.id).not.toBe("pending-second");
   });
 
   it("keeps a damaged inline document failed when its replacement upload fails", async () => {
