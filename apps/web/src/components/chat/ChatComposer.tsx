@@ -189,6 +189,7 @@ import {
 } from "~/lib/composerContextRecords";
 import { rememberCopiedComposerAttachments } from "~/lib/copiedComposerAttachments";
 import { useThreadContextDrop, threadContextDropTargetProps } from "./threadContextDrag";
+import { droppedThreadContextRecord } from "./threadContextDrop.logic";
 import { readThreadShell } from "~/state/entities";
 import { useLinkedEnvironments } from "~/state/peerLinks";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -2877,8 +2878,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         return [];
       }
-      const shell = readThreadShell(ref);
-      return shell ? [threadContextRecord(ref, shell.title)] : [];
+      const record = droppedThreadContextRecord(ref, readThreadShell(ref));
+      return record ? [record] : [];
     });
     if (records.length === 0) return;
     if (questionAttachmentTarget !== null) {
