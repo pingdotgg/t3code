@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -12,7 +13,7 @@ import type * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { stopChildProcessesBeforeExit } from "./DesktopExitChildren.ts";
+import { stopChildProcessesBeforeExit, stopZygotesBeforeExit } from "./DesktopExitChildren.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -338,6 +339,13 @@ export const make = DesktopLifecycle.of({
       });
       yield* addScopedListener(process, "SIGTERM", () => {
         quitFromSignal("SIGTERM", runEffect, quit);
+      });
+    }
+
+    // Unscoped: the app scope closes before Electron exits, and every exit path must run this.
+    if (environment.platform === "linux" && Option.isSome(environment.appImagePath)) {
+      yield* Effect.sync(() => {
+        process.once("exit", () => stopZygotesBeforeExit(process.pid));
       });
     }
   }).pipe(Effect.withSpan("desktop.lifecycle.register")),

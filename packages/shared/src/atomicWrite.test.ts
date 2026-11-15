@@ -79,6 +79,21 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
     }),
   );
 
+  it.effect.each(HostProcess.Platform.defaultValue() === "linux" ? [255] : [])(
+    "saves a file whose name is %i bytes long",
+    (length) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
+        const filePath = path.join(root, `${"s".repeat(length - 5)}.json`);
+
+        yield* writeFileStringAtomically({ filePath, contents: "after" });
+
+        assert.strictEqual(yield* fs.readFileString(filePath), "after");
+      }),
+  );
+
   it.effect("keeps a dangling symlink linked and creates its destination", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
