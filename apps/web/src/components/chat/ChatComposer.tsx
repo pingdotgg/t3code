@@ -3909,7 +3909,7 @@ export function ChatComposer(props: ChatComposerProps) {
               <div
                 data-chat-composer-actions="right"
                 data-chat-composer-transition-actions="true"
-                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt]"
+                className="z-1 flex w-max max-w-full items-center justify-end gap-1.5 self-start justify-self-end [grid-area:prompt] in-data-composer-multiline:self-end"
               >
                 {composerAttachButton}
                 <ComposerFooterPrimaryActions
