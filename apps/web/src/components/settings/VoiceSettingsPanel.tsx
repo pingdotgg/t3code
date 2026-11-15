@@ -800,6 +800,7 @@ function SpeechModelBrowser(props: {
   projectId: ProjectId | null;
   projectName: string | null;
 }) {
+  const { t } = useTranslation("settings");
   const {
     prepared,
     catalog: { status, models, run, controlsDisabled, canCancel, requestedDownload },
@@ -823,10 +824,10 @@ function SpeechModelBrowser(props: {
   );
   const accuracyLanguage = selectedLanguages[0] ?? "en";
   const sortLabels: Record<SpeechModelSort, string> = {
-    recommended: "Recommended",
-    size: "Smallest download",
-    accuracy: `Best ${languageLabel(accuracyLanguage)} accuracy`,
-    speed: "Fastest transcription",
+    recommended: t("voiceModels.recommended"),
+    size: t("voiceModels.size"),
+    accuracy: t("voiceModels.accuracy", { language: languageLabel(accuracyLanguage) }),
+    speed: t("voiceModels.speed"),
   };
   const sortedModels = filterSpeechModels(models, {
     search,
@@ -849,35 +850,33 @@ function SpeechModelBrowser(props: {
     >
       {status && !status.supported ? (
         <p className="px-4 py-2 text-sm text-muted-foreground">
-          This environment can’t transcribe audio: {status.reason}.
+          {t("voiceModels.unsupported", { reason: status.reason })}
         </p>
       ) : null}
       {status?.supported ? (
         <>
           <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground sm:px-4">
-            Pick languages to see models that support all of them. Accuracy is word or character
-            error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
-            Handy’s benchmark {status.benchmarkTier === "cpu" ? "CPU" : "GPU"}.
+            {t("voiceModels.hint", { tier: status.benchmarkTier === "cpu" ? "CPU" : "GPU" })}
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
               <div className="space-y-2 p-3">
-                <p className="text-sm font-medium">Languages</p>
+                <p className="text-sm font-medium">{t("voiceModels.languages")}</p>
                 <Input
                   size="compact"
-                  aria-label="Search languages"
-                  placeholder="Search languages"
+                  aria-label={t("voiceModels.searchLanguages")}
+                  placeholder={t("voiceModels.searchLanguages")}
                   value={languageSearch}
                   onChange={(e) => setLanguageSearch(e.target.value)}
                 />
               </div>
               <div
                 role="group"
-                aria-label="Browse models by language"
+                aria-label={t("voiceModels.browseByLanguage")}
                 className="flex gap-1 overflow-x-auto px-2 pb-2 @min-[32rem]/voice-models:h-72 @min-[32rem]/voice-models:flex-col @min-[32rem]/voice-models:overflow-y-auto"
               >
                 <LanguageRow
-                  label="All languages"
+                  label={t("voiceModels.allLanguages")}
                   selected={selectedLanguages.length === 0}
                   onClick={() => setSelection([])}
                 />
@@ -896,7 +895,9 @@ function SpeechModelBrowser(props: {
                   />
                 ))}
                 {visibleLanguages.length === 0 && (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">No languages match.</p>
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    {t("voiceModels.noLanguages")}
+                  </p>
                 )}
               </div>
             </div>
@@ -904,14 +905,16 @@ function SpeechModelBrowser(props: {
               <div className="space-y-2 p-3">
                 <p className="text-sm font-medium">
                   {selectedLanguages.length
-                    ? "Models for " + selectedLanguages.map(languageLabel).join(", ")
-                    : "All models"}
+                    ? t("voiceModels.modelsFor", {
+                        languages: selectedLanguages.map(languageLabel).join(", "),
+                      })
+                    : t("voiceModels.allModels")}
                 </p>
                 <InputGroup>
                   <InputGroupInput
                     size="compact"
-                    aria-label="Search transcription models"
-                    placeholder="Search models"
+                    aria-label={t("voiceModels.searchModels")}
+                    placeholder={t("voiceModels.searchModels")}
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                   />
@@ -919,7 +922,12 @@ function SpeechModelBrowser(props: {
                     <Menu>
                       <MenuTrigger
                         render={<Button size="compact" variant="ghost-muted" />}
-                        aria-label={`Sort and filter models: ${sortLabels[sort]}${downloadedOnly ? ", downloaded only" : ""}`}
+                        aria-label={t("voiceModels.sortFilterAria", {
+                          sort: sortLabels[sort],
+                          downloadedOnly: downloadedOnly
+                            ? t("voiceModels.downloadedOnlySuffix")
+                            : "",
+                        })}
                       >
                         <SlidersHorizontalIcon />
                         <span className="hidden @min-[40rem]/voice-models:inline">
@@ -929,7 +937,7 @@ function SpeechModelBrowser(props: {
                       </MenuTrigger>
                       <MenuPopup align="end">
                         <MenuGroup>
-                          <MenuGroupLabel>Sort by</MenuGroupLabel>
+                          <MenuGroupLabel>{t("voiceModels.sortBy")}</MenuGroupLabel>
                           <MenuRadioGroup
                             value={sort}
                             onValueChange={(value) => setSort(value as SpeechModelSort)}
@@ -949,7 +957,7 @@ function SpeechModelBrowser(props: {
                           checked={downloadedOnly}
                           onCheckedChange={setDownloadedOnly}
                         >
-                          Downloaded only
+                          {t("voiceModels.downloadedOnly")}
                         </MenuCheckboxItem>
                       </MenuPopup>
                     </Menu>
@@ -959,11 +967,13 @@ function SpeechModelBrowser(props: {
               <div
                 className="h-72 overflow-y-auto divide-y divide-border/60"
                 role="region"
-                aria-label="Transcription models"
+                aria-label={t("voiceModels.regionAria")}
                 tabIndex={0}
               >
                 {sortedModels.length === 0 && (
-                  <p className="px-4 py-2 text-sm text-muted-foreground">No models match.</p>
+                  <p className="px-4 py-2 text-sm text-muted-foreground">
+                    {t("voiceModels.noModels")}
+                  </p>
                 )}
                 {renderedModels.map((model) => {
                   const card: ModelCardProps = {
@@ -977,23 +987,23 @@ function SpeechModelBrowser(props: {
                     benchmarkTier: status.benchmarkTier,
                     onDownload: () =>
                       void run(
-                        "Could not download the model",
+                        t("voiceModels.downloadFailed"),
                         () =>
                           runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, model.id)),
                         model.id,
                       ),
                     onSelect: () =>
-                      void run("Could not select the model", () =>
+                      void run(t("voiceModels.selectFailed"), () =>
                         runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, model.id)),
                       ),
                     onCancel: () =>
-                      void run("Could not cancel the download", () =>
+                      void run(t("voiceModels.cancelFailed"), () =>
                         runEnvironmentSpeech(
                           cancelEnvironmentSpeechModelDownload(prepared, model.id),
                         ),
                       ),
                     onDelete: () =>
-                      void run("Could not delete the model", () =>
+                      void run(t("voiceModels.deleteFailed"), () =>
                         runEnvironmentSpeech(removeEnvironmentSpeechModel(prepared, model.id)),
                       ),
                   };
@@ -1016,7 +1026,7 @@ function SpeechModelBrowser(props: {
                   className="flex items-center gap-2 border-t border-border/60 p-3"
                   onSubmit={(event) => {
                     event.preventDefault();
-                    void run("Could not use a model from that path", async () => {
+                    void run(t("voiceModels.linkFailed"), async () => {
                       await runEnvironmentSpeech(
                         linkEnvironmentSpeechModels(prepared, existingPath),
                       );
@@ -1027,8 +1037,8 @@ function SpeechModelBrowser(props: {
                   <div className="min-w-0 flex-1">
                     <Input
                       size="compact"
-                      aria-label="Path to a model file or folder already on this environment"
-                      placeholder="Already downloaded elsewhere? Paste the model file or folder path"
+                      aria-label={t("voiceModels.linkPathAria")}
+                      placeholder={t("voiceModels.linkPathPlaceholder")}
                       value={existingPath}
                       onChange={(e) => setExistingPath(e.target.value)}
                     />
@@ -1039,7 +1049,7 @@ function SpeechModelBrowser(props: {
                     variant="outline"
                     disabled={controlsDisabled || !existingPath.trim()}
                   >
-                    Use existing
+                    {t("voiceModels.useExisting")}
                   </Button>
                 </form>
               ) : null}

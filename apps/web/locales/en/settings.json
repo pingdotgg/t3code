@@ -3015,5 +3015,35 @@
       "min_15": "After 15 minutes",
       "hour_1": "After 1 hour"
     }
+  },
+  "voiceModels": {
+    "recommended": "Recommended",
+    "size": "Smallest download",
+    "accuracy": "Best {{language}} accuracy",
+    "speed": "Fastest transcription",
+    "unsupported": "This environment can’t transcribe audio: {{reason}}.",
+    "hint": "Pick languages to see models that support all of them. Accuracy is word or character error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on Handy’s benchmark {{tier}}.",
+    "languages": "Languages",
+    "searchLanguages": "Search languages",
+    "browseByLanguage": "Browse models by language",
+    "allLanguages": "All languages",
+    "noLanguages": "No languages match.",
+    "modelsFor": "Models for {{languages}}",
+    "allModels": "All models",
+    "searchModels": "Search models",
+    "sortFilterAria": "Sort and filter models: {{sort}}{{downloadedOnly}}",
+    "downloadedOnlySuffix": ", downloaded only",
+    "sortBy": "Sort by",
+    "downloadedOnly": "Downloaded only",
+    "regionAria": "Transcription models",
+    "noModels": "No models match.",
+    "downloadFailed": "Could not download the model",
+    "selectFailed": "Could not select the model",
+    "cancelFailed": "Could not cancel the download",
+    "deleteFailed": "Could not delete the model",
+    "linkFailed": "Could not use a model from that path",
+    "linkPathAria": "Path to a model file or folder already on this environment",
+    "linkPathPlaceholder": "Already downloaded elsewhere? Paste the model file or folder path",
+    "useExisting": "Use existing"
   }
 }

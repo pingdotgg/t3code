@@ -2995,5 +2995,35 @@
       "min_15": "15 分钟后",
       "hour_1": "1 小时后"
     }
+  },
+  "voiceModels": {
+    "recommended": "推荐",
+    "size": "下载体积最小",
+    "accuracy": "{{language}}准确率最高",
+    "speed": "转写最快",
+    "unsupported": "此环境无法转写音频：{{reason}}。",
+    "hint": "选择语言可筛选支持所选全部语言的模型。准确率指词错误率或字错误率：越低越好。速度指在 Handy 基准（{{tier}}）上转写 30 秒音频所需的时间。",
+    "languages": "语言",
+    "searchLanguages": "搜索语言",
+    "browseByLanguage": "按语言浏览模型",
+    "allLanguages": "全部语言",
+    "noLanguages": "没有匹配的语言。",
+    "modelsFor": "{{languages}}的模型",
+    "allModels": "全部模型",
+    "searchModels": "搜索模型",
+    "sortFilterAria": "排序和筛选模型：{{sort}}{{downloadedOnly}}",
+    "downloadedOnlySuffix": "，仅已下载",
+    "sortBy": "排序方式",
+    "downloadedOnly": "仅显示已下载",
+    "regionAria": "转写模型",
+    "noModels": "没有匹配的模型。",
+    "downloadFailed": "无法下载模型",
+    "selectFailed": "无法选用模型",
+    "cancelFailed": "无法取消下载",
+    "deleteFailed": "无法删除模型",
+    "linkFailed": "无法使用该路径的模型",
+    "linkPathAria": "此环境中已有模型文件或文件夹的路径",
+    "linkPathPlaceholder": "已在别处下载过？粘贴模型文件或文件夹路径",
+    "useExisting": "使用现有模型"
   }
 }
