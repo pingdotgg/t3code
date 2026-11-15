@@ -851,10 +851,10 @@ const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
 };
 
 export const snapshot = (input: SnapshotInput) =>
-  runSnapshot(input, false) as Promise<PreviewAutomationSnapshot>;
+  runSnapshot(input, false) as unknown as Promise<PreviewAutomationSnapshot>;
 
 export const snapshotMetadata = (input: SnapshotInput) =>
-  runSnapshot(input, true) as Promise<PreviewAutomationSnapshotMetadata>;
+  runSnapshot(input, true) as unknown as Promise<PreviewAutomationSnapshotMetadata>;
 
 /** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (

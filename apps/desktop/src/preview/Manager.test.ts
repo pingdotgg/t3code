@@ -2115,7 +2115,7 @@ describe("PreviewManager", () => {
             .mockReturnValueOnce(first.promise)
             .mockReturnValueOnce(second.promise);
           const hostThrottling = vi.fn();
-          yield* manager.setMainWindow({
+          yield* manager.addWindow({
             isDestroyed: () => false,
             once: vi.fn(),
             webContents: { setBackgroundThrottling: hostThrottling },

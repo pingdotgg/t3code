@@ -475,6 +475,7 @@ describe("previewStateStore (single-tab)", () => {
     applyPreviewServerSnapshot(ref, tab);
     applyPreviewDesktopState(ref, tab.tabId, {
       hasWebContents: true,
+      navStatus: tab.navStatus,
       canGoBack: true,
       canGoForward: false,
       loading: false,

@@ -19,7 +19,7 @@ export function carryComposerDraft(from: DraftId, to: DraftId): void {
     source.modelSelectionExplicit === true && source.activeProvider !== null
       ? (source.modelSelectionByProvider[source.activeProvider] ?? null)
       : null;
-  store.moveComposerPromptAndImages(from, to);
+  store.moveComposerContent(from, to);
   if (model !== null) {
     store.setModelSelection(to, model, { explicit: true });
   }

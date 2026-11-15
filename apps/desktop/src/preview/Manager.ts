@@ -2780,6 +2780,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
                 : control.debugger.sendCommand(method, params, sessionId),
             // The tab host has one connection, which gets the page's screencast.
             receivesScreencast: () => true,
+            ackScreencastFrame: (frameId) =>
+              void control.debugger
+                .sendCommand("Page.screencastFrameAck", { sessionId: frameId })
+                .catch(() => {}),
             targetId: async () =>
               (await control.debugger.sendCommand("Target.getTargetInfo")).targetInfo
                 .targetId as string,
