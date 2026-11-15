@@ -1390,6 +1390,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background: var(--bubble-fill);
 }
 
+@utility surface-bubble-quote {
+  @apply surface-well;
+  --bubble-quote-tint: light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 36%));
+  background:
+    linear-gradient(var(--bubble-quote-tint), var(--bubble-quote-tint)) padding-box,
+    var(--bubble-fill) padding-box,
+    var(--surface-rim) border-box,
+    var(--bubble-fill) border-box;
+
+  &:hover {
+    --bubble-quote-tint: light-dark(rgb(0 0 0 / 14%), rgb(0 0 0 / 50%));
+  }
+}
+
 /* Key hints. The popover variant is a step darker for key hints inside
    floating surfaces. */
 @utility surface-kbd {
