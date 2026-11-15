@@ -1,7 +1,9 @@
 import { type ModelSelection, ProviderInstanceId, type ThreadMoveBundle } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { movedModelSelection, threadMoveBundleFits } from "./ThreadProjectMove.ts";
+import * as DateTime from "effect/DateTime";
+
+import { movedModelSelection, threadMoveBundleFits, threadRevision } from "./ThreadProjectMove.ts";
 
 const source = { instanceId: ProviderInstanceId.make("source-only"), model: "s" };
 const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "d" };
@@ -57,5 +59,14 @@ describe("threadMoveBundleFits", () => {
   it("accepts a bundle at the limit and refuses one byte over", () => {
     expect(threadMoveBundleFits(bundle, bytes)).toBe(true);
     expect(threadMoveBundleFits(bundle, bytes - 1)).toBe(false);
+  });
+});
+
+describe("threadRevision", () => {
+  it("changes when a retried run completes under the same id", () => {
+    const run = { id: "run-1", ordinal: 1, completedAt: null };
+    expect(
+      threadRevision([{ ...run, completedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z") }]),
+    ).not.toBe(threadRevision([run]));
   });
 });

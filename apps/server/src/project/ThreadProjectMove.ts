@@ -62,13 +62,22 @@ export function threadMoveBundleFits(bundle: ThreadMoveBundle, maxBytes: number)
   return Buffer.byteLength(JSON.stringify(bundle), "utf8") <= maxBytes;
 }
 
-/** Changes when a run starts, so finishing a move never archives work its export missed. */
-function threadRevision(runs: ReadonlyArray<{ readonly id: string; readonly ordinal: number }>) {
-  const last = runs.reduce<(typeof runs)[number] | undefined>(
-    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-    undefined,
-  );
-  return `${runs.length}:${last?.id ?? ""}`;
+/** Changes when a run starts or any run, retries included, completes, so finish never archives work export missed. */
+export function threadRevision(
+  runs: ReadonlyArray<{
+    readonly id: string;
+    readonly ordinal: number;
+    readonly completedAt: DateTime.Utc | null;
+  }>,
+) {
+  let newest: (typeof runs)[number] | undefined;
+  let lastCompletedAt = 0;
+  for (const run of runs) {
+    if (newest === undefined || run.ordinal > newest.ordinal) newest = run;
+    if (run.completedAt !== null)
+      lastCompletedAt = Math.max(lastCompletedAt, DateTime.toEpochMillis(run.completedAt));
+  }
+  return `${runs.length}:${newest?.id ?? ""}:${lastCompletedAt}`;
 }
 
 export class ThreadProjectMoveError extends Schema.TaggedError<ThreadProjectMoveError>()(
