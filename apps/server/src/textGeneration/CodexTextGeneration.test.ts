@@ -364,29 +364,32 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     }),
   );
 
-  it.effect("reports the failed turn's message when the Codex CLI fails", () =>
-    withFakeCodexEnv(
-      {
-        output: "",
-        exitCode: 1,
-        events: [
-          { type: "thread.started", thread_id: "thread-1" },
-          { type: "turn.started" },
-          { type: "error", message: "stream disconnected" },
-          { type: "turn.failed", error: { message: "The model is not supported." } },
-        ],
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const error = yield* Effect.flip(
-            textGeneration.generateThreadTitle({
-              cwd: process.cwd(),
-              message: "Describe this change",
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-            }),
-          );
-          expect(error.detail).toBe("Codex CLI command failed: The model is not supported.");
-        }),
+  it.effect.each([
+    {
+      events: [
+        { type: "thread.started", thread_id: "thread-1" },
+        { type: "turn.started" },
+        { type: "error", message: "stream disconnected" },
+        { type: "turn.failed", error: { message: "The model is not supported." } },
+      ],
+      detail: "Codex CLI command failed: The model is not supported.",
+    },
+    {
+      events: [{ type: "thread.started", thread_id: "thread-1" }, { type: "turn.started" }],
+      detail: "Codex CLI command failed with code 1.",
+    },
+  ])("reports only the failed turn's message when the Codex CLI fails", ({ events, detail }) =>
+    withFakeCodexEnv({ output: "", exitCode: 1, events }, (textGeneration) =>
+      Effect.gen(function* () {
+        const error = yield* Effect.flip(
+          textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          }),
+        );
+        expect(error.detail).toBe(detail);
+      }),
     ),
   );
 

@@ -399,11 +399,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         if (run._tag === "Result") return Effect.succeed<string | undefined>(run.result);
         const { stdout, stderr, exitCode } = run;
         if (exitCode === 0) return Effect.undefined;
-        const stderrDetail = stderr.trim();
-        const stdoutDetail = stdout.trim();
-        const detail =
-          codexFailureMessage(stdoutDetail) ??
-          (stderrDetail.length > 0 ? stderrDetail : stdoutDetail);
+        // With --json, stdout is the whole event stream; only its failure event is a message.
+        const detail = codexFailureMessage(stdout) ?? stderr.trim();
         return Effect.fail(
           new TextGenerationError({
             operation,
