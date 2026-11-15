@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { makeBoatApi } from "./boatCloudApi.ts";
-import { startMachine } from "./boatCloudStart.ts";
+import { latestCliRelease, snapshotIsOutdated, startMachine } from "./boatCloudStart.ts";
 import { PAIRING_MARKER, parseRepository } from "./boatCloudVm.ts";
 
 const repository = parseRepository("https://github.com/acme/app")!;
@@ -89,6 +89,42 @@ describe("startMachine on a running VM", () => {
 
       const reset = runningVm("env-2");
       assert.strictEqual((yield* start(reset, "env-1")).pairingCode, "fresh-code");
+    }),
+  );
+});
+
+describe("latestCliRelease", () => {
+  const github = (tag: string) =>
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ tag_name: tag, published_at: "2026-11-16T10:00:00Z" }),
+        ),
+      ),
+    );
+
+  it.effect("finds the fork's build and rebuilds only snapshots saved before it", () =>
+    Effect.gen(function* () {
+      const release = yield* latestCliRelease(github("boat-cli-v0.1.9-boat.1"));
+      assert.deepStrictEqual(release, {
+        version: "0.1.9-boat.1",
+        publishedAt: "2026-11-16T10:00:00Z",
+      });
+      const saved = (createdAt: string | null) => ({ status: "ready", createdAt });
+      assert.isTrue(snapshotIsOutdated(saved("2026-11-14T08:00:00Z"), release));
+      assert.isTrue(snapshotIsOutdated(saved(null), release));
+      assert.isFalse(snapshotIsOutdated(saved("2026-11-16T10:05:00Z"), release));
+      assert.isFalse(snapshotIsOutdated({ status: "saving", createdAt: null }, release));
+    }),
+  );
+
+  it.effect("refuses a latest release that is not a Boat cloud build", () =>
+    Effect.gen(function* () {
+      for (const tag of ["v0.1.9", "boat-cli-v0.1.9;reboot", "boat-cli-v1.2"]) {
+        const error = yield* Effect.flip(latestCliRelease(github(tag)));
+        assert.strictEqual(error.code, "cli_release");
+      }
     }),
   );
 });

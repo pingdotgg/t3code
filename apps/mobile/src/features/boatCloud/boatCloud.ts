@@ -92,7 +92,7 @@ export const boatCloudHoldersAtom = Atom.make((get): ReadonlyArray<BoatCloudHold
 }).pipe(Atom.withLabel("mobile-boat-cloud:holders"));
 
 function boatCloudReady(status: BoatCloudStatus | null | undefined) {
-  return status?.connected === true && status.setup.status === "ready";
+  return status?.connected === true && (status.setup.status === "ready" || status.snapshotReady);
 }
 
 /**

@@ -118,10 +118,18 @@ const CommandResult = Schema.Struct({
 export type BoatCommandResult = typeof CommandResult.Type;
 const FileUrl = Schema.Struct({ url: Schema.String });
 const HostResponse = Schema.Struct({ url: Schema.String });
-const SavedSnapshot = Schema.Struct({
-  snapshot: Schema.optional(Schema.Struct({ status: Schema.optional(Schema.String) })),
+const SnapshotFields = {
   status: Schema.optional(Schema.String),
+  createdAt: Schema.optional(Schema.NullOr(Schema.String)),
+};
+const SavedSnapshot = Schema.Struct({
+  snapshot: Schema.optional(Schema.Struct(SnapshotFields)),
+  ...SnapshotFields,
 });
+export interface BoatSnapshot {
+  readonly status: string;
+  readonly createdAt: string | null;
+}
 
 // Commands right after a create or resume can land while the VM mounts its files.
 const transientRetry = Schedule.spaced(Duration.seconds(2));
@@ -298,10 +306,13 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
       ).pipe(Effect.map((response) => response.url)),
     saveSnapshot: (sandboxId: string, name: string) =>
       send(json("POST", "/saved-snapshots", { sandboxId, name }), Schema.Unknown),
-    getSnapshotStatus: (name: string) =>
+    getSnapshot: (name: string) =>
       orNull(
         send(HttpClientRequest.get(url(`/saved-snapshots/${name}`)), SavedSnapshot).pipe(
-          Effect.map((response) => response.snapshot?.status ?? response.status ?? "unknown"),
+          Effect.map((response): BoatSnapshot => ({
+            status: response.snapshot?.status ?? response.status ?? "unknown",
+            createdAt: response.snapshot?.createdAt ?? response.createdAt ?? null,
+          })),
         ),
       ),
     listEnvironments: () =>

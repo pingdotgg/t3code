@@ -26,6 +26,8 @@ import {
   buildSnapshot,
   exec,
   findSandboxByHttpBaseUrl,
+  latestCliRelease,
+  snapshotIsOutdated,
   startMachine,
   vmFailure,
   waitRunning,
@@ -46,7 +48,6 @@ import {
   parseRepository,
   restoreScript,
 } from "@t3tools/shared/boatCloudVm";
-import { buildRemoteT3RunnerScript } from "@t3tools/ssh/tunnel";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -63,16 +64,13 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
-import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
-import * as NpmRelease from "../cloud/npmRelease.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
 
 const API_KEY_SECRET = "boat-cloud-api-key";
 const SKILL_DIRECTORIES = [".claude/skills", ".agents/skills", ".codex/skills"];
-const VM_RUNNER_PATH = "/home/user/.t3-boat-runner.sh";
 const IDLE_SWEEP_INTERVAL = Duration.minutes(1);
 const FAILED_START_LINGER = Duration.minutes(2);
 /**
@@ -81,11 +79,6 @@ const FAILED_START_LINGER = Duration.minutes(2);
  * its threads, or from when it was handed out, whichever is later.
  */
 const IDLE_STOP_SECONDS = IDLE_TTL_SECONDS - 60;
-
-const installServerScript = `set -e
-sh ${VM_RUNNER_PATH} --version
-sh ${VM_RUNNER_PATH} service install
-rm -f ${VM_RUNNER_PATH}`;
 
 const StoredMachine = Schema.Struct({
   sandboxId: Schema.String,
@@ -156,7 +149,6 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const homeDirectory = yield* HostProcess.HomeDirectory;
-  const npmRelease = yield* NpmRelease.NpmRelease;
 
   const directory = path.join(config.stateDir, "boat-cloud");
   const statePath = path.join(directory, "state.json");
@@ -184,6 +176,7 @@ const make = Effect.gen(function* () {
     connected: false,
     account: null,
     setup,
+    snapshotReady: false,
     machines: [],
     starts: [],
     environment: null,
@@ -196,6 +189,7 @@ const make = Effect.gen(function* () {
       connected,
       account: connected ? state.account : null,
       setup: setup.status === "idle" && snapshotReady ? { ...setup, status: "ready" } : setup,
+      snapshotReady: connected && snapshotReady,
       machines: connected
         ? state.machines.map(({ acquiredAt: _acquiredAt, ...machine }) => machine)
         : [],
@@ -268,13 +262,13 @@ const make = Effect.gen(function* () {
   });
 
   const refreshSnapshot = (api: BoatApi) =>
-    api.getSnapshotStatus(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
-      Effect.tap((status) =>
+    api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
+      Effect.tap((snapshot) =>
         Effect.sync(() => {
-          snapshotReady = status === "ready";
+          snapshotReady = snapshot?.status === "ready";
         }),
       ),
-      Effect.ignore,
+      Effect.orElseSucceed(() => null),
     );
 
   /**
@@ -311,16 +305,6 @@ const make = Effect.gen(function* () {
     // that changed nothing has not published them.
     yield* publish;
   });
-
-  // A fork or local build has a version that was never published; its VMs run the latest release.
-  const vmServerVersion = npmRelease.get({ spec: packageJson.version }).pipe(
-    Effect.filterOrElse(
-      (own) => own !== null,
-      () => npmRelease.get({ spec: "latest" }),
-    ),
-    Effect.map((release) => release?.version ?? packageJson.version),
-    Effect.orElseSucceed(() => packageJson.version),
-  );
 
   const transferFailure = (cause: unknown) =>
     isBoatApiError(cause)
@@ -543,53 +527,68 @@ const make = Effect.gen(function* () {
       return publish;
     });
 
-  const runSetup = Effect.fn("BoatCloud.runSetup")(function* () {
-    const api = yield* requireApi;
-    if (setup.status !== "running") {
-      setup = { status: "running", step: "create-vm", error: null };
-      yield* publish;
-      // Setup outlives the request; the page follows it through the status stream.
-      yield* buildSnapshot({
-        api,
-        install: (sandboxId) =>
-          vmServerVersion.pipe(
-            Effect.flatMap((archiveVersion) =>
-              api.writeFile(
-                sandboxId,
-                VM_RUNNER_PATH,
-                buildRemoteT3RunnerScript({ archiveVersion }),
-              ),
-            ),
-            Effect.andThen(exec(api, sandboxId, installServerScript, 600)),
-            Effect.asVoid,
-          ),
-        copySkills: (sandboxId) => copySkills(api, sandboxId),
-        setStep: (step) =>
-          Effect.suspend(() => {
-            setup = { status: "running", step, error: null };
-            return publish;
-          }),
-      }).pipe(
-        Effect.matchCauseEffect({
-          onSuccess: () => finishSetup(true, null),
-          onFailure: (cause) =>
-            Effect.logWarning("boat cloud setup failed", { cause }).pipe(
-              Effect.andThen(
-                finishSetup(
-                  false,
-                  Option.match(Cause.findErrorOption(cause), {
-                    onNone: () => "Setup stopped.",
-                    onSome: (error) => describe(error) ?? "Setup failed.",
-                  }),
-                ),
-              ),
-            ),
+  /** Setup outlives the request that starts it; the page follows it through the status stream. */
+  const startSetup = Effect.fn("BoatCloud.startSetup")(function* (api: BoatApi) {
+    if (setup.status === "running") return;
+    setup = { status: "running", step: "create-vm", error: null };
+    yield* publish;
+    yield* latestCliRelease(http).pipe(
+      Effect.flatMap((release) =>
+        buildSnapshot({
+          api,
+          version: release.version,
+          copySkills: (sandboxId) => copySkills(api, sandboxId),
+          setStep: (step) =>
+            Effect.suspend(() => {
+              setup = { status: "running", step, error: null };
+              return publish;
+            }),
         }),
-        Effect.forkDetach,
-      );
-    }
+      ),
+      Effect.matchCauseEffect({
+        onSuccess: () => finishSetup(true, null),
+        onFailure: (cause) =>
+          Effect.logWarning("boat cloud setup failed", { cause }).pipe(
+            Effect.andThen(
+              finishSetup(
+                false,
+                Option.match(Cause.findErrorOption(cause), {
+                  onNone: () => "Setup stopped.",
+                  onSome: (error) => describe(error) ?? "Setup failed.",
+                }),
+              ),
+            ),
+          ),
+      }),
+      Effect.forkDetach,
+    );
+  });
+
+  const runSetup = Effect.fn("BoatCloud.runSetup")(function* () {
+    yield* startSetup(yield* requireApi);
     return yield* SubscriptionRef.get(statusRef);
   });
+
+  /**
+   * A snapshot saved before the latest t3 build is rebuilt from it, which also uploads
+   * this machine's skills again. VMs keep starting from the old one until the new one is saved.
+   * A failed setup waits for the Rebuild button or a reconnect, so opening the page never loops.
+   */
+  const renewSnapshot = Effect.fn("BoatCloud.renewSnapshot")(
+    function* (api: BoatApi) {
+      const snapshot = yield* refreshSnapshot(api);
+      if (snapshot === null || setup.status !== "idle") return;
+      const release = yield* latestCliRelease(http);
+      if (!snapshotIsOutdated(snapshot, release)) return;
+      yield* Effect.logInfo("boat cloud rebuilds a snapshot older than the latest t3 build", {
+        version: release.version,
+      });
+      yield* startSetup(api);
+    },
+    Effect.catchCause((cause) =>
+      Effect.logWarning("boat cloud could not check the snapshot's t3 build", { cause }),
+    ),
+  );
 
   /** Each repository a machine is known to have, as its checkout path on the VM. */
   const knownWorkspaceRoots = (sandboxId: string) =>
@@ -754,6 +753,7 @@ const make = Effect.gen(function* () {
       .set(API_KEY_SECRET, textEncoder.encode(input.apiKey))
       .pipe(Effect.mapError(cloudError("Could not save the Boat API key.")));
     yield* refreshSnapshot(api);
+    yield* renewSnapshot(api).pipe(Effect.forkDetach);
     // Another account's environments, VMs and backups mean nothing to this key; a wake
     // must never restore one account's backup onto another's VM.
     yield* commit((current) =>
@@ -794,7 +794,7 @@ const make = Effect.gen(function* () {
     const key = yield* readKey;
     if (Option.isNone(key)) return;
     const api = makeBoatApi(http, key.value);
-    yield* refreshSnapshot(api);
+    yield* renewSnapshot(api);
     yield* refreshEnvironments(api);
     yield* reconcile(api).pipe(sweepLock.withPermits(1), Effect.ignore);
     yield* publish;
@@ -813,6 +813,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(BoatCloudService, make).pipe(
-  Layer.provide([ProcessRunner.layer, NpmRelease.layer]),
-);
+export const layer = Layer.effect(BoatCloudService, make).pipe(Layer.provide(ProcessRunner.layer));

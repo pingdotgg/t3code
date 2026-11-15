@@ -108,7 +108,7 @@ export function useBoatCloudProviderDrivers() {
 }
 
 export function boatCloudReady(status: BoatCloudStatus | null) {
-  return status?.connected === true && status.setup.status === "ready";
+  return status?.connected === true && (status.setup.status === "ready" || status.snapshotReady);
 }
 
 function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]) {

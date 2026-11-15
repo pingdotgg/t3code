@@ -25,13 +25,43 @@ const COMPILE_CACHE = `${VM_HOME}/.cache/t3code/compile-cache`;
 const COMPILE_CACHE_DROP_IN = `[Service]
 Environment=NODE_COMPILE_CACHE=${COMPILE_CACHE}`;
 
-// `t3 update` can install a newer runtime, so prefer the newest one, then an npm install.
+// `t3 update` can install a newer runtime, so prefer the newest one, then one on PATH.
 const T3 = `export NODE_COMPILE_CACHE=${COMPILE_CACHE}; T3="$(ls -1d ${VM_HOME}/.t3/runtime/versions/*/t3 2>/dev/null | sort -V | tail -n1)"; [ -x "$T3" ] || T3="$(command -v t3 || true)"; [ -n "$T3" ] || { echo "T3 Code is not installed on this VM." >&2; exit 1; }`;
 
-/** Installs T3 Code from npm, for a holder that has no runner script to upload (the phone). */
-export const npmInstallServerScript = (version: string) => `set -e
-npm install -g --silent ${q(`t3@${version}`)}
-t3 service install`;
+/**
+ * VMs run this fork's own t3 builds, not the npm release, so they carry the fork's
+ * changes. `.github/workflows/boat-cloud-cli.yml` publishes each one as a GitHub release.
+ */
+export const CLI_RELEASE_REPOSITORY = "vkpdeveloper/t3code";
+const CLI_RELEASE_TAG_PREFIX = "boat-cli-v";
+const EXACT_VERSION =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
+
+/** The t3 version a release tag carries, or null for a tag that is not a Boat cloud build. */
+export const cliVersionOfTag = (tag: string) => {
+  if (!tag.startsWith(CLI_RELEASE_TAG_PREFIX)) return null;
+  const version = tag.slice(CLI_RELEASE_TAG_PREFIX.length);
+  return EXACT_VERSION.test(version) ? version : null;
+};
+
+/** Installs that build into the runtime layout `t3 service install` expects, checksum first. */
+export const installCliScript = (version: string) => {
+  const base = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases/download/${CLI_RELEASE_TAG_PREFIX}${version}`;
+  const archive = `t3-${version}-linux-x64.tar.gz`;
+  return `set -eu
+[ "$(uname -m)" = x86_64 ] || { echo "Boat cloud builds of t3 are x86_64 only." >&2; exit 1; }
+dir=${VM_HOME}/.t3/runtime/versions/${q(version)}
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+curl -fsSL --retry 3 --max-time 120 ${q(`${base}/SHA256SUMS`)} -o "$tmp/SHA256SUMS"
+curl -fsSL --retry 3 --max-time 600 ${q(`${base}/${archive}`)} -o "$tmp/${archive}"
+(cd "$tmp" && grep -F ${q(archive)} SHA256SUMS | sha256sum -c --status -)
+rm -rf "$dir" && mkdir -p "$dir"
+tar -xzf "$tmp/${archive}" -C "$dir" --strip-components=1
+"$dir/t3" --version
+printf '%s\\n' ${q(version)} > "$dir/.install-complete"
+"$dir/t3" service install`;
+};
 
 export const extractSkillsScript = `set -e
 tar -xzf ${VM_SKILLS_ARCHIVE} -C ${VM_HOME}

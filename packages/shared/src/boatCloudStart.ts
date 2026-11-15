@@ -11,15 +11,18 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import { type HttpClient, HttpClientResponse } from "effect/http";
 
 import {
   type BoatApi,
   BoatApiError,
   type BoatCommandResult,
   type BoatSandbox,
+  type BoatSnapshot,
 } from "./boatCloudApi.ts";
 import {
   BASE_BRANCH_MISSING_EXIT,
+  CLI_RELEASE_REPOSITORY,
   IDLE_TTL_SECONDS,
   type MachineCandidate,
   MACHINE_LABEL_FILTER,
@@ -30,6 +33,8 @@ import {
   SETUP_LABELS,
   VM_T3_PORT,
   checkoutScript,
+  cliVersionOfTag,
+  installCliScript,
   machineLabelOf,
   machineStateOf,
   measureScript,
@@ -411,11 +416,46 @@ export const wakeMachine = Effect.fn("BoatCloud.wakeMachine")(function* (
   return { ...started, httpBaseUrl };
 });
 
+export interface CliRelease {
+  readonly version: string;
+  readonly publishedAt: string;
+}
+
+const LatestRelease = Schema.Struct({ tag_name: Schema.String, published_at: Schema.String });
+
+/** The newest Boat cloud build of t3, which every snapshot should carry. */
+export const latestCliRelease = Effect.fn("BoatCloud.latestCliRelease")(
+  function* (http: HttpClient.HttpClient) {
+    const response = yield* http
+      .get(`https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases/latest`, {
+        headers: { accept: "application/vnd.github+json" },
+      })
+      .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+    const release = yield* response.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(LatestRelease)),
+    );
+    const version = cliVersionOfTag(release.tag_name);
+    if (version === null) return yield* Effect.fail(release.tag_name);
+    return { version, publishedAt: release.published_at } satisfies CliRelease;
+  },
+  Effect.timeout(Duration.seconds(30)),
+  Effect.mapError((cause) =>
+    vmFailure("Could not find the latest T3 Code build for Boat cloud.", "cli_release", cause),
+  ),
+);
+
+/** A snapshot saved before the latest build was published carries an older t3, or npm's. */
+export const snapshotIsOutdated = (snapshot: BoatSnapshot, release: CliRelease) =>
+  snapshot.status === "ready" &&
+  (snapshot.createdAt === null || Date.parse(snapshot.createdAt) < Date.parse(release.publishedAt));
+
 const waitSnapshot = (api: BoatApi) =>
-  api.getSnapshotStatus(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
-    Effect.flatMap((status) => {
-      if (status === "ready") return Effect.void;
-      if (status === "failed") return Effect.fail(vmFailure("Boat could not save the snapshot."));
+  api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME).pipe(
+    Effect.flatMap((snapshot) => {
+      if (snapshot?.status === "ready") return Effect.void;
+      if (snapshot?.status === "failed") {
+        return Effect.fail(vmFailure("Boat could not save the snapshot."));
+      }
       return Effect.fail(vmFailure("Boat is still saving the snapshot.", "saving"));
     }),
     Effect.retry({
@@ -426,12 +466,12 @@ const waitSnapshot = (api: BoatApi) =>
   );
 
 /**
- * Builds the snapshot every VM starts from: a VM with T3 Code installed as a
- * service that starts at boot, the holder's skills, and no T3 state.
+ * Builds the snapshot every VM starts from: a VM with the given t3 build installed
+ * as a service that starts at boot, the holder's skills, and no T3 state.
  */
 export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (input: {
   readonly api: BoatApi;
-  readonly install: (sandboxId: string) => Effect.Effect<void, BoatApiError>;
+  readonly version: string;
   /** Absent on a holder with no skills of its own, such as the phone. */
   readonly copySkills?: (sandboxId: string) => Effect.Effect<void, BoatApiError>;
   readonly setStep: (step: BoatCloudSetupStep) => Effect.Effect<void>;
@@ -452,7 +492,7 @@ export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (inp
   yield* Effect.gen(function* () {
     yield* waitRunning(api, created.id);
     yield* input.setStep("install-server");
-    yield* input.install(created.id);
+    yield* exec(api, created.id, installCliScript(input.version), 900);
     yield* ensureServer(api, created.id);
     yield* input.setStep("copy-skills");
     if (input.copySkills) yield* input.copySkills(created.id);

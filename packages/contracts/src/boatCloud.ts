@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -134,6 +135,8 @@ export const BoatCloudStatus = Schema.Struct({
   /** The Boat account the key belongs to. */
   account: Schema.NullOr(Schema.String),
   setup: BoatCloudSetup,
+  /** VMs can start from the saved snapshot, even while setup rebuilds it. */
+  snapshotReady: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   machines: Schema.Array(BoatCloudMachine),
   starts: Schema.Array(BoatCloudStart),
   /** The Boat environment new VMs start on, by name. */

@@ -9,8 +9,8 @@ import {
   type PairedEnvironment,
   type ReportStep,
   buildSnapshot,
-  exec,
   findSandboxByHttpBaseUrl,
+  latestCliRelease,
   startMachine,
   wakeMachine,
 } from "@t3tools/shared/boatCloudStart";
@@ -19,7 +19,6 @@ import {
   VM_T3_PORT,
   machineLabelOf,
   machineStateOf,
-  npmInstallServerScript,
   parseRepository,
 } from "@t3tools/shared/boatCloudVm";
 import * as Effect from "effect/Effect";
@@ -46,6 +45,7 @@ const DISCONNECTED: BoatCloudStatus = {
   connected: false,
   account: null,
   setup: { status: "idle", step: null, error: null },
+  snapshotReady: false,
   machines: [],
   starts: [],
   environment: null,
@@ -93,7 +93,7 @@ export function refreshPhoneBoatCloud(): Promise<void> {
       const [account, snapshot, sandboxes, environments, profiles, stored] = yield* Effect.all(
         [
           api.me(),
-          api.getSnapshotStatus(BOAT_CLOUD_SNAPSHOT_NAME),
+          api.getSnapshot(BOAT_CLOUD_SNAPSHOT_NAME),
           api.listSandboxes(MACHINE_LABEL_FILTER),
           api.listEnvironments().pipe(Effect.result),
           // Without it the sign-ins are unknown, and every provider stays offered.
@@ -121,11 +121,12 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         setup:
           status.setup.status === "running"
             ? status.setup
-            : snapshot === "ready"
+            : snapshot?.status === "ready"
               ? { status: "ready", step: null, error: null }
               : status.setup.status === "failed"
                 ? status.setup
                 : { status: "idle", step: null, error: null },
+        snapshotReady: snapshot?.status === "ready",
         machines: sandboxes.map((sandbox) => ({
           sandboxId: sandbox.id,
           environmentId: null,
@@ -225,8 +226,8 @@ export async function configurePhoneBoatCloudEnvironment(
 }
 
 /**
- * Builds the snapshot from the phone. The VM installs T3 Code from npm, since
- * the phone has no server build to upload, and gets no skills.
+ * Builds the snapshot from the phone, with the latest Boat cloud build of t3 and no
+ * skills. Only a machine holder rebuilds an outdated snapshot on its own, since it keeps the skills.
  */
 export async function runPhoneBoatCloudSetup(): Promise<void> {
   if (appAtomRegistry.get(phoneBoatCloudAtom).setup.status === "running") return;
@@ -235,10 +236,10 @@ export async function runPhoneBoatCloudSetup(): Promise<void> {
     await run(
       Effect.gen(function* () {
         const api = yield* phoneApi;
+        const release = yield* latestCliRelease(yield* HttpClient.HttpClient);
         yield* buildSnapshot({
           api,
-          install: (sandboxId) =>
-            exec(api, sandboxId, npmInstallServerScript("latest"), 600).pipe(Effect.asVoid),
+          version: release.version,
           setStep: (step) =>
             Effect.sync(() =>
               setStatus((status) => ({
@@ -249,7 +250,11 @@ export async function runPhoneBoatCloudSetup(): Promise<void> {
         });
       }),
     );
-    setStatus((status) => ({ ...status, setup: { status: "ready", step: null, error: null } }));
+    setStatus((status) => ({
+      ...status,
+      setup: { status: "ready", step: null, error: null },
+      snapshotReady: true,
+    }));
   } catch (error) {
     setStatus((status) => ({
       ...status,
