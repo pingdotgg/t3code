@@ -5,24 +5,33 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
 import { dismissContextMenu } from "~/contextMenuFallback";
-import { act, render } from "../../../test/render";
+import { isMacPlatform } from "~/lib/utils";
+import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { dispatchPreviewAction } from "../preview/previewActionBus";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
   { path: "README.md", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
-const defaultDirectory = {
+const directory: {
+  entries: readonly ProjectEntry[];
+  load: (path: string) => Promise<void>;
+  refresh: () => void;
+  ready: boolean;
+  error: null;
+  isPending: boolean;
+  loadingDirectories: ReadonlySet<string>;
+} = {
   entries,
-  load: (_path: string) => Promise.resolve(),
+  load: (_path) => Promise.resolve(),
   refresh: () => {},
   ready: true,
   error: null,
   isPending: false,
   loadingDirectories,
 };
-let directory = defaultDirectory;
 const pathSearch = {
   entries: [],
   isPending: false,
@@ -31,34 +40,12 @@ const pathSearch = {
   refresh: () => {},
 };
 
-const directoryListeners = new Set<() => void>();
-vi.mock("./useDirectoryEntries", async () => {
-  const { useSyncExternalStore } = await import("react");
-  const subscribe = (listener: () => void) => {
-    directoryListeners.add(listener);
-    return () => void directoryListeners.delete(listener);
-  };
-  return { useDirectoryEntries: () => useSyncExternalStore(subscribe, () => directory) };
-});
+vi.mock("./useDirectoryEntries", () => ({ useDirectoryEntries: () => directory }));
 vi.mock("~/state/queries", () => ({ useProjectPathSearch: () => pathSearch }));
 vi.mock("~/fileContextMenu", () => ({
   useFileContextMenu: () => ({ buildItems: () => [], activate: () => Promise.resolve() }),
 }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: () => {} }));
-
-function Panel() {
-  return (
-    <FileBrowserPanel
-      environmentId={EnvironmentId.make("env-files")}
-      cwd="/repo"
-      projectName="repo"
-      selectedPath={null}
-      selectedPathRevealId={0}
-      onOpenFile={() => {}}
-      workspaceMutationId={null}
-    />
-  );
-}
 
 function findTreeRow(path: string): HTMLElement | null {
   for (const host of document.querySelectorAll("*")) {
@@ -68,14 +55,26 @@ function findTreeRow(path: string): HTMLElement | null {
   return null;
 }
 
-// The useDirectoryEntries mock reads `directory`, so every test starts from the default.
-function setup() {
-  directory = defaultDirectory;
+function withDirectoryListing(
+  listing: readonly ProjectEntry[],
+  load: typeof directory.load = directory.load,
+): Disposable {
+  const previousLoad = directory.load;
+  directory.entries = listing;
+  directory.load = load;
+  return {
+    [Symbol.dispose]: () => {
+      directory.entries = entries;
+      directory.load = previousLoad;
+    },
+  };
 }
+
+const folders = (count: number): ProjectEntry[] =>
+  Array.from({ length: count }, (_, index) => ({ path: `folder-${index}`, kind: "directory" }));
 
 describe("FileBrowserPanel", () => {
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
-    setup();
     await using _screen = await render(
       <FileBrowserPanel
         environmentId={EnvironmentId.make("env-files")}
@@ -113,7 +112,6 @@ describe("FileBrowserPanel", () => {
   });
 
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
-    setup();
     const onOpenFile = vi.fn();
     await using _screen = await render(
       <FileBrowserPanel
@@ -147,58 +145,216 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {
+    using _listing = withDirectoryListing(entries);
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-1"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+
+    directory.entries = [
+      ...entries,
+      // Out of sort order, because inserting in order hides the cost of each insert.
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}`, kind: "directory" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000/")).not.toBeNull());
+    expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps the selected file through a very large listing without reopening it", async () => {
+    const onOpenFile = vi.fn();
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-2"
+        projectName="repo"
+        selectedPath="src/aaa.ts"
+        selectedPathRevealId={1}
+        onOpenFile={onOpenFile}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([...entries, { path: "src/aaa.ts", kind: "file" }]);
+    await using screen = await render(renderPanel());
+    await vi.waitFor(() =>
+      expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true"),
+    );
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("src/aaa.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect(findTreeRow("src/")?.getAttribute("aria-expanded")).toBe("true");
+    expect(onOpenFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps an open search accurate when a very large folder listing arrives", async () => {
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-large-folder-3"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing([
+      ...entries,
+      { path: "lib", kind: "directory" },
+      { path: "lib/generated-existing.ts", kind: "file" },
+    ]);
+    await using screen = await render(renderPanel());
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await userEvent.fill(search, "generated-");
+    await vi.waitFor(() => expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull());
+
+    directory.entries = [
+      ...directory.entries,
+      ...Array.from({ length: 2_000 }, (_, index): ProjectEntry => {
+        const name = String((index * 7_919) % 2_000).padStart(4, "0");
+        return { path: `src/generated-${name}.ts`, kind: "file" };
+      }),
+    ];
+    await screen.rerender(renderPanel());
+
+    await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
+    expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull();
+    await expect.element(search).toHaveValue("generated-");
+  });
+
   it("expands every folder without asking the tree about all folders for each one", async () => {
-    setup();
-    const folders: readonly ProjectEntry[] = Array.from({ length: 300 }, (_, index) => ({
-      path: `folder-${index}`,
-      kind: "directory",
-    }));
     const load = vi.fn((_path: string) => Promise.resolve());
-    directory = { ...directory, entries: folders, load };
-    await using _screen = await render(<Panel />);
+    using _listing = withDirectoryListing(folders(300), load);
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-expand-all-1"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />,
+    );
     using getItem = vi.spyOn(FileTree.prototype, "getItem");
     const expandAll = page.getByRole("button", { name: "Expand all folders" });
     await expect.element(expandAll).toBeVisible();
     getItem.mockClear();
     await userEvent.click(expandAll);
     await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
-    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(folders.length));
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(300));
     // Each of the 300 expansions used to look up all 300 folders again, about 137,000 lookups.
-    expect(getItem.mock.calls.length).toBeLessThan(folders.length * 20);
+    expect(getItem.mock.calls.length).toBeLessThan(300 * 20);
   });
 
   it("expands folders that arrive after Expand all without visiting the earlier ones again", async () => {
-    setup();
     const batches = 5;
     const perBatch = 60;
-    const folder = (index: number): ProjectEntry => ({
-      path: `folder-${index}`,
-      kind: "directory",
-    });
     const load = vi.fn((_path: string) => Promise.resolve());
-    directory = {
-      ...directory,
-      entries: Array.from({ length: perBatch }, (_, i) => folder(i)),
-      load,
-    };
-    await using _screen = await render(<Panel />);
+    using _listing = withDirectoryListing(folders(perBatch), load);
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-expand-all-2"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
     using getItem = vi.spyOn(FileTree.prototype, "getItem");
     await userEvent.click(page.getByRole("button", { name: "Expand all folders" }));
     await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(perBatch));
     getItem.mockClear();
-    // An asynchronous read returns: the listing grows by a batch of folders at a time.
-    for (let batch = 1; batch < batches; batch++) {
-      const total = (batch + 1) * perBatch;
-      directory = { ...directory, entries: Array.from({ length: total }, (_, i) => folder(i)) };
-      await act(() => directoryListeners.forEach((listener) => listener()));
-      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(total));
+    for (let batch = 2; batch <= batches; batch++) {
+      directory.entries = folders(batch * perBatch);
+      await screen.rerender(renderPanel());
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(batch * perBatch));
     }
-    const total = batches * perBatch;
     await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
-    // Every folder, early and late, loaded exactly once.
-    expect(new Set(load.mock.calls.map(([path]) => path)).size).toBe(total);
-    // About 7,100 lookups with the fix. Expanding all listed folders on each update instead of
-    // only the new ones adds 600, and asking the tree about all folders per expansion makes 100,000.
+    expect(new Set(load.mock.calls.map(([path]) => path)).size).toBe(batches * perBatch);
+    // Expanding every listed folder on each update instead of only the new ones adds about 600
+    // lookups, and asking the tree about all folders per expansion about 100,000.
     expect(getItem.mock.calls.length).toBeLessThan(7_400);
+  });
+
+  it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+        answersPanelFind
+      />,
+    );
+    await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+    findTreeRow("README.md")!.focus();
+
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}f{/${modifier}}`);
+
+    const search = page.getByRole("searchbox", { name: "Search repo files" });
+    await expect.element(search).toHaveFocus();
+
+    (search.element() as HTMLElement).blur();
+    dispatchPreviewAction("find");
+    await expect.element(search).toHaveFocus();
+  });
+
+  it("keeps expanded folders when the panel remounts", async () => {
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    {
+      await using _first = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
+
+    await using _second = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
   });
 });

@@ -146,6 +146,23 @@ describe("presentConnectionDiagnosis", () => {
     );
   });
 
+  it("asks for approval on the host instead of reporting it unreachable", () => {
+    const diagnosis = diagnose(
+      backoff(
+        new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          verificationCode: "K7QM-2XFD",
+          hop: "server",
+          via: "relay",
+          failureCause: "approval_pending",
+        }),
+      ),
+    );
+    expect(diagnosis?.headline).toBe("Mac mini is waiting for someone to approve this device");
+    expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
+  });
+
   it("does not report hops as working when the failure names none", () => {
     const failure = new ConnectionBlockedError({
       reason: "authentication",
