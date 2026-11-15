@@ -90,7 +90,7 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
-    "Update settings; omitted fields stay. groupingIdentity: shared lowercase UUID v4 for non-Git copies; null clears. Git wins.",
+    "Update; omitted fields stay. groupingIdentity: shared lowercase UUID v4 for non-Git copies; null clears. Git wins.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     projectId: ProjectId,
