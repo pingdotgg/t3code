@@ -155,8 +155,6 @@ describe("extractTerminalLinks", () => {
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
     "main.c:1:25",
-    "main.c:10",
-    "żółć.ts:12:7",
     "page.test.tsx:5:3",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([

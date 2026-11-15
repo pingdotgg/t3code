@@ -42,7 +42,7 @@ test(
     const project = await t3.project("demo", {
       "main.c": "int main(void) { return missing; }\n",
       // Enough rows that the middle of the terminal shows the diagnostic, whatever its height.
-      "build.log": `${`${DIAGNOSTIC}\n`.repeat(200)}`,
+      "build.log": `${DIAGNOSTIC}\n`.repeat(200),
     });
     const thread = await t3.thread({ project, title: "Build", messages: ["Build it"] });
     await t3.open(thread);
