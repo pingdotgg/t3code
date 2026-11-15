@@ -450,7 +450,7 @@ export function startThreadNotifications(
         latest.open();
       },
     },
-    { context: () => ({ threadNotificationOpen: recentToasts.length > 0 }) },
+    { capture: true, context: () => ({ threadNotificationOpen: recentToasts.length > 0 }) },
   );
 
   const onSettings = () => {

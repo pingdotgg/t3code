@@ -436,10 +436,19 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
     return `toast-${toasts.length}`;
   });
   app.start();
+  using listeners = new DisposableStack();
+  const competingShortcut = vi.fn();
+  const capture = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.key !== "y") return;
+    competingShortcut();
+    event.preventDefault();
+  };
+  window.addEventListener("keydown", capture, true);
+  listeners.defer(() => window.removeEventListener("keydown", capture, true));
   using _timers = fakeTimers();
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   const pressShortcut = () =>
-    window.dispatchEvent(
+    document.body.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "y",
         shiftKey: true,
@@ -467,11 +476,13 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
   toasts[1]!.onRemove();
   pressShortcut();
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(opened("two"));
+  expect(competingShortcut).not.toHaveBeenCalled();
 
   toasts[0]!.onRemove();
   vi.advanceTimersByTime(2_000);
   pressShortcut();
   expect(state.navigate).toHaveBeenCalledOnce();
+  expect(competingShortcut).toHaveBeenCalledOnce();
 
   state.shells.set("one", shell());
   complete("one", "2026-09-13T07:00:02.000Z");
