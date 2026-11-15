@@ -20,6 +20,7 @@ import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts"
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
+  codexCustomEndpoint,
   codexDefaultReasoningEffortOverride,
 } from "../../provider/CodexProvider.ts";
 import {
@@ -1835,7 +1836,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<
     CodexAdapterV2Options,
-    "onUsageLimits" | "resolveRuntime" | "compatibility" | "models" | "customEndpoint"
+    "onUsageLimits" | "resolveRuntime" | "compatibility" | "models"
   > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
@@ -1890,8 +1891,6 @@ export interface CodexAdapterV2Options {
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /** The provider's published models, read per turn for catalog defaults. */
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
-  /** Whether the provider's last probe found Codex sending model requests to a custom endpoint. */
-  readonly customEndpoint?: Effect.Effect<boolean>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -1918,7 +1917,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
   const continuationRequests = adapterOptions.continuationRequests;
-  const readCustomEndpoint = adapterOptions.customEndpoint ?? Effect.succeed(false);
 
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: adapterOptions.instanceId,
@@ -7499,6 +7497,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           );
         });
+
+        // The provider snapshot has no endpoint until its first probe ends, so read it here.
+        // No cwd, matching the probe that sets that endpoint.
+        const cachedCustomEndpoint = yield* Effect.cached(
+          client.request("config/read", { includeLayers: false }).pipe(
+            Effect.map((response) => codexCustomEndpoint(response.config) !== undefined),
+            Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(false))),
+          ),
+        );
+        const readCustomEndpoint = ensureInitialized.pipe(Effect.andThen(cachedCustomEndpoint));
 
         // Codex refuses to resume a session archived elsewhere until it is unarchived, and
         // one it is still unloading after thread/unsubscribe until it emits thread/closed.

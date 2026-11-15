@@ -801,13 +801,16 @@ function codexReplayPreamble(input: {
   ];
 }
 
-/** Every turn/start follows a config/read; inserts that exchange and shifts later client ids. */
+const CODEX_THREAD_REQUEST_METHODS = new Set(["thread/start", "thread/resume", "thread/fork"]);
+
+/** Each turn/start and a session's first thread request follow a config/read; inserts it and shifts later ids. */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
   const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
   let offset = 0;
   let clientIds = new Map<number, number>();
+  let sessionConfigRead = false;
   for (const entry of entries) {
     const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
     if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
@@ -818,15 +821,28 @@ function withConfigReadBeforeTurnStart(
       if (frame.method === "initialize") {
         offset = 0;
         clientIds = new Map();
+        sessionConfigRead = false;
       }
-      if (frame.method === "turn/start") {
+      const previous = result.at(-2);
+      const threadRequest = CODEX_THREAD_REQUEST_METHODS.has(frame.method);
+      if (
+        (frame.method === "turn/start" || (threadRequest && !sessionConfigRead)) &&
+        !(previous?.type === "expect_outbound" && previous.label === "config/read")
+      ) {
         const id = frame.id + offset;
         const params = Predicate.isObject(frame.params) ? frame.params : {};
         result.push(
           {
             type: "expect_outbound",
             label: "config/read",
-            frame: { id, method: "config/read", params: { cwd: params.cwd, includeLayers: false } },
+            frame: {
+              id,
+              method: "config/read",
+              params:
+                frame.method === "turn/start"
+                  ? { cwd: params.cwd, includeLayers: false }
+                  : { includeLayers: false },
+            },
           },
           {
             type: "emit_inbound",
@@ -836,6 +852,7 @@ function withConfigReadBeforeTurnStart(
         );
         offset += 1;
       }
+      if (threadRequest) sessionConfigRead = true;
       clientIds.set(frame.id, frame.id + offset);
       result.push(withReplayRequestId(entry, frame.id + offset));
       continue;
@@ -929,8 +946,8 @@ describe("CodexAdapterV2 process exit", () => {
                     Predicate.isObject(entry.frame) &&
                     "id" in entry.frame,
                 );
-                if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
+                if (response?.type === "emit_inbound" && Predicate.isObject(response.frame)) {
+                  yield* emit({ ...response.frame, id: frame.id });
                 }
               }),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
@@ -1469,7 +1486,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
-    customEndpoint?: CodexAdapterV2.CodexAdapterV2Options["customEndpoint"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1534,7 +1550,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
-        ...(customEndpoint ? { customEndpoint } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -2185,36 +2200,45 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         prompt: "unused",
       })
         .slice(0, 5)
-        .map((entry) =>
+        .flatMap((entry): Array<CodexReplay.CodexAppServerReplayEntry> =>
           entry.type === "expect_outbound" && entry.label === "thread/start"
-            ? {
-                ...entry,
-                frame: {
-                  id: 2,
-                  method: "thread/start",
-                  params: {
-                    config: {
-                      ...CodexAdapterV2.CODEX_THREAD_CONFIG,
-                      "features.apps": false,
-                      "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+            ? [
+                {
+                  type: "expect_outbound",
+                  label: "config/read",
+                  frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "config/read",
+                  frame: {
+                    id: 2,
+                    result: {
+                      config: { openai_base_url: "https://proxy.example/v1" },
+                      origins: {},
                     },
                   },
                 },
-              }
-            : entry,
+                {
+                  ...entry,
+                  frame: {
+                    id: 3,
+                    method: "thread/start",
+                    params: {
+                      config: {
+                        ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                        "features.apps": false,
+                        "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+                      },
+                    },
+                  },
+                },
+              ]
+            : entry.type === "emit_inbound" && entry.label === "thread/start"
+              ? [withReplayRequestId(entry, 3)]
+              : [entry],
         );
-      yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({ scenario, entries }),
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        undefined,
-        Effect.succeed(true),
-      );
+      yield* makeCodexReplayHarness(makeCodexReplayTranscript({ scenario, entries }));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -4124,7 +4148,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "cause.method",
           failAt === 4 ? "thread/unarchive" : "thread/resume",
         );
-        assert.nestedPropertyVal(error, "cause.requestId", String(failAt));
+        // The session's config/read before thread/resume shifts every later client id by one.
+        assert.nestedPropertyVal(error, "cause.requestId", String(failAt + 1));
         return;
       }
       const resumed = yield* resume;
