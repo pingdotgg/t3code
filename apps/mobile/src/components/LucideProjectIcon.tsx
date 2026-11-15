@@ -64,11 +64,10 @@ export function LucideProjectIcon({
       color={resolved.color}
       {...stroke}
     >
-      {lucideIconByName(name).map(([tag, attributes], index) => {
+      {lucideIconByName(name).map(([tag, attributes]) => {
         const Shape = Object.hasOwn(SHAPES, tag) ? SHAPES[tag as keyof typeof SHAPES] : null;
         if (!Shape) return null;
-        // oxlint-disable-next-line react/no-array-index-key -- An icon's shapes never reorder.
-        return <Shape key={index} {...stroke} {...attributes} />;
+        return <Shape key={JSON.stringify([tag, attributes])} {...stroke} {...attributes} />;
       })}
     </Svg>
   );
