@@ -350,7 +350,11 @@ export function renderGhosttySnapshot(options: {
         rowIndex <= hoveredLinkRange.end.y &&
         (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) &&
         (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
-      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
+      if (
+        !cell ||
+        cell.invisible ||
+        (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)
+      ) {
         continue;
       }
       context.fillStyle = cssColor(cell.foreground);
@@ -383,7 +387,7 @@ export function renderGhosttySnapshot(options: {
     } else {
       const cell = cells[snapshot.cursorX];
       context.fillRect(left, top, width, height);
-      if (cell?.text) {
+      if (cell?.text && !cell.invisible) {
         context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
