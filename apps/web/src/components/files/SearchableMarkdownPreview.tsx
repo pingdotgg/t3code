@@ -31,7 +31,7 @@ export function SearchableMarkdownPreview({
     setOpen(false);
     setQuery("");
     setResult({ matchCount: 0, activeIndex: 0 });
-    preview?.focus({ preventScroll: true });
+    content?.focus({ preventScroll: true });
   };
   const readQuery = useEffectEvent(() => query);
   const updateResult = useEffectEvent((next: typeof result) => {
@@ -85,7 +85,7 @@ export function SearchableMarkdownPreview({
                 "a, button, input, textarea, select, [tabindex], [contenteditable]",
               )
             : null;
-        if (!interactive || interactive === preview) preview?.focus({ preventScroll: true });
+        if (!interactive || interactive === preview) content?.focus({ preventScroll: true });
       }}
       onKeyDown={(event) => {
         if (
@@ -118,7 +118,7 @@ export function SearchableMarkdownPreview({
         onClose={close}
       />
       <ScrollArea className="min-h-0 flex-1" onKeyDown={onContentKeyDown}>
-        <div ref={setContent}>
+        <div ref={setContent} tabIndex={-1} className="outline-none">
           <MarkdownFindContext value={open && query.trim().length > 0}>
             {children}
           </MarkdownFindContext>

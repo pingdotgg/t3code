@@ -48,7 +48,9 @@ it("finds inline phrases, preserves Unicode offsets, and excludes controls and b
   expect(highlighted("t3-markdown-find")).toEqual([]);
   await userEvent.keyboard("{Escape}");
   await expect.element(input).not.toBeInTheDocument();
-  expect(document.activeElement).toBe(screen.container.querySelector("[data-markdown-preview]"));
+  expect(document.activeElement).toBe(
+    screen.container.querySelector('[data-slot="scroll-area-viewport"] [tabindex="-1"]'),
+  );
   expect(CSS.highlights.has("t3-markdown-find")).toBe(false);
   await act(() => {
     requestMarkdownFindOpen(paragraph);
