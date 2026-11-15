@@ -1,3 +1,4 @@
+import { issueStateLabel } from "@t3tools/client-runtime/issue-presentation";
 import type { IssueState, IssueTrackerKind } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { CircleCheckIcon, CircleDotIcon, CircleSlashIcon, TicketIcon } from "lucide-react";
@@ -34,25 +35,20 @@ export function issueStatePresentation(state: IssueState) {
   if (state.category === "open") {
     return {
       ...PULL_REQUEST_STATE_PRESENTATION.open,
-      label: state.name === "open" ? "Open" : state.name,
+      label: issueStateLabel(state),
       Icon: CircleDotIcon,
     };
   }
   if (state.closeReason === "not-planned") {
     return {
       ...PULL_REQUEST_STATE_PRESENTATION.draft,
-      label: "Closed as not planned",
+      label: issueStateLabel(state),
       Icon: CircleSlashIcon,
     };
   }
   return {
     ...PULL_REQUEST_STATE_PRESENTATION.merged,
-    label:
-      state.name === "closed"
-        ? state.closeReason === "completed"
-          ? "Closed as completed"
-          : "Closed"
-        : state.name,
+    label: issueStateLabel(state),
     Icon: CircleCheckIcon,
   };
 }
@@ -72,10 +68,4 @@ export function IssueStateGlyph({ state, className }: { state: IssueState; class
       <TooltipPopup>{presentation.label}</TooltipPopup>
     </Tooltip>
   );
-}
-
-/** "completed" → "Completed"; a reason the tracker spells with a dash reads as words. */
-export function issueCloseReasonLabel(reason: string): string {
-  const words = reason.replace(/[-_]+/g, " ").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
 }

@@ -1,23 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  issueEntryKey,
-  mergeIssueListErrors,
-  mergeIssueListPage,
-} from "@t3tools/client-runtime/state/issues";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+  continueIssuePage,
+  groupIssues,
+  holdIssuePages,
+  issueTrackerKey,
+  type HeldIssuePage,
+} from "@t3tools/client-runtime/issue-list";
+import { issueEntryKey } from "@t3tools/client-runtime/state/issues";
 import type {
   EnvironmentId,
   IssueInvolvement,
-  IssueListCursors,
-  IssueListEntry,
   IssueListInput,
-  IssueListProjectError,
-  IssueListResult,
   IssueListState,
   IssueTrackerKind,
   IssueTrackerSummary,
   ProjectId,
-  SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -33,11 +30,7 @@ import { Fragment, useEffect, useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
-import {
-  IssueRow,
-  type EnvironmentIssueEntry,
-  type IssueRowTarget,
-} from "~/components/issue/IssueRow";
+import { IssueRow, type IssueRowTarget } from "~/components/issue/IssueRow";
 import {
   issueListPreferences,
   writeIssueListPreferences,
@@ -84,7 +77,6 @@ import {
 } from "~/rightPanelStore";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useProjects } from "~/state/entities";
 import { useEnvironments, useIssuesSupported } from "~/state/environments";
 import { issueEnvironment, useIssueList, type IssueListTarget } from "~/state/issues";
@@ -129,104 +121,6 @@ function getShortcutContext() {
     isWeb: !isElectron,
     isDesktop: isElectron,
   };
-}
-
-/** Rows from every environment that answered, with any continuation pages laid over them. */
-interface HeldPage {
-  readonly answer: IssueListResult;
-  readonly entries: ReadonlyArray<IssueListEntry>;
-  readonly errors: ReadonlyArray<IssueListProjectError>;
-  readonly nextCursors: IssueListCursors;
-  /** Why the last "Load more" failed, until a retry succeeds or a new first page arrives. */
-  readonly moreFailure: string | null;
-}
-
-function trackerKey(tracker: Pick<IssueTrackerSummary, "tracker" | "host">): string {
-  return `${tracker.tracker} ${tracker.host.toLowerCase()}`;
-}
-
-/** Continuations are laid over the first page they continue; a new first page forgets them. */
-function holdPages(
-  answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>,
-  pages: ReadonlyMap<EnvironmentId, HeldPage>,
-): ReadonlyMap<EnvironmentId, HeldPage> {
-  const next = new Map<EnvironmentId, HeldPage>();
-  for (const [environmentId, answer] of answers) {
-    const previous = pages.get(environmentId);
-    next.set(
-      environmentId,
-      previous?.answer === answer
-        ? previous
-        : {
-            answer,
-            entries: answer.entries,
-            errors: answer.errors,
-            nextCursors: answer.nextCursors,
-            moreFailure: null,
-          },
-    );
-  }
-  return next;
-}
-
-function groupIssues(
-  held: ReadonlyMap<EnvironmentId, HeldPage>,
-  query: string,
-  projects: ReadonlyArray<EnvironmentProject>,
-) {
-  const byTracker = new Map<
-    string,
-    {
-      tracker: IssueTrackerSummary;
-      rows: EnvironmentIssueEntry[];
-      errors: Array<{ projectTitle: string; message: string; environmentId: EnvironmentId }>;
-      more: EnvironmentId[];
-    }
-  >();
-  const needle = query.toLowerCase();
-  for (const [environmentId, page] of held) {
-    for (const tracker of page.answer.trackers) {
-      const key = trackerKey(tracker);
-      if (!byTracker.has(key)) byTracker.set(key, { tracker, rows: [], errors: [], more: [] });
-      const group = byTracker.get(key)!;
-      if (!group.tracker.configured && tracker.configured) group.tracker = tracker;
-      if (Object.keys(page.nextCursors).some((c) => c.startsWith(`${tracker.host} `)))
-        group.more.push(environmentId);
-    }
-    for (const entry of page.entries) {
-      const key = trackerKey(entry);
-      const group = byTracker.get(key);
-      if (!group) continue;
-      // A tracker that cannot search is narrowed here instead.
-      if (
-        needle.length > 0 &&
-        group.tracker.capabilities?.search !== true &&
-        !entry.title.toLowerCase().includes(needle) &&
-        !entry.displayKey.toLowerCase().includes(needle)
-      )
-        continue;
-      group.rows.push({ ...entry, environmentId });
-    }
-    for (const error of page.errors) {
-      const project = projects.find(
-        (p) => p.environmentId === environmentId && p.id === error.projectId,
-      );
-      const kind = project?.repositoryIdentity?.provider as SourceControlProviderKind | undefined;
-      const host = kind
-        ? sourceControlClients.changeRequestHost(project?.repositoryIdentity, kind)
-        : null;
-      const group =
-        (host ? byTracker.get(`${kind} ${host.toLowerCase()}`) : undefined) ??
-        [...byTracker.values()][0];
-      group?.errors.push({ ...error, environmentId });
-    }
-  }
-  for (const group of byTracker.values()) {
-    group.rows.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
-  }
-  return [...byTracker.values()].sort((a, b) =>
-    trackerKey(a.tracker).localeCompare(trackerKey(b.tracker)),
-  );
 }
 
 function hostOptionsFor(groups: ReturnType<typeof groupIssues>) {
@@ -274,8 +168,8 @@ export function IssuesPage() {
   const list = useIssueList(targets);
   useLiveRefresh(list.refresh, { key: JSON.stringify(targets) });
 
-  const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldPage>>(new Map());
-  const held = holdPages(list.answers, pages);
+  const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
+  const held = holdIssuePages(list.answers, pages);
   const loadPage = useAtomCommand(issueEnvironment.listPage, { reportFailure: false });
   const [loadingMore, setLoadingMore] = useState<EnvironmentId | null>(null);
   const loadMore = async (environmentId: EnvironmentId) => {
@@ -292,18 +186,12 @@ export function IssuesPage() {
       const next = new Map(current);
       next.set(
         environmentId,
-        result._tag === "Failure"
-          ? {
-              ...page,
-              moreFailure: failure instanceof Error ? failure.message : "The next page failed.",
-            }
-          : {
-              answer: page.answer,
-              entries: mergeIssueListPage(page.entries, result.value.entries),
-              errors: mergeIssueListErrors(page.errors, result.value.errors),
-              nextCursors: result.value.nextCursors,
-              moreFailure: null,
-            },
+        continueIssuePage(
+          page,
+          result._tag === "Failure"
+            ? { failure: failure instanceof Error ? failure.message : "The next page failed." }
+            : result.value,
+        ),
       );
       return next;
     });
@@ -497,7 +385,7 @@ export function IssuesPage() {
         const presentation = issueTrackerPresentation(group.tracker.tracker);
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
         return (
-          <section key={trackerKey(group.tracker)} className="flex flex-col gap-1">
+          <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
             <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
               <presentation.Icon aria-hidden className="size-3.5" />
               {presentation.providerName}

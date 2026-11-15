@@ -1,12 +1,7 @@
 import type { IssueComment, IssueListEntry, IssueTrackerKind, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  issueEntryKey,
-  mergeIssueListErrors,
-  mergeIssueListPage,
-  prependIssueComments,
-} from "./issues.ts";
+import { issueEntryKey, mergeIssueListPage, prependIssueComments } from "./issues.ts";
 
 function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListEntry {
   return {
@@ -29,22 +24,6 @@ function entry(overrides: Partial<IssueListEntry> & { key: string }): IssueListE
     ...overrides,
   };
 }
-
-describe("mergeIssueListErrors", () => {
-  it("keeps earlier failures and lets a continuation's replace its project's", () => {
-    const api = "api" as ProjectId;
-    const web = "web" as ProjectId;
-    const held = [
-      { projectId: api, projectTitle: "api", message: "boom" },
-      { projectId: web, projectTitle: "web", message: "first" },
-    ];
-    const page = [{ projectId: web, projectTitle: "web", message: "rate limited" }];
-    expect(mergeIssueListErrors(held, page).map((error) => error.message)).toEqual([
-      "boom",
-      "rate limited",
-    ]);
-  });
-});
 
 describe("mergeIssueListPage", () => {
   it("keeps rows from scopes the page did not continue and orders by update", () => {

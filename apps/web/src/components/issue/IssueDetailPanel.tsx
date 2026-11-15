@@ -1,4 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  issueCloseReasonLabel,
+  issueEventSentence,
+  issueWriteAccess,
+} from "@t3tools/client-runtime/issue-presentation";
 import { prependIssueComments } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -71,11 +76,7 @@ import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
-import {
-  issueCloseReasonLabel,
-  issueStatePresentation,
-  issueTrackerPresentation,
-} from "./issuePresentation";
+import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
 
 /**
  * Links or unlinks the issue to the thread it is shown beside. Dispatches the orchestration
@@ -148,14 +149,6 @@ function IssueThreadLinkButton({
       <TooltipPopup>{linked ? "Unlink from this thread" : "Link to this thread"}</TooltipPopup>
     </Tooltip>
   );
-}
-
-/** Why a control is off, said once so each disabled affordance can point at it. */
-function writeBlockReason(detail: IssueDetail, canWrite: boolean): string | null {
-  if (!canWrite) return "Writing to this tracker needs the source-control write scope.";
-  if (!detail.writable)
-    return "This issue is outside every project's own scope, so it is read-only here.";
-  return null;
 }
 
 function IssueReactionBar({
@@ -395,31 +388,6 @@ function IssueAssigneePicker({
   );
 }
 
-function eventSentence(event: IssueEvent): string {
-  switch (event.kind) {
-    case "closed":
-      return event.detail
-        ? `closed this as ${issueCloseReasonLabel(event.detail).toLowerCase()}`
-        : "closed this";
-    case "reopened":
-      return "reopened this";
-    case "labeled":
-      return event.detail ? `added the ${event.detail} label` : "added a label";
-    case "unlabeled":
-      return event.detail ? `removed the ${event.detail} label` : "removed a label";
-    case "assigned":
-      return event.detail ? `assigned ${event.detail}` : "assigned someone";
-    case "unassigned":
-      return event.detail ? `unassigned ${event.detail}` : "unassigned someone";
-    case "renamed":
-      return event.detail ? `renamed this to “${event.detail}”` : "renamed this";
-    case "referenced":
-      return event.detail ? `referenced this from ${event.detail}` : "referenced this";
-    case "state-changed":
-      return event.detail ? `moved this to ${event.detail}` : "changed the state";
-  }
-}
-
 type TimelineItem =
   | { kind: "comment"; at: string; comment: IssueComment }
   | { kind: "event"; at: string; event: IssueEvent };
@@ -521,19 +489,16 @@ export function IssueDetailPanel({
     ...detail.events.map((e): TimelineItem => ({ kind: "event", at: e.createdAt, event: e })),
   ].sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 
-  const blocked = writeBlockReason(detail, canWrite);
-  const may = (capability: boolean, permission: boolean) =>
-    blocked === null && capability && permission;
-  const canComment = may(detail.capabilities.comment, detail.viewerPermissions.comment);
-  const canEdit = may(detail.capabilities.edit, detail.viewerPermissions.edit);
-  const canLabel = may(detail.capabilities.labels, detail.viewerPermissions.labels);
-  const canAssign = may(detail.capabilities.assignees, detail.viewerPermissions.assignees);
-  const canReact = blocked === null && detail.capabilities.reactions;
-  const canSetState = may(detail.capabilities.states.length > 0, detail.viewerPermissions.setState);
+  const access = issueWriteAccess(detail, canWrite);
+  const { blocked } = access;
+  const canComment = access.comment;
+  const canEdit = access.edit;
+  const canLabel = access.labels;
+  const canAssign = access.assignees;
+  const canReact = access.react;
+  const canSetState = access.states.length > 0;
+  const otherStates = access.states;
   const tracker = issueTrackerPresentation(detail.tracker);
-  const otherStates = detail.capabilities.states.filter(
-    (state) => state.category !== detail.state.category || state.name !== detail.state.name,
-  );
   const closingStates = otherStates.filter((state) => state.category === "closed");
   const openingStates = otherStates.filter((state) => state.category === "open");
 
@@ -943,7 +908,7 @@ export function IssueDetailPanel({
                   className="px-1 text-xs text-muted-foreground"
                 >
                   <PullRequestActorLabel actor={item.event.actor} />
-                  <span>{eventSentence(item.event)}</span>
+                  <span>{issueEventSentence(item.event)}</span>
                   <span>{formatRelativeTimeLabel(item.event.createdAt)}</span>
                 </PullRequestMetaLine>
               ),
