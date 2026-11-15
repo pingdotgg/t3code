@@ -24,7 +24,7 @@ export function ThreadHeader(props: {
   /** Present only on a delegated child the user may pop out. */
   readonly onPopOut?: () => void;
 }) {
-  const goBack = useWorkspaceBackNavigation("threads");
+  const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);

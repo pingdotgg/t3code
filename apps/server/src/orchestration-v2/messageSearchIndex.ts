@@ -18,7 +18,7 @@ export const nonPlaceholderMessageCondition = (sql: SqlClient.SqlClient, row = "
 
 /**
  * Exclude attachment placeholders, generated notices and subagent threads. ACP subagents
- * rewrite their finished answer on every streamed chunk.
+ * rewrite their finished answer while it streams.
  * Migration triggers, backfill, rebuild and scans share this predicate; `row` may be `new`.
  */
 export const indexedMessageCondition = (sql: SqlClient.SqlClient, row = "messages") =>
@@ -62,6 +62,10 @@ export const readableSearchText = (text: string) => {
 export const messageSearchText = (sql: SqlClient.SqlClient) =>
   sql.literal(readableText("messages"));
 
+/** What the index stores for a message, so a scan matches the folded query as the index does. */
+export const foldedMessageSearchText = (sql: SqlClient.SqlClient, row = "messages") =>
+  sql.literal(foldApostrophes(readableText(row)));
+
 /**
  * A message's stored text with apostrophes folded, what the index held before
  * migration 81. Migration 69's backfill uses it. `payload` is the message's
@@ -82,7 +86,7 @@ const indexedText = Effect.fn("MessageSearchIndex.indexedText")(function* (
     WHERE name = 'search_text'
   `;
   return column.length > 0
-    ? (row: string) => sql.literal(foldApostrophes(readableText(row)))
+    ? (row: string) => foldedMessageSearchText(sql, row)
     : (row: string) => indexedMessageText(sql, `${row}.payload_json`);
 });
 

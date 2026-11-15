@@ -218,3 +218,60 @@ it("opens on the active provider when every favorite belongs to a disabled provi
   await screen.getByRole("button", { name: "Choose model" }).click();
   await expect.element(page.getByRole("option", { name: /Codex model/ })).toBeVisible();
 });
+
+it("keeps the touch keyboard down while choosing a provider", async () => {
+  const entries = deriveProviderInstanceEntries(
+    ["Codex", "Claude"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.toLowerCase()),
+      driver: ProviderDriverKind.make(name.toLowerCase()),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [
+        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
+      ],
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+  const [codex] = entries;
+  const matchMedia = window.matchMedia.bind(window);
+  using _touch = vi.spyOn(window, "matchMedia").mockImplementation((query) =>
+    query === "(pointer: coarse)"
+      ? ({
+          matches: true,
+          media: query,
+          onchange: null,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+          addListener: () => {},
+          removeListener: () => {},
+          dispatchEvent: () => false,
+        } as MediaQueryList)
+      : matchMedia(query),
+  );
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={codex!.instanceId}
+      model="codex"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+  const search = page.getByPlaceholder("Search models...");
+  const popup = search.element().closest('[data-slot="popover-popup"]');
+  await vi.waitFor(() => expect(document.activeElement).toBe(popup));
+
+  await page.getByRole("button", { name: /^Claude/ }).click();
+  await expect.element(page.getByRole("option", { name: /Claude model/ })).toBeVisible();
+  await expect.element(search).not.toHaveFocus();
+});

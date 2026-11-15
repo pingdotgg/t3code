@@ -252,6 +252,24 @@ it.effect.each(["stopped", "error"] as const)(
     ),
 );
 
+it.effect("applies a model change on next turn after a settled thread's session detached", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const result = yield* service.plan({
+      projection: { ...deadNativeThreadProjection("stopped"), providerSessions: [] },
+      targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+    });
+    assert.equal(result.transition.type, "switch_model_in_session");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(
+    Effect.provide(
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, (input) =>
+        Effect.succeed(acpSelectionTransition(input)),
+      ),
+    ),
+  ),
+);
+
 it.effect("rejects a model change the dead record never negotiated support for", () =>
   Effect.gen(function* () {
     const service = yield* ProviderSwitch.ProviderSwitchServiceV2;

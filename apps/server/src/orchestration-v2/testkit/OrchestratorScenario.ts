@@ -14,6 +14,7 @@ import type {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -37,6 +38,8 @@ export type OrchestratorV2ScenarioStep =
   | {
       readonly type: "advance_clock";
       readonly duration: Duration.Input;
+      /** Wait until the jump idle-releases this thread's provider session. */
+      readonly awaitProviderSessionRelease?: ThreadId;
     }
   | {
       readonly type: "await";
@@ -272,9 +275,21 @@ export function runOrchestratorV2Scenario(
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const storedEventGroups: Array<ReadonlyArray<OrchestrationV2StoredEvent>> = [];
       const observedStoredEvents = yield* Ref.make<Array<OrchestrationV2StoredEvent>>([]);
+      let releaseWatch:
+        | { readonly threadId: ThreadId; readonly released: Deferred.Deferred<void> }
+        | undefined;
       yield* orchestrator.streamStoredEvents.pipe(
-        Stream.runForEach((event) =>
-          Ref.update(observedStoredEvents, (existing) => [...existing, event]),
+        Stream.runForEach((stored) =>
+          Ref.update(observedStoredEvents, (existing) => [...existing, stored]).pipe(
+            Effect.andThen(
+              releaseWatch !== undefined &&
+                stored.event.type === "provider-session.updated" &&
+                stored.event.threadId === releaseWatch.threadId &&
+                stored.event.payload.status === "stopped"
+                ? Deferred.succeed(releaseWatch.released, undefined)
+                : Effect.void,
+            ),
+          ),
         ),
         Effect.forkScoped,
       );
@@ -648,9 +663,28 @@ export function runOrchestratorV2Scenario(
             );
             break;
           }
-          case "advance_clock":
+          case "advance_clock": {
+            if (step.awaitProviderSessionRelease === undefined) {
+              yield* TestClock.adjust(step.duration);
+              break;
+            }
+            // The release runs on a woken fiber; a dispatch before it commits cancels it.
+            const released = yield* Deferred.make<void>();
+            releaseWatch = { threadId: step.awaitProviderSessionRelease, released };
             yield* TestClock.adjust(step.duration);
+            const settled = yield* Deferred.await(released).pipe(
+              Effect.timeoutOption(Duration.millis(SCENARIO_WAIT_DEADLINE_MS)),
+              Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+            );
+            releaseWatch = undefined;
+            if (Option.isNone(settled)) {
+              return yield* new OrchestratorV2ScenarioStepError({
+                scenario: scenario.name,
+                step: `advance_clock:${step.awaitProviderSessionRelease}:no_provider_session_release`,
+              });
+            }
             break;
+          }
           case "await":
             yield* awaitDispatch(step.key);
             break;
