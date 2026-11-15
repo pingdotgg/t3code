@@ -44,9 +44,8 @@ only offers the providers those sign-ins cover.
 
 ## When VMs stop
 
-A VM turns off 10 minutes after the last turn on any of its threads ends, so it never stops while
-another thread on it is still working. A connected machine holding the key stops it a minute early
-and first saves a copy of the VM's threads, provider sessions, and checkouts. A thread on a stopped
+A VM turns off once none of its threads has run a turn for 10 minutes. A connected machine
+holding the key stops it a minute early and first saves a copy of the VM's threads, provider sessions, and checkouts. A thread on a stopped
 VM shows it as sleeping. Your next message turns the same VM back on and the thread continues. If
 Boat deleted the VM, a new one starts from the saved copy. A phone keeps no copy, so it can only
 turn back on a VM that Boat still has. **Settings → Cloud** lists each VM, its

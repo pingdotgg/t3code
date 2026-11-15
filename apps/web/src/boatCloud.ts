@@ -179,14 +179,15 @@ export async function prepareBoatCloudProject(input: {
   if (attachFailure !== null) return fail(attachFailure);
   updateProgress(draftId, (progress) => completeStep(progress, "connect"));
 
-  // Uploads need the VM's server config, so the draft moves once both have arrived.
+  // Uploads need the VM's server config and the send needs its operate grant,
+  // so the draft moves once all three have arrived.
   const findProject = (projects: ReadonlyArray<EnvironmentProject>) =>
     projects.find(
       (project) =>
         project.environmentId === session.environmentId &&
         project.workspaceRoot === session.workspaceRoot,
     );
-  const [projectAppeared, configArrived] = await Promise.all([
+  const [projectAppeared, configArrived, grantArrived] = await Promise.all([
     waitForAtomValue({
       registry: appAtomRegistry,
       atom: environmentProjects.projectsAtom,
@@ -199,9 +200,15 @@ export async function prepareBoatCloudProject(input: {
       predicate: (configs) => configs.has(session.environmentId),
       timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
     }),
+    waitForAtomValue({
+      registry: appAtomRegistry,
+      atom: environmentSession.sessionStateAtom(session.environmentId),
+      predicate: (result) => sessionHasScope(result, AuthOrchestrationOperateScope),
+      timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
+    }),
   ]);
   const project = findProject(appAtomRegistry.get(environmentProjects.projectsAtom));
-  if (!projectAppeared || !configArrived || !project) {
+  if (!projectAppeared || !configArrived || !grantArrived || !project) {
     return fail("The VM did not open the project.");
   }
   updateProgress(draftId, (progress) => completeStep(progress, "project"));

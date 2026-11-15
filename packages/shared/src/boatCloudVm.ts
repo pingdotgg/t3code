@@ -172,11 +172,13 @@ echo "T3 Code did not start on this VM." >&2
 exit 1`;
 
 /**
- * First line `load1 cpus memTotalKb memAvailableKb`, then one line per
- * checkout under ~/projects as `owner/repo` directories.
+ * First line `load1 cpus memTotalKb memAvailableKb`, then one line per checkout
+ * under ~/projects, at `host/namespace/repo`. It does not look inside a checkout.
  */
 export const measureScript = `printf '%s %s %s %s\\n' "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
-for d in ${VM_HOME}/projects/*/*/.git; do [ -d "$d" ] && printf '%s\\n' "\${d%/.git}"; done; exit 0`;
+find ${VM_HOME}/projects -mindepth 3 -maxdepth 8 -type d -exec test -d '{}/.git' ';' -print -prune 2>/dev/null; exit 0`;
+
+export const BASE_BRANCH_MISSING_EXIT = 3;
 
 /**
  * Fails, naming the branch, when the clone in `$dir` has no remote copy of it.
@@ -188,7 +190,7 @@ export const baseBranchCheckScript = (baseBranch: string, repositoryName: string
     `git -C "$dir" rev-parse --verify --quiet ${q(`${ref}^{commit}`)} >/dev/null`;
   return `if ! ${has(`refs/remotes/origin/${baseBranch}`)} && ! ${has(`refs/remotes/${baseBranch}`)}; then
   echo ${q(`${baseBranch} is not on ${repositoryName}. Push it, or start from a pushed branch.`)} >&2
-  exit 3
+  exit ${BASE_BRANCH_MISSING_EXIT}
 fi`;
 };
 
@@ -197,7 +199,7 @@ export const checkoutScript = (repository: ParsedRepository, baseBranch: string 
 ${prepareVmScript}
 dir=${q(repository.workspaceRoot)}
 if [ -d "$dir/.git" ]; then
-  git -C "$dir" fetch --prune --quiet origin || true
+  git -C "$dir" fetch --prune --quiet origin
 else
   mkdir -p "$(dirname "$dir")"
   git clone --quiet ${q(repository.cloneUrl)} "$dir"
@@ -254,11 +256,12 @@ export function subdomainOfHttpBaseUrl(httpBaseUrl: string): string | null {
 const MAX_SHARED_USAGE = 0.5;
 
 export interface ParsedRepository {
-  /** Lowercase `host/owner/repo`, the same for every remote form of one repository. */
+  /** Lowercase `host/owner/repo`, the same for every remote form of one repository. Owner may nest. */
   readonly key: string;
   /** `owner/repo`, for display. */
   readonly name: string;
   readonly cloneUrl: string;
+  /** `~/projects/<key>`, so no two repositories share a checkout. */
   readonly workspaceRoot: string;
 }
 
@@ -297,12 +300,15 @@ export function parseRepository(remoteUrl: string): ParsedRepository | null {
   if (!host || segments.length < 2) return null;
   const repo = segments.at(-1)!;
   const owner = segments.slice(0, -1).join("/");
-  const safe = (value: string) => value.replace(SAFE_SEGMENT, "-");
+  const key = `${host}/${owner}/${repo}`.toLowerCase();
   return {
-    key: `${host}/${owner}/${repo}`.toLowerCase(),
+    key,
     name: `${owner}/${repo}`,
     cloneUrl: `https://${host}/${owner}/${repo}.git`,
-    workspaceRoot: `${VM_HOME}/projects/${safe(owner.replaceAll("/", "-"))}/${safe(repo)}`,
+    workspaceRoot: `${VM_HOME}/projects/${key
+      .split("/")
+      .map((segment) => segment.replace(SAFE_SEGMENT, "-"))
+      .join("/")}`,
   };
 }
 

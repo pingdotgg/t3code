@@ -13,6 +13,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BoatIcon } from "../../components/BoatIcon";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
@@ -96,6 +97,14 @@ export function SettingsCloudRouteScreen() {
 
   // A machine builds the snapshot with its own server and skills, so one speaks first.
   const machineHolder = holders.find((holder) => holder.status.connected) ?? null;
+  const machineSetupReady = machineHolder?.status.setup.status === "ready";
+  const phoneSetupReady = phone.setup.status === "ready";
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the phone reads the snapshot a machine just built from Boat, so it can start VMs once that machine disconnects
+  useEffect(() => {
+    if (machineSetupReady && !phoneSetupReady) void refreshPhoneBoatCloud();
+  }, [machineSetupReady, phoneSetupReady]);
+
   const status = machineHolder?.status ?? (phone.connected ? phone : null);
   const connected = status !== null;
   const setup = status?.setup ?? null;
@@ -144,7 +153,7 @@ export function SettingsCloudRouteScreen() {
   // The phone and every machine start their own VMs, so each keeps the same choice.
   const applyEnvironment = async (environmentId: string, access?: BoatCloudEnvironmentAccess) => {
     setEnvironmentBusy(true);
-    await Promise.all([
+    const [phoneError] = await Promise.all([
       phone.connected ? configurePhoneBoatCloudEnvironment(environmentId, access) : null,
       ...holders
         .filter((holder) => holder.status.connected)
@@ -155,6 +164,7 @@ export function SettingsCloudRouteScreen() {
           }),
         ),
     ]);
+    if (phoneError) Dialog.alert("Could not change this phone's Boat environment", phoneError);
     setEnvironmentBusy(false);
   };
 

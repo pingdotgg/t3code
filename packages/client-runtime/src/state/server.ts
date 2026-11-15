@@ -1789,7 +1789,8 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.boatCloudWake,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => `${environmentId}:${input.environmentId}`,
+        key: ({ environmentId, input }) =>
+          `${environmentId}:${input.environmentId}:${input.httpBaseUrl ?? ""}`,
       },
     }),
     createBot: createEnvironmentRpcCommand(runtime, {

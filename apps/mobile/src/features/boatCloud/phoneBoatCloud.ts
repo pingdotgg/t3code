@@ -78,8 +78,13 @@ const run = <A, E>(effect: Effect.Effect<A, E, HttpClient.HttpClient | MobileSec
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : "Boat could not be reached.";
 
+// Bumped once the key is stored or removed, so a refresh that read the old key drops its result.
+let keyGeneration = 0;
+
 /** Reads the key, the snapshot and the VMs from Boat. Leaves a setup in progress alone. */
 export function refreshPhoneBoatCloud(): Promise<void> {
+  const generation = keyGeneration;
+  const stale = () => generation !== keyGeneration;
   return run(
     Effect.gen(function* () {
       const api = yield* phoneApi;
@@ -95,6 +100,7 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         ],
         { concurrency: "unbounded" },
       );
+      if (stale()) return;
       const listed = Result.isSuccess(environments)
         ? cloudEnvironments(environments.success, Option.getOrNull(profiles))
         : [];
@@ -104,6 +110,7 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         yield* MobileSecureStorage.use((storage) =>
           storage.setItem(ENVIRONMENT_STORAGE_KEY, environment),
         );
+        if (stale()) return;
       }
       setStatus((status) => ({
         ...status,
@@ -137,7 +144,7 @@ export function refreshPhoneBoatCloud(): Promise<void> {
       Effect.catchTags({
         BoatApiError: (error) =>
           Effect.sync(() => {
-            if (error.code === "not_connected") setStatus(() => DISCONNECTED);
+            if (error.code === "not_connected" && !stale()) setStatus(() => DISCONNECTED);
           }),
       }),
     ),
@@ -164,11 +171,13 @@ export async function connectPhoneBoatCloud(apiKey: string): Promise<string | nu
   } catch (error) {
     return errorMessage(error);
   }
+  keyGeneration += 1;
   await refreshPhoneBoatCloud();
   return null;
 }
 
 export async function disconnectPhoneBoatCloud(): Promise<void> {
+  keyGeneration += 1;
   await run(
     MobileSecureStorage.use((storage) =>
       Effect.all([

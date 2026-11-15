@@ -17,6 +17,13 @@ const STEP_LABELS: Record<BoatCloudStartStep, string> = {
   thread: "Start the thread",
 };
 
+const STEP_STATE_LABELS: Record<BoatCloudStepProgress["state"], string> = {
+  pending: "Pending",
+  active: "In progress",
+  done: "Done",
+  failed: "Failed",
+};
+
 // Static on purpose: a start can take a minute, and a spinner repaints the whole time.
 function StepIcon({ state }: { readonly state: BoatCloudStepProgress["state"] }) {
   switch (state) {
@@ -42,6 +49,7 @@ function StartSteps({ steps }: { readonly steps: ReadonlyArray<BoatCloudStepProg
           className="flex min-w-0 items-center gap-2"
         >
           <StepIcon state={entry.state} />
+          <span className="sr-only">{STEP_STATE_LABELS[entry.state]}:</span>
           <Text variant="meta" tone={entry.state === "pending" ? "muted" : "default"} truncate>
             {STEP_LABELS[entry.step]}
           </Text>

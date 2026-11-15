@@ -15,8 +15,10 @@ const BOAT_API_URL = "https://boat.dev/api/v1";
 export class BoatApiError extends Schema.TaggedError<BoatApiError>()("BoatApiError", {
   status: Schema.Number,
   code: Schema.String,
+  /** Fixed or built from `code` and `status`; Boat's own text and VM output stay in `cause`. */
   message: Schema.String,
   retryable: Schema.Boolean,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 export const BoatSandbox = Schema.Struct({
@@ -142,8 +144,12 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
           new BoatApiError({
             status: response.status,
             code,
-            message: parsed?.message ?? `Boat answered ${response.status}.`,
+            message:
+              parsed?.code === undefined
+                ? `Boat answered ${response.status}.`
+                : `Boat answered ${response.status}: ${parsed.code}.`,
             retryable,
+            cause: json,
           }),
         );
       }),
@@ -156,20 +162,27 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
   ) =>
     http.execute(HttpClientRequest.bearerToken(request, apiKey)).pipe(
       Effect.mapError(
-        (error) =>
-          new BoatApiError({ status: 0, code: "network", message: error.message, retryable: true }),
+        (cause) =>
+          new BoatApiError({
+            status: 0,
+            code: "network",
+            message: "Could not reach Boat.",
+            retryable: true,
+            cause,
+          }),
       ),
       Effect.flatMap((response) =>
         response.status >= 200 && response.status < 300
           ? response.json.pipe(
               Effect.flatMap(Schema.decodeUnknownEffect(schema)),
               Effect.mapError(
-                () =>
+                (cause) =>
                   new BoatApiError({
                     status: response.status,
                     code: "invalid_response",
                     message: "Boat returned an unexpected response.",
                     retryable: false,
+                    cause,
                   }),
               ),
             )
@@ -191,10 +204,10 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
   const url = (path: string) => `${BOAT_API_URL}${path}`;
   const json = (method: "POST" | "PUT" | "PATCH", path: string, body: unknown) =>
     HttpClientRequest.make(method)(url(path)).pipe(HttpClientRequest.bodyJsonUnsafe(body));
-  const retryTransient = <A, R>(effect: Effect.Effect<A, BoatApiError, R>) =>
-    effect.pipe(
-      Effect.retry({ schedule: transientRetry, times: 15, while: (error) => error.retryable }),
-    );
+  const retryTransient = <A, R>(
+    effect: Effect.Effect<A, BoatApiError, R>,
+    retryable = (error: BoatApiError) => error.retryable,
+  ) => effect.pipe(Effect.retry({ schedule: transientRetry, times: 15, while: retryable }));
   const orNull = <A, R>(effect: Effect.Effect<A, BoatApiError, R>) =>
     effect.pipe(
       Effect.catchIf(
@@ -261,6 +274,8 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
           CommandResult,
           Duration.seconds(timeoutSeconds + 30),
         ),
+        // A dropped connection may follow a command Boat already ran, and commands are not idempotent.
+        (error) => error.retryable && error.code !== "network",
       ),
     writeFile: (id: string, path: string, content: string) =>
       retryTransient(

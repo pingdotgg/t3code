@@ -32,15 +32,23 @@ describe("parseRepository", () => {
       key: "github.com/pingdotgg/t3code",
       name: "pingdotgg/t3code",
       cloneUrl: "https://github.com/pingdotgg/t3code.git",
-      workspaceRoot: "/home/user/projects/pingdotgg/t3code",
+      workspaceRoot: "/home/user/projects/github.com/pingdotgg/t3code",
     });
   });
 
-  it("keeps nested group paths and rejects what cannot be cloned", () => {
-    assert.strictEqual(
-      parseRepository("https://gitlab.com/group/sub/app.git")?.workspaceRoot,
-      "/home/user/projects/group-sub/app",
-    );
+  it("gives repositories on other hosts or namespaces their own checkout, and rejects what cannot be cloned", () => {
+    const roots = [
+      "https://github.com/acme/app.git",
+      "https://gitlab.com/acme/app.git",
+      "https://gitlab.com/acme/tools/app.git",
+      "https://gitlab.com/acme-tools/app.git",
+    ].map((remote) => parseRepository(remote)?.workspaceRoot);
+    assert.deepStrictEqual(roots, [
+      "/home/user/projects/github.com/acme/app",
+      "/home/user/projects/gitlab.com/acme/app",
+      "/home/user/projects/gitlab.com/acme/tools/app",
+      "/home/user/projects/gitlab.com/acme-tools/app",
+    ]);
     assert.isNull(parseRepository("/home/me/local-repo"));
     assert.isNull(parseRepository("file:///home/me/repo"));
     assert.isNull(parseRepository("https://github.com/only-owner"));

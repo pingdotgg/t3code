@@ -13,6 +13,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import {
+  AuthOrchestrationOperateScope,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
@@ -107,6 +108,7 @@ import {
 import { usePrepareTriage } from "../triage/usePrepareTriage";
 import { useEnvironmentShellReadiness } from "../../state/shell";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { readEnvironmentScope } from "../../state/session";
 import {
   boatCloudMachinesAtom,
   prepareBoatCloudProject,
@@ -714,6 +716,17 @@ export function NewTaskFlowProvider(
     if (boatCloudSelected) return true;
     if (boatCloudStarter === null) {
       Dialog.alert("Boat cloud is not set up", "Finish setup in Settings, Cloud.");
+      return false;
+    }
+    // Send stays blocked on a connected machine this connection cannot operate.
+    const environmentId = selectedProject?.environmentId ?? null;
+    if (
+      environmentId !== null &&
+      connectedEnvironments.find((environment) => environment.environmentId === environmentId)
+        ?.connectionState === "connected" &&
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    ) {
+      Dialog.alert("Boat cloud is not available", "This connection cannot start tasks here.");
       return false;
     }
     if (boatCloudRepositoryUrl() === null) return false;

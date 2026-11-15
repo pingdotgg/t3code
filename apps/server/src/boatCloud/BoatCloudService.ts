@@ -15,6 +15,7 @@ import {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import {
   type BoatApi,
   BoatApiError,
@@ -113,16 +114,16 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
 const isBoatApiError = Schema.is(BoatApiError);
-const describe = (error: { readonly message: string }) => {
-  if (isBoatApiError(error) && error.status === 401) return "Boat rejected the API key.";
-  if (isBoatApiError(error) && error.status === 403) {
-    return `The Boat API key is missing access: ${error.message}`;
-  }
+/** Boat errors carry fixed or attribute-built messages; any other failure's text stays in `cause`. */
+const describe = (error: unknown) => {
+  if (!isBoatApiError(error)) return null;
+  if (error.status === 401) return "Boat rejected the API key.";
+  if (error.status === 403) return "The Boat API key is missing access.";
   return error.message;
 };
 
-const cloudError = (message: string) => (cause: { readonly message: string }) =>
-  new BoatCloudError({ message: `${message} ${describe(cause)}`.trim(), cause });
+const cloudError = (message: string) => (cause: unknown) =>
+  new BoatCloudError({ message: `${message} ${describe(cause) ?? ""}`.trim(), cause });
 
 const pendingSteps = (): Array<BoatCloudStepProgress> =>
   BOAT_CLOUD_START_STEPS.map((step) => ({ step, state: "pending", detail: null }));
@@ -175,6 +176,7 @@ const make = Effect.gen(function* () {
   let environmentsError: string | null = null;
   const starts = new Map<string, Array<BoatCloudStepProgress>>();
   const sweepLock = yield* Semaphore.make(1);
+  const registryLock = yield* Semaphore.make(1);
 
   const statusRef = yield* SubscriptionRef.make<BoatCloudStatus>({
     connected: false,
@@ -201,48 +203,56 @@ const make = Effect.gen(function* () {
       environmentsError: connected ? environmentsError : null,
     });
   });
-  const save = Effect.gen(function* () {
-    yield* fs.makeDirectory(directory, { recursive: true });
-    const temporary = `${statePath}.tmp`;
-    yield* fs.writeFileString(temporary, encodeStoredState(state));
-    yield* fs.rename(temporary, statePath);
-  }).pipe(
-    Effect.catchCause((cause) =>
-      Effect.logWarning("boat cloud could not save its state", { cause }),
-    ),
-  );
-  const commit = Effect.fnUntraced(function* (next: StoredState) {
+  /**
+   * Every registry change goes through here. The update reads the state as it is under the
+   * lock, so concurrent starts, wakes and sweeps never write back a stale copy. Untraced: the
+   * operation that changes the registry already has the span.
+   */
+  const commit = Effect.fnUntraced(function* (update: (current: StoredState) => StoredState) {
+    const next = update(state);
+    if (next === state) return;
     state = next;
-    yield* save;
+    yield* writeFileStringAtomically({
+      filePath: statePath,
+      contents: encodeStoredState(next),
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("boat cloud could not save its state", { cause }),
+      ),
+    );
     yield* publish;
-  });
+  }, registryLock.withPermits(1));
   const updateMachine = (sandboxId: string, patch: Partial<StoredMachine>) =>
-    commit({
-      ...state,
-      machines: state.machines.map((machine) =>
+    commit((current) => ({
+      ...current,
+      machines: current.machines.map((machine) =>
         machine.sandboxId === sandboxId ? { ...machine, ...patch } : machine,
       ),
-    });
+    }));
   const addMachine = (sandboxId: string) =>
-    state.machines.some((machine) => machine.sandboxId === sandboxId)
-      ? Effect.void
-      : commit({
-          ...state,
-          machines: [
-            ...state.machines,
-            {
-              sandboxId,
-              environmentId: null,
-              label: machineLabelOf(sandboxId),
-              httpBaseUrl: null,
-              state: "starting",
-              repositories: [],
-              backedUpAt: null,
-              acquiredAt: null,
-              environment: null,
-            },
-          ],
-        });
+    commit((current) =>
+      current.machines.some((machine) => machine.sandboxId === sandboxId)
+        ? current
+        : {
+            ...current,
+            machines: [
+              ...current.machines,
+              {
+                sandboxId,
+                environmentId: null,
+                label: machineLabelOf(sandboxId),
+                httpBaseUrl: null,
+                state: "starting",
+                repositories: [],
+                backedUpAt: null,
+                acquiredAt: null,
+                environment: null,
+              },
+            ],
+          },
+    );
   const findMachine = (sandboxId: string) =>
     state.machines.find((machine) => machine.sandboxId === sandboxId);
   const now = DateTime.now.pipe(Effect.map(DateTime.formatIso));
@@ -275,7 +285,7 @@ const make = Effect.gen(function* () {
         api.listEnvironments().pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
-              environmentsError = describe(error);
+              environmentsError = describe(error) ?? "Could not read the Boat environments.";
             }),
           ),
           Effect.option,
@@ -289,13 +299,23 @@ const make = Effect.gen(function* () {
     environments = cloudEnvironments(listed.value, Option.getOrNull(profiles));
     environmentsError = null;
     const fallback = listed.value.find((environment) => environment.isDefault)?.name ?? null;
-    if (state.environment === null && fallback !== null) {
-      yield* commit({ ...state, environment: fallback });
+    if (fallback !== null) {
+      yield* commit((current) =>
+        current.environment === null ? { ...current, environment: fallback } : current,
+      );
     }
   });
 
-  const transferFailure = (error: { readonly message: string }) =>
-    new BoatApiError({ status: 0, code: "transfer", message: error.message, retryable: false });
+  const transferFailure = (cause: unknown) =>
+    isBoatApiError(cause)
+      ? cause
+      : new BoatApiError({
+          status: 0,
+          code: "transfer",
+          message: "Could not copy files between this machine and the VM.",
+          retryable: false,
+          cause,
+        });
 
   const uploadFile = Effect.fn("BoatCloud.uploadFile")(function* (
     api: BoatApi,
@@ -327,41 +347,52 @@ const make = Effect.gen(function* () {
 
   /** Folds Boat's list into the registry: a VM deleted in Boat stays only while its backup can bring it back. */
   const reconcile = Effect.fn("BoatCloud.reconcile")(function* (api: BoatApi) {
+    // A VM added after the list was read is missing from it only because it is new.
+    const listedFrom = new Set(state.machines.map((machine) => machine.sandboxId));
     const sandboxes = yield* api.listSandboxes(MACHINE_LABEL_FILTER);
     const byId = new Map(sandboxes.map((sandbox) => [sandbox.id, sandbox]));
-    const machines: Array<StoredMachine> = [];
+    const backedUp = new Set<string>();
     for (const machine of state.machines) {
-      const sandbox = byId.get(machine.sandboxId);
-      byId.delete(machine.sandboxId);
-      if (sandbox) {
-        machines.push({
-          ...machine,
-          state: machineStateOf(sandbox.state),
-          environment: sandbox.environment ?? null,
-        });
-        continue;
-      }
-      if (machine.environmentId === null) continue;
+      if (byId.has(machine.sandboxId) || machine.environmentId === null) continue;
       const hasBackup = yield* fs
         .exists(backupPathOf(machine.environmentId))
         .pipe(Effect.orElseSucceed(() => false));
-      if (hasBackup) machines.push({ ...machine, state: "gone" });
+      if (hasBackup) backedUp.add(machine.sandboxId);
     }
-    // VMs another holder made with the same key are shared, but only swept there.
-    for (const sandbox of byId.values()) {
-      machines.push({
-        sandboxId: sandbox.id,
-        environmentId: null,
-        label: machineLabelOf(sandbox.id),
-        httpBaseUrl: null,
-        state: machineStateOf(sandbox.state),
-        repositories: [],
-        backedUpAt: null,
-        acquiredAt: null,
-        environment: sandbox.environment ?? null,
-      });
-    }
-    yield* commit({ ...state, machines });
+    yield* commit((current) => {
+      const machines: Array<StoredMachine> = [];
+      for (const machine of current.machines) {
+        const sandbox = byId.get(machine.sandboxId);
+        if (sandbox) {
+          machines.push({
+            ...machine,
+            state: machineStateOf(sandbox.state),
+            environment: sandbox.environment ?? null,
+          });
+        } else if (!listedFrom.has(machine.sandboxId)) {
+          machines.push(machine);
+        } else if (backedUp.has(machine.sandboxId)) {
+          machines.push({ ...machine, state: "gone" });
+        }
+      }
+      const known = new Set(current.machines.map((machine) => machine.sandboxId));
+      // VMs another holder made with the same key are shared, but only swept there.
+      for (const sandbox of byId.values()) {
+        if (known.has(sandbox.id)) continue;
+        machines.push({
+          sandboxId: sandbox.id,
+          environmentId: null,
+          label: machineLabelOf(sandbox.id),
+          httpBaseUrl: null,
+          state: machineStateOf(sandbox.state),
+          repositories: [],
+          backedUpAt: null,
+          acquiredAt: null,
+          environment: sandbox.environment ?? null,
+        });
+      }
+      return { ...current, machines };
+    });
   });
 
   /** Rebuilds a VM Boat deleted from the snapshot plus this machine's last backup of it. */
@@ -384,16 +415,16 @@ const make = Effect.gen(function* () {
     yield* uploadFile(api, created.id, VM_BACKUP_ARCHIVE, backupPathOf(environmentId));
     yield* exec(api, created.id, restoreScript, 600);
     // Same environment on a new VM: the new entry takes over the old one's history.
-    yield* commit({
-      ...state,
-      machines: state.machines
+    yield* commit((current) => ({
+      ...current,
+      machines: current.machines
         .filter((candidate) => candidate.sandboxId !== machine.sandboxId)
         .map((candidate) =>
           candidate.sandboxId === created.id
             ? { ...candidate, repositories: machine.repositories, backedUpAt: machine.backedUpAt }
             : candidate,
         ),
-    });
+    }));
     return created.id;
   });
 
@@ -416,6 +447,12 @@ const make = Effect.gen(function* () {
     api: BoatApi,
     machine: StoredMachine,
   ) {
+    // A start can hand the VM out again while the sweep probes or backs it up; it stays on then.
+    const handedOutAgain = () => {
+      const current = findMachine(machine.sandboxId);
+      return current?.state !== "running" || current.acquiredAt !== machine.acquiredAt;
+    };
+    if (handedOutAgain()) return;
     if (machine.environmentId !== null) {
       // The VM's own deadline is a minute away; the backup must not be cut off by it.
       yield* api.extend(machine.sandboxId, IDLE_TTL_SECONDS).pipe(Effect.ignore);
@@ -428,6 +465,7 @@ const make = Effect.gen(function* () {
         ),
       );
     }
+    if (handedOutAgain()) return;
     yield* api.stop(machine.sandboxId);
     yield* updateMachine(machine.sandboxId, { state: "stopped" });
     yield* Effect.logInfo("boat cloud stopped an idle VM", { sandboxId: machine.sandboxId });
@@ -472,7 +510,7 @@ const make = Effect.gen(function* () {
       timeout: Duration.minutes(2),
     });
     if (packed.code !== 0) {
-      return yield* vmFailure(`Could not pack skills: ${packed.stderr.trim()}`, "skills");
+      return yield* vmFailure("Could not pack this machine's skills.", "skills", packed.stderr);
     }
     yield* uploadFile(api, sandboxId, VM_SKILLS_ARCHIVE, archive);
     yield* fs.remove(archive).pipe(Effect.ignore);
@@ -520,7 +558,7 @@ const make = Effect.gen(function* () {
                   false,
                   Option.match(Cause.findErrorOption(cause), {
                     onNone: () => "Setup stopped.",
-                    onSome: describe,
+                    onSome: (error) => describe(error) ?? "Setup failed.",
                   }),
                 ),
               ),
@@ -603,7 +641,13 @@ const make = Effect.gen(function* () {
         }),
       ),
       // Clients title this failure "Could not start on Boat cloud", so the message is just the cause.
-      Effect.mapError((cause) => new BoatCloudError({ message: describe(cause), cause })),
+      Effect.mapError(
+        (cause) =>
+          new BoatCloudError({
+            message: describe(cause) ?? "Something went wrong on Boat.",
+            cause,
+          }),
+      ),
     );
   });
 
@@ -661,7 +705,7 @@ const make = Effect.gen(function* () {
       const chosen = environments.find((environment) => environment.id === input.environmentId);
       if (!chosen) return yield* vmFailure("Boat has no such environment.");
       // VMs already running keep theirs; only new ones start on the choice.
-      yield* commit({ ...state, environment: chosen.name });
+      yield* commit((current) => ({ ...current, environment: chosen.name }));
       return yield* SubscriptionRef.get(statusRef);
     }).pipe(Effect.mapError(cloudError("Could not change the Boat environment.")));
   });
@@ -673,9 +717,13 @@ const make = Effect.gen(function* () {
       .set(API_KEY_SECRET, textEncoder.encode(input.apiKey))
       .pipe(Effect.mapError(cloudError("Could not save the Boat API key.")));
     yield* refreshSnapshot(api);
-    // Another account's environment names mean nothing to this key.
-    const sameAccount = state.account === account;
-    yield* commit({ ...state, account, environment: sameAccount ? state.environment : null });
+    // Another account's environments, VMs and backups mean nothing to this key; a wake
+    // must never restore one account's backup onto another's VM.
+    yield* commit((current) =>
+      current.account === account
+        ? current
+        : { ...current, account, environment: null, machines: [] },
+    );
     yield* refreshEnvironments(api);
     return yield* SubscriptionRef.get(statusRef);
   });
@@ -686,7 +734,8 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(cloudError("Could not remove the Boat API key.")));
     snapshotReady = false;
     setup = { status: "idle", step: null, error: null };
-    yield* commit({ ...state, account: null });
+    // The account stays recorded, so reconnecting it keeps its VMs and backups.
+    yield* publish;
     return yield* SubscriptionRef.get(statusRef);
   }).pipe(Effect.withSpan("BoatCloud.disconnect"));
 

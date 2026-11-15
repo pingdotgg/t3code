@@ -82,6 +82,7 @@ function useKeyHolders(vmEnvironmentIds: ReadonlySet<EnvironmentId>) {
   return environments.filter(
     (environment) =>
       environment.connection.phase === "connected" &&
+      !environment.boatCloud &&
       !vmEnvironmentIds.has(environment.environmentId),
   );
 }

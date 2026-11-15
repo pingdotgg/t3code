@@ -11,8 +11,14 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
-import { type BoatApi, BoatApiError, type BoatSandbox } from "./boatCloudApi.ts";
 import {
+  type BoatApi,
+  BoatApiError,
+  type BoatCommandResult,
+  type BoatSandbox,
+} from "./boatCloudApi.ts";
+import {
+  BASE_BRANCH_MISSING_EXIT,
   IDLE_TTL_SECONDS,
   type MachineCandidate,
   MACHINE_LABEL_FILTER,
@@ -45,22 +51,34 @@ const decodePairing = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ credential: Schema.String })),
 );
 
-export const vmFailure = (message: string, code = "vm") =>
-  new BoatApiError({ status: 0, code, message, retryable: false });
+export const vmFailure = (message: string, code = "vm", cause?: unknown) =>
+  new BoatApiError({ status: 0, code, message, retryable: false, cause });
 
-export const exec = (api: BoatApi, sandboxId: string, script: string, timeoutSeconds = 120) =>
+/** The command's output stays in `cause`; `failure` names what did not work. */
+const commandFailure = (result: BoatCommandResult, failure?: string) =>
+  vmFailure(
+    failure ??
+      (result.timedOut
+        ? "A command on the VM timed out."
+        : `A command on the VM exited with ${result.exitCode}.`),
+    "vm",
+    result,
+  );
+
+export const exec = (
+  api: BoatApi,
+  sandboxId: string,
+  script: string,
+  timeoutSeconds = 120,
+  failure?: string,
+) =>
   api
     .exec(sandboxId, script, timeoutSeconds)
     .pipe(
       Effect.flatMap((result) =>
         result.exitCode === 0
           ? Effect.succeed(result.stdout ?? "")
-          : Effect.fail(
-              vmFailure(
-                (result.stderr ?? "").trim().split("\n").slice(-3).join(" ") ||
-                  `A command on the VM exited with ${result.exitCode}.`,
-              ),
-            ),
+          : Effect.fail(commandFailure(result, failure)),
       ),
     );
 
@@ -79,7 +97,7 @@ export const waitRunning = (api: BoatApi, sandboxId: string) =>
   );
 
 const ensureServer = (api: BoatApi, sandboxId: string) =>
-  exec(api, sandboxId, ensureServerScript, 90).pipe(
+  exec(api, sandboxId, ensureServerScript, 90, "T3 Code did not start on the VM.").pipe(
     Effect.flatMap((output) =>
       Option.match(decodeDescriptor(output), {
         onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not describe itself.")),
@@ -98,7 +116,13 @@ const hostServer = (api: BoatApi, sandboxId: string) =>
   );
 
 const pair = (api: BoatApi, sandboxId: string, workspaceRoot: string | null) =>
-  exec(api, sandboxId, addProjectAndPairScript(workspaceRoot, "Boat cloud")).pipe(
+  exec(
+    api,
+    sandboxId,
+    addProjectAndPairScript(workspaceRoot, "Boat cloud"),
+    120,
+    "T3 Code on the VM did not issue a pairing code.",
+  ).pipe(
     Effect.flatMap((output) =>
       Option.match(decodePairing(output), {
         onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not issue a pairing code.")),
@@ -109,14 +133,40 @@ const pair = (api: BoatApi, sandboxId: string, workspaceRoot: string | null) =>
 
 const GIT_AUTH_FAILURE = /could not read Username|Authentication failed|Repository not found/u;
 
-/** Boat clones with the GitHub access set up in its dashboard; without it git only says it cannot log in. */
-const cloneFailure = (error: BoatApiError, name: string) =>
-  GIT_AUTH_FAILURE.test(error.message)
-    ? vmFailure(
-        `Boat cannot clone ${name}. Connect GitHub in the Boat dashboard, under Environments.`,
-        "clone",
-      )
-    : error;
+/**
+ * Clones or refreshes the checkout. Boat clones with the GitHub access set up in its
+ * dashboard; without it git only says it cannot log in.
+ */
+const checkout = (
+  api: BoatApi,
+  sandboxId: string,
+  repository: ParsedRepository,
+  baseBranch: string | null,
+) =>
+  api.exec(sandboxId, checkoutScript(repository, baseBranch), 600).pipe(
+    Effect.flatMap((result) => {
+      if (result.exitCode === 0) return Effect.void;
+      if (baseBranch !== null && result.exitCode === BASE_BRANCH_MISSING_EXIT) {
+        return Effect.fail(
+          vmFailure(
+            `${baseBranch} is not on ${repository.name}. Push it, or start from a pushed branch.`,
+            "base_branch",
+            result,
+          ),
+        );
+      }
+      if (GIT_AUTH_FAILURE.test(result.stderr ?? "")) {
+        return Effect.fail(
+          vmFailure(
+            `Boat cannot clone ${repository.name}. Connect GitHub in the Boat dashboard, under Environments.`,
+            "clone",
+            result,
+          ),
+        );
+      }
+      return Effect.fail(commandFailure(result, `Could not get ${repository.name} on the VM.`));
+    }),
+  );
 
 export type ReportStep = (
   step: BoatCloudStartStep,
@@ -256,9 +306,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
         report,
         "repository",
         repository.name,
-        exec(api, sandboxId, checkoutScript(repository, input.baseBranch), 600).pipe(
-          Effect.mapError((error) => cloneFailure(error, repository.name)),
-        ),
+        checkout(api, sandboxId, repository, input.baseBranch),
       ),
     ],
     { concurrency: 2 },

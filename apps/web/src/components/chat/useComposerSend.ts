@@ -1627,6 +1627,9 @@ export function useComposerSend(input: ComposerSendInput) {
       sendInFlightRef.current = false;
     });
     if (!ready) return;
+    // A draft's instance is keyed by its draft, so a route change there is the same draft moving
+    // or promoting. A server thread's instance is reused across threads, so it must still be here.
+    if (draftId === null && currentRouteThreadKeyRef.current !== routeThreadKey) return;
     // A woken VM's connection lands in a store update; commit it so the send reads it.
     flushSync(() => {});
     await onSendLatest(...args);

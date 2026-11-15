@@ -57,6 +57,24 @@ export function connectionFloatingStatus(input: {
   readonly boatCloudSleep?: "sleeping" | "waking" | null;
 }): FloatingWorkingStatus | null {
   const environmentLabel = input.environmentLabel ?? "Environment";
+  const unavailable = (label: string): FloatingWorkingStatus => ({
+    kind: "connection",
+    tone: "unavailable",
+    label,
+    onPress: input.onReconnect,
+  });
+
+  // A Boat VM reads as asleep in any unconnected phase, so a real diagnostic outranks it.
+  if (input.connectionState === "offline") return unavailable("You are offline");
+  if (input.connectionState === "unsupported") return unavailable("Client not supported");
+  if (input.connectionState === "reconnecting" && input.connectionAwaitingApproval) {
+    return {
+      kind: "connection",
+      tone: "reconnecting",
+      label: `Waiting for ${environmentLabel} to approve this device`,
+      onPress: input.onReconnect,
+    };
+  }
   if (input.boatCloudSleep === "waking") {
     return {
       kind: "connection",
@@ -73,21 +91,6 @@ export function connectionFloatingStatus(input: {
       onPress: input.onReconnect,
     };
   }
-  const unavailable = (label: string): FloatingWorkingStatus => ({
-    kind: "connection",
-    tone: "unavailable",
-    label,
-    onPress: input.onReconnect,
-  });
-
-  if (input.connectionState === "reconnecting" && input.connectionAwaitingApproval) {
-    return {
-      kind: "connection",
-      tone: "reconnecting",
-      label: `Waiting for ${environmentLabel} to approve this device`,
-      onPress: input.onReconnect,
-    };
-  }
   switch (input.connectionState) {
     case "connecting":
     case "reconnecting":
@@ -100,10 +103,6 @@ export function connectionFloatingStatus(input: {
             : `Failed to connect. Retrying ${environmentLabel}...`,
         onPress: input.onReconnect,
       };
-    case "offline":
-      return unavailable("You are offline");
-    case "unsupported":
-      return unavailable("Client not supported");
     case "error":
       return unavailable(
         input.connectionError
