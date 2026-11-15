@@ -177,7 +177,8 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string, rowWidth:
     animatesLayout ? withTiming(height, COMPOSER_TIMING) : height,
   );
   const containerStyle = useAnimatedStyle(() => ({
-    height: interpolate(expansion.value, [0, 1], [compactRowHeight, editorHeight.value + 52]),
+    height:
+      editorHeight.value + interpolate(expansion.value, [0, 1], [compactRowHeight - minimum, 52]),
   }));
   const isRTL = I18nManager.isRTL;
   const editorStyle = useAnimatedStyle(() => {
