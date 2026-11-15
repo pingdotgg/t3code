@@ -105,36 +105,47 @@ const layerTest = (input: {
 };
 
 // macOS command lookup cannot search a Windows drive-letter PATH.
-it.effect.skipIf(windowsHost)(
-  "opens home-relative app bundles using the server home directory",
-  () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
-      yield* fs.writeFileString(path.join(bin, "open"), "#!/bin/sh\n");
-      yield* fs.chmod(path.join(bin, "open"), 0o755);
-      const spawned: ChildProcess.StandardCommand[] = [];
-      yield* Effect.gen(function* () {
-        const launcher = yield* ExternalLauncher.ExternalLauncher;
-        for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-          yield* launcher.launchEditor({ editor: "file-manager", cwd });
-        }
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            platform: "darwin",
-            env: { PATH: bin },
-            onSpawn: (command) => spawned.push(command),
-          }),
-        ),
-        Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
-      );
-      assert.deepEqual(
-        spawned.map((command) => command.args),
-        [["/Users/server/Applications/My App.app"], ["/Applications/My App.app"]],
-      );
-    }).pipe(Effect.provide(NodeServices.layer)),
+it.effect.skipIf(windowsHost)("opens home-relative targets using the server home directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const bin = yield* fs.makeTempDirectoryScoped({ prefix: "t3-app-open-" });
+    for (const name of ["open", "code", "idea"]) {
+      yield* fs.writeFileString(path.join(bin, name), "#!/bin/sh\n");
+      yield* fs.chmod(path.join(bin, name), 0o755);
+    }
+    const spawned: ChildProcess.StandardCommand[] = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      }
+      yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
+      yield* launcher.launchEditor({
+        editor: "idea",
+        cwd: "~/notes/todo.md:3",
+        projectRoot: "~/notes",
+      });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: bin },
+          onSpawn: (command) => spawned.push(command),
+        }),
+      ),
+      Effect.provideService(HostProcess.HomeDirectory, "/Users/server"),
+    );
+    assert.deepEqual(
+      spawned.map((command) => command.args),
+      [
+        ["/Users/server/Applications/My App.app"],
+        ["/Applications/My App.app"],
+        ["--goto", "/Users/server/notes/todo.md:3"],
+        ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
+      ],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(windowsHost)(
@@ -341,6 +352,39 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
     assert.equal(spawned.options.shell, true);
     assert.equal(spawned.options.detached, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+const wslpathSpawner = (out: string | undefined) =>
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        if (!ChildProcess.isStandardCommand(command)) {
+          throw new Error("Expected a standard command");
+        }
+        assert.equal(command.command, "wslpath");
+        return makeMockDetachedHandle(
+          out === undefined ? { exitCode: 1 } : { exitCode: 0, stdout: `${out}\n` },
+        );
+      }),
+    ),
+  );
+
+it.effect.each([
+  // wslpath is mount-aware: a drive remapped in /etc/wsl.conf keeps its real letter.
+  { target: "/mnt/d/project", wslpath: "E:\\project", expected: "E:\\project" },
+  // wslpath missing or failing falls back to the hand-built UNC path.
+  {
+    target: "/home/user/repo",
+    wslpath: undefined,
+    expected: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\user\\repo",
+  },
+  { target: "/", wslpath: undefined, expected: "\\\\wsl.localhost\\Ubuntu-24.04" },
+])("resolveWslFileManagerPath resolves $target to $expected", ({ target, wslpath, expected }) =>
+  Effect.gen(function* () {
+    const result = yield* ExternalLauncher.resolveWslFileManagerPath(target, "Ubuntu-24.04");
+    assert.equal(result, expected);
+  }).pipe(Effect.provide(wslpathSpawner(wslpath))),
 );
 
 it.live.skipIf(!windowsHost)("opens Windows folders through the default shell handler", () =>
