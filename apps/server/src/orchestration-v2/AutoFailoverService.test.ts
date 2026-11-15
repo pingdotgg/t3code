@@ -71,19 +71,27 @@ describe("autoFailoverPlan", () => {
     expect(result?.cooldownUntilMs).toBe(now + 5 * 60_000);
   });
 
-  it("leaves other failures, non-Auto threads and stale runs alone", () => {
+  it("moves a hand-picked thread to Auto at the level its model implies", () => {
+    const picked = (model: string) =>
+      shell({ modelSelection: { instanceId: ProviderInstanceId.make("grok"), model } });
+    expect(plan(picked("grok-4.7"))?.command.modelSelection).toEqual({
+      instanceId: "grok",
+      model: "auto-medium",
+    });
+    expect(plan(picked("claude-fable-5-2"))?.command.modelSelection?.model).toBe("auto-high");
+    expect(plan(picked("claude-haiku-5-5"))?.command.modelSelection?.model).toBe("auto-low");
+    // A delegated thread keeps the model its parent chose.
+    const delegated = {
+      rootThreadId: ThreadId.make("t0"),
+      parentThreadId: ThreadId.make("t0"),
+      relationshipToParent: "subagent",
+    };
+    expect(plan(shell({ ...picked("grok-4.7"), lineage: delegated }))).toBeNull();
+  });
+
+  it("leaves other failures and stale runs alone", () => {
     expect(
       plan(shell({ lastErrorClass: "provider_error", lastErrorCode: "api_error_404" })),
-    ).toBeNull();
-    expect(
-      plan(
-        shell({
-          modelSelection: {
-            instanceId: ProviderInstanceId.make("claudeAgent"),
-            model: "claude-opus-5-5",
-          },
-        }),
-      ),
     ).toBeNull();
     expect(plan(shell({ latestRunId: RunId.make("run:newer") }))).toBeNull();
     expect(plan(shell({ status: "idle" }))).toBeNull();
