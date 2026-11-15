@@ -123,12 +123,11 @@ function ThreadLineageRowList(props: {
   return (
     <>
       {/* ScrollArea's max-height viewport measures badly inside this scrolling panel. */}
-      {/* The cap fits whole 2rem rows so the last row is never clipped. */}
       <ul
         ref={listRef}
         tabIndex={-1}
         aria-label="Related threads"
-        className="m-0 max-h-[14rem] list-none overflow-y-auto scrollbar-gutter-stable p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none overflow-y-auto p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
