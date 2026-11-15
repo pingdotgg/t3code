@@ -51,6 +51,7 @@ import { vcsEnvironment } from "../../state/vcs";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
@@ -95,7 +96,10 @@ import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-
 import { threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
-import { projectThreadContentPresentation } from "./threadContentPresentation";
+import {
+  projectThreadContentPresentation,
+  threadSyncStatusLabel,
+} from "./threadContentPresentation";
 import {
   Inspector,
   useAdaptiveWorkspaceLayout,
@@ -944,14 +948,6 @@ function ThreadRouteContent(
       serverOwned: false,
     };
   })();
-  if (!environmentId || !threadId) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
-  if (!selectedThread) {
-    return <OpeningThreadLoadingScreen />;
-  }
-
   // Queued creation displays its prompt before server creation; temporary not-found is expected.
   const contentPresentation =
     creationState !== null
@@ -962,6 +958,19 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
+  // Shown in the header subtitle so the composer's status slot doesn't jump while history syncs.
+  const threadSyncLabel = useDelayedStatus(
+    selectedThread === null ? "" : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
+    threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind),
+  );
+  if (!environmentId || !threadId) {
+    return <OpeningThreadLoadingScreen />;
+  }
+
+  if (!selectedThread) {
+    return <OpeningThreadLoadingScreen />;
+  }
+
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = () => (
     <>
@@ -977,7 +986,7 @@ function ThreadRouteContent(
             props.inspectorPresentation ? null : (
               <ThreadHeader
                 title={selectedThread.title}
-                subtitle={headerSubtitle}
+                subtitle={threadSyncLabel ?? headerSubtitle}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}
@@ -1043,7 +1052,6 @@ function ThreadRouteContent(
           respondingUserInputId={requests.respondingUserInputId}
           connectionStateLabel={routeConnectionState}
           connectionAwaitingApproval={routeEnvironmentRuntime?.connectionAwaitingApproval === true}
-          threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
