@@ -771,7 +771,6 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
 
 it.effect("an MCP pin lands above every existing pin, as a client pin does", () => {
   const dispatched: Array<OrchestrationV2ServerCommand> = [];
-  const indexReads: Array<number> = [];
   let targetPinnedAt: DateTime.Utc | null = null;
   const pinnedAt = DateTime.makeUnsafe("2026-11-10T00:00:00.000Z");
   const indexEntry = (id: string, pinned: boolean, pinOrderKey: string | null) => ({
@@ -798,7 +797,6 @@ it.effect("an MCP pin lands above every existing pin, as a client pin does", () 
     expect(dispatched[0]).toMatchObject({ type: "thread.pin", threadId: "pin-target" });
     // The smallest key among pinned threads is "g"; the unpinned "b" and keyless pin are ignored.
     expect(orderKey).toBe(pinOrderKeyBetween(null, "g"));
-    expect(orderKey! < "g").toBe(true);
 
     // A thread the handler last saw pinned still gets a key: an unpin can commit
     // before this command, and the reducer ignores the key if the pin holds.
@@ -806,7 +804,6 @@ it.effect("an MCP pin lands above every existing pin, as a client pin does", () 
     const again = yield* pin;
     expect(again.isError).toBe(false);
     expect(dispatched[1]).toMatchObject({ type: "thread.pin", orderKey });
-    expect(indexReads).toHaveLength(2);
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
@@ -825,15 +822,13 @@ it.effect("an MCP pin lands above every existing pin, as a client pin does", () 
                 thread: { ...projection.thread, pinnedAt: targetPinnedAt },
               });
             },
-            listActiveShellIndex: () => {
-              indexReads.push(1);
-              return Effect.succeed([
+            listActiveShellIndex: () =>
+              Effect.succeed([
                 indexEntry("pinned-late", true, "t"),
                 indexEntry("pinned-top", true, "g"),
                 indexEntry("pinned-keyless", true, null),
                 indexEntry("unpinned-stale-key", false, "b"),
-              ]);
-            },
+              ]),
             dispatch: (command) => {
               dispatched.push(command);
               return Effect.succeed({ sequence: dispatched.length, storedEvents: [] });

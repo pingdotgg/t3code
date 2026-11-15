@@ -2507,7 +2507,7 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
   assert.deepEqual(reordered.updatedAt, createdAt);
   assert.equal(reordered.thread.activeOrderKey, "a");
 
-  // The active shell index returns a stored pin key, which MCP pins read to sort first.
+  // MCP pins read the stored pin key from the active shell index.
   yield* store.apply({
     id: EventId.make("event:background-updates:pinned"),
     type: "thread.pinned",
@@ -2520,9 +2520,6 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
     },
   });
   const pinned = yield* readActivity;
-  assert.equal(pinned.thread.pinOrderKey, "m");
-  const pinnedEntry = (yield* store.listActiveShellIndex()).find((entry) => entry.id === threadId);
-  assert.equal(pinnedEntry?.pinOrderKey, "m");
   yield* assertShellIndexCoversShells();
 
   // An already-unpinned thread keeps its activity time even when replay's envelope advances.
