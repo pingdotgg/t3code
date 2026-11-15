@@ -26,6 +26,11 @@ class ClaudeSessionRelocationError extends Schema.TaggedError<ClaudeSessionReloc
   },
 ) {}
 
+export class ClaudeSessionRelocationRecordError extends Schema.TaggedError<ClaudeSessionRelocationRecordError>()(
+  "ClaudeSessionRelocationRecordError",
+  { cause: Schema.Defect() },
+) {}
+
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeSessionRecord = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ sessionId: Schema.String })),
@@ -216,28 +221,30 @@ export const relocateClaudeSessionStorage = Effect.fn(
   yield* relocateClaudeTranscript(environment, request, lastAttempt).pipe(
     Effect.annotateLogs({ threadId }),
   );
-  const { providerThreads } =
-    yield* (yield* ThreadManagementService.ThreadManagementService).getThreadRecords(threadId, [
-      "providerThreads",
-    ]);
-  const providerThread = providerThreads.find((row) => row.id === request.providerThreadId);
-  if (providerThread === undefined) return;
-  const now = yield* DateTime.now;
-  const { committed } = yield* (yield* EventSink.EventSinkV2).writeIfProviderThreadUnchanged({
-    expected: providerThread,
-    events: [
-      {
-        id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({ threadId }),
-        type: "provider-thread.updated",
-        threadId,
-        driver: providerThread.driver,
-        providerInstanceId: providerThread.providerInstanceId,
-        occurredAt: now,
-        payload: { ...providerThread, nativeStorageFolder: request.newFolder, updatedAt: now },
-      },
-    ],
-  });
-  if (!committed) {
-    return yield* new ClaudeSessionRelocationError({ reason: "provider-thread-changed" });
-  }
+  yield* Effect.gen(function* () {
+    const { providerThreads } =
+      yield* (yield* ThreadManagementService.ThreadManagementService).getThreadRecords(threadId, [
+        "providerThreads",
+      ]);
+    const providerThread = providerThreads.find((row) => row.id === request.providerThreadId);
+    if (providerThread === undefined) return;
+    const now = yield* DateTime.now;
+    const { committed } = yield* (yield* EventSink.EventSinkV2).writeIfProviderThreadUnchanged({
+      expected: providerThread,
+      events: [
+        {
+          id: yield* (yield* IdAllocator.IdAllocatorV2).allocate.event({ threadId }),
+          type: "provider-thread.updated",
+          threadId,
+          driver: providerThread.driver,
+          providerInstanceId: providerThread.providerInstanceId,
+          occurredAt: now,
+          payload: { ...providerThread, nativeStorageFolder: request.newFolder, updatedAt: now },
+        },
+      ],
+    });
+    if (!committed) {
+      return yield* new ClaudeSessionRelocationError({ reason: "provider-thread-changed" });
+    }
+  }).pipe(Effect.mapError((cause) => new ClaudeSessionRelocationRecordError({ cause })));
 });

@@ -69,6 +69,16 @@ function isNonRetryableProviderTurnControlFailure(effectType: string, errorText:
 const ownsStartingRun = (effectType: EffectOutbox.OrchestrationEffectV2["request"]["type"]) =>
   effectType === "provider-turn.start" || effectType === "provider-turn.restart";
 
+const isRelocationRecordError = Schema.is(
+  ClaudeSessionRelocation.ClaudeSessionRelocationRecordError,
+);
+const needsRelocationRecord = (cause: Cause.Cause<unknown>) =>
+  Cause.findErrorOption(cause).pipe(
+    Option.exists(
+      (error) => isOrchestrationEffectExecutionError(error) && isRelocationRecordError(error.cause),
+    ),
+  );
+
 const cannotSettleRun = (cause: Cause.Cause<unknown>) =>
   Cause.findErrorOption(cause).pipe(
     Option.exists(
@@ -722,7 +732,7 @@ export const layerExecutor: Layer.Layer<
               // The thread's turns go on: Claude resumes the session by id from the folder it
               // is still stored in, and the provider thread keeps that folder on record.
               Effect.tapError((cause) =>
-                willRetry
+                willRetry || isRelocationRecordError(cause)
                   ? Effect.void
                   : Effect.logError("orchestration-v2.claude-relocation.gave-up", {
                       threadId: effect.threadId,
@@ -1000,6 +1010,7 @@ export const layerWithOptions = (
                 .succeed({ effectId: effect.id, workerId })
                 .pipe(Effect.onError((cause) => terminalizeClaim(effect, cause)))
             : effect.attemptCount >= maxAttempts &&
+                !needsRelocationRecord(exit.cause) &&
                 (!ownsStartingRun(effect.request.type) || cannotSettleRun(exit.cause))
               ? yield* outbox
                   .fail({ effectId: effect.id, workerId, error })

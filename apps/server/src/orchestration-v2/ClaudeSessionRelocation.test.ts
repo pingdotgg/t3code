@@ -9,6 +9,9 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -248,6 +251,7 @@ it.effect("retries an occupied rename when the destination cannot be set aside",
 it.effect.each([
   { name: "writes the new folder once the transcript moved" },
   { name: "fails when the provider thread changed", committed: false },
+  { name: "keeps the final metadata write retryable", committed: false, lastAttempt: true },
   { name: "denied transcript rename", at: "transcript", fault: "denied" },
   { name: "denied subagent rename", at: "subagents", fault: "denied" },
   { name: "denied record append", at: "record", fault: "denied" },
@@ -257,7 +261,7 @@ it.effect.each([
   { name: "lost before the record's newline", at: "record", fault: "lost", written: -1 },
 ])(
   "relocates and records the storage folder: $name",
-  ({ committed = true, at, fault, written = 0 }) =>
+  ({ committed = true, at, fault, written = 0, lastAttempt = false }) =>
     Effect.gen(function* () {
       const { fs, record, run, expectLayout, faultAt } = yield* setup();
       if (at !== undefined) {
@@ -270,9 +274,16 @@ it.effect.each([
           0,
         );
       }
-      const outcome = Effect.exit(run(fs, committed));
+      const outcome = Effect.exit(run(fs, committed, lastAttempt));
 
-      assert.equal((yield* outcome)._tag, committed ? "Success" : "Failure");
+      const result = yield* outcome;
+      assert.equal(result._tag, committed ? "Success" : "Failure");
+      if (Exit.isFailure(result)) {
+        assert.instanceOf(
+          Option.getOrThrow(Cause.findErrorOption(result.cause)),
+          ClaudeSessionRelocation.ClaudeSessionRelocationRecordError,
+        );
+      }
       const fragment = written === 0 ? "" : `${record.slice(0, written)}\n`;
       const tail = `${fragment}${fragment === record ? "" : record}`;
       yield* expectLayout("new", "new", tail);
