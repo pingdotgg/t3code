@@ -246,7 +246,7 @@ describe("collapsed split Back", () => {
     routeParamList: {},
     routeGetIdList: {},
   };
-  type Appearance = "willAppear" | "didAppear" | "willDisappear";
+  type Appearance = "willAppear" | "didAppear" | "willDisappear" | "didDisappear";
   // UIKit's appearance callbacks for one collapsed transition, against the router at each step.
   function replay(
     steps: ReadonlyArray<readonly [Appearance, string, StackNavigationState<ParamListBase>]>,
@@ -313,6 +313,30 @@ describe("collapsed split Back", () => {
         ["didAppear", home.key, state],
       ]).pop,
     ).toBeNull();
+  });
+
+  it("forgets the leaving detail when a full-screen presentation covers it", () => {
+    const state = history([home, thread]);
+    const leavingAfter = (steps: ReadonlyArray<readonly [Appearance, string]>) =>
+      steps.reduce<CollapsedSplitColumn>(
+        (column, [type, key]) =>
+          collapsedSplitTransition(column, { type, key }, state, home.key).column,
+        { visible: "secondary", leaving: null },
+      ).leaving;
+    expect(
+      leavingAfter([
+        ["willDisappear", thread.key],
+        ["didDisappear", thread.key],
+      ]),
+    ).toBeNull();
+    // Native Back reveals the list before the detail finishes disappearing.
+    expect(
+      leavingAfter([
+        ["willDisappear", thread.key],
+        ["willAppear", home.key],
+        ["didDisappear", thread.key],
+      ]),
+    ).toBe(thread.key);
   });
 
   it("does not mistake JS navigation or a cold link for native Back", () => {
