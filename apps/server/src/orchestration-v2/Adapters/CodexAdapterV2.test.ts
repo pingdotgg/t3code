@@ -1593,6 +1593,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const nativeTurnId = "browser-access-turn";
       const completeTurn = yield* Deferred.make<void>();
       const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const browserAccessWithdrawn = yield* Deferred.make<void>();
       const mcpSession = {
         environmentId: EnvironmentId.make("environment-browser-access"),
         threadId: ThreadId.make(`thread-${scenario}`),
@@ -1601,6 +1602,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         endpoint: "http://127.0.0.1:1/mcp",
         authorizationHeader: "Bearer fixture",
         browserToolsAvailable: true,
+        browserAccessAllowed: Deferred.isDone(browserAccessWithdrawn).pipe(
+          Effect.map((done) => !done),
+        ),
       };
       yield* sessions.set(mcpSession);
       const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
@@ -1680,11 +1684,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isFalse(yield* allowed({ sessionId: "other-session" }));
       assert.isFalse(yield* allowed({ turnId: "other-turn" }));
       assert.isFalse(yield* allowed({ executorId: "other-executor" }));
+      yield* Deferred.succeed(browserAccessWithdrawn, undefined);
+      assert.isFalse(yield* allowed());
       yield* sessions.set({ ...mcpSession, browserToolsAvailable: false });
       assert.isFalse(yield* allowed());
       yield* sessions.clear(mcpSession.threadId);
       assert.isFalse(yield* allowed());
-      yield* sessions.set(mcpSession);
+      yield* sessions.set({ ...mcpSession, browserAccessAllowed: Effect.succeed(true) });
       assert.isTrue(yield* allowed());
       yield* Deferred.succeed(completeTurn, undefined);
       yield* harness.firstTerminal;

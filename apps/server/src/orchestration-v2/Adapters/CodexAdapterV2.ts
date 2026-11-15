@@ -1887,7 +1887,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               root.providerThread.nativeThreadRef?.nativeId !== request.sessionId
             )
               return false;
-            return (yield* readMcpSession(context.input.threadId))?.browserToolsAvailable === true;
+            const session = yield* readMcpSession(context.input.threadId);
+            if (session?.browserToolsAvailable !== true) return false;
+            return session.browserAccessAllowed === undefined
+              ? true
+              : yield* session.browserAccessAllowed;
           }),
         ).pipe(
           Effect.catch((cause) =>
