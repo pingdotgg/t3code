@@ -242,6 +242,7 @@ interface CreateManagerOptions {
     ReadonlyArray<{ readonly pid: number; readonly ppid: number; readonly name: string }>,
     never
   >;
+  foregroundProcessGroup?: (terminalPid: number) => Effect.Effect<number | null>;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
   registerTerminalProcesses?: Parameters<
@@ -293,6 +294,8 @@ const createManager = (
           ? { subprocessInspector: options.subprocessInspector }
           : {}),
         ...(options.processTable !== undefined ? { processTable: options.processTable } : {}),
+        // Fixture pids are not real processes; default to a shell idle at its prompt.
+        foregroundProcessGroup: options.foregroundProcessGroup ?? ((pid) => Effect.succeed(pid)),
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
@@ -940,6 +943,51 @@ it.layer(
           false,
           true,
         ]);
+      }),
+  );
+
+  it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: "node" }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
+  it.effect.each([
+    { label: "idle prompt", platform: "linux", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "linux", foregroundProcessGroup: 100, killed: false },
+    {
+      label: "unknown foreground group",
+      platform: "linux",
+      foregroundProcessGroup: null,
+      killed: false,
+    },
+    { label: "idle prompt", platform: "darwin", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "darwin", foregroundProcessGroup: 100, killed: false },
+  ] as const)(
+    "settles a shell with a childless shell-named child by its foreground group: $label ($platform)",
+    ({ platform, foregroundProcessGroup, killed }) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/bash",
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "bash" },
+            { pid: 100, ppid: 9000, name: "bash" },
+          ]),
+          foregroundProcessGroup: () => Effect.succeed(foregroundProcessGroup),
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes[0]?.killed).toBe(killed);
       }),
   );
 
@@ -1940,6 +1988,41 @@ it.layer(
     }),
   );
 
+  it.effect("keeps a startup failure in the snapshot every later attachment receives", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(new Error("forkpty(3) failed."));
+      const startupFailure = {
+        type: "snapshot",
+        snapshot: {
+          status: "error",
+          error: expect.stringContaining("Failed to spawn PTY process"),
+        },
+      };
+      const record = (events: TerminalAttachStreamEvent[]) => (event: TerminalAttachStreamEvent) =>
+        Effect.sync(() => events.push(event));
+
+      const creating: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream(openInput(), record(creating)))();
+      const resumed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream({ ...openInput(), resume: true }, record(resumed)))();
+      const observed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        record(observed),
+      ))();
+      expect([creating, resumed, observed]).toMatchObject([
+        [startupFailure],
+        [startupFailure],
+        [startupFailure],
+      ]);
+
+      const restarted = yield* manager.open(openInput());
+      expect(restarted.status).toBe("running");
+      expect(restarted).not.toHaveProperty("error");
+    }),
+  );
+
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;
@@ -2546,6 +2629,30 @@ it.layer(
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
       expect(ptyAdapter.spawnInputs[1]?.env.PROVIDER_SECRET).toBe("second-secret");
     }),
+  );
+
+  it.effect("force-kills a closed terminal that ignores SIGTERM when the manager shuts down", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 1_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+
+      const shutdown = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(shutdown);
+
+      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      expect(process.exitListenerCount).toBe(0);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("attaches to a running provider terminal without resolving the provider again", () =>
