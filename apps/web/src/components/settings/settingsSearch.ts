@@ -552,6 +552,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "turn-work-fold",
+    title: "Fold each turn's work",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline",
+    ],
+  },
+  {
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/chat",
