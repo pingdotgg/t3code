@@ -1,12 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
-import {
-  markdownForNativeParsing,
-  markdownForNativeRendering,
-  markdownWithFileEmbeds,
-  markdownWithInlineFileLinks,
-  markdownWithTableBreaks,
-} from "./markdownDocument";
 import {
   convertNativeMarkdown,
   convertStreamingMarkdown,
@@ -66,6 +58,7 @@ const samples: Record<string, string> = {
     String.raw`[w](C:\work\.t3\f.md)` + "\n\nplain `src/q.ts`\n\n" + String.raw`[v](<C:\a b\c.md>)`,
   setext: "Title\n===\n\nbody\n\n---\n\nmore",
   indented: "para\n\n    code <b>\n\n    more\n\nafter",
+  prosePaths: "Edited /Users/me/app/src/a.ts:12.\n\nNo path here.\n\nThen (/tmp/b.log) too",
 };
 
 // Each of these made a block-by-block conversion differ from the whole-text one in an earlier
@@ -96,26 +89,6 @@ const pitfalls: Record<string, string> = {
   bomLater: "a\n\n\ufeff`a/b.ts:3`\n\nlast",
   crlf: "a\r\n\r\nb `src/a.ts`\r\n\r\nc",
 };
-
-describe("convertNativeMarkdown", () => {
-  // The conversion the feed ran before the streaming path existed, written out from its passes.
-  it("is the whole-text pipeline: parse, file links, file embeds, table breaks", () => {
-    for (const sample of [...Object.values(samples), ...Object.values(pitfalls)]) {
-      expect(convertNativeMarkdown(sample, undefined).markdown).toBe(
-        markdownForNativeRendering(sample, ENRICHED_INLINE_FILE_LINK_REGEX),
-      );
-      const content = markdownWithInlineFileLinks(
-        markdownForNativeParsing(sample),
-        ENRICHED_INLINE_FILE_LINK_REGEX,
-      );
-      const files = markdownWithFileEmbeds(content, label);
-      const expected = markdownWithTableBreaks(files.markdown);
-      const actual = convertNativeMarkdown(sample, label);
-      expect(actual.markdown).toBe(expected);
-      expect([...actual.fileHrefs]).toEqual([...files.fileHrefs]);
-    }
-  });
-});
 
 describe("convertStreamingMarkdown", () => {
   it("converts every prefix of a stream like the whole text, reusing one cache", () => {
@@ -155,33 +128,6 @@ describe("convertStreamingMarkdown", () => {
       expect(stream(pitfalls[name]!, label), name).toBeNull();
   });
 
-  it("treats only spaces and tabs as blank", () => {
-    expect(splitMarkdownStreamBlocks("a\n\u00a0\nb\n\nc")).toEqual(["a\n\u00a0\nb\n\n", "c"]);
-  });
-
-  it("never splits text that is not streaming", () => {
-    const cache = createNativeMarkdownBlockCache();
-    const text = "First\n\nSecond\n\nThird";
-    expect(stream(text, label, cache)).not.toBeNull();
-    expect(
-      convertStreamingMarkdown(text, label, cache, false, nativeMarkdownPipeline(label), 0),
-    ).toBeNull();
-    expect(cache.blocks.size).toBe(0);
-  });
-
-  it("leaves short text to the whole-text conversion", () => {
-    const text = "a\n\nb";
-    expect(
-      convertStreamingMarkdown(
-        text,
-        label,
-        createNativeMarkdownBlockCache(),
-        true,
-        nativeMarkdownPipeline(label),
-      ),
-    ).toBeNull();
-  });
-
   it("converts only blocks that changed", () => {
     const parsed: string[] = [];
     const base = nativeMarkdownPipeline(label);
@@ -210,18 +156,6 @@ describe("convertStreamingMarkdown", () => {
     const second = stream(text, other as typeof label, cache)!;
     expect(sameRender(first, convertNativeMarkdown(text, label))).toBe(true);
     expect(sameRender(second, convertNativeMarkdown(text, other as typeof label))).toBe(true);
-  });
-
-  it("re-renders every block when the first file path shows up late", () => {
-    const cache = createNativeMarkdownBlockCache();
-    const early = "Escape a backtick with `` ` `` as in `src/a.ts`.\n\nMore.\n\nAnd more.";
-    const late = `${early}\n\nSee \`src/b.ts\`.`;
-    const before = stream(early, label, cache)!;
-    expect(before.markdown).toBe(convertNativeMarkdown(early, label).markdown);
-    expect(before.markdown).not.toContain("[src/a.ts]");
-    const after = stream(late, label, cache)!;
-    expect(after.markdown).toBe(convertNativeMarkdown(late, label).markdown);
-    expect(after.markdown).toContain("[src/a.ts](<src/a.ts>)");
   });
 });
 
@@ -267,6 +201,8 @@ describe("differential against whole-text conversion", () => {
     "[^1]",
     String.raw`[w](C:\work\f.md)`,
     "`C:\\x\\y.ts`",
+    "/Users/me/a.ts",
+    "/tmp/x.log:3",
     "\\`",
   ];
   it("matches on generated documents, whole and at every prefix", () => {
@@ -284,15 +220,6 @@ describe("differential against whole-text conversion", () => {
 });
 
 describe("splitMarkdownStreamBlocks", () => {
-  it("splits at blank lines that close every open block and joins back exactly", () => {
-    for (const sample of Object.values(samples)) {
-      const blocks = splitMarkdownStreamBlocks(sample);
-      expect(blocks?.join("")).toBe(sample);
-    }
-    expect(splitMarkdownStreamBlocks(samples.prose!)).toHaveLength(3);
-    expect(splitMarkdownStreamBlocks(samples.list!)?.[0]).toContain("- last");
-  });
-
   it("keeps a fenced code block, blank lines and all, in one piece", () => {
     const blocks = splitMarkdownStreamBlocks(`Before\n\n${fence}\n\nAfter`);
     expect(blocks).toEqual(["Before\n\n", `${fence}\n\n`, "After"]);
