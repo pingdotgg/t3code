@@ -305,9 +305,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
               />
             ) : null}
             {machine?.linked ? (
-              <p className="text-xs text-muted-foreground">
-                {t("linkedEnvs.alreadyLinked")}
-              </p>
+              <p className="text-xs text-muted-foreground">{t("linkedEnvs.alreadyLinked")}</p>
             ) : null}
             {needsAddress ? (
               <label className="block space-y-1.5">

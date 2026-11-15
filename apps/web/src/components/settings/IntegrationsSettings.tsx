@@ -45,7 +45,7 @@ import { useRef, useState } from "react";
 
 import { useTranslation } from "react-i18next";
 
-import { translateDynamic } from "~/i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
 import { resolveEnvironmentOptionLabel } from "~/components/BranchToolbar.logic";
@@ -706,7 +706,11 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
             }
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={t("integrations.linkTarget.aria")}>
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-40"
+            aria-label={t("integrations.linkTarget.aria")}
+          >
             <SelectValue>{translateDynamic(LINK_TARGET_LABELS[linkTarget])}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
