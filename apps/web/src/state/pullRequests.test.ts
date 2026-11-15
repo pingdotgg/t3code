@@ -44,6 +44,7 @@ import {
   observePullRequestChecks,
   observePullRequestMetadata,
   newestPullRequestSummary,
+  newestDisplayedPullRequestSummary,
   rememberPullRequestListAnswer,
   restorePullRequestList,
   restoredPullRequestList,
@@ -154,6 +155,15 @@ describe("pull request summary cache", () => {
     const older = summary({ updatedAt: "2026-09-11T00:00:00Z", observedAt: 999 });
     expect(newestPullRequestSummary(older, reopened)).toBe(reopened);
     expect(newestPullRequestSummary(reopened, older)).toBe(reopened);
+    const edited = summary({ title: "Accepted title" });
+    expect(newestPullRequestSummary(summary(), edited)).toBe(edited);
+    const loaded = summary();
+    expect(newestDisplayedPullRequestSummary(loaded, false, edited, loaded, [])).toBe(loaded);
+    expect(newestDisplayedPullRequestSummary(summary(), true, edited, loaded, [])).toBe(edited);
+    const titleEdit = { reference: loaded, title: "Pending title" };
+    expect(newestDisplayedPullRequestSummary(loaded, true, null, loaded, [titleEdit])?.title).toBe(
+      "Pending title",
+    );
   });
 
   it("reuses saved thread state while detail is stale and lets newer detail replace it", () => {

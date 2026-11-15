@@ -35,6 +35,9 @@ type Archive = Extract<BinaryWorkerResult, { type: "archive" }>;
 type Database = Extract<BinaryWorkerResult, { type: "sqlite" }>;
 type Rows = Extract<BinaryWorkerResult, { type: "rows" }>;
 
+const countLabel = (count: number, one: string, many: string) =>
+  `${count.toLocaleString()} ${count === 1 ? one : many}`;
+
 function ArchiveFile(props: { readonly path: string; readonly bytes: Uint8Array<ArrayBuffer> }) {
   const [url, setUrl] = useState<string | null>(null);
   const kind = filePreviewKind({ name: props.path });
@@ -210,7 +213,7 @@ export default function BinaryViewer(props: {
             {selectedPath ?? (folder || "Archive contents")}
           </span>
           <span className="shrink-0 text-muted-foreground">
-            {archive.entries.length.toLocaleString()} entries
+            {countLabel(archive.entries.length, "entry", "entries")}
             {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
           </span>
         </div>
@@ -227,13 +230,13 @@ export default function BinaryViewer(props: {
               >
                 <SelectTrigger aria-label="Table" aria-disabled={busy} aria-busy={busy} size="xs">
                   <SelectValue>
-                    {table.name} ({table.count.toLocaleString()} rows)
+                    {table.name} ({countLabel(table.count, "row", "rows")})
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup>
                   {database.tables.map((item) => (
                     <SelectItem key={item.name} value={item.name}>
-                      {item.name} ({item.count.toLocaleString()} rows)
+                      {item.name} ({countLabel(item.count, "row", "rows")})
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -263,7 +266,8 @@ export default function BinaryViewer(props: {
             className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
             role="status"
           >
-            {table.count.toLocaleString()} rows · {rows?.columns.length ?? "…"} columns
+            {countLabel(table.count, "row", "rows")} ·{" "}
+            {rows ? countLabel(rows.columns.length, "column", "columns") : "… columns"}
             {sizeBytes !== null ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}
           </div>
           <FileSurfaceNotice>

@@ -904,11 +904,14 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("carries an interrupted prompt into the steer that restarts the turn", () =>
+  it.effect("carries a dropped prompt forward, and resumes a checkpointed one natively", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-steer-" });
       const sentMessages: Array<string> = [];
+      const resumedRuns: Array<number> = [];
+      // Cursor keeps a cancelled run in the conversation only once it saved a checkpoint.
+      const checkpointedRuns = new Set<string>();
       const runEnds: Array<Deferred.Deferred<"finished" | "cancelled">> = [];
       const instanceId = ProviderInstanceId.make("cursor");
       const threadId = ThreadId.make("cursor-steer-thread");
@@ -929,8 +932,15 @@ describe("CursorAdapterV2", () => {
               agentId: "native-cursor-steer",
               listMessages: Effect.succeed([]),
               close: Effect.void,
+              runCheckpointed: (runId) =>
+                Effect.succeed(
+                  runId === undefined
+                    ? checkpointedRuns.has(`native-cursor-run-${sentMessages.length}`)
+                    : checkpointedRuns.has(runId),
+                ),
               send: (input) =>
                 Effect.gen(function* () {
+                  if (input.resume === true) resumedRuns.push(sentMessages.length + 1);
                   sentMessages.push(
                     typeof input.message === "string" ? input.message : input.message.text,
                   );
@@ -1011,6 +1021,24 @@ describe("CursorAdapterV2", () => {
           attachments: [],
         },
       });
+      const { message: _message, ...resumeBase } = turnInput(4, "");
+      const resumeInput = (runOrdinal: number) => ({
+        ...resumeBase,
+        runId: RunId.make(`cursor-steer-run-${runOrdinal}`),
+        runOrdinal,
+        providerTurnOrdinal: runOrdinal,
+        attemptId: RunAttemptId.make(`cursor-steer-attempt-${runOrdinal}`),
+        messageId: MessageId.make(`cursor-steer-message-${runOrdinal}`),
+      });
+      const unknown = yield* Effect.flip(runtime.resumeTurn!(resumeInput(1)));
+      assert(unknown._tag === "ProviderAdapterTurnStartError");
+      assert.strictEqual(
+        (unknown.cause as { readonly _tag?: string })._tag,
+        "ProviderResumeUnsupportedError",
+        "nothing Cursor checkpointed and no known stopped request: nothing to resume",
+      );
+      assert.lengthOf(sentMessages, 0);
+
       const firstPrompt = "Write me a 1000 word story about a dog.";
       const steerText = "No wait, a pig please.";
 
@@ -1041,6 +1069,59 @@ describe("CursorAdapterV2", () => {
       );
       yield* runtime.startTurn(turnInput(3, "Now a cow."));
       assert.notInclude(sentMessages[2]!, firstPrompt, "a finished turn carries nothing forward");
+
+      const interruptRunning = Effect.gen(function* () {
+        const running = Option.getOrThrow(
+          yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+            ),
+            Stream.runHead,
+          ),
+        );
+        assert(running.type === "provider_turn.updated");
+        yield* runtime.interruptTurn({ providerThread, providerTurnId: running.providerTurn.id });
+      });
+
+      // Stopped before Cursor checkpointed it: resume replays the exact request Cursor dropped.
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(4));
+      assert.deepEqual(resumedRuns, []);
+      assert.strictEqual(sentMessages[3], sentMessages[2]);
+
+      // Stopped after a checkpoint: Cursor's own ResumeAction continues it, with no message.
+      checkpointedRuns.add("native-cursor-run-4");
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(5));
+      assert.deepEqual(resumedRuns, [5]);
+      assert.strictEqual(sentMessages[4], "");
+
+      // The resumed run is stopped before its own checkpoint; the request is still in history.
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(6));
+      assert.deepEqual(resumedRuns, [5, 6]);
+
+      yield* interruptRunning;
+      yield* runtime.startTurn(turnInput(7, "Make it shorter."));
+      assert.notInclude(
+        sentMessages[6]!,
+        "Now a cow.",
+        "a request Cursor checkpointed is not carried forward",
+      );
+
+      // A turn that ended without a Stop (a usage limit, say) resumes from Cursor's checkpoint,
+      // and stays resumable when that resume is stopped before saving its own.
+      checkpointedRuns.add("native-cursor-run-7");
+      yield* Deferred.succeed(runEnds[6]!, "finished");
+      yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal" && event.status === "completed"),
+        Stream.runHead,
+      );
+      yield* runtime.resumeTurn!(resumeInput(8));
+      yield* interruptRunning;
+      yield* runtime.resumeTurn!(resumeInput(9));
+      assert.deepEqual(resumedRuns, [5, 6, 8, 9]);
     }).pipe(
       Effect.scoped,
       Effect.provide(

@@ -9,6 +9,9 @@ const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
 const NPM_SHIM = `${NPM_DIR}\\claude.cmd`;
 const NPM_PACKAGE_EXE = `${NPM_DIR}\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe`;
 const NPM_PACKAGE_CLI = `${NPM_DIR}\\node_modules\\@anthropic-ai\\claude-code\\cli.js`;
+const WINGET_DIR = "C:\\Users\\dev\\AppData\\Local\\Microsoft\\WinGet";
+const WINGET_SHIM = `${WINGET_DIR}\\Links\\claude.cmd`;
+const WINGET_EXE = `${WINGET_DIR}\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe`;
 
 function withWindowsResolution(input: {
   readonly resolvedCommand: string | undefined;
@@ -34,6 +37,16 @@ describe("resolveClaudeSdkExecutablePath", () => {
           }),
         ),
       ).toBe(NPM_PACKAGE_EXE);
+    }),
+  );
+
+  it.effect("follows the WinGet launcher to the package's native binary", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* resolveClaudeSdkExecutablePath("claude", {}).pipe(
+          withWindowsResolution({ resolvedCommand: WINGET_SHIM, existingFiles: [WINGET_EXE] }),
+        ),
+      ).toBe(WINGET_EXE);
     }),
   );
 

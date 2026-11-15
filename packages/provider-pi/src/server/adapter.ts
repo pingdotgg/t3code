@@ -517,7 +517,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return yield* Effect.gen(function* () {
           const launch = buildPiRpcLaunch({
             launchArgs: resolvedLaunchArgs.args,
-            environment: options.environment,
+            // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
+            environment: { ...options.environment, T3CODE_THREAD_ID: input.threadId },
             mcpSession,
             extensionPath,
             sessionPath,

@@ -1,5 +1,6 @@
 import ExpoModulesCore
 import UIKit
+import UniformTypeIdentifiers
 
 private struct ComposerTokenPayload: Decodable, Equatable {
   let type: String
@@ -46,12 +47,12 @@ private enum ComposerEnterBehavior: String {
 }
 
 private final class ComposerTextAttachment: NSTextAttachment {
-  let source: String
-  let label: String
+  let token: ComposerTokenPayload
+  var source: String { token.source }
+  var label: String { token.label }
 
-  init(source: String, label: String, image: UIImage, size: CGSize, baselineOffset: CGFloat) {
-    self.source = source
-    self.label = label
+  init(token: ComposerTokenPayload, image: UIImage, size: CGSize, baselineOffset: CGFloat) {
+    self.token = token
     super.init(data: nil, ofType: nil)
     self.image = image
     bounds = CGRect(x: 0, y: baselineOffset, width: size.width, height: size.height)
@@ -88,7 +89,6 @@ private final class ComposerTextView: UITextView {
   var onPasteContext: (([String: String]) -> Void)?
   var onPasteText: ((String, NSRange) -> Void)?
   var clipboardFragment = ""
-  var onAttributedMutation: (() -> Void)?
   var onSubmit: ((Bool) -> Void)?
   var isReadOnly = false
   var textPasteThresholdBytes = 0
@@ -309,18 +309,28 @@ private final class ComposerTextView: UITextView {
   func loadImages(from providers: [NSItemProvider]) {
     let group = DispatchGroup()
     let lock = NSLock()
-    var images = [UIImage?](repeating: nil, count: providers.count)
+    var images = [(data: Data, fileExtension: String)?](repeating: nil, count: providers.count)
 
     for (index, provider) in providers.enumerated() {
       group.enter()
-      provider.loadObject(ofClass: UIImage.self) { object, _ in
-        defer { group.leave() }
-        guard let image = object as? UIImage else {
-          return
-        }
+      let store = { (image: (data: Data, fileExtension: String)?) in
         lock.lock()
         images[index] = image
         lock.unlock()
+        group.leave()
+      }
+      let loadPNG = {
+        _ = provider.loadObject(ofClass: UIImage.self) { object, _ in
+          store((object as? UIImage)?.pngData().map { ($0, "png") })
+        }
+      }
+      // Decoding a GIF to UIImage keeps only its first frame, so pass its bytes through.
+      if provider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) {
+        _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.gif.identifier) { data, _ in
+          if let data { store((data, "gif")) } else { loadPNG() }
+        }
+      } else {
+        loadPNG()
       }
     }
 
@@ -328,7 +338,9 @@ private final class ComposerTextView: UITextView {
       guard let self, !self.isReadOnly else {
         return
       }
-      let urls = images.compactMap { $0 }.compactMap(Self.writeTemporaryImage)
+      let urls = images.compactMap { $0 }.compactMap {
+        Self.writeTemporaryImage($0.data, fileExtension: $0.fileExtension)
+      }
       if !urls.isEmpty {
         self.onPasteImages?(urls)
       }
@@ -350,9 +362,7 @@ private final class ComposerTextView: UITextView {
       return super.cut(sender)
     }
     copy(sender)
-    textStorage.replaceCharacters(in: selectedRange, with: "")
-    selectedRange = NSRange(location: selectedRange.location, length: 0)
-    onAttributedMutation?()
+    replaceDisplayRange(selectedRange)
   }
 
   func serializedText() -> String {
@@ -408,9 +418,10 @@ private final class ComposerTextView: UITextView {
   }
 
   private static func writeTemporaryImage(_ image: UIImage) -> String? {
-    guard let data = image.pngData() else {
-      return nil
-    }
+    image.pngData().flatMap { writeTemporaryImage($0, fileExtension: "png") }
+  }
+
+  private static func writeTemporaryImage(_ data: Data, fileExtension: String) -> String? {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(pastedImageDirectoryName, isDirectory: true)
     do {
@@ -419,7 +430,7 @@ private final class ComposerTextView: UITextView {
         withIntermediateDirectories: true
       )
       removeStaleTemporaryImages(in: directory)
-      let url = directory.appendingPathComponent("\(UUID().uuidString).png")
+      let url = directory.appendingPathComponent("\(UUID().uuidString).\(fileExtension)")
       try data.write(to: url, options: .atomic)
       return url.absoluteString
     } catch {
@@ -549,9 +560,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         "text": text,
         "selection": ["start": selection.start, "end": selection.end],
       ])
-    }
-    textView.onAttributedMutation = { [weak self] in
-      self?.emitTextChange()
     }
     textView.onSubmit = { [weak self] alternate in
       self?.onComposerSubmit(["alternate": alternate])
@@ -723,8 +731,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     if tokensJson != document.tokensJson {
       tokensJson = document.tokensJson
       let nextTokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
-      // Typing before a chip only moves its offsets; rebuilding then makes iOS autocorrect behind the caret.
-      tokensNeedRebuild = tokensNeedRebuild || !nextTokens.elementsEqual(tokens, by: { $0.rendersLike($1) })
+      // Rebuild only when a chip on screen would look different: typing before a chip moves its
+      // offsets, and Undo restores the chip it removed. A rebuild there makes iOS autocorrect
+      // behind the caret, and replacing the text drops UIKit's Redo.
+      tokensNeedRebuild = tokensNeedRebuild || !nextTokens.elementsEqual(renderedChipTokens(), by: { $0.rendersLike($1) })
       tokens = nextTokens
     }
     let previousSelection = sourceSelection()
@@ -1038,8 +1048,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       font: chipFont
     )
     let attachment = ComposerTextAttachment(
-      source: token.source,
-      label: token.label,
+      token: token,
       image: image,
       size: image.size,
       baselineOffset: chipFont.ascender - image.size.height
@@ -1337,6 +1346,19 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
         $0.end <= source.length &&
         source.substring(with: NSRange(location: $0.start, length: $0.end - $0.start)) == $0.source
     }
+  }
+
+  private func renderedChipTokens() -> [ComposerTokenPayload] {
+    var rendered: [ComposerTokenPayload] = []
+    textView.textStorage.enumerateAttribute(
+      .attachment,
+      in: NSRange(location: 0, length: textView.textStorage.length)
+    ) { value, _, _ in
+      if let attachment = value as? ComposerTextAttachment {
+        rendered.append(attachment.token)
+      }
+    }
+    return rendered
   }
 
   private func documentMatchesExpectedTokens() -> Bool {

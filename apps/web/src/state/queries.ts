@@ -13,6 +13,7 @@ import {
   type ThreadSearchScope,
 } from "@t3tools/client-runtime/state/thread-search";
 import {
+  ProjectSearchContentsError,
   PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH,
   THREAD_SEARCH_QUERY_MAX_LENGTH,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import type {
   VcsRef,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -46,6 +48,8 @@ const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
+const PROJECT_CONTENT_SEARCH_SCAN_RETRY_MS = 30_000;
+const isProjectSearchContentsError = Schema.is(ProjectSearchContentsError);
 const THREAD_SEARCH_DEBOUNCE_MS = 120;
 const VCS_REF_LIST_LIMIT = 100;
 const EMPTY_REFS: ReadonlyArray<VcsRef> = [];
@@ -390,6 +394,22 @@ export function useProjectContentSearch(target: ProjectContentSearchTarget) {
         })
       : null,
   );
+  // Only once the timeout has come back: a refresh restarts a search still in flight.
+  const settledScanTimeout =
+    !result.isPending &&
+    isProjectSearchContentsError(result.failure) &&
+    result.failure.failure === "search_index_scan_timed_out"
+      ? result.failure
+      : null;
+  const { refresh } = result;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retry timer: nothing tells the client when the server's first scan ends
+  useEffect(() => {
+    if (settledScanTimeout === null) return;
+    const timer = window.setTimeout(refresh, PROJECT_CONTENT_SEARCH_SCAN_RETRY_MS);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [refresh, settledScanTimeout]);
 
   return {
     canReadFiles,

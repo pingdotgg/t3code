@@ -1234,6 +1234,8 @@ const mobileEndorsementRows = [
     section { padding: 56px 0; }
     .sec-cta { padding: 80px 0; }
     .container { padding-left: 20px; padding-right: 20px; }
+    /* A nowrap tag widens its column past the grid, which then clips the other column. */
+    .harness-tag { white-space: normal; }
     .endorsements-head {
       margin-bottom: 40px;
     }
@@ -1264,5 +1266,9 @@ const mobileEndorsementRows = [
       padding: 16px;
       font-size: 11px;
     }
+  }
+
+  @media (max-width: 360px) {
+    .harness { padding-left: 12px; padding-right: 12px; }
   }
 </style>

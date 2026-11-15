@@ -175,7 +175,7 @@ describe("cloneUrlForProtocol", () => {
 });
 
 describe("cloneUrlRepositoryPath", () => {
-  it("rejects Windows device names and trailing dots or spaces in every folder", () => {
+  it("derives portable clone folders from URI and SCP paths", () => {
     for (const segment of [
       "CON",
       "nul.txt",
@@ -197,5 +197,19 @@ describe("cloneUrlRepositoryPath", () => {
       "gitlab.com/group/sub/repo",
     );
     expect(cloneUrlRepositoryPath("C:/repos/project.git")).toBeNull();
+    for (const prefix of ["https://host.example/", "ssh://git@host.example/"]) {
+      expect(cloneUrlRepositoryPath(`${prefix}Research%20Tools/r%C3%A9sum%C3%A9.git`)).toBe(
+        "host.example/Research Tools/résumé",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%2520name.git`)).toBe(
+        "host.example/team/repo%20name",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/%2e%2e/repo.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%20.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/bad%FF.git`)).toBeNull();
+    }
+    expect(cloneUrlRepositoryPath("git@host.example:team/repo%20name.git")).toBe(
+      "host.example/team/repo%20name",
+    );
   });
 });
