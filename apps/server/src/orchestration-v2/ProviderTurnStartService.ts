@@ -886,7 +886,9 @@ export const layer: Layer.Layer<
           (source) =>
             source.ordinal <= run.ordinal &&
             source.status !== "rolled_back" &&
-            !commandMessageIds.has(source.userMessageId),
+            !commandMessageIds.has(
+              (unsentManualContinuationSource(source, projection) ?? source).userMessageId,
+            ),
         )
         .flatMap((source) =>
           projection.attempts.filter((candidate) => candidate.runId === source.id),
@@ -900,7 +902,7 @@ export const layer: Layer.Layer<
       );
       const named = (id: ProviderInstanceId) => ({ id, displayName: instances?.[id]?.displayName });
       const switchNote =
-        commandMessageIds.has(message.id) ||
+        commandMessageIds.has(providerMessage.id) ||
         previousAttempt === undefined ||
         previousAttempt.providerInstanceId === run.providerInstanceId
           ? ""

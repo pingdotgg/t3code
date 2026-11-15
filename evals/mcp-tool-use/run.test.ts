@@ -751,6 +751,28 @@ it("replays earlier capability results with the model under test as the caller",
   }
 });
 
+it.each(["claude-opus-5-5", "gpt-6.1-sol"])(
+  "untargeted delegates inherit the normalized %s caller",
+  (model) => {
+    const base = buildBase(template, { model, keepUserInstructions: false });
+    const sample = makeSample(
+      {
+        ...childCase,
+        setup: {
+          role: "top",
+          mocks: { orchestrator_capabilities: { inheritedProviderInstanceId: "claude-2" } },
+        },
+      },
+      model.startsWith("gpt-")
+        ? { ...base, codex: { input: [], reasoning: { effort: "xhigh" } } }
+        : base,
+    );
+    expect(t3Default(sample, "delegate_task", {})).toMatchObject({
+      providerInstanceId: model.startsWith("gpt-") ? "codex" : "claude-2",
+    });
+  },
+);
+
 it("sends a side chat's context and an account switch note together, as T3 does", () => {
   const base = buildBase(template, { model: "claude-opus-5-5", keepUserInstructions: false });
   const setup = {

@@ -1381,8 +1381,9 @@ const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_
   | undefined;
 
 /** The account a call without a target inherits: the case's capabilities mock, else the harness's. */
-const inheritedInstance = ({ base, testCase }: Sample) => {
-  const mocked = testCase.setup.mocks?.orchestrator_capabilities;
+const inheritedInstance = (sample: Sample) => {
+  const { base, testCase } = sample;
+  const mocked = capabilities(sample, testCase.setup.mocks?.orchestrator_capabilities);
   return isRecord(mocked) && typeof mocked.inheritedProviderInstanceId === "string"
     ? mocked.inheritedProviderInstanceId
     : base.codex
