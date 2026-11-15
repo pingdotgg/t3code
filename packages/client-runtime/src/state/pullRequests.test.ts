@@ -3000,6 +3000,56 @@ it.effect(
     ),
 );
 
+it.effect("re-reads every reader a save touched when one of them sees the host rewrite it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let title = "Cached";
+      const sent = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const client = actionReplyClient({
+        [WS_METHODS.pullRequestsDetail]: () =>
+          Effect.sync(() => ({ ...actionReference, state: "open", title })),
+        [WS_METHODS.pullRequestsList]: () =>
+          Effect.sync(() =>
+            listResult([
+              { ...actionReference, state: "open", title, updatedAt: actionReply.updatedAt },
+            ]),
+          ),
+        [WS_METHODS.pullRequestsUpdate]: (input: { readonly title: string }) =>
+          Effect.gen(function* () {
+            title = `Draft: ${input.title}`;
+            yield* Deferred.succeed(sent, undefined);
+            yield* Deferred.await(release);
+          }),
+      });
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const detail = atoms.detail(target);
+      // Pages past the first are not refreshed by the server.
+      const page = atoms.list({
+        environmentId: target.environmentId,
+        input: { state: "open", cursors: { "github.example.com": "page-2" } },
+      });
+      for (const atom of [detail, page] as const) {
+        registry.mount(atom);
+        yield* Effect.promise(() => executeAtomQuery(registry, atom));
+      }
+      const editing = yield* Effect.promise(() =>
+        atoms.update.run(registry, { ...target, input: { ...actionReference, title: "Edited" } }),
+      ).pipe(Effect.forkScoped);
+      yield* Deferred.await(sent);
+      // Only the detail reads again during the save, and it sees the host's own title.
+      yield* Effect.promise(() => executeAtomQuery(registry, detail, { refresh: true }));
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(editing);
+      const pageAnswer = yield* Effect.promise(() => executeAtomQuery(registry, page));
+      expect(pageAnswer._tag === "Success" && pageAnswer.value.entries[0]?.title).toBe(
+        "Draft: Edited",
+      );
+    }),
+  ),
+);
+
 it.effect.each(["accepted", "refused"] as const)(
   "keeps a label change on retained rows only when the host takes it (%s)",
   (outcome) =>

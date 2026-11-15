@@ -399,6 +399,10 @@ function settleEdit(
   let rewritten = false;
   const pending = registry.get(pullRequestPendingEditsAtom(environmentId));
   const textAtSend = editedTextAtSend(atSend, edit);
+  const touched: Array<{
+    readonly reader: EditableReader;
+    readonly writable: Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
+  }> = [];
   for (const atom of registry.getNodes().keys()) {
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
@@ -423,15 +427,18 @@ function settleEdit(
         shown.value,
         edit,
       );
-    if (changed) {
-      rewritten = true;
-      registry.refresh(writable);
-      continue;
-    }
-    registry.update(
-      writable,
-      AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
-    );
+    if (changed) rewritten = true;
+    touched.push({ reader, writable });
+  }
+  // A rewrite one reader saw holds for all of them, and a reader the server does not refresh
+  // would otherwise keep the typed text.
+  for (const { reader, writable } of touched) {
+    if (!rewritten) {
+      registry.update(
+        writable,
+        AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
+      );
+    } else if (!registry.get(writable).waiting) registry.refresh(writable);
   }
   return rewritten;
 }
