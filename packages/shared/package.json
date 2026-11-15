@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./wslUncPath": {
+      "types": "./src/wslUncPath.ts",
+      "import": "./src/wslUncPath.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

@@ -7,6 +7,7 @@ import {
   type ProjectSnapshot,
   ProjectId,
 } from "@t3tools/contracts";
+import { parseWslUncPath } from "@t3tools/shared/wslUncPath";
 import * as Console from "effect/Console";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
@@ -158,6 +159,19 @@ export class ProjectAlreadyExistsError extends Schema.TaggedError<ProjectAlready
   }
 }
 
+export class ProjectWslSharePathError extends Schema.TaggedError<ProjectWslSharePathError>()(
+  "ProjectWslSharePathError",
+  {
+    workspaceRoot: Schema.String,
+    distro: Schema.String,
+    linuxPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Could not add WSL project: '${this.workspaceRoot}' is in WSL distro '${this.distro}'. Add '${this.linuxPath}' from that distro's T3 Code backend instead; git over the WSL share is too slow.`;
+  }
+}
+
 export const ProjectCommandError = Schema.Union([
   ProjectCommandIdGenerationError,
   ProjectLiveServerDeclaredResponseError,
@@ -167,6 +181,7 @@ export const ProjectCommandError = Schema.Union([
   ProjectIdentifierEmptyError,
   ProjectNotFoundError,
   ProjectAlreadyExistsError,
+  ProjectWslSharePathError,
 ]);
 export type ProjectCommandError = typeof ProjectCommandError.Type;
 
@@ -487,6 +502,13 @@ const projectAddCommand = Command.make("add", {
           command: ProjectCliDispatchCommand,
         ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
       }) {
+        const wslPath = parseWslUncPath(flags.workspaceRoot);
+        if (wslPath) {
+          return yield* new ProjectWslSharePathError({
+            workspaceRoot: flags.workspaceRoot,
+            ...wslPath,
+          });
+        }
         const workspaceRoot = yield* normalizeWorkspaceRootForProjectCommand(flags.workspaceRoot);
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,

@@ -190,10 +190,10 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import { useAvailableSettingsSearchItems } from "./settings/useAvailableSettingsSearchItems";
 import {
   applyWslEnvironmentConfiguration,
-  parseWslUncPath,
   resolveProjectPickerTarget,
   resolveWslProjectSelection,
 } from "../wslPaths";
+import { parseWslUncPath } from "@t3tools/shared/wslUncPath";
 import {
   resolveCommandPaletteProject,
   ADDON_ICON_CLASS,
@@ -2013,8 +2013,65 @@ function OpenCommandPaletteDialog(props: {
     setOpen(false);
   };
 
+  // WSL shares go to the matching WSL backend: git over the \\wsl.localhost share is too slow.
+  const resolveDesktopWslProjectSelection = async (
+    path: string,
+    knownWslState: DesktopWslState | null,
+  ) => {
+    const desktopWslState =
+      knownWslState ?? (await window.desktopBridge?.getWslState().catch(() => null)) ?? null;
+    let primaryRunningDistro: string | null = null;
+    try {
+      primaryRunningDistro =
+        window.desktopBridge
+          ?.getLocalEnvironmentBootstraps()
+          .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID)?.runningDistro ??
+        null;
+    } catch {}
+    return resolveWslProjectSelection(
+      path,
+      applyWslEnvironmentConfiguration(
+        environments.flatMap((environment) => {
+          const backendId = desktopLocalBackendId(environment.entry.target);
+          if (!backendId) {
+            return [];
+          }
+
+          const bootstrap = desktopLocalBootstraps.find(
+            (candidate) => candidate.httpBaseUrl === environment.displayUrl,
+          );
+          const runningDistro = bootstrap?.runningDistro ?? null;
+          return [{ environmentId: environment.environmentId, backendId, runningDistro }];
+        }),
+        primaryEnvironmentId,
+        desktopWslState,
+        primaryRunningDistro,
+      ),
+    );
+  };
+
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
+    if (canOpenProjectFromFileManager && parseWslUncPath(rawCwd)) {
+      const selection = await resolveDesktopWslProjectSelection(rawCwd, null);
+      if (!selection) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not add WSL project",
+            description: "Start the matching WSL backend, then add the path again.",
+          }),
+        );
+        return;
+      }
+      await handleAddProjectForEnvironment({
+        environmentId: selection.environmentId,
+        rawCwd: selection.linuxPath,
+        platform: "Linux",
+        currentProjectCwd: null,
+      });
+      return;
+    }
     await handleAddProjectForEnvironment({
       environmentId: browseEnvironmentId,
       rawCwd,
@@ -2795,37 +2852,7 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     if (parseWslUncPath(pickedPath)) {
-      if (desktopWslState === null) {
-        desktopWslState = (await window.desktopBridge?.getWslState().catch(() => null)) ?? null;
-      }
-      let primaryRunningDistro: string | null = null;
-      try {
-        primaryRunningDistro =
-          window.desktopBridge
-            ?.getLocalEnvironmentBootstraps()
-            .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID)?.runningDistro ??
-          null;
-      } catch {}
-      const selection = resolveWslProjectSelection(
-        pickedPath,
-        applyWslEnvironmentConfiguration(
-          environments.flatMap((environment) => {
-            const backendId = desktopLocalBackendId(environment.entry.target);
-            if (!backendId) {
-              return [];
-            }
-
-            const bootstrap = desktopLocalBootstraps.find(
-              (candidate) => candidate.httpBaseUrl === environment.displayUrl,
-            );
-            const runningDistro = bootstrap?.runningDistro ?? null;
-            return [{ environmentId: environment.environmentId, backendId, runningDistro }];
-          }),
-          primaryEnvironmentId,
-          desktopWslState ?? null,
-          primaryRunningDistro,
-        ),
-      );
+      const selection = await resolveDesktopWslProjectSelection(pickedPath, desktopWslState);
       if (!selection) {
         toastManager.add(
           stackedThreadToast({
