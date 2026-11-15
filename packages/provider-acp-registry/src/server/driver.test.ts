@@ -289,7 +289,6 @@ describe("acpRegistrySnapshotReadiness", () => {
         currentModelId: "glm",
         configOptions: [...liveOptions, sharedMode],
         modelOptionIds: ["effort"],
-        modelsFromModelSelect: false,
       },
       [],
     );
@@ -308,7 +307,6 @@ describe("acpRegistrySnapshotReadiness", () => {
         currentModelId: "opus",
         configOptions: [{ ...liveOptions[0]!, id: "thinking" }, sharedMode],
         modelOptionIds: ["thinking"],
-        modelsFromModelSelect: false,
       },
       [],
     ).models;

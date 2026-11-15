@@ -207,7 +207,7 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelOptionIds?: NonNullable<AcpRegistryProbeResult["modelOptionIds"]>;
   // A single model from an explicit select is the agent's deliberate catalog
   // (e.g. an entitlement change), not a cold-start placeholder.
-  readonly modelsFromModelSelect: boolean;
+  readonly modelsFromModelSelect?: boolean;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
