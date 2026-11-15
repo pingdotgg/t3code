@@ -27,6 +27,9 @@ function displayEventFromEntry(entry: TimelineEntry): DisplayEvent | null {
     }
     case "event":
       return displayEventFromTurnItem(entry.projectedItem.item);
+    // A Normal-mode send, drawn from its output; the server reads the same send from its input.
+    case "sent-message":
+      return { type: "sent", id: entry.id, text: entry.text };
     default:
       return { type: "other" };
   }
@@ -36,6 +39,23 @@ function displayEventFromEntry(entry: TimelineEntry): DisplayEvent | null {
 // until a rewrite changes its text or edit time without changing its entry.
 const repliesInRun = new WeakMap<TimelineEntry, Extract<TimelineEntry, { kind: "message" }>>();
 const repliesOutsideRun = new WeakMap<TimelineEntry, Extract<TimelineEntry, { kind: "message" }>>();
+const rewrittenSends = new WeakMap<
+  TimelineEntry,
+  Extract<TimelineEntry, { kind: "sent-message" }>
+>();
+
+/** Normal draws a Normal-mode send in upstream's row, with the text of its latest rewrite. */
+function sentWithText(
+  entry: Extract<TimelineEntry, { kind: "sent-message" }>,
+  text: string,
+): TimelineEntry {
+  if (text === entry.text) return entry;
+  const known = rewrittenSends.get(entry);
+  if (known?.text === text) return known;
+  const rewritten = { ...entry, text };
+  rewrittenSends.set(entry, rewritten);
+  return rewritten;
+}
 
 /**
  * A sent message reads as the agent's reply, not as a tool call. The turn fold hides messages of a
@@ -217,10 +237,10 @@ export function rowShownIn(
 }
 
 /**
- * Returns the rows that a display mode draws. A completed send is a reply in every mode, with the
- * text of its latest rewrite, and a replace call has no row. A mode without `visibleCores` keeps
- * all other rows. A mode with sub-threads draws the first messages, or with `subThread`, the id of
- * a first message, that message and its replies. The result is `entries` itself when no row changes.
+ * Returns the rows that a display mode draws, or `entries` itself when no row changes. A completed
+ * send is a reply with its latest text, but in Normal a Normal-mode send keeps upstream's row. A
+ * replace call has no row. A mode without `visibleCores` keeps all other rows. A mode with
+ * sub-threads draws the first messages, or with `subThread`, that first message and its replies.
  */
 export function applyDisplayMode(
   mode: DisplayMode,
@@ -243,16 +263,10 @@ export function applyDisplayMode(
     const item = entry.kind === "work" ? entry.entry.structuredPayload : undefined;
     if (item !== undefined && isReplaceSendCall(item)) return [];
     const event = events[index];
-    return [
-      event?.type === "sent"
-        ? replyEntry(
-            entry,
-            coreTexts.get(entry.id) ?? event.text,
-            editedAt.get(entry.id),
-            shownIds === null,
-          )
-        : entry,
-    ];
+    if (event?.type !== "sent") return [entry];
+    const text = coreTexts.get(entry.id) ?? event.text;
+    if (entry.kind === "sent-message" && shownIds === null) return [sentWithText(entry, text)];
+    return [replyEntry(entry, text, editedAt.get(entry.id), shownIds === null)];
   });
   return rows.length === entries.length && rows.every((row, index) => row === entries[index])
     ? entries

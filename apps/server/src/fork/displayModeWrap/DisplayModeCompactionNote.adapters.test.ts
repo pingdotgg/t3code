@@ -5,6 +5,7 @@ import { assert, it } from "@effect/vitest";
 import {
   ClaudeSettings,
   CodexSettings,
+  EnvironmentId,
   MessageId,
   NodeId,
   ProjectId,
@@ -220,6 +221,53 @@ it.effect("a Claude adapter built on the provider infrastructure adds the thread
     );
   }).pipe(Effect.scoped, Effect.provide(infrastructureFor(threadId, "t3-compaction-note-claude-")));
 });
+
+it.effect(
+  "Claude gets upstream's send_to_user section from the hook in Normal, not in its system prompt",
+  () => {
+    const normalId = ThreadId.make("thread:send-section:normal");
+    const messagesOnlyId = ThreadId.make("thread:send-section:messages-only");
+    const section = "### Text the user must read mid-turn";
+    return Effect.gen(function* () {
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const submitted = Effect.fn("submitted")(function* (threadId: ThreadId) {
+        yield* sessions.set({
+          environmentId: EnvironmentId.make("environment-send-section"),
+          threadId,
+          providerSessionId: "mcp-session-send-section",
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer send-section",
+          browserToolsAvailable: false,
+        });
+        const options = yield* startClaudeTurn(threadId, { text: "hi" });
+        const append = (options.systemPrompt as { readonly append?: string }).append ?? "";
+        assert.include(append, "call `t3_background_wait`");
+        assert.notInclude(append, section);
+        const callback = options.hooks?.UserPromptSubmit?.[0]?.hooks[0];
+        const output = yield* Effect.promise(() =>
+          callback!(
+            {
+              hook_event_name: "UserPromptSubmit",
+              prompt: "hi",
+              session_id: "native-thread-compaction-note",
+              transcript_path: "/transcripts/native-thread-compaction-note.jsonl",
+              cwd: "/workspace",
+            } satisfies HookInput,
+            undefined,
+            { signal: new AbortController().signal },
+          ),
+        );
+        return "hookSpecificOutput" in output &&
+          output.hookSpecificOutput?.hookEventName === "UserPromptSubmit"
+          ? output.hookSpecificOutput.additionalContext
+          : undefined;
+      });
+      assert.include(yield* submitted(normalId), section);
+      assert.isUndefined(yield* submitted(messagesOnlyId));
+    }).pipe(Effect.scoped, Effect.provide(infrastructureFor(messagesOnlyId, "t3-send-section-")));
+  },
+);
 
 it.effect("Claude gets a slash command's note only with that command's own prompt", () => {
   const threadId = ThreadId.make("thread:command-note:claude");

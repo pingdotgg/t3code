@@ -63,8 +63,8 @@ export function replyCallOf(item: OrchestrationV2TurnItem, named: boolean): Repl
   const event = displayEventFromTurnItem(item);
   switch (resolveT3McpToolId(item.toolName)) {
     case SEND_TO_USER_TOOL_NAME: {
+      if (event?.type === "sent") return { kind: event.ack ? "ack" : "answer", delivered: true };
       const kind = isAckInput(item.input) ? "ack" : "answer";
-      if (event?.type === "sent") return { kind, delivered: true };
       return named && event === null ? { kind, delivered: false } : null;
     }
     case REPLACE_SEND_TO_USER_TOOL_NAME:

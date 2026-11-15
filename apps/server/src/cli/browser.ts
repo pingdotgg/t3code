@@ -10,7 +10,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { browserSetupRootWarning } from "../fork/browserSetupRootWarning.ts";
-import { FULL_CHROME_PRODUCT } from "../fork/previewChrome.ts";
+import { FULL_CHROME_PRODUCT, profileNeedsWrite } from "../fork/previewChrome.ts";
 import { missingDisplayServer } from "../fork/previewDisplay.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { resolveBaseDir } from "../os-jank.ts";
@@ -175,11 +175,9 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
       }
 
       if (needsProfile) {
-        // An existing profile may carry an administrator's edits, so it is reloaded as is.
-        const profileOnDisk = yield* fs
-          .exists(PreviewBrowserHost.APPARMOR_PROFILE_PATH)
-          .pipe(Effect.orElseSucceed(() => false));
-        if (!profileOnDisk) {
+        // Any profile but an older T3's may carry an administrator's edits, so it is reloaded as is.
+        const keepProfile = !(yield* profileNeedsWrite(PreviewBrowserHost.APPARMOR_PROFILE_PATH));
+        if (!keepProfile) {
           yield* fs
             .writeFileString(
               PreviewBrowserHost.APPARMOR_PROFILE_PATH,
@@ -200,7 +198,7 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           PreviewBrowserHost.APPARMOR_PROFILE_PATH,
         ]);
         yield* Console.log(
-          profileOnDisk
+          keepProfile
             ? `Reloaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`
             : `Wrote and loaded the AppArmor profile at ${PreviewBrowserHost.APPARMOR_PROFILE_PATH} that allows Chrome's sandbox for T3's browser.`,
         );

@@ -14,9 +14,11 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
-import { McpSchema, McpServer } from "effect/ai";
+import * as Context from "effect/Context";
+import { McpSchema, McpServer, Tool } from "effect/ai";
 
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
+import { MessageToolkit } from "../../mcp/toolkits/message/tools.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { DisplayModeWrap } from "../displayModeWrap/DisplayModeWrap.ts";
@@ -160,6 +162,12 @@ const SHOWN = {
   ok: true,
   message: "Shown to the user. If you are done, end your turn with no text.",
 };
+/** Normal mode answers as upstream's send_to_user, and gives web and mobile the text to draw. */
+const shownInNormal = (text: string) => ({
+  ok: true,
+  message: "Shown to the user. Don't repeat it.",
+  sentMessage: text,
+});
 const ACKED = {
   ok: true,
   message: "Shown to the user as an ack. Send your answer when it is ready.",
@@ -179,12 +187,22 @@ it.effect("shows the message to the user without needing any capability", () =>
   Effect.gen(function* () {
     const result = yield* send("The tests pass.");
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toEqual({
-      ok: true,
-      message: "Shown to the user. If you are done, end your turn with no text.",
-    });
+    expect(result.structuredContent).toEqual(shownInNormal("The tests pass."));
   }).pipe(Effect.provide(layer)),
 );
+
+// The allowlist, ToolSearch and plan mode treat the registered send_to_user by upstream's annotations.
+it("annotates send_to_user as upstream's send_to_user", () => {
+  const annotations = (tool: Tool.Any) => [
+    ...[Tool.Readonly, Tool.Destructive, Tool.Idempotent, Tool.OpenWorld].map((key) =>
+      Context.get(tool.annotations, key),
+    ),
+    Context.getOption(tool.annotations, Tool.Meta),
+  ];
+  expect(annotations(SendToUser.SendToUserToolkit.tools.send_to_user)).toEqual(
+    annotations(MessageToolkit.tools.send_to_user),
+  );
+});
 
 it.effect("refuses a caller outside a thread", () =>
   Effect.gen(function* () {
@@ -250,12 +268,12 @@ describe("the 1000-byte limit", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("shows an ack of 200 bytes and refuses one byte more, in every display mode", () =>
+  it.effect("shows an ack of 200 bytes and refuses one byte more, outside Normal", () =>
     Effect.gen(function* () {
-      history = [typed("u1", "Fix the build.")];
       const ack = (text: string, threadId: ThreadId) =>
         call("send_to_user", { text, ack: true }, { threadId });
-      for (const threadId of [normalThread, messagesThread]) {
+      for (const threadId of [messagesThread, dashboardThread]) {
+        history = [typed("u1", "Fix the build.")];
         expect(refusalText(yield* ack("a".repeat(201), threadId))).toBe(
           "an ack is at most 200 bytes. Say only that you got the message and are on it.",
         );
@@ -263,17 +281,33 @@ describe("the 1000-byte limit", () => {
       }
       const answer = yield* call("send_to_user", { text: "a".repeat(1_000) });
       expect(answer.structuredContent).toEqual(SHOWN);
+      const normal = yield* ack("a".repeat(201), normalThread);
+      expect(normal.structuredContent).toEqual(shownInNormal("a".repeat(201)));
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("gives the same answer in every display mode", () =>
+  it.effect("refuses an oversize send in Messages only and Messages + Dashboard", () =>
     Effect.gen(function* () {
       history = [typed("u1", "Fix the build.")];
-      for (const threadId of [normalThread, messagesThread, dashboardThread]) {
+      for (const threadId of [messagesThread, dashboardThread]) {
         expect(seen(yield* call("send_to_user", { text: oversize }, { threadId }))).toEqual(
           REFUSED,
         );
       }
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each<readonly [string, string]>([
+    ["ASCII letters", "a".repeat(4_000)],
+    ["Chinese characters", "界".repeat(4_000)],
+    ["emoji", "😀".repeat(2_000)],
+  ])("shows 4000 UTF-16 code units of %s in Normal and refuses one more", ([_name, atLimit]) =>
+    Effect.gen(function* () {
+      const normal = (text: string) => call("send_to_user", { text }, { threadId: normalThread });
+      expect((yield* normal(atLimit)).structuredContent).toEqual(shownInNormal(atLimit));
+      expect(refusalText(yield* normal(`${atLimit}a`))).toBe(
+        "a message is at most 4000 UTF-16 code units; send the rest in another message.",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -329,9 +363,12 @@ describe("the 1000-byte limit", () => {
       ]) {
         expect(schema).toMatchObject({ minLength: 1 });
         expect(schema).not.toHaveProperty("maxLength");
-        expect(schema?.description).toContain("at most 1000 bytes");
+        expect(schema?.description).toContain("1000 bytes of UTF-8 after JSON escaping");
         expect(schema?.description).toContain("a longer text is refused and not shown");
       }
+      expect(parameter("send_to_user", "text")?.description).toContain(
+        "In any other thread (the full view, Normal): at most 4000 UTF-16 code units",
+      );
       const empty = yield* call("send_to_user", { text: "" }).pipe(Effect.exit);
       expect(Exit.isFailure(empty)).toBe(true);
     }).pipe(Effect.provide(layer)),
@@ -372,6 +409,17 @@ describe("one send per typed message", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("counts a send made in Normal as an answer, though it passed ack", () =>
+    Effect.gen(function* () {
+      const inNormal = {
+        ...acked("n1", "On it."),
+        output: shownInNormal("On it."),
+      } satisfies OrchestrationV2TurnItem;
+      history = [typed("u1", "Fix the build."), inNormal];
+      expect(reasonOf(yield* call("send_to_user", { text: "Done." }))).toBe(SECOND_ANSWER);
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("takes one ack before the answer, and no send after the answer", () =>
     Effect.gen(function* () {
       const named = (text: string, ack = false) =>
@@ -399,7 +447,7 @@ describe("one send per typed message", () => {
       );
       expect(dashboard.isError).toBe(true);
       const normal = yield* call("send_to_user", { text: "Done." }, { threadId: normalThread });
-      expect(normal.structuredContent).toEqual(SHOWN);
+      expect(normal.structuredContent).toEqual(shownInNormal("Done."));
     }).pipe(Effect.provide(layer)),
   );
 

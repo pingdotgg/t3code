@@ -457,6 +457,30 @@ it.effect("refuses a second answer to one message, and points to the replace too
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("does not count a send made in Normal as an answer, though it passed reply_to", () =>
+  Effect.gen(function* () {
+    setup([
+      ...twoSubThreads(),
+      {
+        ...answer("a2", "Lint passes too.", "q2"),
+        output: {
+          ok: true,
+          message: "Shown to the user. Don't repeat it.",
+          sentMessage: "Lint passes too.",
+        },
+      },
+    ]);
+    const result = yield* call("send_to_user", {
+      text: "Also: types pass.",
+      reply_to: shortId("q2"),
+      user_message: "And the lint job?",
+    });
+    expect(result.structuredContent).toEqual(
+      shown(`Shown to the user as your answer to "${shortId("q2")}".`),
+    );
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("takes one ack before the answer to a message, and none for a new message", () =>
   Effect.gen(function* () {
     setup(twoSubThreads());

@@ -256,11 +256,8 @@ export class ServerBrowserContexts {
         executablePath,
       }),
     );
-<<<<<<< origin/main
-    if (!options.headless) keepStartPage(context);
-=======
     stubWorkerBadges(context);
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
+    if (!options.headless) keepStartPage(context);
     return context;
   }
 

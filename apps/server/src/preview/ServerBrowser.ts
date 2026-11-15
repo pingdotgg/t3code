@@ -599,9 +599,8 @@ const make = Effect.gen(function* () {
     },
   });
 
-<<<<<<< origin/main
   yield* PreviewBrowserMode.restartOnChange(() => contexts.restart());
-=======
+
   // Playwright cannot reload a crashed page, so a fresh page takes over its tab.
   const reopenCrashedTab = async (tab: ServerTab) => {
     if (tab.desktop) return dropTab(tab, true);
@@ -646,7 +645,6 @@ const make = Effect.gen(function* () {
     pendingTabs.set(key, { agentId: tab.control.agentId, promise: reopening });
     await reopening.catch(constVoid);
   };
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
 
   const dialogStatus = (tab: ServerTab) =>
     tab.dialog

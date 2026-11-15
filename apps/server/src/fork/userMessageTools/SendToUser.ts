@@ -25,6 +25,7 @@ import {
   WRAPPED_CORE_COUNT,
 } from "@t3tools/shared/displayModes";
 import { TEXT_MATCH_MIN_RATIO, textSimilarity } from "@t3tools/shared/textMatch";
+import { SEND_TO_USER_MAX_LENGTH } from "@t3tools/shared/toolOutput";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -45,10 +46,15 @@ import {
   replyCallOf,
 } from "./replyStage.ts";
 
+const MAX_BYTES_TEXT = `Markdown, at most ${SEND_TO_USER_MAX_BYTES} bytes of UTF-8 after JSON escaping; a longer text is refused and not shown. Most CJK characters count as 3 bytes, a quote, a backslash, a tab, or a line break as 2, and most other control characters as 6.`;
 // The description goes before the checks: one set after a custom check is left out of the JSON schema.
-const MessageText = Schema.String.annotate({
-  description: `Markdown, at most ${SEND_TO_USER_MAX_BYTES} bytes of UTF-8 after JSON escaping; a longer text is refused and not shown. Most CJK characters count as 3 bytes, a quote, a backslash, a tab, or a line break as 2, and most other control characters as 6.`,
-}).check(Schema.isMinLength(1));
+const messageText = (description: string) =>
+  Schema.String.annotate({ description }).check(Schema.isMinLength(1));
+const MessageText = messageText(MAX_BYTES_TEXT);
+// Normal mode takes upstream's send_to_user limit; the other modes keep the fork's.
+const SendText = messageText(
+  `In a thread set to Messages only, Messages + Dashboard or Chat + Replies: ${MAX_BYTES_TEXT} In any other thread (the full view, Normal): at most ${SEND_TO_USER_MAX_LENGTH} UTF-16 code units, where most characters count once and an emoji or a rare CJK character twice or more.`,
+);
 
 const jsonEscapedBytes = (text: string) => Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
 
@@ -84,6 +90,7 @@ const UNNAMED_SEND_HOLD_MS = 10_000;
 const MIN_PERCENT = Math.round(TEXT_MATCH_MIN_RATIO * 100);
 const DONE = "If you are done, end your turn with no text.";
 const SHOWN = { ok: true as const, message: `Shown to the user. ${DONE}` };
+const SHOWN_NORMAL = { ok: true as const, message: "Shown to the user. Don't repeat it." };
 const ACKED = {
   ok: true as const,
   message: "Shown to the user as an ack. Send your answer when it is ready.",
@@ -103,9 +110,9 @@ const dependencies = [
 // The tools change only what the caller's thread shows, so read-only sandboxes and plan mode may use them.
 const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   description:
-    "Show the user a message in this thread. In a thread set to Messages only, this is the only output the user sees. In a thread set to Chat + Replies, also pass reply_to with user_message, or new_sub_thread.",
+    "Show the user a message in this thread. In a thread set to Messages only, this is the only output the user sees. In a thread set to Chat + Replies, also pass reply_to with user_message, or new_sub_thread. In the full view (Normal), use it for content the user must read in full before your turn ends, such as a draft or a code block, and don't repeat it in your reply.",
   parameters: Schema.Struct({
-    text: MessageText,
+    text: SendText,
     reply_to: Pointer(
       "Chat + Replies only. The id of the user's message that this text answers, as the <t3-replies-mode> block before that message gave it.",
     ),
@@ -127,7 +134,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
     ack: Schema.optional(
       Schema.NullOr(
         Schema.Boolean.annotate({
-          description: `True for a note of at most ${ACK_MAX_BYTES} bytes that you got the message and are on it, only when your answer will take a while. At most one, before the answer.`,
+          description: `In a thread set to Messages only, Messages + Dashboard or Chat + Replies: true for a note of at most ${ACK_MAX_BYTES} bytes that you got the message and are on it, only when your answer will take a while. At most one, before the answer.`,
         }),
       ),
     ),
@@ -136,6 +143,8 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
     ok: Schema.Literal(true),
     message: Schema.String,
     messageId: Schema.optional(Schema.String),
+    // Normal mode only: web and mobile draw this as the agent's words, as upstream's send_to_user.
+    sentMessage: Schema.optional(Schema.String),
   }),
   failure: OrchestratorMcpFailure,
   dependencies,
@@ -144,7 +153,9 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  // Claude is told to use it from its first turn; Claude Code otherwise defers it behind ToolSearch.
+  .annotate(Tool.Meta, { "anthropic/alwaysLoad": true });
 
 const ReplaceSendToUserTool = Tool.make(REPLACE_SEND_TO_USER_TOOL_NAME, {
   description: `In threads set to Messages only, Messages + Dashboard or Chat + Replies, you answer each message of the user once, after at most one ack. This replaces your latest message for it in place; an ack becomes the answer. Pass the user's last message and your current message as the recap shows them (their words only), each at least ${MIN_PERCENT}% alike, and the whole new text. In Chat + Replies, also pass reply_to or sub_thread.`,
@@ -346,12 +357,15 @@ function answerCalls(
   const targetAt = items.findIndex(
     (item) => item.type === "user_message" && item.messageId === target,
   );
-  return replyCallsAfter(
-    items,
-    targetAt,
-    named,
-    (item) => messagePointer(inputField(item, "reply_to")) === replyTo,
-  );
+  return replyCallsAfter(items, targetAt, named, (item) => {
+    // A completed send counts where it shows; a Normal-mode send answers no message.
+    const event = displayEventFromTurnItem(item);
+    const pointer =
+      event?.type === "sent" || event?.type === "rewrite"
+        ? event.replyTo
+        : messagePointer(inputField(item, "reply_to"));
+    return pointer === replyTo;
+  });
 }
 
 /** Whether a send still running would be shown as a new message: the handler would accept it. */
@@ -751,12 +765,19 @@ export const layerHandlers = McpToolAccess.toLayer(
     return {
       [SEND_TO_USER_TOOL_NAME]: McpToolAccess.readsAsCaller((input) =>
         Effect.gen(function* () {
+          const { threadId, mode } = yield* callerThread;
+          if (!mode.oneSendPerMessage) {
+            if (input.text.length > SEND_TO_USER_MAX_LENGTH)
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: `a message is at most ${SEND_TO_USER_MAX_LENGTH} UTF-16 code units; send the rest in another message.`,
+              });
+            return { ...SHOWN_NORMAL, sentMessage: input.text };
+          }
           const ack = input.ack === true;
           yield* checkMessageSize(input.text, ack);
-          const { threadId, mode } = yield* callerThread;
           if (mode.subThreads)
             return yield* sendInSubThread(threadId, input).pipe(lockFor(threadId).withPermits(1));
-          if (!mode.oneSendPerMessage) return SHOWN;
           return yield* Effect.gen(function* () {
             const turn = yield* readThreadTurn(threadId);
             if (ack && turn.typed === undefined) {

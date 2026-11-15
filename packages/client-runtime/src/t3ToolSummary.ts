@@ -479,17 +479,13 @@ export function summarizeT3ToolCalls(
       label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
       break;
     case "send-to-user":
-<<<<<<< origin/main
-      label = phrase("Sent", "send", `${quantity(selected.length, "message")} to the user`);
+      label = phrase("Sent", "send", quantity(selected.length, "message"));
       break;
     case "rewrite-to-user":
       label = phrase("Rewrote", "rewrite", `${quantity(selected.length, "message")} to the user`);
       break;
     case "dashboard":
       label = phrase("Used", "use", `the Dashboard ${times}`);
-=======
-      label = phrase("Sent", "send", quantity(selected.length, "message"));
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
       break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);

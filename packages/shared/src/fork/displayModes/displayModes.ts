@@ -300,9 +300,9 @@ export const NORMAL_DISPLAY_MODE: DisplayMode = {
   id: "normal",
   label: "Normal",
   notice:
-    "<t3-display-mode>The user switched this thread back to the full view. They see all your output again; reply in plain text.</t3-display-mode>",
+    "<t3-display-mode>The user switched this thread back to the full view. They see your replies and tool calls again; reply as usual, not only through send_to_user.</t3-display-mode>",
   stateNotice:
-    "<t3-display-mode>This thread is in the full view. The user sees all your output; reply in plain text.</t3-display-mode>",
+    "<t3-display-mode>This thread is in the full view. The user sees your replies and tool calls; reply as usual, not only through send_to_user.</t3-display-mode>",
   visibleCores: null,
   wrap: null,
   dashboard: false,
@@ -471,6 +471,10 @@ function messageToolEvent(
   if (typeof input !== "object" || input === null) return null;
   const text: unknown = Reflect.get(input, tool.field);
   if (typeof text !== "string") return null;
+  const output = compactDynamicToolOutput(item.output);
+  // A Normal-mode send returns `sentMessage` and ignores the other modes' fields.
+  if (tool.type === "sent" && output?.sentMessage !== undefined)
+    return { type: "sent", id: item.id, text };
   const replyTo = pointerField(input, "reply_to");
   return tool.type === "sent"
     ? {
@@ -478,7 +482,7 @@ function messageToolEvent(
         id: item.id,
         text,
         replyTo,
-        pointer: messagePointer(compactDynamicToolOutput(item.output)?.messageId),
+        pointer: messagePointer(output?.messageId),
         ...(isAckInput(input) && { ack: true as const }),
       }
     : { type: "rewrite", id: item.id, text, replyTo, subThread: pointerField(input, "sub_thread") };

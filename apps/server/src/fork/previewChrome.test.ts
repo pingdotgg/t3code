@@ -13,7 +13,8 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as NodeZlib from "node:zlib";
 
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
-import { chromeBrands, fullChromeRelease } from "./previewChrome.ts";
+import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
+import { chromeBrands, fullChromeRelease, HEADLESS_SHELL_PROFILE } from "./previewChrome.ts";
 
 const storedZip = (entries: ReadonlyArray<{ readonly name: string; readonly mode: number }>) => {
   const records: Array<Buffer> = [];
@@ -63,6 +64,54 @@ it("pins full Chrome where its archive unpacks, and keeps the shell on macOS", (
   expect(fullChromeRelease("win64")?.executable).toBe("chrome.exe");
   expect(fullChromeRelease("mac-arm64")).toBeNull();
 });
+
+it.effect.each([
+  { label: "no profile", restricted: "1\n", profile: undefined, blocked: true },
+  {
+    label: "the profile an older T3 wrote",
+    restricted: "1\n",
+    profile: HEADLESS_SHELL_PROFILE,
+    blocked: true,
+  },
+  {
+    label: "the current profile",
+    restricted: "1\n",
+    profile: PreviewBrowserHost.APPARMOR_PROFILE,
+    blocked: false,
+  },
+  {
+    label: "an administrator's profile",
+    restricted: "1\n",
+    profile: "profile edited {}\n",
+    blocked: false,
+  },
+  {
+    label: "no userns restriction",
+    restricted: "0\n",
+    profile: HEADLESS_SHELL_PROFILE,
+    blocked: false,
+  },
+])("full Chrome's sandbox counts as blocked with $label", (input) =>
+  Effect.gen(function* () {
+    const files = new Map([
+      ["/proc/sys/kernel/apparmor_restrict_unprivileged_userns", input.restricted],
+    ]);
+    if (input.profile !== undefined)
+      files.set(PreviewBrowserHost.APPARMOR_PROFILE_PATH, input.profile);
+    const fileSystem = FileSystem.makeNoop({
+      exists: (path) => Effect.succeed(files.has(path)),
+      readFileString: (path) => {
+        const content = files.get(path);
+        return content === undefined ? Effect.die(`no ${path}`) : Effect.succeed(content);
+      },
+    });
+    const blocked = yield* PreviewBrowserHost.sandboxBlocked.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    );
+    expect(blocked).toBe(input.blocked);
+  }),
+);
 
 it("builds the brand list real Chrome sends", () => {
   // Read from google-chrome 150.0.7871.114 with navigator.userAgentData.getHighEntropyValues.

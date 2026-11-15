@@ -17,6 +17,8 @@ export interface DisplayModeCompactionNoteShape {
    * and returns `undefined`.
    */
   readonly noteAfterCompaction: (threadId: ThreadId) => Effect.Effect<string | undefined>;
+  /** Whether the thread is in Normal, or `undefined` when the read fails, which it logs. */
+  readonly isNormal: (threadId: ThreadId) => Effect.Effect<boolean | undefined>;
 }
 
 export class DisplayModeCompactionNote extends Context.Service<
@@ -69,7 +71,24 @@ export const layer: Layer.Layer<
       );
     });
 
-    return DisplayModeCompactionNote.of({ noteAfterCompaction });
+    const isNormal: DisplayModeCompactionNoteShape["isNormal"] = Effect.fn(
+      "DisplayModeCompactionNote.isNormal",
+    )(function* (threadId) {
+      return yield* serverSettings.getSettings.pipe(
+        Effect.map(
+          (settings) =>
+            resolveDisplayMode(settings.threadDisplayModes[threadId]) === NORMAL_DISPLAY_MODE,
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Display mode read for the send_to_user section failed", {
+            threadId,
+            cause,
+          }).pipe(Effect.as(undefined)),
+        ),
+      );
+    });
+
+    return DisplayModeCompactionNote.of({ noteAfterCompaction, isNormal });
   }),
 );
 
@@ -84,8 +103,23 @@ export const claudeDisplayModeHooks = (input: {
   readonly threadId: ThreadId;
   readonly activeTurn: Effect.Effect<ProviderAdapter.ProviderAdapterV2TurnInput | undefined>;
   readonly runPromise: <A>(effect: Effect.Effect<A>) => Promise<A>;
+  /**
+   * Upstream's send_to_user section of the system prompt, which a conversation keeps from its start.
+   * In each Claude process, the first user prompt in Normal gets it, a compaction in Normal gets it
+   * again, and so does the first Normal prompt after another mode's prompt.
+   */
+  readonly sendToUserSection?: string;
 }): Partial<Record<HookEvent, HookCallbackMatcher[]>> => {
-  const { notes, threadId, activeTurn, runPromise } = input;
+  const { notes, threadId, activeTurn, runPromise, sendToUserSection } = input;
+  let sectionOwed = true;
+  const section = async () => {
+    if (sendToUserSection === undefined || notes === undefined) return undefined;
+    const normal = await runPromise(notes.isNormal(threadId));
+    if (normal === false) sectionOwed = true;
+    if (normal !== true || !sectionOwed) return undefined;
+    sectionOwed = false;
+    return sendToUserSection;
+  };
   return notes === undefined
     ? {}
     : {
@@ -95,20 +129,25 @@ export const claudeDisplayModeHooks = (input: {
               async (hookInput) => {
                 if (
                   hookInput.hook_event_name !== "UserPromptSubmit" ||
-                  hookInput.source === "system"
+                  hookInput.source === "system" ||
+                  hookInput.agent_id !== undefined
                 )
                   return {};
                 const turn = await runPromise(activeTurn);
-                const note = turn?.commandNote;
-                if (note === undefined || hookInput.prompt.trim() !== turn?.message.text.trim())
-                  return {};
-                await runPromise(note.delivered);
-                return {
-                  hookSpecificOutput: {
-                    hookEventName: "UserPromptSubmit",
-                    additionalContext: note.text,
-                  },
-                };
+                const note =
+                  hookInput.prompt.trim() === turn?.message.text.trim()
+                    ? turn.commandNote
+                    : undefined;
+                if (note !== undefined) await runPromise(note.delivered);
+                const context = [note?.text, await section()].filter((text) => text !== undefined);
+                return context.length === 0
+                  ? {}
+                  : {
+                      hookSpecificOutput: {
+                        hookEventName: "UserPromptSubmit",
+                        additionalContext: context.join("\n\n"),
+                      },
+                    };
               },
             ],
           },
@@ -119,13 +158,15 @@ export const claudeDisplayModeHooks = (input: {
             hooks: [
               async (input) => {
                 if (input.agent_id !== undefined) return {};
+                sectionOwed = true;
                 const note = await runPromise(notes.noteAfterCompaction(threadId));
-                return note === undefined
+                const context = [note, await section()].filter((text) => text !== undefined);
+                return context.length === 0
                   ? {}
                   : {
                       hookSpecificOutput: {
                         hookEventName: "SessionStart",
-                        additionalContext: note,
+                        additionalContext: context.join("\n\n"),
                       },
                     };
               },

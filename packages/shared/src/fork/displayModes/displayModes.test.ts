@@ -157,6 +157,16 @@ describe("displayEventFromTurnItem", () => {
       { type: "sent", id: "item-1", text: "On it.", ack: true },
     ],
     [
+      "a Normal-mode send, which ignores the other modes' fields",
+      {
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__send_to_user",
+        input: { text: "On it.", ack: true, reply_to: "a1b2c3" },
+        output: { ok: true, message: "Shown to the user. Don't repeat it.", sentMessage: "On it." },
+      },
+      { type: "sent", id: "item-1", text: "On it." },
+    ],
+    [
       "a send with ack false",
       {
         type: "dynamic_tool",

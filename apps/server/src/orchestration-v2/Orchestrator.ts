@@ -806,15 +806,11 @@ function mayStartSubagentFollowup(
 ): boolean {
   if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
     return false;
-<<<<<<< origin/main
-  if (command.notification !== undefined) return command.notification.source.kind !== "monitor";
-  if (command.delegatedCompletion !== undefined) return true;
-=======
   if (command.notification !== undefined)
     return (
       command.notification.source.kind !== "monitor" || command.notification.outcome !== "updated"
     );
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
+  if (command.delegatedCompletion !== undefined) return true;
   return (
     command.createdBy === "user" ||
     command.creationSource === "mcp" ||

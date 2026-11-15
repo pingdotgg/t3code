@@ -1833,6 +1833,25 @@ describe("MessagesTimeline thread find", () => {
       ).toBeLessThanOrEqual(2);
     });
   });
+  it("finds text in a sent-message row", async () => {
+    setup();
+    const sent = {
+      id: "item-sent-1",
+      kind: "sent-message",
+      createdAt: CREATED_AT,
+      runId: null,
+      text: "The draft names the needle.",
+    } as Entry;
+    await using screen = await renderElement(
+      <MessagesTimeline {...baseProps()} timelineEntries={[message("Where is it?"), sent]} />,
+    );
+    await vi.waitFor(() => {
+      expect(screen.container.querySelector('[data-timeline-row-id="item-sent-1"]')).not.toBeNull();
+    });
+    expect(collectThreadFindRanges(screen.container, "needle").map((match) => match.rowId)).toEqual(
+      ["item-sent-1"],
+    );
+  });
   it("reveals find's match, not the remembered row, on a thread it switches to", async () => {
     setup();
     const base = baseProps();

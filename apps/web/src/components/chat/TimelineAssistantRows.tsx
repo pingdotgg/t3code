@@ -121,17 +121,20 @@ export function SentMessageTimelineRow({
   return (
     <div className="min-w-0 px-1 py-0.5">
       <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-      <ChatMarkdown
-        text={row.text}
-        cwd={ctx.markdownCwd}
-        threadRef={ctx.threadRef ?? undefined}
-        lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
-        skills={ctx.skills}
-        headingLevelOffset={MESSAGE_HEADING_LEVEL}
-        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
-        onRunShellCommand={ctx.onRunShellCommand}
-        onImageExpand={ctx.onImageExpand}
-      />
+      <div data-thread-find-text="true">
+        <ChatMarkdown
+          text={row.text}
+          assistantReply
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+          skills={ctx.skills}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onRunShellCommand={ctx.onRunShellCommand}
+          onImageExpand={ctx.onImageExpand}
+        />
+      </div>
     </div>
   );
 }

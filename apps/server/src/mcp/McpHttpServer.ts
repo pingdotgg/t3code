@@ -86,8 +86,6 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
-import { MessageToolkit } from "./toolkits/message/tools.ts";
-import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import * as SendToUser from "../fork/userMessageTools/SendToUser.ts";
 import * as DashboardTools from "../fork/threadDashboard/DashboardTools.ts";
@@ -1245,7 +1243,11 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
-const layerMessageToolkit = toolkitRegistration(MessageToolkit, MessageHandlers.layer);
+// The fork's send_to_user replaces upstream's: display modes read its calls by name and `text`.
+const layerMessageToolkit = toolkitRegistration(
+  SendToUser.SendToUserToolkit,
+  SendToUser.layerHandlers,
+);
 
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
@@ -1337,12 +1339,8 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
-<<<<<<< origin/main
-  toolkitRegistration(SendToUser.SendToUserToolkit, SendToUser.layerHandlers),
-  toolkitRegistration(DashboardTools.DashboardToolkit, DashboardTools.layerHandlers),
-=======
   layerMessageToolkit,
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
+  toolkitRegistration(DashboardTools.DashboardToolkit, DashboardTools.layerHandlers),
 );
 
 const layerToolExposure = Layer.effect(

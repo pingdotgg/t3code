@@ -51,13 +51,14 @@ import { projectComposerContextForProvider } from "@t3tools/shared/composerConte
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { isHiddenClaudeTool, withoutCodexSubagentTools } from "./fork/hiddenNativeTools.ts";
+import { DashboardToolkit } from "../../apps/server/src/fork/threadDashboard/DashboardTools.ts";
+import { SendToUserToolkit } from "../../apps/server/src/fork/userMessageTools/SendToUser.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
-import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -437,7 +438,13 @@ export const normalizeToolName = (name: string) => {
 };
 export const normalizeToolInput = (name: string, input: unknown) => {
   const decode = t3InputDecoders.get(normalizeToolName(name));
-  if (decode !== undefined) return Option.getOrElse(decode(input), () => input);
+  if (decode !== undefined) {
+    const decoded = Option.getOrElse(decode(input), () => input);
+    // Upstream's cases grade send_to_user's `message`; the fork's tool takes `text`.
+    return normalizeToolName(name) === "send_to_user" && isRecord(decoded)
+      ? { ...decoded, message: decoded.text }
+      : decoded;
+  }
   return normalizeToolName(name) === "Bash" && isRecord(input)
     ? { ...input, command: input.command ?? input.cmd }
     : typeof input === "string" && normalizeToolName(name) === "Edit"
@@ -460,7 +467,9 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
-  MessageToolkit,
+  // McpHttpServer registers the fork's send_to_user in place of upstream's MessageToolkit.
+  SendToUserToolkit,
+  DashboardToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(

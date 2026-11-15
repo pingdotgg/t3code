@@ -12,6 +12,7 @@ import { Command } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { HEADLESS_SHELL_PROFILE } from "../fork/previewChrome.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 import { browserCommand } from "./browser.ts";
 
@@ -32,6 +33,8 @@ const runSetupAsRoot = (input: { readonly profile: string | undefined }) => {
   const files = new Map([
     [USERNS_RESTRICTION, "1\n"],
     [BROWSER, ""],
+    // The fork's setup also asks for Xvfb, which full Chrome's headed mode runs in.
+    ["/usr/bin/Xvfb", ""],
   ]);
   if (input.profile !== undefined) {
     files.set(PreviewBrowserHost.APPARMOR_PROFILE_PATH, input.profile);
@@ -119,6 +122,12 @@ it.effect.each([
   {
     label: "writes and loads a missing profile",
     profile: undefined,
+    written: PreviewBrowserHost.APPARMOR_PROFILE,
+    said: "Wrote and loaded",
+  },
+  {
+    label: "rewrites the profile an older T3 wrote",
+    profile: HEADLESS_SHELL_PROFILE,
     written: PreviewBrowserHost.APPARMOR_PROFILE,
     said: "Wrote and loaded",
   },

@@ -166,7 +166,8 @@ describe("Messages only timeline", () => {
       "Status from the build bot",
       "Continue where you left off.",
       "vp test",
-      "to the user",
+      "Sent a message",
+      "Sent 1 message",
     ]) {
       expect(text).not.toContain(hidden);
     }
@@ -182,7 +183,8 @@ describe("Messages only timeline", () => {
     const text = screen.container.textContent ?? "";
     expect(text).toContain("Worked for");
     expect(text).toContain("Status from the build bot");
-    expect(text).not.toContain("to the user");
+    expect(text).not.toContain("Sent a message");
+    expect(text).not.toContain("Sent 1 message");
   });
 
   describe("while the agent works", () => {
@@ -273,6 +275,51 @@ describe("Messages only timeline", () => {
       }
     });
 
+    // A send made in Normal returns upstream's sentMessage, which upstream's row draws.
+    const normalSends = entriesOf([
+      userMessage("two-ask", 0, "Please ship it."),
+      { ...base("two-run", 1), type: "command_execution", input: "vp test", exitCode: 0 },
+      ...[
+        send("two-first", 2, "Tests pass, shipping now."),
+        {
+          ...base("two-push", 3),
+          type: "command_execution" as const,
+          input: "git push",
+          exitCode: 0,
+        },
+        send("two-last", 4, "It is shipped."),
+      ].map((item) =>
+        item.type === "dynamic_tool"
+          ? {
+              ...item,
+              output: {
+                ok: true,
+                message: "Shown to the user. Don't repeat it.",
+                sentMessage: (item.input as { readonly text: string }).text,
+              },
+            }
+          : item,
+      ),
+    ]);
+
+    it("shows each Normal-mode send once in Normal, outside the fold, and as replies in Messages only", async () => {
+      for (const [mode, repliesChosen] of [
+        [NORMAL_DISPLAY_MODE, false],
+        [MESSAGES_ONLY_DISPLAY_MODE, true],
+      ] as const) {
+        await using screen = await renderTimeline(
+          [...applyDisplayMode(mode, normalSends)],
+          repliesChosen,
+        );
+        await expect.element(screen.getByText("Tests pass, shipping now.")).toBeVisible();
+        await expect.element(screen.getByText("It is shipped.")).toBeVisible();
+        const text = screen.container.textContent ?? "";
+        for (const sent of ["Tests pass, shipping now.", "It is shipped."])
+          expect(text.split(sent)).toHaveLength(2);
+        expect(text).not.toContain("Sent a message");
+      }
+    });
+
     it("folds the earlier send in Normal, like any text before the turn's last reply", async () => {
       await using screen = await renderTimeline([
         ...applyDisplayMode(NORMAL_DISPLAY_MODE, twoSends),
@@ -339,6 +386,25 @@ describe("Messages only timeline", () => {
       await expect
         .element(page.getByText(formatChatTimestampTooltip(editedAt, "locale"), { exact: true }))
         .toBeVisible();
+    });
+
+    it("draws a Normal-mode send with its rewritten text back in Normal", () => {
+      const normalSend: OrchestrationV2TurnItem = {
+        ...send,
+        output: {
+          ok: true,
+          message: "Shown to the user. Don't repeat it.",
+          sentMessage: "The build is red.",
+        },
+      };
+      const rewritten = entriesOf([
+        userMessage("rewrite-ask", 0, "Is the build green?"),
+        normalSend,
+        replace("rewrite-call", "completed"),
+      ]);
+      const [, shown] = applyDisplayMode(NORMAL_DISPLAY_MODE, rewritten);
+      expect(shown).toMatchObject({ kind: "sent-message", text: "The build is green again." });
+      expect(applyDisplayMode(NORMAL_DISPLAY_MODE, rewritten)[1]).toBe(shown);
     });
 
     it("draws no row for a replace call in any mode, running or done", () => {

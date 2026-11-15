@@ -2168,12 +2168,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
       OR item.payload_json LIKE '%"viewedImagePath"%'
       OR item.payload_json LIKE '%"toolName":"%delegate_task"%'
-<<<<<<< origin/main
-      OR item.payload_json LIKE ${SEND_TO_USER_PAYLOAD_LIKE})`;
-=======
       OR item.payload_json LIKE '%"toolName":"%send_to_user"%'
       OR item.payload_json LIKE '%sentMessage%')`;
->>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(

@@ -49,6 +49,14 @@ it.layer(notes)("DisplayModeCompactionNote", (it) => {
       assert.deepEqual(yield* toldRows, before);
     }),
   );
+
+  it.effect("reads whether a thread is in Normal", () =>
+    Effect.gen(function* () {
+      const { isNormal } = yield* DisplayModeCompactionNote.DisplayModeCompactionNote;
+      assert.isTrue(yield* isNormal(plainId));
+      assert.isFalse(yield* isNormal(messagesOnlyId));
+    }),
+  );
 });
 
 it("states the mode instead of announcing a switch", () => {
@@ -74,6 +82,7 @@ it("adds the compaction note hook to Claude beside the subagent hook", async () 
       notes: {
         noteAfterCompaction: (id) =>
           Effect.succeed(id === threadId ? MESSAGES_ONLY_DISPLAY_MODE.stateNotice : undefined),
+        isNormal: () => Effect.succeed(true),
       },
       threadId,
       activeTurn: Effect.undefined,
@@ -100,4 +109,58 @@ it("adds the compaction note hook to Claude beside the subagent hook", async () 
     },
   });
   assert.deepEqual(await callback({ ...input, agent_id: "subagent-1" }, undefined, { signal }), {});
+});
+
+it("gives upstream's send_to_user section once in Normal, again after another mode or a compaction", async () => {
+  const threadId = ThreadId.make("thread:compaction-note:section");
+  let normal: boolean | undefined = true;
+  const hooks = DisplayModeCompactionNote.claudeDisplayModeHooks({
+    notes: {
+      noteAfterCompaction: () => Effect.undefined,
+      isNormal: () => Effect.succeed(normal),
+    },
+    threadId,
+    activeTurn: Effect.undefined,
+    runPromise: Effect.runPromise,
+    sendToUserSection: "SECTION",
+  });
+  const prompt = hooks.UserPromptSubmit![0]!.hooks[0]!;
+  const compact = hooks.SessionStart![0]!.hooks[0]!;
+  const base = {
+    session_id: "native-thread-section",
+    transcript_path: "/transcripts/native-thread-section.jsonl",
+    cwd: "/workspace",
+  };
+  const signal = new AbortController().signal;
+  const submit = async (extra: Partial<HookInput> = {}) => {
+    const output = await prompt(
+      { ...base, hook_event_name: "UserPromptSubmit", prompt: "Go on.", ...extra } as HookInput,
+      undefined,
+      { signal },
+    );
+    return "hookSpecificOutput" in output &&
+      output.hookSpecificOutput?.hookEventName === "UserPromptSubmit"
+      ? output.hookSpecificOutput.additionalContext
+      : undefined;
+  };
+
+  assert.isUndefined(await submit({ source: "system" } as Partial<HookInput>));
+  assert.isUndefined(await submit({ agent_id: "subagent-1" }));
+  assert.equal(await submit(), "SECTION");
+  assert.isUndefined(await submit());
+  normal = undefined;
+  assert.isUndefined(await submit());
+  normal = false;
+  assert.isUndefined(await submit());
+  normal = true;
+  assert.equal(await submit(), "SECTION");
+  const compacted = await compact(
+    { ...base, hook_event_name: "SessionStart", source: "compact" } satisfies HookInput,
+    undefined,
+    { signal },
+  );
+  assert.deepEqual(compacted, {
+    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "SECTION" },
+  });
+  assert.isUndefined(await submit());
 });

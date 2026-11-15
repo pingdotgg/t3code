@@ -2019,6 +2019,8 @@ export function makeClaudeQueryOptions(input: {
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
+  /** False leaves out the send_to_user section, which the fork's display-mode hooks then give. */
+  readonly sendToUserInstructions?: boolean;
   readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
@@ -2177,7 +2179,7 @@ export function makeClaudeQueryOptions(input: {
             ? ""
             : t3OrchestrationInstructions(CLAUDE_PROVIDER) +
               CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
-              CLAUDE_SEND_TO_USER_INSTRUCTIONS +
+              (input.sendToUserInstructions === false ? "" : CLAUDE_SEND_TO_USER_INSTRUCTIONS) +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
@@ -12271,6 +12273,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          // Fork: a conversation keeps its first system prompt, so the display-mode hooks give this by mode.
+          const sendToUserSection =
+            adapterOptions.displayModeCompactionNote !== undefined &&
+            mcpOverrides.mcpServers !== undefined
+              ? CLAUDE_SEND_TO_USER_INSTRUCTIONS.trim()
+              : undefined;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog,
@@ -12303,11 +12311,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
+            sendToUserInstructions: sendToUserSection === undefined,
             hooks: claudeDisplayModeHooks({
               notes: adapterOptions.displayModeCompactionNote,
               threadId: turnInput.appThread.id,
               activeTurn: Ref.get(activeTurn).pipe(Effect.map((turn) => turn?.input)),
               runPromise,
+              ...(sendToUserSection === undefined ? {} : { sendToUserSection }),
             }),
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined

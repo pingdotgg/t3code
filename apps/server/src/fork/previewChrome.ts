@@ -1,3 +1,7 @@
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+
 import type { PreviewBrowserRelease } from "../preview/PreviewBrowser.ts";
 
 // Full Chrome for Testing, which the preview browser's "xvfb" mode runs (see previewBrowserMode.ts).
@@ -84,3 +88,25 @@ export const FULL_CHROME_DEBIAN_PACKAGES: ReadonlyArray<ReadonlyArray<string>> =
   ["libcairo2"],
   ["xvfb"],
 ];
+
+// What T3 wrote before full Chrome. Setup replaces it, and keeps any other profile as an administrator's.
+export const HEADLESS_SHELL_PROFILE = `# Written by \`t3 browser setup\`: lets T3 Code's headless browser use Chrome's sandbox.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile t3-chrome-headless-shell /**/tools/chrome-headless-shell/*/*/chrome-headless-shell flags=(unconfined) {
+  userns,
+
+  include if exists <local/t3-chrome-headless-shell>
+}
+`;
+
+/** Whether setup writes the AppArmor profile at `path`: none is there, or an older T3 wrote it. */
+export const profileNeedsWrite = Effect.fn("previewChrome.profileNeedsWrite")(function* (
+  path: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false)))) return true;
+  const profile = yield* fs.readFileString(path).pipe(Effect.option);
+  return Option.getOrUndefined(profile) === HEADLESS_SHELL_PROFILE;
+});
