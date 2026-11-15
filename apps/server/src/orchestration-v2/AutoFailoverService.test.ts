@@ -25,6 +25,12 @@ function shell(overrides: Partial<Record<string, unknown>> = {}): OrchestrationV
       ],
     },
     latestRunId: runId,
+    lineage: {
+      rootThreadId: ThreadId.make("t1"),
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
+    creationSource: "user",
     status: "failed",
     lastErrorClass: "usage_limit",
     lastErrorCode: "api_error_429",
@@ -86,6 +92,17 @@ describe("autoFailoverPlan", () => {
 });
 
 describe("admitFailover", () => {
+  it("leaves a provider's own subagent alone, which cannot receive messages", () => {
+    const lineage = {
+      rootThreadId: ThreadId.make("t0"),
+      parentThreadId: ThreadId.make("t0"),
+      relationshipToParent: "subagent",
+    };
+    expect(plan(shell({ lineage, creationSource: "provider" }))).toBeNull();
+    // A delegate_task child takes messages like any thread.
+    expect(plan(shell({ lineage, creationSource: "agent" }))).not.toBeNull();
+  });
+
   it("caps failovers per thread per hour", () => {
     const history: Array<number> = [];
     for (let i = 0; i < MAX_FAILOVERS_PER_HOUR; i++)

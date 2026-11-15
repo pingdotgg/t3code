@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isProviderNativeSubagentThread,
   MessageId,
   type OrchestrationV2ThreadShell,
   type RunId,
@@ -13,6 +14,7 @@ import * as FiberMap from "effect/FiberMap";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { markAutoCooldown } from "./AutoCooldown.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
@@ -64,7 +66,9 @@ export function autoFailoverPlan(input: {
     shell.status !== "failed" ||
     shell.archivedAt !== null ||
     shell.settledOverride === "settled" ||
-    shell.pendingRuntimeRequest !== null
+    shell.pendingRuntimeRequest !== null ||
+    // A provider's own subagent cannot receive messages; its parent sees the failure.
+    isProviderNativeSubagentThread(shell)
   )
     return null;
   const level = routedAutoLevel(shell.modelSelection);
@@ -114,6 +118,7 @@ export function admitFailover(history: Array<number>, nowMs: number): boolean {
  */
 export const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const history = new Map<ThreadId, Array<number>>();
 
   const failOver = Effect.fn("AutoFailoverService.failOver")(
@@ -124,7 +129,10 @@ export const make = Effect.gen(function* () {
       const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
       const plan = autoFailoverPlan({ shell, runId, failedInstanceId, nowMs });
       if (plan === null) return;
+      // Bench the instance either way, so the next message the user sends routes around it.
       markAutoCooldown(plan.failedInstanceId, plan.cooldownUntilMs);
+      // The same switch as resuming at reset: off means T3 sends nothing on its own.
+      if (!(yield* settings.getSettings).autoResumeLimitedThreads) return;
       const threadHistory = history.get(threadId) ?? [];
       history.set(threadId, threadHistory);
       if (!admitFailover(threadHistory, nowMs)) {
