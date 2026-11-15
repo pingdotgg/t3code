@@ -2,6 +2,34 @@ import type { ThreadTitleMessage } from "@t3tools/provider-core/server/threadTit
 
 export const threadTitleEvaluationCases = [
   {
+    id: "referenced-thread-startup",
+    source: "Maintainer report of chart thread references overriding a startup question",
+    request: "Explain why one example thread failed to start and another needed a retry.",
+    previousTitle: "Fix Chart Formatting",
+    messages: [
+      {
+        role: "user",
+        text: "[xlsx: chart data labels use the cells' number format](t3-context://v1/thread/thread_labels) why could this thread not start up? [Run chart format tests on external target](t3-context://v1/thread/thread_tests) why did i have to say it like this over here to get it working?",
+      },
+    ],
+    rubric:
+      "Name thread startup or prompt/retry behavior. Chart formatting and tests are titles of example threads, not the requested work. Replace the inaccurate previous title.",
+  },
+  {
+    id: "referenced-thread-subject",
+    source: "Control for maintainer report of referenced thread titles overriding the request",
+    request: "Continue the actual chart formatting work in a referenced thread.",
+    previousTitle: "Chart Label Number Formats",
+    messages: [
+      {
+        role: "user",
+        text: "Continue [xlsx: chart data labels use the cells' number format](t3-context://v1/thread/thread_labels). Make the chart labels inherit the cells' number formats.",
+      },
+    ],
+    rubric:
+      "Name chart label number formatting. Referenced titles can supply the subject when the user explicitly continues that work.",
+  },
+  {
     id: "linked-reset-credits",
     source: "https://github.com/pingdotgg/t3code/pull/10462",
     request: "Review the reset credit routing change.",
