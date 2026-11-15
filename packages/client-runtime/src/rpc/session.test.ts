@@ -291,9 +291,15 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
-  it.effect.each([false, true])(
-    "blocks the session as unsupported when config fails to decode, after readiness=%s",
-    (established) =>
+  it.effect.each([
+    { established: false, closedWith: { _tag: "ConnectionBlockedError", reason: "unsupported" } },
+    {
+      established: true,
+      closedWith: { _tag: "ConnectionTransientError", reason: "remote-unavailable" },
+    },
+  ])(
+    "ends the session when config fails to decode, after readiness=$established",
+    ({ established, closedWith }) =>
       Effect.gen(function* () {
         const { factory, sockets } = yield* makeFactory();
         const session = yield* factory.connect(PREPARED);
@@ -312,9 +318,7 @@ describe("RpcSessionFactory", () => {
           });
         }
 
-        const error = yield* Effect.flip(session.closed);
-        expect(error).toBeInstanceOf(ConnectionBlockedError);
-        expect(error).toMatchObject({ reason: "unsupported", hop: "server" });
+        expect(yield* Effect.flip(session.closed)).toMatchObject({ ...closedWith, hop: "server" });
       }).pipe(Effect.scoped),
   );
 

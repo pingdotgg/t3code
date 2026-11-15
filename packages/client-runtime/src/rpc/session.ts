@@ -137,12 +137,13 @@ const isSocketErrorReason = Schema.is(Socket.SocketErrorReason);
 const PING_TIMEOUT_SECONDS = Duration.toSeconds(PING_TIMEOUT);
 
 function mapSessionRpcError(
-  error: InitialConfigError | ProbeError | ServerConfigSubscriptionError | ConnectionBlockedError,
+  error: InitialConfigError | ProbeError | ServerConfigSubscriptionError | ConnectionAttemptError,
   via: "relay" | "direct",
   socketFailure: () => ConnectionTransientError,
 ): ConnectionAttemptError {
   switch (error._tag) {
     case "ConnectionBlockedError":
+    case "ConnectionTransientError":
       return error;
     case "EnvironmentAuthorizationError":
       return new ConnectionBlockedError({
@@ -294,7 +295,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
     const serverConfigExit = yield* Deferred.make<
       void,
-      ServerConfigSubscriptionError | ConnectionBlockedError
+      ServerConfigSubscriptionError | ConnectionAttemptError
     >();
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
     const serverConfigState = yield* Ref.make(Option.none<ServerConfigReplayState>());
@@ -357,7 +358,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
           }
         }),
       ),
-      // A config chunk that fails to decode ends only this stream; reconnecting cannot fix it.
+      // An unreadable first snapshot means the versions are incompatible. A later
+      // unreadable update ends the session, and the reconnect's snapshot decides.
       Effect.catchDefect((defect) =>
         Schema.isSchemaError(defect)
           ? Effect.logWarning("Server configuration failed to decode.", {
@@ -366,12 +368,19 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             }).pipe(
               Effect.andThen(
                 Effect.fail(
-                  new ConnectionBlockedError({
-                    reason: "unsupported",
-                    detail: `${connection.label} sent an incompatible server configuration. Update the client and server to compatible versions.`,
-                    hop: "server",
-                    via,
-                  }),
+                  Deferred.isDoneUnsafe(initialConfigDeferred)
+                    ? new ConnectionTransientErrorClass({
+                        reason: "remote-unavailable",
+                        detail: `${connection.label} sent a server configuration update this client could not read.`,
+                        hop: "server",
+                        via,
+                      })
+                    : new ConnectionBlockedError({
+                        reason: "unsupported",
+                        detail: `${connection.label} sent an incompatible server configuration. Update the client and server to compatible versions.`,
+                        hop: "server",
+                        via,
+                      }),
                 ),
               ),
             )
