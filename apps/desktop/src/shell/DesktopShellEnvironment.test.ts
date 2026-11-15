@@ -869,11 +869,13 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const scripts: Array<string> = [];
       const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          scripts.push(command.args.at(-1) ?? "");
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -907,22 +909,6 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
-    }),
-  );
-
-  it.effect("asks PowerShell for UTF-8 output on Windows", () =>
-    Effect.gen(function* () {
-      const scripts: Array<string> = [];
-      yield* runShellEnvironment({
-        env: { PATH: "C:\\Windows\\System32" },
-        platform: "win32",
-        handler: (command) => {
-          if (command._tag !== "StandardCommand") return "";
-          scripts.push(command.args.at(-1) ?? "");
-          return envOutput({ PATH: "C:\\Working" });
-        },
-      });
-
       assert.isNotEmpty(scripts);
       for (const script of scripts) {
         assert.include(

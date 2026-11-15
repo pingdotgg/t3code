@@ -401,6 +401,9 @@ describe("readEnvironmentFromWindowsShell", () => {
         expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
         { encoding: "utf8", timeout: 5000 },
       );
+      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+      );
     }),
   );
 
@@ -424,25 +427,6 @@ describe("readEnvironmentFromWindowsShell", () => {
       ).toEqual({
         FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
       });
-    }),
-  );
-
-  effectIt.effect("asks PowerShell for UTF-8 output", () =>
-    Effect.gen(function* () {
-      const execFile = vi.fn<
-        (
-          file: string,
-          args: ReadonlyArray<string>,
-          options: { encoding: "utf8"; timeout: number },
-        ) => string
-      >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
-
-      yield* readEnvironmentFromWindowsShell(["PATH"], {}, (...args) =>
-        Effect.sync(() => Option.liftThrowable(execFile)(...args)),
-      );
-      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
-        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
-      );
     }),
   );
 
