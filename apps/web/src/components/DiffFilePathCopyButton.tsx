@@ -9,6 +9,8 @@ import {
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+import { translateDynamic } from "../i18nCore";
+
 export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
   const ref = useRef<HTMLButtonElement>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
@@ -25,7 +27,7 @@ export function DiffFilePathCopyButton({ filePath }: { filePath: string }) {
             ref={ref}
             size="icon-micro"
             variant="ghost-muted"
-            aria-label="Copy file path"
+            aria-label={translateDynamic("ui:copyFilePath")}
             onClick={() => copyToClipboard(filePath, undefined)}
           />
         }

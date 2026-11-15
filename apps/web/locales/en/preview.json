@@ -21,14 +21,17 @@
   },
   "checkConnection": "Checking your connection",
   "checkProxyFirewall": "Checking the proxy and the firewall",
+  "closeFloatingPreview": "Close floating preview",
   "confirmDevServer": "Confirming the dev server is running",
   "copied": "Copied!",
   "copyImage": "Copy image",
   "copyPath": "Copy path",
+  "desktopTabNotice": "This tab is open in the T3 Code desktop app.",
   "details": "Details",
   "device": {
     "hostFallback": "Device host"
   },
+  "download": "Download",
   "empty": {
     "title": "No preview yet"
   },
@@ -51,6 +54,8 @@
     "stopRecording": "Unable to stop recording",
     "updatePopup": "Unable to update popped-out preview"
   },
+  "fileDownloadedInstead": "from {{host}} was downloaded instead.",
+  "fileNotShown": "This file can’t be shown here",
   "find": {
     "close": "Close find",
     "findInPage": "Find in page",
@@ -60,6 +65,7 @@
   },
   "hideDetails": "Hide details",
   "listening": "Listening",
+  "localServers": "Local servers",
   "menu": {
     "appearance": "Appearance",
     "clearCache": "Clear cache",
@@ -91,15 +97,22 @@
     "refresh": "Refresh",
     "stop": "Stop"
   },
+  "openInBrowser": "Open in browser",
   "openInEnvironmentBrowser": "Open in {{label}}'s browser",
+  "openInRightPanel": "Open in right panel",
   "openOnThisComputer": "Open on this computer",
+  "openPreviewInRightPanel": "Open preview in right panel",
   "pip": {
     "close": "Close floating preview",
     "float": "Float preview over chat"
   },
+  "profileLabel": "Profile: {{name}}",
+  "recentlyUsed": "Recently used",
+  "reconnectingPreview": "Reconnecting preview…",
   "recording": {
     "saved": "Recording saved"
   },
+  "reload": "Reload",
   "removedProfile": "Removed profile",
   "revealInFileExplorer": "Reveal in File Explorer",
   "revealInFiles": "Reveal in Files",
@@ -107,21 +120,8 @@
   "screenshot": {
     "saved": "Screenshot saved"
   },
-  "fileNotShown": "This file can’t be shown here",
-  "fileDownloadedInstead": "from {{host}} was downloaded instead.",
-  "openInBrowser": "Open in browser",
-  "download": "Download",
+  "selectLocalServer": "Select a live local server to open it in this browser tab.",
   "siteUnreachable": "This site can’t be reached",
-  "tryThese": "Try:",
   "tryEnvBrowser": "Opening it in the environment’s browser, which reaches its network",
-  "reload": "Reload",
-  "reconnectingPreview": "Reconnecting preview…",
-  "openPreviewInRightPanel": "Open preview in right panel",
-  "openInRightPanel": "Open in right panel",
-  "closeFloatingPreview": "Close floating preview",
-  "desktopTabNotice": "This tab is open in the T3 Code desktop app.",
-  "profileLabel": "Profile: {{name}}",
-  "recentlyUsed": "Recently used",
-  "localServers": "Local servers",
-  "selectLocalServer": "Select a live local server to open it in this browser tab."
+  "tryThese": "Try:"
 }

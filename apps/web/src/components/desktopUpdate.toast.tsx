@@ -7,6 +7,8 @@ import {
 } from "./desktopUpdate.logic";
 import { toastManager } from "./ui/toast";
 
+import { translateDynamic } from "../i18nCore";
+
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
 
 export async function openDesktopUpdateReleaseNotes(
@@ -34,7 +36,7 @@ function ReleaseNotesLink({
       }}
       type="button"
     >
-      Read more
+      {translateDynamic("ui:readMore")}
       <ArrowRightIcon
         aria-hidden
         className="ml-1 inline size-3 -rotate-45 align-[-0.125em]"

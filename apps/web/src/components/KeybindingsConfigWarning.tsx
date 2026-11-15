@@ -10,6 +10,8 @@ import { useEnvironmentScope } from "../state/session";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
+import { translateDynamic } from "../i18nCore";
+
 export function KeybindingsConfigWarning({
   message,
   environmentId,
@@ -46,7 +48,7 @@ export function KeybindingsConfigWarning({
             );
           }}
         >
-          Open keybindings.json
+          {translateDynamic("ui:openKeybindingsJson")}
         </Button>
       </span>
     </>

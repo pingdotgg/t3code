@@ -19,6 +19,11 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`ui:${key}`, options);
+
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
 }
@@ -207,10 +212,7 @@ function ActiveSshPasswordPrompt({
             {visibleResponseError ? (
               <p className="text-sm text-destructive">{visibleResponseError}</p>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                SSH keys may replace a password, but your server can still require a verification
-                code.
-              </p>
+              <p className="text-sm text-muted-foreground">{td("sshKeyVerificationNote")}</p>
             )}
           </form>
         </DialogPanel>
@@ -219,7 +221,7 @@ function ActiveSshPasswordPrompt({
             {isExpired ? "Dismiss" : "Cancel"}
           </Button>
           <Button disabled={isResponding || isExpired} form={formId} type="submit">
-            Continue
+            {td("continueLabel")}
           </Button>
         </DialogFooter>
       </DialogPopup>

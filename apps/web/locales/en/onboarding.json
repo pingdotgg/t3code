@@ -90,6 +90,7 @@
     "whatItMayDo": "What it may do",
     "whoeverRunsIt": "· whoever runs it gets this access"
   },
+  "continueHere": "Continue here",
   "firstRun": {
     "couldNotReadSettings": "Could not read settings",
     "couldNotReadSettingsDescription": "Your saved settings could not be loaded.",
@@ -98,6 +99,7 @@
     "stillConnecting": "Still connecting",
     "stillConnectingDescription": "T3 Code could not confirm this workspace."
   },
+  "getT3Code": "Get T3 Code",
   "importWarning": {
     "couldNotImport": "Could not import thread history.",
     "notImportedThreads_one": "{{count}} thread could not be imported.",
@@ -180,6 +182,7 @@
     "chatgptFailedReturn": "Return to the provider and try again.",
     "chatgptFailedTitle": "ChatGPT sign-in couldn't finish"
   },
+  "rememberMyChoice": "Remember my choice",
   "telemetry": {
     "notice": "T3 Code collects anonymous usage data to improve the app.",
     "optOut": "To opt out, see the <0>privacy policy</1>.",

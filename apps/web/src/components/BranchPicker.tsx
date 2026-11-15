@@ -163,7 +163,7 @@ export function BranchPicker({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
                       <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from remote</span>
+                      <span className="truncate">{t("branch.startFromRemote")}</span>
                     </span>
                     <Switch
                       id={startFromOriginSwitchId}

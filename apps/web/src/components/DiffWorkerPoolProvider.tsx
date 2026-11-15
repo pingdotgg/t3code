@@ -7,6 +7,8 @@ import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/use
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 
+import { translateDynamic } from "../i18nCore";
+
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
   themeName: Schema.Literals(["pierre-dark", "t3-light"]),
@@ -115,7 +117,7 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
       role="status"
       className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
     >
-      Loading code...
+      {translateDynamic("ui:loadingCode")}
     </div>
   );
 }

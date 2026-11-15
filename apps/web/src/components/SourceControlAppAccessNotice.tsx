@@ -12,6 +12,11 @@ import { sourceControlEnvironment } from "../state/sourceControl";
 import { T3AppIcon } from "./T3AppIcon";
 import { InlineButton } from "./ui/button";
 
+import { translateDynamic } from "../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`ui:${key}`, options);
+
 /**
  * Says when the server's forge app sign-in cannot reach `repository`, so requests there fall back
  * to the user's own login. Renders nothing for servers that do not use the app.
@@ -53,8 +58,9 @@ export function SourceControlAppAccessNotice(props: {
     >
       <T3AppIcon className="size-4 shrink-0" />
       <p className="min-w-0 flex-1">
-        {appSignIn.appName} isn't installed on <span className="text-foreground">{owner}</span>, so
-        requests here use your own GitHub login and its lower rate limit.
+        {td("scAppNotInstalledOn", { app: appSignIn.appName })}{" "}
+        <span className="text-foreground">{owner}</span>
+        {td("scAppOwnLoginNote")}
       </p>
       <InlineButton
         className="shrink-0"

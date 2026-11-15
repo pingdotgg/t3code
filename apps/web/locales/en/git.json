@@ -23,6 +23,7 @@
     "showingOf": "Showing {{count}} of {{total}} refs",
     "showingOf_one": "Showing {{count}} of {{total}} refs",
     "showingOf_other": "Showing {{count}} of {{total}} refs",
+    "startFromRemote": "Start from remote",
     "workspace": "Workspace"
   },
   "commit": {

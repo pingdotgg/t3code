@@ -17,5 +17,9 @@
     "expandAll": "展开所有文件夹",
     "files": "文件"
   },
-  "loading": "正在加载差异…"
+  "loading": "正在加载差异…",
+  "noCompletedTurns": "还没有已完成的回合。",
+  "selectThreadForTurnDiffs": "选择一个线程以查看回合差异。",
+  "turnLabel": "第 {{count}} 回合",
+  "turnsUnavailable": "回合差异不可用，因为此项目不是 git 仓库。"
 }

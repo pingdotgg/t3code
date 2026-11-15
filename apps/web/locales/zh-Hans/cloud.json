@@ -1,13 +1,13 @@
 {
   "cancel": "取消",
-  "dontShowAgain": "不再显示",
-  "notNow": "暂不",
   "done": "完成",
+  "dontShowAgain": "不再显示",
+  "linkT3Chat": "关联 T3 Chat",
+  "manageTunnels": "管理隧道",
   "noPublishedEnvironments": "你的账户还没有发布其他环境。在另一台设备上发布一个，它就会出现在这里。",
+  "notNow": "暂不",
   "signIn": "登录",
   "tunnelsInUse": "已使用 {{limit}} 条隧道中的 {{used}} 条",
   "tunnelsInUseLabel": "正在使用的 T3 Connect 隧道",
-  "linkT3Chat": "关联 T3 Chat",
-  "upgradeOnT3Chat": "在 T3 Chat 上升级",
-  "manageTunnels": "管理隧道"
+  "upgradeOnT3Chat": "在 T3 Chat 上升级"
 }

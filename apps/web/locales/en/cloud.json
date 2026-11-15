@@ -1,13 +1,13 @@
 {
   "cancel": "Cancel",
-  "dontShowAgain": "Don't show this again",
-  "notNow": "Not now",
   "done": "Done",
+  "dontShowAgain": "Don't show this again",
+  "linkT3Chat": "Link T3 Chat",
+  "manageTunnels": "Manage tunnels",
   "noPublishedEnvironments": "No other environments are published to your account yet. Publish one from another device and it will show up here.",
+  "notNow": "Not now",
   "signIn": "Sign in",
   "tunnelsInUse": "{{used}} of {{limit}} tunnels in use",
   "tunnelsInUseLabel": "T3 Connect tunnels in use",
-  "linkT3Chat": "Link T3 Chat",
-  "upgradeOnT3Chat": "Upgrade on T3 Chat",
-  "manageTunnels": "Manage tunnels"
+  "upgradeOnT3Chat": "Upgrade on T3 Chat"
 }

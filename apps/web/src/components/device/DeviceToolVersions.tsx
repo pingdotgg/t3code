@@ -67,9 +67,9 @@ export function DeviceToolVersions({
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
                     <dt className="text-muted-foreground">{td("runningVersion")}</dt>
                     <dd className="text-right font-mono">{tool.runningVersion ?? "Not running"}</dd>
-                    <dt className="text-muted-foreground">Required</dt>
+                    <dt className="text-muted-foreground">{td("requiredVersion")}</dt>
                     <dd className="text-right font-mono">{tool.requiredVersion}</dd>
-                    <dt className="text-muted-foreground">Installed</dt>
+                    <dt className="text-muted-foreground">{td("installedVersion")}</dt>
                     <dd className="text-right font-mono break-words">
                       {tool.installedVersions.join(", ") || "None"}
                     </dd>
