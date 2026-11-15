@@ -168,6 +168,12 @@ type OpenRunOwnedSubagentProjection = {
   readonly linkedChildThreadIds: ReadonlySet<ThreadId>;
 };
 
+export type UnsettledWork = {
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+};
+
 type RunOwnedSubagentTerminalStatus = Extract<
   OrchestrationV2Subagent["status"],
   "interrupted" | "failed" | "cancelled"
@@ -650,6 +656,14 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
+  /**
+   * Stored rows of a thread's unsettled work. Work a dead runtime left is ended from these, since
+   * Stop may have settled it after the snapshots this run holds.
+   */
+  readonly loadUnsettledWork?: (
+    threadId: ThreadId,
+    nodeIds: ReadonlyArray<NodeId>,
+  ) => Effect.Effect<UnsettledWork, ProjectionStoreV2Error>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
@@ -718,7 +732,7 @@ export const layer: Layer.Layer<
         readonly openRunOwnedSubagentsTerminal?: ProviderTerminalEvent;
         // Root turn snapshot written with the run when T3 ends the run itself.
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
-        // Root tool calls still open when the provider runtime was lost; nothing else ends them.
+        // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
@@ -1196,8 +1210,8 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
-        // Last snapshot of each open tool call on the root thread, for when the runtime is lost.
-        const openRootToolCalls = new Map<TurnItemId, OrchestrationV2TurnItem>();
+        // Open tool calls on the root thread, to end from their stored rows if the runtime is lost.
+        const openRootToolCalls = new Set<TurnItemId>();
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
         // Owned child threads whose last snapshot reported pending work, such as a queued native
@@ -1274,28 +1288,110 @@ export const layer: Layer.Layer<
           }
           yield* Ref.set(rootRunFinalized, true);
         });
-        // Subagents and tool calls that outlived the root run die with the provider runtime.
+        // The stored rows of the work this run still tracks as open on the given threads.
+        const loadTrackedWork = Effect.fn("RunExecutionService.loadTrackedWork")(function* (
+          threadIds: Iterable<ThreadId>,
+        ) {
+          const open = yield* Ref.get(openRunOwnedSubagents);
+          const subagents = new Map<NodeId, OrchestrationV2Subagent>();
+          const nodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
+          const turnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
+          if (input.loadUnsettledWork === undefined) return { subagents, nodes, turnItems };
+          const trackedItemIds = new Set<TurnItemId>([
+            ...openRootToolCalls.keys(),
+            ...open.childTurnItems.keys(),
+            ...[...open.turnItems.values()].map((item) => item.id),
+          ]);
+          for (const threadId of new Set(threadIds)) {
+            const stored = yield* input.loadUnsettledWork(
+              threadId,
+              [...open.nodes.values(), ...open.subagents.values()]
+                .filter((record) => record.threadId === threadId)
+                .map((record) => record.id),
+            );
+            for (const subagent of stored.subagents) {
+              if (open.subagents.has(subagent.id) && !isSettledSubagentStatus(subagent.status)) {
+                subagents.set(subagent.id, subagent);
+              }
+            }
+            for (const node of stored.nodes) {
+              if (open.nodes.has(node.id) && isOpenExecutionNodeStatus(node.status)) {
+                nodes.set(node.id, node);
+              }
+            }
+            for (const item of stored.turnItems) {
+              if (trackedItemIds.has(item.id) && !isSettledTurnItemStatus(item.status)) {
+                turnItems.set(item.id, item);
+              }
+            }
+          }
+          return { subagents, nodes, turnItems };
+        });
+        const loadLostRootToolCalls = loadTrackedWork([input.run.threadId]).pipe(
+          Effect.map(({ turnItems }) =>
+            [...turnItems.values()].filter((item) => openRootToolCalls.has(item.id)),
+          ),
+        );
+        // Subagents and tool calls that outlived the root run die with the provider runtime. Stop
+        // can settle them meanwhile, so each write holds only while its stored row is unchanged.
         const endWorkLostAfterRootRun = Effect.fn("RunExecutionService.endWorkLostAfterRootRun")(
           function* (completedAt: DateTime.Utc) {
             const allocateEventId = () =>
               idAllocator.allocate.event({ threadId: input.run.threadId });
-            const events = [
-              ...(yield* cascadeTerminalizeRunOwnedSubagents({
+            const open = yield* Ref.get(openRunOwnedSubagents);
+            const stored = yield* loadTrackedWork([
+              input.run.threadId,
+              ...[
+                ...open.subagents.values(),
+                ...open.nodes.values(),
+                ...open.childTurnItems.values(),
+              ].map((record) => record.threadId),
+            ]);
+            for (const subagent of stored.subagents.values()) {
+              const subagentItemId = open.turnItems.get(subagent.id)?.id;
+              const subagentItem =
+                subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
+              const events = yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
-                open: yield* Ref.get(openRunOwnedSubagents),
+                open: {
+                  subagents: new Map([[subagent.id, subagent]]),
+                  turnItems: new Map(
+                    subagentItem?.type === "subagent" ? [[subagent.id, subagentItem]] : [],
+                  ),
+                  childTurnItems: new Map(
+                    [...stored.turnItems].filter(
+                      ([id, item]) =>
+                        open.childTurnItems.has(id) && item.threadId === subagent.childThreadId,
+                    ),
+                  ),
+                  nodes: new Map(
+                    [...stored.nodes].filter(
+                      ([id, node]) =>
+                        id === subagent.id || node.threadId === subagent.childThreadId,
+                    ),
+                  ),
+                  linkedChildThreadIds: new Set(
+                    subagent.childThreadId === null ? [] : [subagent.childThreadId],
+                  ),
+                },
                 status: "failed",
                 completedAt,
                 allocateEventId,
-              })),
-              ...(yield* interruptLostToolCalls({
-                run: input.run,
-                toolCalls: openRootToolCalls.values(),
-                completedAt,
-                allocateEventId,
-              })),
-            ];
-            if (events.length === 0) return;
-            yield* eventSink.writeWithEffects({ effects: [], events });
+              });
+              yield* eventSink.writeIfSubagentUnchanged({ expected: subagent, events });
+            }
+            for (const toolCall of stored.turnItems.values()) {
+              if (!openRootToolCalls.has(toolCall.id)) continue;
+              yield* eventSink.writeIfTurnItemUnchanged({
+                expected: toolCall,
+                events: yield* interruptLostToolCalls({
+                  run: input.run,
+                  toolCalls: [toolCall],
+                  completedAt,
+                  allocateEventId,
+                }),
+              });
+            }
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
             openRootToolCalls.clear();
           },
@@ -1425,7 +1521,7 @@ export const layer: Layer.Layer<
                 if (isSettledTurnItemStatus(event.turnItem.status)) {
                   openRootToolCalls.delete(event.turnItem.id);
                 } else {
-                  openRootToolCalls.set(event.turnItem.id, event.turnItem);
+                  openRootToolCalls.add(event.turnItem.id);
                 }
               }
             }
@@ -1970,6 +2066,18 @@ export const layer: Layer.Layer<
                       : null;
                   const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                   const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+                  const lostToolCalls = runtimeLost
+                    ? yield* loadLostRootToolCalls.pipe(
+                        Effect.catchCauseIf(
+                          (loadCause) => !Cause.hasInterruptsOnly(loadCause),
+                          (loadCause) =>
+                            Effect.logWarning(
+                              "orchestration V2 failed to read tool calls lost with the provider runtime",
+                              { runId: input.run.id, cause: loadCause },
+                            ).pipe(Effect.as([])),
+                        ),
+                      )
+                    : [];
                   let nextRetryWarningAt = completedAt;
                   yield* writeFinalRunEvents({
                     run: input.run,
@@ -1983,7 +2091,7 @@ export const layer: Layer.Layer<
                     },
                     openRunOwnedSubagents: openSubagents,
                     ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
-                    ...(runtimeLost ? { lostToolCalls: [...openRootToolCalls.values()] } : {}),
+                    lostToolCalls,
                     completedAt,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({

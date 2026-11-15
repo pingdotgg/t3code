@@ -3605,9 +3605,15 @@ it.effect("keeps a running root command open when a write fails under a live pro
   }),
 );
 
-it.effect.each([undefined, true] as const)(
-  "ends a subagent that outlived its root when the provider stream fails (raised by T3: %s)",
-  (raisedByT3) =>
+it.effect.each([
+  { ended: true },
+  // T3 ending the stream proves no dead runtime; Stop settles the work it releases.
+  { ended: false, raisedByT3: true },
+  // A Stop that already settled the subagent keeps its result.
+  { ended: false, stopped: true },
+] as const)(
+  "ends a subagent that outlived its root when the provider stream fails (%o)",
+  ({ ended, raisedByT3, stopped }) =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex");
       const { finalEvents } = yield* captureRootRunTermination({
@@ -3652,6 +3658,15 @@ it.effect.each([undefined, true] as const)(
               ),
             ),
           ),
+        ...(stopped === true
+          ? {
+              settleStored: (work) => ({
+                ...work,
+                subagents: work.subagents.map((row) => ({ ...row, status: "interrupted" })),
+                turnItems: work.turnItems.map((row) => ({ ...row, status: "interrupted" })),
+              }),
+            }
+          : {}),
       });
       assert.deepEqual(
         finalEvents.flatMap((event) =>
@@ -3661,10 +3676,9 @@ it.effect.each([undefined, true] as const)(
             ? [`${event.type}:${event.payload.status}`]
             : [],
         ),
-        // T3 ending the stream proves no dead runtime; Stop settles the work it releases.
-        raisedByT3 === true
-          ? ["run.updated:waiting"]
-          : ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"],
+        ended
+          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:waiting"],
       );
     }),
 );
@@ -3931,9 +3945,36 @@ function captureRootRunTermination(input: {
   readonly afterStart?: (
     closed: Deferred.Deferred<void>,
   ) => Effect.Effect<void, never, PreviewAgentActivity.PreviewAgentActivity>;
+  /** Changes the stored rows after the provider reported them, as a concurrent Stop does. */
+  readonly settleStored?: (
+    work: RunExecutionService.UnsettledWork,
+  ) => RunExecutionService.UnsettledWork;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
+    // The rows the provider's events stored, which the run reads back when its runtime is lost.
+    const stored = {
+      subagents: new Map<string, OrchestrationV2Subagent>(),
+      nodes: new Map<string, OrchestrationV2ExecutionNode>(),
+      turnItems: new Map<string, OrchestrationV2TurnItem>(),
+    };
+    const store = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+      Effect.sync(() => {
+        if (event.type === "subagent.updated")
+          stored.subagents.set(event.subagent.id, event.subagent);
+        if (event.type === "node.updated") stored.nodes.set(event.node.id, event.node);
+        if (event.type === "turn_item.updated")
+          stored.turnItems.set(event.turnItem.id, event.turnItem);
+      });
+    const loadUnsettledWork = (threadId: ThreadId) =>
+      Effect.sync(() => {
+        const work = {
+          subagents: [...stored.subagents.values()].filter((row) => row.threadId === threadId),
+          nodes: [...stored.nodes.values()].filter((row) => row.threadId === threadId),
+          turnItems: [...stored.turnItems.values()].filter((row) => row.threadId === threadId),
+        };
+        return input.settleStored?.(work) ?? work;
+      });
     const providerInstanceId = ProviderInstanceId.make("codex");
     const runningSubagent = makeRunOwnedSubagentFixture({
       ids,
@@ -4002,11 +4043,27 @@ function captureRootRunTermination(input: {
                 yield* captureFinalEvents(payload.events);
                 return { committed: true, storedEvents: [] };
               }),
+            // Committed only against the row that was read, as the real conditional writes are.
+            writeIfSubagentUnchanged: (payload) =>
+              stored.subagents.get(payload.expected.id) === payload.expected
+                ? captureFinalEvents(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  )
+                : Effect.succeed({ committed: false, storedEvents: [] }),
+            writeIfTurnItemUnchanged: (payload) =>
+              stored.turnItems.get(payload.expected.id) === payload.expected
+                ? captureFinalEvents(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  )
+                : Effect.succeed({ committed: false, storedEvents: [] }),
           }),
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
+            ingestNormalized: (request) =>
+              store(request.event).pipe(
+                Effect.andThen(input.ingestNormalized?.(request) ?? Effect.succeed([])),
+              ),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -4092,6 +4149,7 @@ function captureRootRunTermination(input: {
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
         shouldFinalizeRun: input.shouldFinalizeRun,
+        loadUnsettledWork,
         ...(input.loadRunInterruptReason === undefined
           ? {}
           : { loadRunInterruptReason: input.loadRunInterruptReason }),
