@@ -6,6 +6,7 @@ import {
   ProjectId,
   RunId,
   ThreadId,
+  TurnItemId,
   type ClientSettings,
   type ReviewBranchCommitsResult,
   type ReviewDiffPreviewResult,
@@ -31,6 +32,11 @@ const state = vi.hoisted(() => ({
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
+  project: {
+    workspaceRoot: "/project",
+    repositoryIdentity: null as { rootPath: string } | null,
+  },
+  toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
   localRefs: null as unknown as ResultAtom<VcsListRefsResult>,
@@ -61,7 +67,7 @@ vi.mock("~/state/vcs", () => ({
 }));
 vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => state.thread,
-  useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
+  useProject: () => state.project,
   useThreadCheckpointSummaries: () => state.checkpoints,
   useQuietThreadVisibleTurnItems: () => [],
 }));
@@ -81,7 +87,11 @@ vi.mock("~/hooks/useTheme", () => ({
 }));
 vi.mock("~/state/queries", () => ({
   useCheckpointDiff: () => ({ data: state.checkpointDiff, error: null, isPending: false }),
-  useTurnItemDetail: () => ({ data: null, error: null, isPending: false }),
+  useTurnItemDetail: () => ({
+    data: state.toolCallItem ? { item: state.toolCallItem } : null,
+    error: null,
+    isPending: false,
+  }),
   useDebouncedValue: <A,>(value: A) => value,
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => async () => {} }));
@@ -131,6 +141,8 @@ function setup(failedBaseRef: string | null) {
   };
   reset();
   state.diffFilesCollapsed = false;
+  state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
@@ -367,4 +379,39 @@ it.each([
   await expect
     .element(screen.getByRole("button", { name: `Collapse ${name}`, exact: true }))
     .toHaveAttribute("aria-expanded", "true");
+});
+
+it("opens a file from a tool call's diff by the path its agent recorded", async () => {
+  using context = setup("origin/orphan");
+  // A local thread in a project that is the repository's apps/web folder.
+  state.thread = { ...state.thread!, worktreePath: null };
+  state.project = { workspaceRoot: "/repo/apps/web", repositoryIdentity: { rootPath: "/repo" } };
+  const status = AsyncResult.getOrThrow(context.registry.get(state.status));
+  state.status = Atom.make(
+    AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),
+  );
+  // Claude's Edit can record a path relative to the workspace, unlike the repository's diffs.
+  state.toolCallItem = {
+    type: "file_change",
+    fileName: "src/a.ts",
+    diffStr: "--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-before\n+after\n",
+  };
+  useDiffPanelStore.getState().selectToolCall(context.threadRef, {
+    threadId: context.threadRef.threadId,
+    itemId: TurnItemId.make("edit"),
+    revision: "1",
+  });
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div className="flex h-[600px] flex-col">
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
+  await vi.waitFor(() =>
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
+    ).toMatchObject({ activeSurfaceId: "file:src/a.ts" }),
+  );
 });
