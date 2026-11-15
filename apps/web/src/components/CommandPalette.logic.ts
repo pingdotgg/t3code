@@ -30,12 +30,13 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/filesystem";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { type ReactNode } from "react";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
-import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 
 export const RECENT_THREAD_LIMIT = 12;
+const NO_THREAD_KEYS: ReadonlySet<string> = new Set();
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
 export const ADDON_ICON_CLASS = "size-4";
 
@@ -439,7 +440,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   /** Tasks linked environments run for a listed thread; they open from under that thread. */
   delegatedUnderParent?: ReadonlySet<string>;
 }): CommandPaletteActionItem[] {
-  const delegatedUnderParent = input.delegatedUnderParent ?? new Set<string>();
+  const delegatedUnderParent = input.delegatedUnderParent ?? NO_THREAD_KEYS;
   // Callers order these: recents by last use, search results by rank.
   const visibleThreads = input.threads.filter(
     (thread) =>
