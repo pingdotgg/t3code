@@ -1979,10 +1979,14 @@ it.layer(
 
   it.effect("starts a $SHELL whose path contains a space", () =>
     Effect.gen(function* () {
-      for (const [shell, expected] of [
-        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
-        ["/Users/Jane -Doe/.local/bin/fish -l", "/Users/Jane -Doe/.local/bin/fish"],
-      ] as const) {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-path-" });
+      for (const directory of ["Jane Doe", "Jane -Doe", "Jane -Doe=Smith", "Jane -Doe Smith"]) {
+        const bin = `${root}/Users/${directory}/.local/bin`;
+        yield* fs.makeDirectory(bin, { recursive: true });
+        const expected = `${bin}/fish`;
+        yield* fs.writeFileString(expected, "");
+        const shell = `${expected} -l`;
         const { manager, ptyAdapter } = yield* createManager(5, {
           env: { SHELL: shell },
         }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
@@ -1999,15 +2003,25 @@ it.layer(
     }),
   );
 
-  it.effect("starts a quoted $SHELL whose path contains a space and a dash", () =>
+  it.effect("strips shell flags without splitting quoted paths", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { SHELL: '"/opt/my -shell/fish" -l' },
-      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      for (const [shell, expected] of [
+        ['"/opt/my -shell/fish" -l', "/opt/my -shell/fish"],
+        ["bash -l", "bash"],
+        ["bash --rcfile=/x", "bash"],
+        ["bash --rcfile /x", "bash"],
+      ]) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          env: { SHELL: shell },
+        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
 
-      yield* manager.open(openInput());
+        yield* manager.open(openInput());
 
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/opt/my -shell/fish"]);
+        expect(
+          ptyAdapter.spawnInputs.map((input) => input.shell),
+          shell,
+        ).toEqual([expected]);
+      }
     }),
   );
 
