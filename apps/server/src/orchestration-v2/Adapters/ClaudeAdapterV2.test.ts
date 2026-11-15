@@ -20167,6 +20167,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected: "Functions:\n  - add (line 1)\n\nDone.",
     },
     {
+      label: "completes a framed report that starts with the async-launch acknowledgment text",
+      content: [
+        {
+          type: "text",
+          text: `${CLAUDE_HAND_BACK_FRAME}\n  Async agent launched successfully.\n${CLAUDE_HAND_BACK_TRAILER}`,
+        },
+      ],
+      expected: "Async agent launched successfully.",
+    },
+    {
       label: "keeps an unframed subagent result's indentation and agentId lines",
       content: [
         {
