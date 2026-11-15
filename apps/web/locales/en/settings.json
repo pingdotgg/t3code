@@ -2531,5 +2531,27 @@
     "writerModel": "Source control writer model",
     "writerModelNotSaved": "Source control writer model not saved",
     "useSeparateWriterModel": "Use a separate source control writer model"
+  },
+  "textGenerators": {
+    "emptyTitle": "No text generators yet",
+    "emptyDescription": "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
+    "connect": "Connect",
+    "useIt": "Use it",
+    "purposeThreadTitles": "Thread titles and other generated text",
+    "purposeCommits": "Commit messages, pull requests, and branch names",
+    "purposeVoice": "Voice transcript cleanup",
+    "addGenerator": "Add a text generator",
+    "addDescription": "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+    "service": "Service",
+    "custom": "Custom",
+    "apiKey": "API key",
+    "apiKeyOptional": "API key (optional)",
+    "connecting": "Connecting",
+    "saveAndContinue": "Save and continue",
+    "searchModels": "Search models",
+    "models": "Models",
+    "modelListFailed": "The model list couldn't load.",
+    "modelListLoading": "Loading the model list.",
+    "editGenerator": "Edit {{name}}"
   }
 }

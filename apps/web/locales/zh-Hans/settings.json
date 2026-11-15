@@ -2512,5 +2512,27 @@
     "writerModel": "源码控制撰写模型",
     "writerModelNotSaved": "源码控制撰写模型未保存",
     "useSeparateWriterModel": "使用单独的源码控制撰写模型"
+  },
+  "textGenerators": {
+    "emptyTitle": "还没有文本生成器",
+    "emptyDescription": "添加一个模型 API，用它撰写线程标题、提交信息等短文本，无需启动编码代理。",
+    "connect": "连接",
+    "useIt": "开始使用",
+    "purposeThreadTitles": "线程标题及其他生成文本",
+    "purposeCommits": "提交信息、拉取请求和分支名称",
+    "purposeVoice": "语音转写清理",
+    "addGenerator": "添加文本生成器",
+    "addDescription": "撰写线程标题、提交信息等短文本，无需启动编码代理。你的 API 密钥保存在此环境中。",
+    "service": "服务",
+    "custom": "自定义",
+    "apiKey": "API 密钥",
+    "apiKeyOptional": "API 密钥（可选）",
+    "connecting": "连接中",
+    "saveAndContinue": "保存并继续",
+    "searchModels": "搜索模型",
+    "models": "模型",
+    "modelListFailed": "模型列表加载失败。",
+    "modelListLoading": "正在加载模型列表。",
+    "editGenerator": "编辑 {{name}}"
   }
 }
