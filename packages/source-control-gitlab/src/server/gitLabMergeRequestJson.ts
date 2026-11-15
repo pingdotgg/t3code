@@ -2072,7 +2072,7 @@ export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
 export const MERGE_REQUEST_WATCH_FINGERPRINT_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
-      state mergeStatusEnum conflicts diffHeadSha
+      state mergeStatusEnum detailedMergeStatus conflicts diffHeadSha
       userPermissions { updateMergeRequest }
       headPipeline {
         id status
@@ -2106,6 +2106,7 @@ const decodeMergeRequestWatchFingerprint = decodeJsonResult(
             Schema.Struct({
               state: Schema.String,
               mergeStatusEnum: Schema.NullOr(Schema.String),
+              detailedMergeStatus: Schema.optional(Schema.NullOr(Schema.String)),
               conflicts: Schema.Boolean,
               diffHeadSha: Schema.NullOr(Schema.String),
               userPermissions: Schema.Struct({ updateMergeRequest: Schema.Boolean }),
@@ -2191,6 +2192,7 @@ export function decodeMergeRequestWatchFingerprintJson(
     status: [
       mr.state,
       mr.mergeStatusEnum ?? "",
+      mr.detailedMergeStatus ?? "",
       mr.conflicts,
       mr.diffHeadSha ?? "",
       pipeline?.id ?? "",

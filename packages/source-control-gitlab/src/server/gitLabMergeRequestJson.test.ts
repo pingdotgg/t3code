@@ -1297,6 +1297,7 @@ describe("decodeMergeRequestWatchFingerprintJson", () => {
               mergeRequest: {
                 state: "opened",
                 mergeStatusEnum: "CAN_BE_MERGED",
+                detailedMergeStatus: "MERGEABLE",
                 conflicts: false,
                 diffHeadSha: "a".repeat(40),
                 userPermissions: { updateMergeRequest: true },
@@ -1338,6 +1339,8 @@ describe("decodeMergeRequestWatchFingerprintJson", () => {
     expect(edited?.remarks).not.toBe(base?.remarks);
     expect(resolved?.remarks).toBe(base?.remarks);
     expect(read({ userNotesCount: 3 })?.remarks).not.toBe(base?.remarks);
+    // A target branch moving on leaves merge_status at can_be_merged on fast-forward projects.
+    expect(read({ detailedMergeStatus: "NEED_REBASE" })?.status).not.toBe(base?.status);
   });
 
   // Only the REST read asks GitLab to recheck mergeability, and only for viewers who can update.
