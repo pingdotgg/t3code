@@ -2748,6 +2748,7 @@ describe("ClaudeAdapterV2 query exit", () => {
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.succeed([]),
                 stopTask: () => Effect.void,
+                renameSession: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
               }),
