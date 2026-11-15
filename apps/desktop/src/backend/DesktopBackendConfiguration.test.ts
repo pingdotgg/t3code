@@ -23,7 +23,6 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
-import { pickDistroIpv4 } from "../wsl/wslPathParsing.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
@@ -770,74 +769,38 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("resolveWsl binds only the address Windows dials unless network access is on", () =>
+  it.effect("resolveWsl binds loopback only when network access is off and Windows dials it", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-config-test-",
       });
-      // `hostname -I` is the distro's full address list, as the real lookup reads it.
+      // Loopback stands in for the host address a mirrored distro reports.
       const cases = [
+        { exposureBindHost: "127.0.0.1", distroIp: null, url: "127.0.0.1", bind: "127.0.0.1" },
         {
           exposureBindHost: "127.0.0.1",
-          hostnameI: "",
+          distroIp: "127.0.0.1",
           url: "127.0.0.1",
           bind: "127.0.0.1",
         },
-        // Mirrored: the distro reports one of the host's own addresses; loopback stands in as one every runner has.
+        // NAT keeps the wildcard so wslhost loopback forwarding still reaches the backend.
         {
           exposureBindHost: "127.0.0.1",
-          hostnameI: "127.0.0.1",
-          url: "127.0.0.1",
-          bind: "127.0.0.1",
-        },
-        // NAT: Windows dials the distro IP, so the backend listens there and nowhere else.
-        {
-          exposureBindHost: "127.0.0.1",
-          hostnameI: "172.27.0.99",
-          url: "172.27.0.99",
-          bind: "172.27.0.99",
-        },
-        // A tailnet address listed first is passed over for the NAT address while network access is off.
-        {
-          exposureBindHost: "127.0.0.1",
-          hostnameI: "100.101.102.103 172.27.0.99",
-          url: "172.27.0.99",
-          bind: "172.27.0.99",
-        },
-        {
-          exposureBindHost: "127.0.0.1",
-          hostnameI: "100.101.102.103",
-          url: "127.0.0.1",
-          bind: "127.0.0.1",
-        },
-        {
-          exposureBindHost: "0.0.0.0",
-          hostnameI: "",
-          url: "127.0.0.1",
-          bind: "0.0.0.0",
-        },
-        {
-          exposureBindHost: "0.0.0.0",
-          hostnameI: "127.0.0.1",
-          url: "127.0.0.1",
-          bind: "0.0.0.0",
-        },
-        {
-          exposureBindHost: "0.0.0.0",
-          hostnameI: "172.27.0.99",
+          distroIp: "172.27.0.99",
           url: "172.27.0.99",
           bind: "0.0.0.0",
         },
+        { exposureBindHost: "0.0.0.0", distroIp: "127.0.0.1", url: "127.0.0.1", bind: "0.0.0.0" },
         {
           exposureBindHost: "0.0.0.0",
-          hostnameI: "100.101.102.103 172.27.0.99",
-          url: "100.101.102.103",
+          distroIp: "172.27.0.99",
+          url: "172.27.0.99",
           bind: "0.0.0.0",
         },
       ] as const;
 
-      for (const { exposureBindHost, hostnameI, url, bind } of cases) {
+      for (const { exposureBindHost, distroIp, url, bind } of cases) {
         const config = yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           return yield* configuration.resolveWsl({ port: 5050, distro: null });
@@ -851,8 +814,7 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslEnvironment.layerTest({
                   isAvailable: true,
                   windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                  getDistroIp: (_distro, options) =>
-                    Option.fromNullishOr(pickDistroIpv4(hostnameI, options)),
+                  getDistroIp: () => Option.fromNullishOr(distroIp),
                 }),
               ),
               Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),
@@ -862,12 +824,8 @@ describe("DesktopBackendConfiguration", () => {
         assert.deepEqual(
           { url: config.httpBaseUrl.hostname, bind: config.bootstrap.host },
           { url, bind },
-          `network access bind ${exposureBindHost}, hostname -I "${hostnameI}"`,
+          `network access bind ${exposureBindHost}, distro IP ${distroIp}`,
         );
-        if (exposureBindHost === "127.0.0.1") {
-          // Network access off never widens past the one address Windows dials.
-          assert.equal(config.bootstrap.host, config.httpBaseUrl.hostname);
-        }
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );

@@ -641,13 +641,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
-  const networkAccessible = exposureBindHost === "0.0.0.0";
-  // With network access off, Windows must not dial an in-distro tailnet address, and the
-  // backend must not listen on one.
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig, {
-    skipTailnet: !networkAccessible,
-  });
+  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
@@ -658,11 +652,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     ? "127.0.0.1"
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
-  // With network access off, listen only on the address Windows dials: loopback, or under NAT
-  // the distro's address on the host-only WSL switch, which neither the LAN nor tailnet peers
-  // reach. Anything but the explicit wildcard counts as off. A managed policy needs no case
-  // here: a managed machine runs no WSL backend (see DesktopWslEnvironment's availability).
-  const wslBindHost = networkAccessible ? "0.0.0.0" : rendererHost;
+  // With network access off, a backend Windows reaches over loopback listens only there. NAT keeps
+  // the wildcard: Windows dials the distro IP, and loopback must still answer for wslhost
+  // forwarding and the localhost sign-in return page. The NAT address is host-only.
+  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
+  const wslBindHost =
+    exposureBindHost !== "0.0.0.0" && rendererHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
 
   const bootstrap = {
     mode: "desktop" as const,
