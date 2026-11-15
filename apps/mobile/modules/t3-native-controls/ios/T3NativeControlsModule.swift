@@ -304,11 +304,12 @@ public final class T3NativeControlsModule: Module {
     else { throw URLError(.cannotLoadFromNetwork) }
     let file = T3NativeFilePresentation(
       identifier: identifier, sources: presentationSources, sourceIdentifiers: sourceIdentifiers,
-      onFinish: { [weak self] in self?.setFilePreviewActive(false) }
-    ) { [weak self] error in
-      self?.filePresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+      onFinish: { [weak self] in self?.setFilePreviewActive(false) },
+      completion: { [weak self] error in
+        self?.filePresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     filePresentation = file
     setFilePreviewActive(true)
     return file
