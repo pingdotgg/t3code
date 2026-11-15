@@ -376,6 +376,13 @@ function snoozedCompletion(
 ): boolean {
   if (state?.phase !== "completed" || thread.latestRunCompletedAt == null) return false;
   const completedAt = DateTime.toEpochMillis(thread.latestRunCompletedAt);
+  // Wake clears the snooze fields, so a completion that ended before the wake was hidden by it.
+  if (
+    thread.lastSnoozeWakeAt != null &&
+    completedAt <= DateTime.toEpochMillis(thread.lastSnoozeWakeAt)
+  ) {
+    return true;
+  }
   if (thread.snoozedAt != null && completedAt < DateTime.toEpochMillis(thread.snoozedAt)) {
     return false;
   }
@@ -383,17 +390,10 @@ function snoozedCompletion(
 }
 
 function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
-  if (thread.latestRunCompletedAt == null) return false;
-  const completedAt = DateTime.toEpochMillis(thread.latestRunCompletedAt);
-  // Wake clears the snooze fields; a completion that ended before the wake was hidden by it.
-  if (
-    thread.status === "completed" &&
-    thread.lastSnoozeWakeAt != null &&
-    completedAt <= DateTime.toEpochMillis(thread.lastSnoozeWakeAt)
-  ) {
-    return false;
-  }
-  return completedAt > startedAt;
+  return (
+    thread.latestRunCompletedAt != null &&
+    DateTime.toEpochMillis(thread.latestRunCompletedAt) > startedAt
+  );
 }
 
 export function resolveAgentAwarenessRelayActiveThreadIds(input: {

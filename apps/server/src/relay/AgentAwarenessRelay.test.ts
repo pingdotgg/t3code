@@ -150,12 +150,6 @@ describe("startup agent activity", () => {
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
         }),
         shell({
-          id: ThreadId.make("completed-before-wake"),
-          status: "completed",
-          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:00:01.000Z"),
-          lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:00:02.000Z"),
-        }),
-        shell({
           id: oldFailed,
           status: "failed",
           latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T11:59:00.000Z"),
@@ -823,36 +817,41 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
-  it.effect("does not alert a completion the snooze hid once the wake clears the snooze", () =>
-    Effect.gen(function* () {
-      const snoozed = {
-        snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
-        snoozedAt: DateTime.makeUnsafe(NOW),
-      };
-      const completed = {
-        status: "completed" as const,
-        latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:01:00.000Z"),
-      };
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      yield* Ref.set(currentShell, shell(snoozed));
-      yield* relay.publishThread(THREAD_ID);
-      yield* Ref.set(currentShell, shell({ ...snoozed, ...completed }));
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
+  it.effect.each(["1 second", "5 seconds"] as const)(
+    "does not alert a completion the snooze hid when woken %s after it",
+    (beforeWake) =>
+      Effect.gen(function* () {
+        const snoozed = {
+          snoozedUntil: DateTime.makeUnsafe("2999-01-01T00:00:00.000Z"),
+          snoozedAt: DateTime.makeUnsafe(NOW),
+        };
+        const completed = {
+          status: "completed" as const,
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:01:00.000Z"),
+        };
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        yield* Ref.set(currentShell, shell(snoozed));
+        yield* relay.publishThread(THREAD_ID);
+        yield* Ref.set(currentShell, shell({ ...snoozed, ...completed }));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust(beforeWake);
+        yield* relay.drain;
 
-      yield* Ref.set(
-        currentShell,
-        shell({ ...completed, lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z") }),
-      );
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map((publication) => publication.state?.phase ?? null),
-        ["running", null],
-      );
-    }),
+        yield* Ref.set(
+          currentShell,
+          shell({
+            ...completed,
+            lastSnoozeWakeAt: DateTime.makeUnsafe("2026-09-04T12:02:00.000Z"),
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state?.phase ?? null),
+          ["running", null],
+        );
+      }),
   );
 
   it.effect("publishes a cleared thread's tombstone once while it stays cleared", () =>
