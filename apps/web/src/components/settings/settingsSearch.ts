@@ -411,6 +411,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "app-icon",
+    title: "App icon",
+    to: "/settings/appearance",
+    searchTerms: ["dock taskbar favicon logo nightly blueprint sunrise black classic"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",

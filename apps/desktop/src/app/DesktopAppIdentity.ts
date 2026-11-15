@@ -1,3 +1,4 @@
+import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,6 +9,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopUserData from "./DesktopUserData.ts";
@@ -28,6 +30,7 @@ export class DesktopAppIdentity extends Context.Service<
       DesktopUserData.DesktopUserDataInitializationError
     >;
     readonly configure: Effect.Effect<void>;
+    readonly applyAppIcon: (appIcon: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppIdentity") {}
 
@@ -46,6 +49,8 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const userDataContext = yield* Effect.context<FileSystem.FileSystem | Path.Path>();
   const commitHashCache = yield* Ref.make<Option.Option<Option.Option<string>>>(Option.none());
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  const customAppIconApplied = yield* Ref.make(false);
 
   const resolveEmbeddedCommitHash = Effect.gen(function* () {
     const packageJsonPath = environment.path.join(environment.appRoot, "package.json");
@@ -89,6 +94,39 @@ export const make = Effect.gen(function* () {
     Effect.provide(userDataContext),
   );
 
+  const applyAppIcon = Effect.fn("desktop.appIdentity.applyAppIcon")(function* (appIcon: string) {
+    const customIconPath = yield* assets.resolveAppIconPath(appIcon);
+    const replacedCustomIcon = yield* Ref.getAndSet(
+      customAppIconApplied,
+      Option.isSome(customIconPath),
+    );
+    if (Option.isSome(customIconPath)) {
+      yield* environment.platform === "darwin"
+        ? electronApp.setDockIcon(customIconPath.value)
+        : electronApp.setWindowIcons(customIconPath.value);
+      return;
+    }
+    const iconPaths = yield* assets.iconPaths;
+    if (environment.platform === "darwin") {
+      // Packaged bundles carry their icon in Info.plist; setting it again overwrites the user's custom icon.
+      if (!environment.isPackaged) {
+        yield* Option.match(iconPaths.png, {
+          onNone: () => Effect.void,
+          onSome: electronApp.setDockIcon,
+        });
+      } else if (replacedCustomIcon) {
+        yield* electronApp.setDockIcon(null);
+      }
+      return;
+    }
+    if (!replacedCustomIcon) return;
+    const defaultWindowIcon = environment.platform === "win32" ? iconPaths.ico : iconPaths.png;
+    yield* Option.match(defaultWindowIcon, {
+      onNone: () => Effect.void,
+      onSome: electronApp.setWindowIcons,
+    });
+  });
+
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
     // Electron strips spaces but keeps parentheses in its User-Agent token, breaking Turnstile in preview sessions.
@@ -105,19 +143,21 @@ export const make = Effect.gen(function* () {
       yield* electronApp.setAppUserModelId(environment.appUserModelId);
     }
 
-    // Packaged bundles carry their icon in Info.plist; setting it again overwrites the user's custom icon.
-    if (environment.platform === "darwin" && !environment.isPackaged) {
-      const iconPaths = yield* assets.iconPaths;
-      yield* Option.match(iconPaths.png, {
-        onNone: () => Effect.void,
-        onSome: electronApp.setDockIcon,
-      });
-    }
+    const settings = yield* clientSettings.get.pipe(
+      Effect.orElseSucceed(() => Option.none<ClientSettings>()),
+    );
+    yield* applyAppIcon(
+      Option.match(settings, {
+        onNone: () => DEFAULT_CLIENT_SETTINGS.appIcon,
+        onSome: (value) => value.appIcon,
+      }),
+    );
   }).pipe(Effect.withSpan("desktop.appIdentity.configure"));
 
   return DesktopAppIdentity.of({
     resolveUserDataPath: userDataPath,
     configure,
+    applyAppIcon,
   });
 });
 
