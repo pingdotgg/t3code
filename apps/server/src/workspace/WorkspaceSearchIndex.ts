@@ -142,7 +142,10 @@ export class WorkspaceSearchIndex extends Context.Service<
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
-    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
+    ) => Effect.Effect<
+      ProjectSearchContentsResult,
+      WorkspaceSearchIndexSearchFailed | WorkspaceSearchIndexScanTimedOut
+    >;
     readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
@@ -573,6 +576,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }).pipe(Effect.orDie),
   );
   let initialScanTimedOut = false;
+  let contentIndexPending = false;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
   yield* waitForIndexReady(
@@ -586,12 +590,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       }),
   ).pipe(
     Effect.catchTags({
-      WorkspaceSearchIndexScanTimedOut: (error) =>
-        variant === "paths"
-          ? Effect.sync(() => {
-              initialScanTimedOut = true;
-            })
-          : Effect.fail(error),
+      WorkspaceSearchIndexScanTimedOut: () =>
+        Effect.sync(() => {
+          // A failed build would be cached and thrown away, so a slow content index never finishes.
+          if (variant === "paths") initialScanTimedOut = true;
+          else contentIndexPending = true;
+        }),
     }),
   );
 
@@ -605,6 +609,24 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
   });
   const hasIncompleteInitialScan = () => (initialScanTimedOut ? isScanning : Effect.succeed(false));
+
+  // Grep before the content index is ready reads every file itself, as slowly as the build.
+  const ensureContentIndexReady = Effect.fn("WorkspaceSearchIndex.ensureContentIndexReady")(
+    function* () {
+      if (!contentIndexPending) return;
+      const progress = yield* Effect.promise(() =>
+        finder.getScanProgressAsync().catch(() => undefined),
+      );
+      if (progress?.ok && !progress.value.isScanning && progress.value.isWarmupComplete) {
+        contentIndexPending = false;
+        return;
+      }
+      return yield* new WorkspaceSearchIndexScanTimedOut({
+        cwd,
+        timeout: WORKSPACE_INDEX_SCAN_TIMEOUT,
+      });
+    },
+  );
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -1036,6 +1058,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
+    yield* ensureContentIndexReady();
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.

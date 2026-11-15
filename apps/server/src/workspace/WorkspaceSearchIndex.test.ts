@@ -294,6 +294,53 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
   ).pipe(Effect.provide(testLayer)),
 );
 
+it.effect("keeps building a content index that outlasts the scan timeout", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let isWarmupComplete = false;
+      const grep = vi.fn(async () => ({
+        ok: true as const,
+        value: {
+          items: [],
+          totalMatched: 0,
+          totalFilesSearched: 0,
+          totalFiles: 0,
+          filteredFileCount: 0,
+          nextCursor: null,
+        } satisfies GrepResult,
+      }));
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+        getScanProgressAsync: async () => ({
+          ok: true as const,
+          value: { isScanning: false, isWarmupComplete },
+        }),
+        watch: () => ({ ok: true as const, value: () => undefined }),
+        grepAsync: grep,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const input = {
+        query: "needle",
+        limit: 10,
+        caseSensitive: false,
+        wholeWord: false,
+        useRegex: false,
+      };
+      const pending = yield* Effect.flip(searchIndex.searchContents(input));
+      expect(pending._tag).toBe("WorkspaceSearchIndexScanTimedOut");
+      expect(grep).not.toHaveBeenCalled();
+
+      isWarmupComplete = true;
+      const result = yield* searchIndex.searchContents(input);
+      expect(result).toEqual({ matches: [], truncated: false });
+      expect(finder.destroy).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
 function fakeSymlinkFinder(
   directories: ReadonlyArray<string>,
   options: {
