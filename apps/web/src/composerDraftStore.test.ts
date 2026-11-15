@@ -1877,14 +1877,14 @@ describe("composerDraftStore modelSelection", () => {
     const threadSelection = modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
       reasoningEffort: "low",
     });
-    const effective = (threadStarted: boolean) => {
+    const effective = (threadStarted: boolean, baseSelection = threadSelection) => {
       const state = deriveEffectiveComposerModelState({
         draft: useComposerDraftStore.getState().getComposerDraft(threadRef),
         threadStarted,
         providers,
         selectedProvider: CODEX_DRIVER,
         selectedInstanceId: CODEX_INSTANCE,
-        threadModelSelection: threadSelection,
+        threadModelSelection: baseSelection,
         projectModelSelection: null,
         settings: DEFAULT_UNIFIED_SETTINGS,
       });
@@ -1919,6 +1919,30 @@ describe("composerDraftStore modelSelection", () => {
         model: "gpt-5.4",
         options: toSelections({ reasoningEffort: "high" }),
       });
+    });
+
+    it.each([false, true])(
+      "an explicit optionless pick overrides base traits when threadStarted=%s",
+      (threadStarted) => {
+        const store = useComposerDraftStore.getState();
+        store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+        expect(effective(threadStarted)).toEqual({ model: "gpt-5.4", options: [] });
+      },
+    );
+
+    it("restores saved traits when the base model uses an alias", () => {
+      useComposerDraftStore
+        .getState()
+        .setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
+          explicit: true,
+          replaceOptions: true,
+        });
+      expect(
+        effective(true, modelSelection(CODEX_DRIVER, "5.4", { reasoningEffort: "low" })),
+      ).toEqual({ model: "gpt-5.4", options: toSelections({ reasoningEffort: "low" }) });
     });
 
     it("keeps the thread's model when traits change over a seed", () => {
