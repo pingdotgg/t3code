@@ -370,6 +370,10 @@ export function routeProviderEvent(
   const ownsChildThread = (threadId: ThreadId): boolean =>
     threadId !== input.threadId && ownsThread(threadId);
   const ownsRun = (runId: string | null): boolean => runId === input.runId;
+  // ACP plan ids are session-scoped, so a turn can update a plan an earlier turn of this
+  // thread reported. Only an active root turn adopts those rows, never a lingering run.
+  const adoptsEarlierPlan = (threadId: ThreadId): boolean =>
+    threadId === input.threadId && !state.rootTurnEnded;
   const addProviderThread = (providerThreadId: ProviderThreadId): ProviderEventRoutingState => ({
     ...state,
     ownedProviderThreadIds: new Set([...state.ownedProviderThreadIds, providerThreadId]),
@@ -431,7 +435,11 @@ export function routeProviderEvent(
         : [false, state];
     }
     case "node.updated": {
-      const belongs = ownsRun(event.node.runId) || ownsChildThread(event.node.threadId);
+      const belongs =
+        ownsRun(event.node.runId) ||
+        ownsChildThread(event.node.threadId) ||
+        ((event.node.kind === "todo_list" || event.node.kind === "plan") &&
+          adoptsEarlierPlan(event.node.threadId));
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
       }
@@ -492,7 +500,12 @@ export function routeProviderEvent(
     case "steer.updated":
       return [ownsRun(event.runId), state];
     case "turn_item.updated": {
-      if (ownsRun(event.turnItem.runId) || ownsChildThread(event.turnItem.threadId)) {
+      if (
+        ownsRun(event.turnItem.runId) ||
+        ownsChildThread(event.turnItem.threadId) ||
+        ((event.turnItem.type === "todo_list" || event.turnItem.type === "proposed_plan") &&
+          adoptsEarlierPlan(event.turnItem.threadId))
+      ) {
         return [true, state];
       }
       const inheritedRunId = state.inheritedBackgroundTurnItems.get(event.turnItem.id);
@@ -512,7 +525,12 @@ export function routeProviderEvent(
       return [true, { ...state, inheritedBackgroundTurnItems }];
     }
     case "plan.updated":
-      return [ownsRun(event.plan.runId) || ownsChildThread(event.plan.threadId), state];
+      return [
+        ownsRun(event.plan.runId) ||
+          ownsChildThread(event.plan.threadId) ||
+          adoptsEarlierPlan(event.plan.threadId),
+        state,
+      ];
     case "runtime_request.updated":
       return [
         (event.threadId !== undefined && ownsChildThread(event.threadId)) ||
@@ -582,6 +600,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly baseline?: Effect.Effect<void>;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly resume?: boolean;
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -1133,6 +1152,9 @@ export const layer: Layer.Layer<
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
+        // Owned child threads whose last snapshot reported pending work, such as a queued native
+        // continuation. Unlike the root's, these must hold the stream past owner loss.
+        const childSnapshotPendingWork = new Set<ProviderThreadId>();
         let rootTurnOwnershipChecked = false;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
@@ -1381,7 +1403,7 @@ export const layer: Layer.Layer<
           // while these sets are non-empty: turn_item.updated writes are not ownership-gated, so
           // late completions still land.
           const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
-          if (backgroundItems.size > 0) {
+          if (backgroundItems.size > 0 || childSnapshotPendingWork.size > 0) {
             return false;
           }
           if (yield* Ref.get(providerThreadOwnerLost)) {
@@ -1479,6 +1501,10 @@ export const layer: Layer.Layer<
               if (!routing.ownedProviderTurns.has(id)) {
                 pendingBackgroundProviderTurns.delete(id);
               }
+            }
+            // Routing now rejects the moved thread's snapshots, so none would clear its entry.
+            for (const id of childSnapshotPendingWork) {
+              if (!routing.ownedProviderThreadIds.has(id)) childSnapshotPendingWork.delete(id);
             }
             yield* Ref.update(
               activeBackgroundTurnItems,
@@ -1681,6 +1707,12 @@ export const layer: Layer.Layer<
             if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
               yield* Ref.set(latestProviderThread, event.providerThread);
               rootSnapshotPendingWork = event.pendingBackgroundWork === true;
+            } else if (event.providerThread.id !== input.providerThread.id) {
+              if (event.pendingBackgroundWork === true) {
+                childSnapshotPendingWork.add(event.providerThread.id);
+              } else if (event.pendingBackgroundWork === false) {
+                childSnapshotPendingWork.delete(event.providerThread.id);
+              }
             }
           }
           if (
@@ -1962,21 +1994,37 @@ export const layer: Layer.Layer<
         const compact =
           input.message.attachments.length === 0 &&
           input.message.text.trim().toLowerCase() === "/compact";
-        const startTurn = compact
-          ? (input.session.compactThread?.(turnInput) ??
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterTurnStartError({
-                driver: input.session.driver,
-                threadId: input.run.threadId,
-                providerThreadId: input.providerThread.id,
-                runId: input.run.id,
-                cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+        const { message: _message, ...resumeInput } = turnInput;
+        const startTurn =
+          input.resume === true
+            ? (input.session.resumeTurn?.({ ...resumeInput, messageId: input.message.messageId }) ??
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: input.session.driver,
+                  threadId: input.run.threadId,
                   providerThreadId: input.providerThread.id,
+                  runId: input.run.id,
+                  cause: new ProviderAdapter.ProviderResumeUnsupportedError({
+                    driver: input.session.driver,
+                    providerThreadId: input.providerThread.id,
+                  }),
                 }),
-              }),
-            ))
-          : input.session.startTurn(turnInput);
+              ))
+            : compact
+              ? (input.session.compactThread?.(turnInput) ??
+                Effect.fail(
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: input.session.driver,
+                    threadId: input.run.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.run.id,
+                    cause: new ProviderAdapter.ProviderCompactionUnsupportedError({
+                      driver: input.session.driver,
+                      providerThreadId: input.providerThread.id,
+                    }),
+                  }),
+                ))
+              : input.session.startTurn(turnInput);
         yield* Effect.andThen(shouldStart, startTurn).pipe(
           // Wait for acceptance so abandoned startup cannot leave a refresher
           // on the already-detached ingestion fiber.
