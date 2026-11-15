@@ -501,6 +501,7 @@ it("opens the newest toast's thread from the shortcut until shortly after it clo
   state.shells.set("one", shell());
   complete("one", "2026-09-13T07:00:05.000Z");
   toasts[5]!.onRemove();
+  state.mode = "notifications";
   state.inApp = false;
   app.changeSettings();
   pressShortcut();
