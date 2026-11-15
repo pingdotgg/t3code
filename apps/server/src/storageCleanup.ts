@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import {
   CheckpointScopeId,
   GitCommandError,
+  linkOriginIsFenced,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -1216,7 +1217,10 @@ const make = Effect.gen(function* () {
       // Its terminal protects the worktree while it runs, and completion requests a new sweep.
       const settleScriptReason = Effect.fnUntraced(function* (projectRoot: string) {
         if (settledThread?.settledOverride === "settled") return null;
-        const key = `${thread.id}\0${worktreeKey}`;
+        // The runner cannot read a deleted thread's origin, so fence linked threads here.
+        if (thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin)) return null;
+        // Activity in the key reruns the script after a resumed turn recreates the checkout.
+        const key = `${thread.id}\0${worktreeKey}\0${activityAt}`;
         const state = settleScripts.get(key);
         if (state === "done") return null;
         if (state === "running") return waitForStop("settle script is running");

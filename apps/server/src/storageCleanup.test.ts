@@ -2070,6 +2070,23 @@ describe("deleted thread worktrees", () => {
       expect(fixture.settleRuns()).toHaveLength(1);
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
+
+  it.effect("does not run the settle script for a deleted thread a restricted link started", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      const owner = {
+        ...parent(fixture.worktree),
+        linkOrigin: { sessionId: "link-session", label: "Linked" },
+      };
+      fixture.setDeletedThreads([owner]);
+      fixture.setThreads([]);
+      fixture.setSettleScript(Effect.never);
+      yield* fixture.service.runNow;
+      expect(fixture.settleRuns()).toEqual([]);
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
 });
 
 describe("orphan worktree reports", () => {
