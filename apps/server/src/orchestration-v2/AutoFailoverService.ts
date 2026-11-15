@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isDelegatedAppThread,
   isProviderNativeSubagentThread,
   MessageId,
   type OrchestrationV2ThreadShell,
@@ -51,8 +52,8 @@ export interface AutoFailoverPlan {
 /**
  * What to do when a run on an Auto thread fails: bench the instance that failed and send the
  * thread back through Auto, which then picks the next subscription in the chain. Null when the
- * run did not fail for lack of room, or the thread is not on Auto, or is no longer the
- * thread's latest run.
+ * run did not fail for lack of room, or the thread is a delegated one not on Auto, or the run is
+ * no longer the thread's latest.
  */
 export function autoFailoverPlan(input: {
   readonly shell: OrchestrationV2ThreadShell;
@@ -71,8 +72,12 @@ export function autoFailoverPlan(input: {
     isProviderNativeSubagentThread(shell)
   )
     return null;
-  const level = routedAutoLevel(shell.modelSelection);
-  if (level === undefined) return null;
+  // A thread not on Auto (an older thread, or one where a model was picked by hand) moves to
+  // Auto at the level its model implies: a limit there means the picked model is out anyway.
+  // Delegated threads keep the model their parent chose; their parent sees the failure.
+  const routed = routedAutoLevel(shell.modelSelection);
+  if (routed === undefined && isDelegatedAppThread(shell)) return null;
+  const level = routed ?? impliedAutoLevel(shell.modelSelection.model);
   const limited = shell.lastErrorClass === "usage_limit";
   const noCapacity = !limited && CAPACITY_CODES.has(shell.lastErrorCode ?? "");
   if (!limited && !noCapacity) return null;
@@ -100,6 +105,13 @@ export function autoFailoverPlan(input: {
       dispatchMode: { type: "start_immediately" },
     },
   };
+}
+
+/** The Auto level whose orchestrator is closest to a hand-picked model. */
+function impliedAutoLevel(model: string): "low" | "medium" | "high" {
+  if (/fable|gpt-6\.1-sol|astra/i.test(model)) return "high";
+  if (/sonnet|haiku|flash|opencode\/|luna/i.test(model)) return "low";
+  return "medium";
 }
 
 /** Keeps the timestamps of recent failovers under the hourly cap; true when one more fits. */
