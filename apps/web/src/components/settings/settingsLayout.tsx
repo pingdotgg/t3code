@@ -273,7 +273,7 @@ export function SettingsUnavailableGroup({
         <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
         <p>{message}</p>
       </div>
-      <div className="[&>*+*]:border-t [&>*+*]:border-divider [&>[data-slot=settings-row]]:rounded-none [&_h3]:opacity-64 [&_p]:opacity-64">
+      <div className="*:not-first:border-t *:not-first:border-divider [&>[data-slot=settings-row]]:rounded-none [&_h3]:opacity-64 [&_p]:opacity-64">
         {children}
       </div>
     </div>
