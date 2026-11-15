@@ -270,6 +270,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
+  readonly skipTests: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -593,7 +594,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       return isMemoryTest(file) ? needsMemory(step) : step;
     }),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(vitestTests.length > 0
+    ...(vitestTests.length > 0 && !input.skipTests
       ? [
           {
             ...(serverTests ? needsMemory(vitestStep) : vitestStep),
@@ -649,6 +650,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
   if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
   if (!runKnip) summary.push("  knip skipped: no code or manifest changed");
+  if (input.skipTests && vitestTests.length > 0)
+    summary.push(`  tests skipped: --skip-tests left ${vitestTests.length} files to the test jobs`);
   yield* Console.log(`\n${summary.join("\n")}`);
 
   if (results.some((result) => result.outcome !== "pass")) return false;
@@ -684,6 +687,12 @@ export const checkChangedCommand = Command.make(
         "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
       ),
       Flag.optional,
+    ),
+    skipTests: Flag.Boolean("skip-tests").pipe(
+      Flag.withDescription(
+        "Skip the tests beside changes, for CI where the test jobs run the full suites.",
+      ),
+      Flag.withDefault(false),
     ),
   },
   (input) =>

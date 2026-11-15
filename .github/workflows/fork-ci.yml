@@ -80,7 +80,8 @@ jobs:
         run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
       - name: Validate changed files
         if: github.event_name == 'pull_request'
-        run: vp run check:changed HEAD^1 --concurrency 1
+        # The test jobs run the full suites; a large merge has too many tests beside changes for one step.
+        run: vp run check:changed HEAD^1 --concurrency 1 --skip-tests
       - name: Validate full repository
         if: github.event_name != 'pull_request'
         run: |
