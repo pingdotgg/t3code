@@ -175,5 +175,10 @@ export function withWithheldFiles(
       noticeActionable: canLoad && (load === undefined || load.status === "error"),
     };
   });
-  return { ...parsed, files };
+  return {
+    ...parsed,
+    files,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
+  };
 }

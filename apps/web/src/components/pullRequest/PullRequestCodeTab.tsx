@@ -662,6 +662,8 @@ function PullRequestCodeTab({
       JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
     ),
   );
+  // A refetch keeps showing the last patch, whose lines may not exist at the new head.
+  const withheldRefetching = withheldResults.some((result) => result.waiting);
   const withheldStatuses = new Map<string, WithheldFileStatus>();
   const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
   const cutFiles = new Set<unknown>();
@@ -720,10 +722,9 @@ function PullRequestCodeTab({
           file.hunks.length === 0 ? (withheldFiles.get(resolveFileDiffPath(file)) ?? file) : file,
         );
   const loadWithheldFile = (path: string) => {
-    if (withheldPaths.includes(path)) {
-      atomRegistry.refresh(withheldFileDiff(path));
-      return;
-    }
+    // The read is keyed without the head, so even a first load must not reuse an older one.
+    atomRegistry.refresh(withheldFileDiff(path));
+    if (withheldPaths.includes(path)) return;
     setWithheldLoads({
       scope: scopeKey,
       paths: [...withheldPaths, path],
@@ -1039,7 +1040,7 @@ function PullRequestCodeTab({
     range: SelectedLineRange | null,
     context: { item: CodeViewItem<ReviewAnnotationGroup> },
   ) => {
-    if (!range || !canSelectLines) return;
+    if (!range || !canSelectLines || withheldRefetching) return;
     const item = context.item;
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -1166,8 +1167,8 @@ function PullRequestCodeTab({
       cutFiles.has(fileDiff)
         ? Promise.reject(new Error("Unchanged lines are unavailable in a file with cut lines."))
         : loadDiffFiles(fileDiff),
-    enableGutterUtility: canSelectLines && draft === null,
-    enableLineSelection: canSelectLines && draft === null,
+    enableGutterUtility: canSelectLines && draft === null && !withheldRefetching,
+    enableLineSelection: canSelectLines && draft === null && !withheldRefetching,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: (fileContainer: HTMLElement, instance: object) => {

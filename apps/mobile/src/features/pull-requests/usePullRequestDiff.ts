@@ -152,8 +152,9 @@ export function usePullRequestDiff(
     for (const path of withheldPaths) registry.refresh(withheldFileDiff(key, path));
   };
   const loadWithheldFile = (path: string) => {
-    if (withheldPaths.includes(path)) registry.refresh(withheldFileDiff(key, path));
-    else setWithheldLoads({ key, paths: [...withheldPaths, path] });
+    // The read is keyed without the head, so even a first load must not reuse an older one.
+    registry.refresh(withheldFileDiff(key, path));
+    if (!withheldPaths.includes(path)) setWithheldLoads({ key, paths: [...withheldPaths, path] });
   };
   // A refetch keeps showing the last patch, whose lines may not exist at the new head.
   const withheldRefetching = withheldResults.some((result) => result.waiting);

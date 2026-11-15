@@ -164,8 +164,9 @@ describe("paged mobile pull request diffs", () => {
     const parsed = combinePullRequestDiffPages(pages, new WeakMap(), "pr", GITHUB);
     if (parsed.kind !== "files") throw new Error("Expected structured diff");
     const placeholder = parsed.files[0];
+    let merged: ReviewParsedDiff = parsed;
     const fileWith = (load: WithheldFileLoad | undefined, canLoad = true) => {
-      const merged = withWithheldFiles(
+      merged = withWithheldFiles(
         parsed,
         new Map(load === undefined ? [] : [["large.ts", load]]),
         canLoad,
@@ -191,5 +192,7 @@ describe("paged mobile pull request diffs", () => {
     expect(loaded).toMatchObject({ id: placeholder?.id, path: "large.ts" });
     expect(loaded?.notice).toBeUndefined();
     expect(loaded?.rows.length).toBeGreaterThan(0);
+    // The totals follow the loaded file, which may have changed since the page was read.
+    expect(merged).toMatchObject({ additions: 1, deletions: 1 });
   });
 });
