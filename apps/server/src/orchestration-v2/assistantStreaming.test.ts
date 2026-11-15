@@ -14,6 +14,10 @@ describe("V2 assistant streaming", () => {
       ready: "```ts\nx()\n```\n",
       rest: "rest",
     });
+    expect(splitBufferedAssistantText("```a``` is inline.\n\n```\ncode\n\nmore\n")).toEqual({
+      ready: "```a``` is inline.\n\n",
+      rest: "```\ncode\n\nmore\n",
+    });
   });
 });
 
