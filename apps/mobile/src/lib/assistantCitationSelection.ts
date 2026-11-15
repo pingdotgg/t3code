@@ -5,7 +5,12 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { splitMarkdownDetails } from "./markdownDetails";
-import { parseMarkdownDocument, type MarkdownNode } from "./markdownDocument";
+import {
+  markdownReferenceDefinitions,
+  parseMarkdownDocument,
+  withReferenceDefinitions,
+  type MarkdownNode,
+} from "./markdownDocument";
 
 function renderedText(node: MarkdownNode, restoreMath: (value: string) => string): string {
   if (
@@ -56,15 +61,24 @@ function citationText(markdown: string): string {
   );
 }
 
-function citationSegments(markdown: string, path = ""): Array<{ path: string; text: string }> {
+function citationSegments(
+  markdown: string,
+  path = "",
+  definitions = markdownReferenceDefinitions(markdown),
+): Array<{ path: string; text: string }> {
   return splitMarkdownDetails(markdown).flatMap((block, index) => {
-    if (block.kind === "details") return citationSegments(block.body, `${path}${index}/`);
+    if (block.kind === "details")
+      return citationSegments(block.body, `${path}${index}/`, definitions);
     return splitCodexArtifactTemplateMarkdown(block.markdown).flatMap((segment, segmentIndex) =>
       segment.kind === "markdown"
         ? [
             {
               path: `${path}${index}:${segmentIndex}`,
-              text: citationText(renderCodexInlineDirectivesAsMarkdown(segment.markdown)),
+              text: citationText(
+                renderCodexInlineDirectivesAsMarkdown(
+                  withReferenceDefinitions(segment.markdown, definitions),
+                ),
+              ),
             },
           ]
         : [],

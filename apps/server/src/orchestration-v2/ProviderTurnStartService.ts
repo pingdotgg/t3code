@@ -546,6 +546,10 @@ export const layer: Layer.Layer<
       });
       if (userText.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         yield* settleRunBeforeStart({
+          run,
+          rootNode,
+          attempt,
+          turnItems: projection.turnItems,
           signal: "expanded-input-too-long",
           status: "failed",
           now: yield* DateTime.now,
