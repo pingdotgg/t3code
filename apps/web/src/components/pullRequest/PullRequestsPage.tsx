@@ -18,13 +18,12 @@ import type {
   PullRequestListCursors,
   PullRequestListInput,
   PullRequestListResult,
-  PullRequestListState,
   PullRequestSummary,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   collectPullRequestListFacets,
@@ -60,7 +59,6 @@ import {
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
-  PullRequestFilterRadioSubmenu,
   PullRequestFiltersMenu,
   describePullRequestListFilters,
   PullRequestSearchInput,
@@ -95,7 +93,6 @@ import { registerCommands } from "~/shortcuts/dispatcher";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { RightPanelMaximizeControl } from "../chat/PanelLayoutControls";
 import { Button } from "../ui/button";
-import { MenuItem } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -1480,15 +1477,18 @@ export function PullRequestsPage() {
   const sortMenu = (
     <PullRequestCompactFilterMenu
       label="Sort pull requests"
-      triggerIcon={<ArrowDownUpIcon aria-hidden className="size-3.5 shrink-0" />}
+      triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
+      triggerLabel="Sort"
       value={sort}
       options={SORT_OPTIONS}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
-  const renderFiltersMenu = (compactItems?: ReactNode) => (
+  const filtersMenu = (
     <PullRequestFiltersMenu
-      {...(compactItems ? { compactItems } : {})}
+      state={search.state}
+      stateOptions={STATE_TABS}
+      onState={(state) => updateListScope({ state })}
       onOpenChange={setFiltersOpen}
       involvement={search.involvement}
       involvementOptions={INVOLVEMENT_TABS}
@@ -1534,42 +1534,15 @@ export function PullRequestsPage() {
       }
     />
   );
-  const filtersMenu = renderFiltersMenu();
-  const compactMenu = renderFiltersMenu(
-    <>
-      <PullRequestFilterRadioSubmenu
-        label="State"
-        icon={PullRequestGlyph.pullRequest}
-        value={search.state}
-        options={STATE_TABS}
-        onChange={(state) => updateListScope({ state })}
-      />
-      <PullRequestFilterRadioSubmenu
-        label="Sort"
-        icon={ArrowDownUpIcon}
-        value={sort}
-        options={SORT_OPTIONS}
-        onChange={(next) => updateListScope({ sort: next })}
-      />
-      <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
-        <RefreshIcon size="sm" refreshing={refreshing} />
-        Refresh
-      </MenuItem>
-    </>,
-  );
   const columnProps = {
     refreshing,
     onRefresh: () => void refreshFromHost(),
-    searchValue: search.q ?? "",
-    state: search.state,
     host: search.host,
     hostMenuOptions,
-    onState: (state: PullRequestListState) => updateListScope({ state }),
     onHost: (host: string | undefined) => updateListScope({ host }),
     searchInput,
     sortMenu,
     filtersMenu,
-    compactMenu,
     rightPanelOpen: rightPanelState.isOpen,
     maximizedAway: rightPanelMaximized,
     listBody,
