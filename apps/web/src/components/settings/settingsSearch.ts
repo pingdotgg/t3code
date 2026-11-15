@@ -145,6 +145,8 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     heading: msg("Agents"),
     paths: [
       "/settings/providers",
+      "/settings/tools",
+      "/settings/mcp-servers",
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
