@@ -129,7 +129,9 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       const fiber = yield* Effect.forkChild(
         attempt(relayRoute!, relayScope).pipe(
           Effect.flatMap((result) =>
-            result._tag === "Success" || result.failure.reason === "unsupported"
+            // Relay can reach a different server than the direct routes, so an
+            // incompatible relay is a failed backup, not the end of the walk.
+            result._tag === "Success"
               ? Effect.succeed<Settled>({ result, scope: relayScope })
               : Effect.fail(result),
           ),
@@ -178,12 +180,10 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   if (relay !== undefined) {
-    const settled = yield* Fiber.join(relay.fiber).pipe(Effect.option);
-    if (Option.isSome(settled)) {
-      const { result } = settled.value;
-      if (result._tag === "Success") return result.success;
-      return yield* result.failure;
-    }
+    const settled = yield* Fiber.join(relay.fiber).pipe(Effect.result);
+    const result = settled._tag === "Success" ? settled.success.result : settled.failure;
+    if (result._tag === "Success") return result.success;
+    if (result.failure.reason === "unsupported") return yield* result.failure;
   }
   const late = yield* Effect.forEach(silent, ({ index }) => Fiber.join(checks[index]!), {
     concurrency: "unbounded",

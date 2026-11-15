@@ -41,7 +41,9 @@ server on every route. A direct route that answered the check but is still
 connecting when the check's head start ends starts T3 Connect instead of holding
 it back. T3 Connect then races that route and every direct route after it, so a
 failed direct route still moves on to the next one. The first to connect wins and
-the others close. While connected over a later route the
+the others close. An incompatible T3 Connect server does not end that race, because
+relay can reach a different server than a direct route, such as a preview app
+sharing the home directory; it is reported only when no direct route connects. While connected over a later route the
 [supervisor](../../packages/client-runtime/src/connection/supervisor.ts)
 preflights the earlier ones and replaces the session when one would connect.
 Preflight includes authorization so a route that answers but rejects this

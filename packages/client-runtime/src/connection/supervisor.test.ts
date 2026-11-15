@@ -2059,40 +2059,49 @@ describe("EnvironmentSupervisor routes", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps waiting for a slow LAN route when relay fails its identity check", () =>
-    Effect.gen(function* () {
-      const lanWaiting = yield* Deferred.make<void>();
-      const attempted: string[] = [];
-      const harness = yield* makeHarness({
-        checkRoute: (route) =>
-          Effect.succeed(route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked"),
-        prepare: (_attempt, target) => {
-          attempted.push(target._tag);
-          return target._tag === "RelayConnectionTarget"
-            ? Effect.fail(
-                environmentMismatchError({
-                  expected: TARGET.environmentId,
-                  actual: EnvironmentId.make("environment-2"),
-                }),
-              )
-            : Effect.succeed(preparedFor(target));
-        },
-        ready: () =>
-          Deferred.succeed(lanWaiting, undefined).pipe(Effect.andThen(Effect.sleep("3 seconds"))),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
+  it.effect.each(["fails its identity check", "reaches an unsupported server"] as const)(
+    "keeps waiting for a slow LAN route when relay %s",
+    (relayFailure) =>
+      Effect.gen(function* () {
+        const lanWaiting = yield* Deferred.make<void>();
+        const attempted: string[] = [];
+        const harness = yield* makeHarness({
+          checkRoute: (route) =>
+            Effect.succeed(
+              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+            ),
+          prepare: (_attempt, target) => {
+            attempted.push(target._tag);
+            return target._tag === "RelayConnectionTarget"
+              ? Effect.fail(
+                  relayFailure === "fails its identity check"
+                    ? environmentMismatchError({
+                        expected: TARGET.environmentId,
+                        actual: EnvironmentId.make("environment-2"),
+                      })
+                    : new ConnectionBlockedError({
+                        reason: "unsupported",
+                        detail: "This client requires a newer server.",
+                      }),
+                )
+              : Effect.succeed(preparedFor(target));
+          },
+          ready: () =>
+            Deferred.succeed(lanWaiting, undefined).pipe(Effect.andThen(Effect.sleep("3 seconds"))),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
 
-      yield* Deferred.await(lanWaiting);
-      yield* TestClock.adjust("3 seconds");
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
-        "BearerConnectionTarget",
-      );
-      expect(attempted).toEqual(["BearerConnectionTarget", "RelayConnectionTarget"]);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
-    }).pipe(Effect.provide(TestClock.layer())),
+        yield* Deferred.await(lanWaiting);
+        yield* TestClock.adjust("3 seconds");
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+          "BearerConnectionTarget",
+        );
+        expect(attempted).toEqual(["BearerConnectionTarget", "RelayConnectionTarget"]);
+        expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("closes both racing routes when the user disconnects", () =>
