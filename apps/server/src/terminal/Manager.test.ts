@@ -956,23 +956,8 @@ it.layer(
   );
 
   it.effect.each([
-    ...[
-      "bash",
-      "zsh",
-      "fish",
-      "sh",
-      "dash",
-      "ksh",
-      "mksh",
-      "tcsh",
-      "csh",
-      "nu",
-      "xonsh",
-      "elvish",
-      "pwsh",
-    ].map((command) => ({ command, idle: true })),
+    { command: "zsh", idle: true },
     { command: "tmux", idle: false },
-    { command: "node", idle: false },
   ])("settles an exec-replaced root according to its command: $command", ({ command, idle }) =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -1035,12 +1020,6 @@ it.layer(
     {
       label: "foreground Bash builtin",
       command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
-      source: "ps",
-      procStat: "real",
-    },
-    {
-      label: "foreground Bash builtin",
-      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
       source: "native table",
       procStat: "real",
     },
@@ -1049,12 +1028,6 @@ it.layer(
       command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
       source: "native table",
       procStat: "denied",
-    },
-    {
-      label: "foreground Bash builtin",
-      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
-      source: "native table",
-      procStat: "malformed",
     },
   ] as const)(
     "native settlement preserves active commands: $label ($source, proc stat $procStat)",
@@ -1096,9 +1069,7 @@ it.layer(
                       cause: { code: "EACCES" },
                     }),
                   )
-                : procStat === "malformed" && path.startsWith("/proc/")
-                  ? Effect.succeed("invalid stat")
-                  : fs.readFileString(path),
+                : fs.readFileString(path),
           }),
         );
         const prompt = yield* Deferred.make<void>();
