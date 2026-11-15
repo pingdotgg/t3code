@@ -113,7 +113,7 @@ export function PullRequestDetailCrumbs({
 }) {
   const state = detail ? resolvePullRequestState(detail) : null;
   return (
-    <div className="mt-2 flex min-h-6 min-w-0 flex-wrap items-center gap-1.5 pl-4 text-label text-muted-foreground @md/pr-header:flex-nowrap">
+    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
       {detail && toneClassName && state ? (
         <>
           {onBack ? (
@@ -129,13 +129,13 @@ export function PullRequestDetailCrumbs({
                 repositoryUrl ? (
                   <InlineButton
                     tone="muted"
-                    className="min-w-0 shrink @max-sm/pr-header:hidden"
+                    className="min-w-16 shrink @max-sm/pr-header:hidden"
                     onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
                   >
                     <span className="truncate">{detail.repository}</span>
                   </InlineButton>
                 ) : (
-                  <span className="min-w-0 truncate @max-sm/pr-header:hidden">
+                  <span className="min-w-16 truncate @max-sm/pr-header:hidden">
                     {detail.repository}
                   </span>
                 )

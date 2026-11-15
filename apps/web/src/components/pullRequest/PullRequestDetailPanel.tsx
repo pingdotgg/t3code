@@ -1572,7 +1572,7 @@ export function PullRequestDetailPanel({
     );
 
   const headerBranches = detail ? (
-    <span className="ml-auto flex min-w-0 flex-1 basis-full items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:basis-0">
+    <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:ml-auto @md/pr-header:basis-0 @md/pr-header:justify-end">
       <PullRequestBaseBranch
         baseBranch={detail.baseBranch}
         freshness={freshness}
@@ -1639,15 +1639,17 @@ export function PullRequestDetailPanel({
           {detail ? (
             <>
               {stackMenuProps !== null ? (
-                <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                <span className="inline-flex shrink-0 @max-2xs/pr-header:hidden">
+                  <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                </span>
               ) : supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
               ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
+              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground @max-[30rem]/pr-header:hidden">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums @max-sm/pr-header:hidden"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-[34rem]/pr-header:hidden"
                   aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />

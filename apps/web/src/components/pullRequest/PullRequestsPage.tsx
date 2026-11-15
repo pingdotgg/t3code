@@ -98,6 +98,8 @@ import { SidebarInset, useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useOpenPanelPullRequestUrl } from "~/hooks/useOpenPanelPullRequestUrl";
+import { PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH } from "~/hooks/usePreviewPanelInlineSize";
+import { observeResize } from "~/lib/observeResize";
 import { copyThreadReference } from "~/lib/copyThreadReference";
 import { useLayoutPageLocation } from "~/layout/pageNavigation";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
@@ -1148,7 +1150,14 @@ export function PullRequestsPage() {
   const rightPanelAvailable = selectedPullRequestSurface !== null;
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const [maximized, setMaximized] = useState(false);
-  const rightPanelMaximized = rightPanelState.isOpen && maximized;
+  // A pane too narrow for the list and the review at their minimums shows the review alone.
+  const [tooNarrowToSplit, setTooNarrowToSplit] = useState(false);
+  const observeSplitRow = useStableCallback((row: HTMLDivElement) =>
+    observeResize(row, () =>
+      setTooNarrowToSplit(row.clientWidth < PREVIEW_PANEL_SPLIT_MIN_ROW_WIDTH),
+    ),
+  );
+  const rightPanelMaximized = rightPanelState.isOpen && (maximized || tooNarrowToSplit);
   if (!rightPanelState.isOpen && maximized) setMaximized(false);
   const toggleRightPanelMaximized = () => {
     if (rightPanelState.isOpen) setMaximized((value) => !value);
@@ -1246,20 +1255,21 @@ export function PullRequestsPage() {
       onSubmit={submitQuery}
     />
   );
-  const openPanelControls = rightPanelState.isOpen ? (
-    <div
-      className={cn(
-        "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
-        mobileSidebarSheetMounted && "hidden",
-      )}
-      data-workspace-titlebar-controls
-    >
-      <RightPanelMaximizeControl
-        maximized={rightPanelMaximized}
-        onToggle={toggleRightPanelMaximized}
-      />
-    </div>
-  ) : null;
+  const openPanelControls =
+    rightPanelState.isOpen && !tooNarrowToSplit ? (
+      <div
+        className={cn(
+          "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+          mobileSidebarSheetMounted && "hidden",
+        )}
+        data-workspace-titlebar-controls
+      >
+        <RightPanelMaximizeControl
+          maximized={rightPanelMaximized}
+          onToggle={toggleRightPanelMaximized}
+        />
+      </div>
+    ) : null;
   const listError = listQuery.error
     ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
     : null;
@@ -1644,7 +1654,7 @@ export function PullRequestsPage() {
       variant={splitPanes ? "split" : "pane"}
       className="h-full min-h-0 overflow-hidden overscroll-y-none"
     >
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={observeSplitRow} className="relative flex min-h-0 flex-1">
         {pullRequestsSupported && rightPanelPresent ? openPanelControls : null}
         <PullRequestsColumn {...columnProps} split={splitPanes} />
 
@@ -1716,6 +1726,7 @@ export function PullRequestsPage() {
                   .settlePullRequestReveal(rightPanelRef, renderedPullRequestSurface.id, revealUrl);
               }}
               environmentId={panelEnvironmentId}
+              onBack={tooNarrowToSplit ? toggleRightPanel : undefined}
               onGuideShown={onGuideShown}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;
