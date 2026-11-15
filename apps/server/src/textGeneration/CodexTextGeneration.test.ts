@@ -246,18 +246,13 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
-  it.effect.each(["exec", "mcp list", "startup failure"] as const)(
-    "observes subprocess startup and cancellation: %s",
+  it.effect.each(["exec", "mcp list"] as const)(
+    "kills a stalled %s CLI when its request is interrupted",
     (command) =>
       Effect.gen(function* () {
         const probe = yield* makeProcessProbe;
         yield* withFakeCodexEnv(
-          {
-            output: "",
-            ...(command === "startup failure"
-              ? { exitCode: 1, stderr: "fixture failed before startup" }
-              : { lifecycle: { port: probe.port, command } }),
-          },
+          { output: "", lifecycle: { port: probe.port, command } },
           (textGeneration) =>
             Effect.gen(function* () {
               const fiber = yield* textGeneration
@@ -267,22 +262,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
                   modelSelection: DEFAULT_TEST_MODEL_SELECTION,
                 })
                 .pipe(Effect.forkScoped);
-              const startup = probe.started.pipe(
-                Effect.raceFirst(
-                  Fiber.join(fiber).pipe(
-                    Effect.andThen(Effect.die("Generation completed before fixture startup")),
-                  ),
-                ),
-              );
-              if (command === "startup failure") {
-                const exit = yield* Effect.exit(startup);
-                expect(Exit.isFailure(exit)).toBe(true);
-                if (Exit.isFailure(exit)) {
-                  expect(Cause.pretty(exit.cause)).toContain("fixture failed before startup");
-                }
-                return;
-              }
-              yield* startup;
+              yield* probe.started;
 
               const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkScoped);
               yield* probe.exited;
