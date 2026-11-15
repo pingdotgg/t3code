@@ -845,6 +845,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     void listRef.current?.scrollToIndex({
       index,
       animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+      viewPosition: 0,
       viewOffset: 24,
     });
   });
