@@ -1630,6 +1630,129 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
+  it.live("does not re-send a delivered retry handoff to a later fresh native session", () =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("retry-handoff-redelivery");
+      const failStartOnce = yield* Ref.make(false);
+      const failResumeOnce = yield* Ref.make(false);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          injectedHistory,
+          failStartOnce,
+          failResumeOnce,
+          failedRunOrdinals: new Set([3]),
+          nativeThreadGeneration: yield* Ref.make(0),
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const run = Effect.fn("run")(function* (ordinal: number) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`redelivery:${ordinal}`),
+            threadId,
+            messageId: MessageId.make(`redelivery:${ordinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text: `Request ${ordinal}`,
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.payload.ordinal === ordinal &&
+                (event.payload.status === "completed" || event.payload.status === "failed"),
+            ),
+            Stream.runHead,
+          );
+          yield* worker.drain();
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("redelivery:create"),
+          threadId,
+          projectId,
+          createdBy: "user",
+          creationSource: "web",
+          title: "Retry handoff redelivery",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* run(1);
+        // Run 2 never reaches the provider, so run 3 carries it as a retry delta; run 3 then fails.
+        yield* Ref.set(failStartOnce, true);
+        yield* run(2);
+        yield* run(3);
+        yield* run(4);
+        yield* run(5);
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const run3 = before.runs[2]!;
+        const retryHandoff = before.contextHandoffs.find(
+          (handoff) =>
+            handoff.targetRunId === run3.id && handoff.strategy === "delta_since_target_last_seen",
+        );
+        assert.isDefined(retryHandoff);
+        const firstDelivery = retryHandoff?.delivery?.nativeThreadId;
+        assert.isDefined(firstDelivery);
+
+        const providerSessionId = before.providerThreads[0]?.providerSessionId;
+        if (providerSessionId == null) return yield* Effect.die("Expected a provider session.");
+        yield* orchestrator.dispatch({
+          type: "provider-session.detach",
+          commandId: CommandId.make("redelivery:detach"),
+          threadId,
+          providerSessionId,
+        });
+        yield* worker.drain();
+        yield* Ref.set(failResumeOnce, true);
+        yield* run(6);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          projection.runs.map((candidate) => candidate.status),
+          ["completed", "failed", "failed", "completed", "completed", "completed"],
+        );
+        const run6NativeThreadId = (yield* Ref.get(capturedTurns)).at(-1)?.nativeThreadId;
+        assert.notEqual(run6NativeThreadId, firstDelivery);
+        // Run 6's resume-fallback summary already covers runs 1-5.
+        assert.equal(
+          projection.contextHandoffs.find((handoff) => handoff.id === retryHandoff?.id)?.delivery
+            ?.nativeThreadId,
+          firstDelivery,
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: "retry-handoff-redelivery",
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: { type: "readOnly" },
+              },
+            },
+            layerRegistry,
+          ),
+        ),
+      );
+    }),
+  );
+
   it.live.each([
     ["background work", new ClaudeBackgroundWorkBlocksQueryReplacementError()],
     ["an unreadable append file", new ClaudeAppendSystemPromptFileError({ path: "missing.md" })],
