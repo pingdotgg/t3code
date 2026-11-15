@@ -75,6 +75,9 @@ pub struct FakeProvider {
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
+    /// Set by [`Self::with_process_exit`]: a notify ends every open session's event stream,
+    /// as a provider process that exits on its own (systemd's SIGTERM reaches it too).
+    process_exit: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -109,7 +112,15 @@ impl FakeProvider {
             close_delay: std::time::Duration::ZERO,
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
+            process_exit: None,
         }
+    }
+
+    /// A provider whose processes can exit on their own: `exit.notify_waiters()` ends the event
+    /// stream of every session open at that moment.
+    pub fn with_process_exit(mut self, exit: Arc<tokio::sync::Notify>) -> Self {
+        self.process_exit = Some(exit);
+        self
     }
 
     /// A provider whose `capabilities` say it cannot roll a conversation back; its sessions'
@@ -250,7 +261,27 @@ impl Provider for FakeProvider {
             self.sessions.fetch_add(1, Ordering::SeqCst);
             crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
-            let (tx, rx) = mpsc::channel(64);
+            let (tx, mut rx) = mpsc::channel(64);
+            if let Some(exit) = self.process_exit.clone() {
+                // Events pass through a task that stops, and drops the engine's end, on exit.
+                let (out, forwarded) = mpsc::channel(64);
+                let mut inner = std::mem::replace(&mut rx, forwarded);
+                tokio::spawn(async move {
+                    let exited = exit.notified();
+                    tokio::pin!(exited);
+                    loop {
+                        tokio::select! {
+                            () = &mut exited => break,
+                            event = inner.recv() => {
+                                let Some(event) = event else { break };
+                                if out.send(event).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
             Ok(OpenedSession {
                 provider_session: from_json(json!({
                     "id": input.provider_session_id, "driver": "claudeAgent",

@@ -306,6 +306,9 @@ pub async fn serve_with_instances(
         }
         signal = shutdown_signal(is_desktop) => {
             eprintln!("conn-server: {signal}, stopping");
+            // At once, not after the drain below: systemd sends the same SIGTERM to the
+            // provider processes, which exit within it. A run they leave stays for the next start.
+            engine.begin_shutdown();
             let _ = stop_tx.send(true);
             // Open WebSockets keep the graceful stop waiting; give them a moment, no more.
             let _ = tokio::time::timeout(Duration::from_secs(2), &mut server).await;

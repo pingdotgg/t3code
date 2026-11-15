@@ -355,6 +355,12 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(()))
     }
 
+    /// Marks that shutdown began, at the signal, before the server drains its connections and
+    /// calls [`Engine::shutdown`]. From then on a provider session that ends ends no run: under
+    /// systemd the stop signal reaches the provider processes too, and a run they leave open
+    /// is continued by the next start, as T3 does.
+    fn begin_shutdown(&self) {}
+
     /// `GET /api/orchestration/threads/:threadId`: `OrchestrationV2ThreadDetailSnapshot`, or
     /// `None` for an unknown thread (404).
     fn thread_snapshot(
