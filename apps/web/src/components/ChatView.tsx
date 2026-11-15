@@ -3171,6 +3171,7 @@ export default function ChatView(props: ChatViewProps) {
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
     linkCheckoutPullRequest,
+    layoutTabId: layoutPane.tabId,
   });
   const withdrawQueuedSendStable = useStableCallback(withdrawQueuedSend);
 
