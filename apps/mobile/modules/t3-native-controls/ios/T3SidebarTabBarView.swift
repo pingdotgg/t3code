@@ -56,6 +56,9 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
       composeButton.isHidden = !showsCompose
       tabBarTrailing.constant = showsCompose ? (compact ? -64 : -76) : 0
       setNeedsLayout()
+      // JS moves this view's edge by the same amount, so the bar keeps its frame and won't lay
+      // itself out; compose is placed only from that layout.
+      tabBar.setNeedsLayout()
     }
   }
   var appearance = "light" {
