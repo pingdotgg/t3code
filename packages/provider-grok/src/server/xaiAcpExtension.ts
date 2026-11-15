@@ -988,10 +988,10 @@ export interface XAiExitPlanModeResponse {
   readonly feedback?: string;
 }
 
-/** Abandon the native approval gate after T3 captures the plan; implementation uses T3 UI. */
+/** Gate reply after T3 captures the plan; "abandoned" would tell the model the user chose Abandon. */
 export function makeXAiExitPlanModeCapturedResponse(feedback?: string): XAiExitPlanModeResponse {
   return {
-    outcome: "abandoned",
+    outcome: "request_changes",
     feedback:
       feedback ??
       "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
