@@ -140,32 +140,32 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
-  folder: Option.Option<string>,
+  isDirectory: boolean,
   projectRoot: string | undefined,
   position: LaunchEditorInput["position"],
 ): ReadonlyArray<string> {
   const parsedTarget =
     position === undefined
       ? parseTargetPathAndPosition(target)
-      : position.line === undefined
-        ? Option.none<TargetPathAndPosition>()
-        : Option.some({
+      : Option.fromUndefinedOr(position.line).pipe(
+          Option.map((line) => ({
             path: target,
-            line: String(position.line),
-            column: Option.fromUndefinedOr(
-              position.column === undefined ? undefined : String(position.column),
-            ),
-          });
-  const positionedTarget = Option.isSome(parsedTarget)
-    ? `${parsedTarget.value.path}:${parsedTarget.value.line}${Option.isSome(parsedTarget.value.column) ? `:${parsedTarget.value.column.value}` : ""}`
-    : target;
+            line: String(line),
+            column: Option.fromUndefinedOr(position.column).pipe(Option.map(String)),
+          })),
+        );
+  const positionedTarget = Option.match(parsedTarget, {
+    onNone: () => target,
+    onSome: ({ path, line, column }) => [path, line, ...Option.toArray(column)].join(":"),
+  });
 
   switch (editor.launchStyle) {
     case "direct-path":
       return [positionedTarget];
     case "goto":
+      // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      if (Option.isSome(folder)) return ["--new-window", folder.value];
+      if (isDirectory) return ["--new-window", target];
       // VS Code splits every numeric colon segment, including ones inside the filename.
       if (
         position !== undefined &&
@@ -567,23 +567,19 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       });
     }
     const { command, baseArgs } = resolved.value;
-    const fileSystem = yield* FileSystem.FileSystem;
-    const folder =
-      editorDef.launchStyle === "goto"
-        ? yield* fileSystem.stat(target).pipe(
-            Effect.map((info) =>
-              info.type === "Directory" ? Option.some(target) : Option.none<string>(),
-            ),
-            Effect.orElseSucceed(() => Option.none<string>()),
-          )
-        : Option.none<string>();
+    const isDirectory =
+      editorDef.launchStyle === "goto" &&
+      (yield* (yield* FileSystem.FileSystem).stat(target).pipe(
+        Effect.map((info) => info.type === "Directory"),
+        Effect.orElseSucceed(() => false),
+      ));
     return {
       editor: editorDef.id,
       target: input.cwd,
       command,
       args: [
         ...baseArgs,
-        ...resolveCommandEditorArgs(editorDef, target, folder, input.projectRoot, position),
+        ...resolveCommandEditorArgs(editorDef, target, isDirectory, input.projectRoot, position),
       ],
     };
   }
