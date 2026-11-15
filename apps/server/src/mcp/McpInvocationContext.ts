@@ -192,6 +192,17 @@ export const hiddenWhileFleetOff = (): boolean => {
   return scope?.fleetAvailable !== false;
 };
 
+/**
+ * `McpSchema.EnabledWhen` for tools that act as the calling thread: a client
+ * from outside has none. Discovery only; `McpToolAccess` still refuses the
+ * call, and `toLayer` requires this on every thread-bound declaration.
+ */
+export const hiddenFromOutsideClients = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope === undefined || scope.thread !== undefined;
+};
+
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();

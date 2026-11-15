@@ -102,9 +102,10 @@ import Migration0091 from "./Migrations/091_AuthConnectDeniedRequests.ts";
 import Migration0092 from "./Migrations/092_QueuedTurnInputIndexJsonValid.ts";
 import Migration0093 from "./Migrations/093_ProviderTurnAttemptIndex.ts";
 import Migration0094 from "./Migrations/094_TurnItemMessageOrdinalIndex.ts";
-import Migration0095 from "./Migrations/095_FleetPeerEnvironments.ts";
-import Migration0096 from "./Migrations/096_OpenShellFleetState.ts";
-import Migration0097 from "./Migrations/097_FleetDrainImports.ts";
+import Migration0095 from "./Migrations/095_TurnItemInlineWorkOutput.ts";
+import Migration0096 from "./Migrations/096_FleetPeerEnvironments.ts";
+import Migration0097 from "./Migrations/097_OpenShellFleetState.ts";
+import Migration0098 from "./Migrations/098_FleetDrainImports.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -202,9 +203,10 @@ const migrationEntries = [
   [92, "QueuedTurnInputIndexJsonValid", Migration0092],
   [93, "ProviderTurnAttemptIndex", Migration0093],
   [94, "TurnItemMessageOrdinalIndex", Migration0094],
-  [95, "FleetPeerEnvironments", Migration0095],
-  [96, "OpenShellFleetState", Migration0096],
-  [97, "FleetDrainImports", Migration0097],
+  [95, "TurnItemInlineWorkOutput", Migration0095],
+  [96, "FleetPeerEnvironments", Migration0096],
+  [97, "OpenShellFleetState", Migration0097],
+  [98, "FleetDrainImports", Migration0098],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

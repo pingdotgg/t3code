@@ -485,3 +485,58 @@ describe("GhosttyTerminalCore scrollback", () => {
     }
   });
 });
+
+describe("GhosttyTerminalCore mouse encoding", () => {
+  it("reports the cell drawn under the pointer on a fractional grid", async () => {
+    // The default 13px font measures a fractional 7.82666015625px cell; rows are 18px.
+    const cellWidth = 7.82666015625;
+    const cellHeight = 18;
+    const core = await GhosttyTerminalCore.create(
+      54,
+      15,
+      cellWidth,
+      cellHeight,
+      {
+        foreground: { r: 255, g: 255, b: 255 },
+        background: { r: 0, g: 0, b: 0 },
+        cursor: { r: 255, g: 255, b: 255 },
+      },
+      () => {},
+    );
+    const mouse = (
+      x: number,
+      y: number,
+      paddingTop: number,
+      screenWidth = 437,
+      action: "press" | "release" = "press",
+    ) =>
+      core.encodeMouse({
+        action,
+        button: 1,
+        mods: 0,
+        x,
+        y,
+        screenWidth,
+        screenHeight: 279,
+        cellWidth,
+        cellHeight,
+        paddingLeft: 4,
+        paddingRight: 4,
+        paddingTop,
+        paddingBottom: 279 - paddingTop - 15 * cellHeight,
+        anyButtonPressed: true,
+      });
+    try {
+      core.write("\x1b[?1002h\x1b[?1006h");
+      expect(mouse(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
+      expect(mouse(4 + 53.5 * cellWidth, 140, 4)).toBe("\x1b[<0;54;8M");
+      expect(mouse(10, 4.5 + cellHeight + 0.2, 4.5)).toBe("\x1b[<0;1;2M");
+      expect(mouse(304, 140, 4, 305)).toBe("\x1b[<0;37;8M");
+      expect(mouse(500, 140, 4, 305, "release")).toBe("\x1b[<0;37;8m");
+      core.write("\x1b[?1016h");
+      expect(mouse(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
+    } finally {
+      core.dispose();
+    }
+  });
+});
