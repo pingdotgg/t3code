@@ -192,16 +192,20 @@ const makeSweep = Effect.gen(function* () {
         attemptedSwitches.add(switchCommand.commandId);
         acted = true;
         const resetMs = Date.parse(thread.usageLimitResetAt ?? "");
-        limitedUntil.set(
-          thread.modelSelection.instanceId,
-          Number.isFinite(resetMs) ? resetMs : nowMs + ACCOUNT_SWITCH_WINDOW_MS,
-        );
         yield* threads.dispatch(switchCommand).pipe(
           Effect.provideService(AccountFallback, {
             commandId: switchCommand.commandId,
             threadSelection: thread.modelSelection,
             requestedSelection: undefined,
           }),
+          Effect.tap(() =>
+            Effect.sync(() =>
+              limitedUntil.set(
+                thread.modelSelection.instanceId,
+                Number.isFinite(resetMs) ? resetMs : nowMs + ACCOUNT_SWITCH_WINDOW_MS,
+              ),
+            ),
+          ),
           Effect.catchCause((cause) =>
             Effect.logWarning("orchestration-v2.limit-recovery.account-switch-failed", {
               threadId: thread.id,

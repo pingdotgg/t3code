@@ -59,6 +59,7 @@ describe("new thread model fallback", () => {
   const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
   const fallback = { instanceId: ProviderInstanceId.make("claude"), model: "claude-fable-5-1" };
   const limited = provider({
+    auth: { status: "authenticated", email: "quota@example.com", workspaceId: "workspace_a" },
     usageLimits: {
       checkedAt: "2026-09-03T11:00:00.000Z",
       windows: [{ ...window, usedPercent: 100 }],
@@ -163,6 +164,36 @@ describe("new thread model fallback", () => {
           model: selection.model,
           options: [{ id: "reasoningEffort", value: "high" }],
         },
+      ],
+      [
+        "a distinct login instead of another instance sharing the exhausted account",
+        [
+          {
+            ...codexAccount("codex_duplicate", 0),
+            auth: {
+              status: "authenticated",
+              email: "QUOTA@example.com",
+              workspaceId: "workspace_a",
+            },
+          },
+          codexAccount("codex_other", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_other"), model: selection.model },
+      ],
+      [
+        "a different workspace on the same login",
+        [
+          {
+            ...codexAccount("codex_workspace", 0),
+            auth: {
+              status: "authenticated",
+              email: "quota@example.com",
+              workspaceId: "workspace_b",
+            },
+          },
+          codexAccount("codex_other", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_workspace"), model: selection.model },
       ],
       [
         "the requested model before a same-provider default with more headroom",

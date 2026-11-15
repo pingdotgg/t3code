@@ -178,14 +178,14 @@ function automaticFallbackSelections(
       ? Math.max(...left)
       : Math.min(...left);
   };
-  const exhaustedLogin = exhausted.usageLimits?.credentialFingerprint;
+  const resolveAccountKey = accountKeyResolver(providers.map(nativeReport));
+  const exhaustedLogin = resolveAccountKey(nativeReport(exhausted));
   return providers
     .flatMap((entry) => {
       if (
         entry.instanceId === exhausted.instanceId ||
         // Two instances signed in to the same login share one quota.
-        (exhaustedLogin !== undefined &&
-          entry.usageLimits?.credentialFingerprint === exhaustedLogin)
+        (exhaustedLogin !== null && resolveAccountKey(nativeReport(entry)) === exhaustedLogin)
       ) {
         return [];
       }

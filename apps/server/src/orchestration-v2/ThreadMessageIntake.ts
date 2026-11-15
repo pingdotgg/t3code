@@ -117,6 +117,7 @@ const withAvailableAccount = Effect.fn("ThreadMessageIntake.withAvailableAccount
   if (
     command.dispatchMode.type === "steer_active" ||
     command.dispatchMode.type === "restart_active" ||
+    command.manualContinuationOfRunId !== undefined ||
     command.usageLimitContinuationOfRunId !== undefined ||
     command.restartContinuationOfRunId !== undefined
   ) {
@@ -222,9 +223,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
     command.type !== "message.dispatch" &&
     (command.type !== "queued-run.edit" || command.attachments === undefined)
   )
-    return yield* threads
-      .dispatch(command)
-      .pipe(Effect.provideService(AccountFallback, prepared.fallback));
+    return yield* threads.dispatch(command);
   // An accepted edit's retry replays its receipt even if a later cleanup removed its files.
   if (command.type === "queued-run.edit" && !(yield* threads.hasReceipt(command.commandId))) {
     const config = yield* ServerConfig.ServerConfig;
@@ -262,6 +261,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : {}),
     })
     .pipe(
+      Effect.provideService(AccountFallback, prepared.fallback),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,

@@ -6840,6 +6840,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         (automaticFallback !== undefined &&
           (projection.thread.settledOverride === "settled" ||
+            !modelSelectionsEqual(source.modelSelection, automaticFallback.threadSelection) ||
             !modelSelectionsEqual(
               projection.thread.modelSelection,
               automaticFallback.threadSelection,
