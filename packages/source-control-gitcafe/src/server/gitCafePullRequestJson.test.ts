@@ -336,32 +336,6 @@ describe("toStack", () => {
 });
 
 describe("toDiff", () => {
-  it("marks the unterminated 93-byte tunnel-release migration as missing its final newline", () => {
-    const content =
-      'ALTER TABLE "relay_managed_endpoint_allocations" ADD COLUMN "tunnel_released_at" varchar(64);';
-    assert.strictEqual(Buffer.byteLength(content), 93);
-    const { patch } = GitCafePullRequestJson.toDiff(
-      decodeDiff({
-        items: [
-          {
-            path: "infra/relay/migrations/postgres/20261005232034_managed_endpoint_tunnel_released_at/migration.sql",
-            status: "added",
-            hunks: [
-              {
-                oldStart: 1,
-                oldLines: 0,
-                newStart: 1,
-                newLines: 1,
-                lines: [{ origin: "+", content }],
-              },
-            ],
-          },
-        ],
-      }),
-    );
-    assert.isTrue(patch.endsWith(`+${content}\n\\ No newline at end of file\n`));
-  });
-
   it.each(["+", "-", " "])("marks unterminated ordinary %j lines", (origin) => {
     const { patch } = GitCafePullRequestJson.toDiff(
       decodeDiff({
