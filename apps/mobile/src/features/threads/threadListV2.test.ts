@@ -1776,6 +1776,32 @@ describe("Working section beta", () => {
         thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
     });
     expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
+    // A folder keeps the same inbox order for its members, not their manual order.
+    const filed = build({
+      threads: threads.map((thread) =>
+        thread.id === "finished-early" ? { ...thread, activeOrderKey: "a0" } : thread,
+      ),
+      inboxReturnAt: (thread) =>
+        thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
+      folders: [
+        {
+          environmentId,
+          id: ThreadFolderId.make("inbox"),
+          name: "Inbox",
+          icon: null,
+          threadIds: [ThreadId.make("finished-late"), ThreadId.make("finished-early")],
+          rule: null,
+          autoFile: false,
+          ruleSetAt: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+    });
+    expect(filed.items.filter((item) => item.folderKey).map((item) => item.thread.id)).toEqual([
+      "finished-early",
+      "finished-late",
+    ]);
   });
 
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {

@@ -16,7 +16,11 @@ export const MAX_THREAD_FOLDER_MOVE_THREADS = 100;
 
 export const ThreadFolderName = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
 
-const ThreadFolderRulePattern = TrimmedNonEmptyString.check(Schema.isMaxLength(200));
+export const MAX_THREAD_FOLDER_RULE_PATTERN_LENGTH = 200;
+
+const ThreadFolderRulePattern = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_THREAD_FOLDER_RULE_PATTERN_LENGTH),
+);
 const ThreadFolderRuleList = <S extends Schema.Top>(item: S) =>
   Schema.Array(item).check(Schema.isMinLength(1), Schema.isMaxLength(20));
 

@@ -1032,7 +1032,13 @@ export function buildThreadListV2Items(input: {
   const folderLayout = layoutThreadFolders({
     threads: [
       ...orderedPinned,
-      ...sortThreadsForListV2([...active, ...working]),
+      // Filed threads keep the order their shelf would give them.
+      ...(workingShelfEnabled
+        ? [
+            ...sortInboxThreadsByReturn(active, input.inboxReturnAt),
+            ...sortWorkingThreadsBySend(working),
+          ]
+        : sortThreadsForListV2([...active, ...working])),
       ...allOrderedSnoozed,
       ...allOrderedSettled,
     ],

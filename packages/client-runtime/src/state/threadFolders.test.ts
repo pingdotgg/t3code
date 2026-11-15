@@ -160,6 +160,7 @@ describe("threadFolderCollectChoices", () => {
         shell("member", "feat/a", "/w/t3-1", "2026-01-01"),
         shell("dupe", "feat/b", null, "2026-01-02"),
         { ...shell("remote", "remote", null, "2026-01-09"), environmentId: remote },
+        shell("long", "x".repeat(201), null, "2026-01-10"),
       ],
     );
     expect(choices).toEqual({

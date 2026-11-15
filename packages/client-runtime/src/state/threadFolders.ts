@@ -1,10 +1,11 @@
 import { Atom } from "effect/reactivity";
-import type {
-  EnvironmentId,
-  ThreadFolder,
-  ThreadFolderMutation,
-  ThreadFolderRule,
-  ThreadId,
+import {
+  MAX_THREAD_FOLDER_RULE_PATTERN_LENGTH,
+  type EnvironmentId,
+  type ThreadFolder,
+  type ThreadFolderMutation,
+  type ThreadFolderRule,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 export interface EnvironmentThreadFolder extends ThreadFolder {
@@ -214,7 +215,8 @@ export function threadFolderCollectChoices(
               ?.replace(/[\\/]+$/, "")
               .split(/[\\/]/)
               .at(-1) ?? null);
-      if (!value) continue;
+      // A rule cannot hold a longer pattern, so the menu would offer a choice that fails.
+      if (!value || value.length > MAX_THREAD_FOLDER_RULE_PATTERN_LENGTH) continue;
       const score = [Number(members.has(thread.id)), thread.updatedAt] as const;
       const previous = best.get(value);
       if (
