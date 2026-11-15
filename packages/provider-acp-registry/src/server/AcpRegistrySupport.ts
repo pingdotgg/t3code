@@ -1202,9 +1202,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         timeout: PACKAGE_QUERY_TIMEOUT,
         truncatedOutputReason: "install_failed",
       }).pipe(Effect.flatMap((output) => parsePackageManagerPath(managerPath, output)));
-      const commandEnvironment = withPreferredPath(environment, binDirectory, platform);
+      const managedBinEnvironment = { ...environment, PATH: binDirectory };
       const executablePath = packageCommandCandidates(agent, packageIdentity.name)
-        .map((candidate) => resolveExecutable(candidate, platform, commandEnvironment))
+        .map((candidate) => resolveExecutable(candidate, platform, managedBinEnvironment))
         .find((candidate): candidate is string => candidate !== undefined);
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()
@@ -1361,7 +1361,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const rootRealPath = yield* fileSystem.realPath(root);
     const executableRealPath = yield* fileSystem.realPath(executablePath);
     const relative = path.relative(rootRealPath, executableRealPath);
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       return yield* new AcpRegistryError({
         reason: "archive_invalid",
         detail: "ACP Registry archive command resolves outside its installation directory.",

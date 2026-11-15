@@ -1,5 +1,9 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
-import { mergeProviderTurnInputRecordedAt } from "@t3tools/contracts";
+import {
+  applyOrchestrationV2ThreadVisit,
+  isQueuedProviderThreadPlaceholder,
+  mergeProviderTurnInputRecordedAt,
+} from "@t3tools/contracts";
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -322,6 +326,11 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.tags-updated":
     case "thread.marked-unread":
       return { ...projection, thread: event.payload };
+    case "thread.visit-recorded":
+      return {
+        ...projection,
+        thread: applyOrchestrationV2ThreadVisit(projection.thread, event.payload),
+      };
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };
@@ -377,7 +386,15 @@ export function applyOrchestrationV2ProjectionEvent(
         ),
       };
     case "provider-thread.updated":
-      return { ...base, providerThreads: upsertEntity(base.providerThreads, event.payload) };
+      return {
+        ...base,
+        thread:
+          event.payload.appThreadId === base.thread.id &&
+          !isQueuedProviderThreadPlaceholder(event.payload)
+            ? { ...base.thread, activeProviderThreadId: event.payload.id }
+            : base.thread,
+        providerThreads: upsertEntity(base.providerThreads, event.payload),
+      };
     case "provider-turn.updated": {
       const current = base.providerTurns.find((turn) => turn.id === event.payload.id);
       const tokenUsage = event.payload.tokenUsage ?? current?.tokenUsage;
