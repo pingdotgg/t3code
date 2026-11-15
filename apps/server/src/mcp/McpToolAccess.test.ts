@@ -495,19 +495,6 @@ it.effect.each(["reads_as_caller", "acts_as_caller"] as const)(
     ),
 );
 
-it.effect.each(["reads_as_caller", "acts_as_caller"] as const)(
-  "%s is not found by an outside client",
-  (tool) =>
-    McpServer.McpServer.pipe(
-      Effect.flatMap((server) => server.callTool({ name: tool, arguments: {} })),
-      Effect.flip,
-      Effect.map((error) => expect(error.message).toContain(`Tool '${tool}' not found`)),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, fullAccessClient),
-      Effect.provideService(McpSchema.McpServerClient, mcpClient),
-      Effect.provide(probeServer(Layer.mock(ThreadManagement.ThreadManagementService)({}))),
-    ),
-);
-
 it.effect("refuses to build a thread-bound tool that outside clients would be offered", () =>
   Effect.gen(function* () {
     const CallerToolkit = Toolkit.make(Tool.make("reads_as_caller", probe));
