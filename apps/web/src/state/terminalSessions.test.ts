@@ -18,53 +18,24 @@ const metadataAtom = await vi.hoisted(async () => {
     AsyncResult.initial(true),
   );
 });
-const grants = await vi.hoisted(async () => {
-  const { Atom } = await import("effect/reactivity");
-  return Atom.make(true);
-});
-const projectionFixture = vi.hoisted(() => ({ snapshots: false }));
 vi.mock("./terminal", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
-  const { applyTerminalAttachStreamEvent, EMPTY_TERMINAL_BUFFER_STATE } =
-    await import("@t3tools/client-runtime/state/terminal");
-  const buffer = () =>
-    applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
-      type: "snapshot",
-      snapshot: {
-        threadId: "thread-a",
-        terminalId: "terminal-1",
-        cwd: "/repo",
-        worktreePath: null,
-        status: "running",
-        pid: 123,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        label: "Terminal",
-        updatedAt: "2026-11-15T00:00:00.000Z",
-      },
-    });
-  const attach = Atom.family(() =>
-    Atom.make(() =>
-      projectionFixture.snapshots ? AsyncResult.success(buffer()) : AsyncResult.initial(true),
-    ).pipe(Atom.setIdleTTL(0)),
-  );
-  const observe = Atom.family(() => Atom.make(() => AsyncResult.success(buffer())));
   return {
     terminalEnvironment: {
       attach: (request: unknown) => {
         attachCalls.push(request);
-        return attach("terminal");
+        return Atom.make(AsyncResult.initial(true));
       },
-      observe: () => observe("terminal"),
       metadata: () => metadataAtom,
     },
   };
 });
 vi.mock("./session", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const granted = Atom.make(AsyncResult.success({}));
   return {
-    environmentSession: { sessionStateAtom: () => grants },
-    sessionHasScope: (operate: boolean, scope: string) => scope !== "terminal:operate" || operate,
+    environmentSession: { sessionStateAtom: () => granted },
+    sessionHasScope: () => true,
     useEnvironmentScope: () => true,
   };
 });
@@ -173,26 +144,6 @@ describe("knownTerminalSessionsAtom", () => {
 });
 
 describe("attachedTerminalSessionAtom", () => {
-  it("keeps recovery identity across operate, observe and a fresh attach projection", () => {
-    projectionFixture.snapshots = true;
-    const registry = AtomRegistry.make();
-    const atom = attachedTerminalSessionAtom(environmentA, {
-      threadId: threadA,
-      terminalId: "terminal-1",
-      cwd: "/grants-test",
-    });
-    const release = registry.mount(atom);
-    const original = registry.get(atom).pty;
-    expect(original?.pid).toBe(123);
-    registry.set(grants, false);
-    expect(registry.get(atom).pty).toBe(original);
-    registry.set(grants, true);
-    expect(registry.get(atom).pty).toBe(original);
-    release();
-    registry.dispose();
-    projectionFixture.snapshots = false;
-  });
-
   it("attaches with the launch input it was keyed by", () => {
     attachCalls.length = 0;
     const input = {

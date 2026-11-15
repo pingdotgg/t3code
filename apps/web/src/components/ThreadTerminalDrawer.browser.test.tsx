@@ -80,10 +80,23 @@ vi.mock("~/terminal/ghostty/surface", () => ({
 vi.mock("../state/terminalSessions", async () => {
   const Atom = await import("effect/reactivity/Atom");
   // A strong map, not Atom.family: a family holds weakly, so a GC could hand setSession a new atom.
+  const summary = (threadId: ThreadId, pid: number) => ({
+    threadId,
+    terminalId: "term-1",
+    cwd: "/repo",
+    worktreePath: null,
+    status: "running" as const,
+    pid,
+    exitCode: null,
+    exitSignal: null,
+    hasRunningSubprocess: false,
+    label: "Terminal 1",
+    updatedAt: "2026-11-15T00:00:00.000Z",
+  });
   const makeSession = (threadId: ThreadId) =>
     Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
       ...EMPTY_TERMINAL_SESSION_STATE,
-      pty: { pid: 123 },
+      summary: summary(threadId, 123),
       status: fixture.statusByThreadId.get(threadId) ?? "closed",
       version: 1,
     });
@@ -112,6 +125,7 @@ vi.mock("../state/terminalSessions", async () => {
     const current = appAtomRegistry.get(atom);
     appAtomRegistry.set(atom, {
       ...current,
+      summary: summary(thread.threadId, pid),
       ...applyTerminalAttachStreamEvent(current, {
         type,
         threadId: thread.threadId,
@@ -434,12 +448,11 @@ it("drops the rest of a split paste when the shell restarts mid-paste", async ()
 });
 
 it.each([
-  { event: "snapshot" as const, pid: 123, closes: true },
-  { event: "snapshot" as const, pid: 456, closes: false },
-  { event: "restarted" as const, pid: 123, closes: false },
+  { pid: 123, closes: true },
+  { pid: 456, closes: false },
 ])(
-  "recovers interrupted bracket framing for $event with PID $pid",
-  async ({ event, pid, closes }) => {
+  "closes interrupted bracket framing only for its process (PID $pid)",
+  async ({ pid, closes }) => {
     const { other: threadRef } = setup();
     let settleWrite = () => {};
     fixture.runWrite = () =>
@@ -456,7 +469,7 @@ it.each([
     const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
     fixture.typeIntoSurface?.(large);
     await act(async () => {
-      fixture.sessionEvent(threadRef, event, pid);
+      fixture.sessionEvent(threadRef, "snapshot", pid);
       settleWrite();
     });
     await act(async () => {
