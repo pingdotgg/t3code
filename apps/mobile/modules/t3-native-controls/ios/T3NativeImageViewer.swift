@@ -441,7 +441,8 @@ private final class T3ImageViewerChrome: UIView {
   }
 }
 
-final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate,
+  UINavigationBarDelegate {
   var sourceView: (Int) -> UIView? = { _ in nil }
   var fileForPage: (Int) -> URL? = { _ in nil }
   var onRetry: (Int) -> Void = { _ in }
@@ -456,6 +457,8 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private let chrome = T3ImageViewerChrome()
   private let titleLabel = UILabel()
   private let counterLabel = UILabel()
+  private let header = UINavigationBar()
+  private let headerItem = UINavigationItem()
   private lazy var dismissPan = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
   private var chromeHidden = false
   private var chromeHiddenBeforeDrag = false
@@ -522,70 +525,63 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     updateTitle()
   }
 
-  /// Laid out like Messages: a blurred band with Close and the title, and Save and Share in a capsule below.
+  /// Laid out like Messages: a system navigation bar with Close and the title, and Save and Share in a capsule below.
   private func configureChrome() {
     chrome.alpha = 0
     chrome.frame = view.bounds
     chrome.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     view.addSubview(chrome)
-    let band = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
-    let close = makeCloseButton()
-    titleLabel.font = .preferredFont(forTextStyle: .headline)
-    counterLabel.font = .preferredFont(forTextStyle: .caption1)
-    for label in [titleLabel, counterLabel] {
-      label.textColor = .white
-      label.textAlignment = .center
-      label.adjustsFontForContentSizeCategory = true
-      label.lineBreakMode = .byTruncatingMiddle
-    }
-    counterLabel.textColor = UIColor(white: 1, alpha: 0.7)
-    let titles = UIStackView(arrangedSubviews: [titleLabel, counterLabel])
-    titles.axis = .vertical
-    titles.alignment = .center
+    configureHeader()
     let save = makeToolbarButton(symbol: "square.and.arrow.down", label: "Save to Photos") { [weak self] in self?.save() }
     let share = makeToolbarButton(symbol: "square.and.arrow.up", label: "Share") { [weak self] in self?.share() }
     saveButton = save
     shareButton = share
     let toolbar = makeCapsule(containing: [save, share])
-    for subview in [band, close, titles, toolbar] {
+    for subview in [header, toolbar] {
       subview.translatesAutoresizingMaskIntoConstraints = false
       chrome.addSubview(subview)
     }
     let guide = view.safeAreaLayoutGuide
     NSLayoutConstraint.activate([
-      band.topAnchor.constraint(equalTo: chrome.topAnchor),
-      band.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
-      band.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
-      band.bottomAnchor.constraint(equalTo: close.bottomAnchor, constant: 10),
-      close.topAnchor.constraint(equalTo: guide.topAnchor, constant: 6),
-      close.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
-      titles.centerXAnchor.constraint(equalTo: chrome.centerXAnchor),
-      titles.centerYAnchor.constraint(equalTo: close.centerYAnchor),
-      titles.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 12),
-      titles.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -72),
+      header.topAnchor.constraint(equalTo: guide.topAnchor),
+      header.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+      header.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
       toolbar.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -8),
     ])
   }
 
-  private func makeCloseButton() -> UIButton {
-    var configuration: UIButton.Configuration
-    if #available(iOS 26.0, *) {
-      configuration = .glass()
-    } else {
-      configuration = .filled()
-      configuration.baseBackgroundColor = UIColor(white: 0.2, alpha: 0.8)
+  /// A real navigation bar, so the header has the system's material, margins and close button.
+  private func configureHeader() {
+    header.delegate = self
+    header.overrideUserInterfaceStyle = .dark
+    let appearance = UINavigationBarAppearance()
+    appearance.configureWithDefaultBackground()
+    header.standardAppearance = appearance
+    header.compactAppearance = appearance
+    header.scrollEdgeAppearance = appearance
+    headerItem.leftBarButtonItem = UIBarButtonItem(
+      systemItem: .close, primaryAction: UIAction { [weak self] _ in self?.close() })
+    if #unavailable(iOS 26.0) {
+      // Before iOS 26 a navigation item has no subtitle, so the count sits under the title by hand.
+      titleLabel.font = .preferredFont(forTextStyle: .headline)
+      counterLabel.font = .preferredFont(forTextStyle: .caption1)
+      counterLabel.textColor = .secondaryLabel
+      for label in [titleLabel, counterLabel] {
+        label.textAlignment = .center
+        label.adjustsFontForContentSizeCategory = true
+        label.lineBreakMode = .byTruncatingMiddle
+      }
+      let titles = UIStackView(arrangedSubviews: [titleLabel, counterLabel])
+      titles.axis = .vertical
+      titles.alignment = .center
+      headerItem.titleView = titles
     }
-    configuration.cornerStyle = .capsule
-    configuration.baseForegroundColor = .white
-    configuration.image = UIImage(systemName: "xmark",
-                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
-    configuration.contentInsets = NSDirectionalEdgeInsets(top: 13, leading: 13, bottom: 13, trailing: 13)
-    let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in self?.close() })
-    button.accessibilityLabel = "Close"
-    button.overrideUserInterfaceStyle = .dark
-    return button
+    header.items = [headerItem]
   }
+
+  /// Extends the bar's background up under the status bar, like a screen's own navigation bar.
+  func position(for bar: UIBarPositioning) -> UIBarPosition { .topAttached }
 
   private func makeToolbarButton(symbol: String, label: String, action: @escaping () -> Void) -> UIButton {
     var configuration = UIButton.Configuration.plain()
@@ -627,9 +623,13 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
 
   private func updateTitle() {
     updateActions()
-    titleLabel.text = titles[safe: currentIndex]
-    counterLabel.text = titles.count > 1 ? "\(currentIndex + 1) of \(titles.count)" : nil
-    counterLabel.isHidden = titles.count < 2
+    let title = titles[safe: currentIndex]
+    let counter = titles.count > 1 ? "\(currentIndex + 1) of \(titles.count)" : nil
+    headerItem.title = title
+    if #available(iOS 26.0, *) { headerItem.subtitle = counter }
+    titleLabel.text = title
+    counterLabel.text = counter
+    counterLabel.isHidden = counter == nil
   }
 
   override func viewDidLayoutSubviews() {
