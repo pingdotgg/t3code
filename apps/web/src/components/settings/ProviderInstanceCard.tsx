@@ -11,8 +11,9 @@ import {
   PlusIcon,
   Trash2Icon,
   XIcon,
+  LockIcon,
+  LockOpenIcon,
 } from "lucide-react";
-import { Lock as LockGlyph, LockOpen } from "lucide";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { Fragment, useState, type ReactElement, type ReactNode } from "react";
@@ -42,7 +43,6 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { DraftInput } from "../ui/draft-input";
 import { SecretSourceInput, type SecretSource } from "./SecretSourceInput";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -71,6 +71,13 @@ import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
+  type CustomModelSave,
+  customModelsKey,
+  pendingCustomModelSaves,
+  settleCustomModelSave,
+} from "./customModelSaves.logic";
+import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
+import {
   getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderStatusKey,
@@ -97,7 +104,9 @@ function ProviderStatusDiagnostic({
 }
 
 let environmentVariableDraftId = 0;
-const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
+const DRAFT_ROW_ID_PREFIX = "provider-env-";
+const nextEnvironmentVariableDraftId = () =>
+  `${DRAFT_ROW_ID_PREFIX}${environmentVariableDraftId++}`;
 
 type EnvironmentDraftRow = {
   readonly id: string;
@@ -282,6 +291,7 @@ function ProviderEnvironmentFieldRow(props: {
   readonly onRemove: (field: ProviderEnvironmentField) => void;
   readonly managedReason?: string | undefined;
   readonly secretSources: ReadonlyArray<SecretSource>;
+  readonly environmentId?: EnvironmentId | undefined;
 }) {
   const inputId = `${props.idPrefix}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
@@ -316,6 +326,7 @@ function ProviderEnvironmentFieldRow(props: {
               spellCheck={false}
               aria-label={props.field.label}
               sources={props.secretSources}
+              environmentId={props.environmentId}
               onSecretChange={(secret) => props.onSecretChange(props.field, secret)}
             />
           )}
@@ -342,16 +353,28 @@ export function ProviderEnvironmentSection(props: {
   /** Variables an administrator's policy pins: listed by name, never editable or removable. */
   readonly managed?: { readonly names: ReadonlySet<string>; readonly reason: string } | undefined;
   readonly secretSources?: ReadonlyArray<SecretSource>;
+  readonly environmentId?: EnvironmentId | undefined;
 }) {
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
-  const draft = reconcileRowsDraft(
+  let draft = reconcileRowsDraft(
     storedDraft,
     props.environment,
     providerEnvironmentsEqual,
     toEnvironmentDraftRows,
   );
+  if (draft.rows !== storedDraft.rows) {
+    // Keep rows the server never acknowledged, even across an external reseed.
+    const acknowledged = new Set(storedDraft.seen.map((variable) => variable.name));
+    const unpublished = storedDraft.rows.filter(
+      (row) =>
+        row.id.startsWith(DRAFT_ROW_ID_PREFIX) &&
+        !acknowledged.has(row.name) &&
+        !draft.rows.some((incoming) => incoming.name === row.name),
+    );
+    if (unpublished.length > 0) draft = { ...draft, rows: [...draft.rows, ...unpublished] };
+  }
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
   const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) =>
@@ -492,10 +515,11 @@ export function ProviderEnvironmentSection(props: {
                         aria-pressed={variable.sensitive}
                         aria-label={`Mark environment variable ${variable.name || index + 1} as sensitive`}
                       >
-                        <MorphIcon
-                          className="size-3"
-                          icon={variable.sensitive ? LockGlyph : LockOpen}
-                        />
+                        {variable.sensitive ? (
+                          <LockIcon className="size-3" />
+                        ) : (
+                          <LockOpenIcon className="size-3" />
+                        )}
                       </Button>
                     }
                   />
@@ -531,6 +555,7 @@ export function ProviderEnvironmentSection(props: {
                     spellCheck={false}
                     aria-label={`Environment variable value ${index + 1}`}
                     sources={props.secretSources ?? []}
+                    environmentId={props.environmentId}
                     onSecretChange={(secret) => setVariableSecret(variable.id, secret)}
                   >
                     {(parts) => layout(parts.source, parts.value)}
@@ -657,7 +682,7 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
-  readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  readonly onUpdate: (nextInstance: ProviderInstanceConfig) => Promise<boolean>;
   readonly onDelete?: (() => void) | undefined;
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
@@ -691,6 +716,33 @@ interface ProviderInstanceCardProps {
 const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 const NO_SECRET_SOURCES: ReadonlyArray<SecretSource> = [];
 const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
+
+/**
+ * Every custom model save writes the whole list, so the next edit starts from the last list sent
+ * until the config stream echoes it, which can land before or after the save's reply.
+ */
+function useCustomModelSaves(
+  stored: ReadonlyArray<CustomModelDefinition>,
+  save: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>,
+) {
+  const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
+  const storedKey = customModelsKey(stored);
+  const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
+  if (previousStoredKey !== storedKey) {
+    setPreviousStoredKey(storedKey);
+    // Unchanged contents can match a queued restore, so only a stream change can be an echo.
+    setSaves((list) => pendingCustomModelSaves(list, storedKey));
+  }
+  const current = saves.at(-1)?.models ?? stored;
+  const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
+    const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
+    setSaves((list) => [...list, sent]);
+    const saved = await save(next);
+    setSaves((list) => settleCustomModelSave(list, sent, saved));
+    return saved;
+  });
+  return [current, update] as const;
+}
 
 /** Unknown drivers stay read-only to preserve fork config. projectOverride switches affect only the
  * project, not instance.enabled. */
@@ -756,6 +808,8 @@ export function ProviderInstanceCard({
     !isUpdating && (updateState?.status === "failed" || updateState?.status === "unchanged")
       ? updateState.message
       : null;
+  const restartNotice =
+    enabled && !isUpdating && liveProvider ? getProviderRestartNotice(liveProvider) : null;
   const hasCompatibilityWarning =
     compatibility !== undefined &&
     compatibility.status !== "supported" &&
@@ -804,10 +858,20 @@ export function ProviderInstanceCard({
     instance.config !== null && typeof instance.config === "object"
       ? (instance.config as Record<string, unknown>).customModels
       : undefined;
-  const customModels =
+  const [customModels, updateCustomModels] = useCustomModelSaves(
     instance.driver === "antigravity"
       ? NO_CUSTOM_MODELS
-      : readCustomModelEntries(storedCustomModels);
+      : readCustomModelEntries(storedCustomModels),
+    (next) => {
+      const nextConfig = nextConfigBlobWithValue(
+        instance.config,
+        "customModels",
+        next.map(toCustomModelSetting),
+      );
+      const { config: _omit, ...rest } = instance;
+      return onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+    },
+  );
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
     customModels,
@@ -848,16 +912,6 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
-
-  const updateCustomModels = useStableCallback((next: ReadonlyArray<CustomModelDefinition>) => {
-    const nextConfig = nextConfigBlobWithValue(
-      instance.config,
-      "customModels",
-      next.map(toCustomModelSetting),
-    );
-    const { config: _omit, ...rest } = instance;
-    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
-  });
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
@@ -1075,13 +1129,13 @@ export function ProviderInstanceCard({
       <div
         data-slot="settings-row"
         className={cn(
-          "group flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
+          "group relative flex min-h-18 items-center gap-3 px-3 py-3 transition-colors sm:px-4",
           selected ? "bg-foreground/[0.06]" : "hover:bg-muted/25",
         )}
       >
         <div
           className={cn(
-            "pointer-events-none relative flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
+            "pointer-events-none flex min-w-0 flex-1 items-start gap-3 rounded-md text-left transition-opacity",
             !enabled && !selected && "opacity-60 group-hover:opacity-100",
           )}
         >
@@ -1126,7 +1180,7 @@ export function ProviderInstanceCard({
             </span>
           </span>
         </div>
-        <span className="flex h-5 shrink-0 items-center gap-1">
+        <span className="pointer-events-none relative flex h-5 shrink-0 items-center gap-1 *:pointer-events-auto">
           {projectOverride?.value !== undefined ? (
             <span className="flex items-center">
               <ProjectOverrideInheritance
@@ -1198,6 +1252,11 @@ export function ProviderInstanceCard({
           {editorStatusNode}
         </div>
       </ProviderStatusDiagnostic>
+      {restartNotice ? (
+        <p aria-live="polite" className="text-xs leading-snug [overflow-wrap:anywhere]">
+          {restartNotice}
+        </p>
+      ) : null}
       {urlAuthAction && onAcceptUrlAuth ? (
         <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
           <p>{urlAuthAction.message}</p>
@@ -1306,6 +1365,7 @@ export function ProviderInstanceCard({
                       : undefined
                   }
                   secretSources={secretSources}
+                  environmentId={environmentId}
                 />
               ))}
             </div>
@@ -1353,6 +1413,7 @@ export function ProviderInstanceCard({
             environment={genericEnvironment}
             onChange={updateGenericEnvironment}
             secretSources={secretSources}
+            environmentId={environmentId}
             managed={
               instanceLocks && {
                 names: instanceLocks.environmentNames,
