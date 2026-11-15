@@ -155,6 +155,17 @@ describe("trailBodyMarkdown", () => {
     });
     expect(split).toBe("use \\*`value`\\* here");
     expect(unpreservedMarkdown(split)).toBe("escaped markdown characters");
+    const bracketed = trailBodyMarkdown({
+      text_snapshot: "",
+      content_json: {
+        type: "doc",
+        content: [
+          paragraph(text("["), text("docs", [{ type: "bold" }]), text("](https://example.com)")),
+        ],
+      },
+    });
+    expect(bracketed).toBe("\\[**docs**](https://example.com)");
+    expect(unpreservedMarkdown(bracketed)).toBe("escaped markdown characters");
   });
 
   it("delimits code by more backticks than it holds, which Entire can't read back", () => {

@@ -45,6 +45,7 @@ const longestBacktickRun = (text: string) =>
 function delimiterCounts(text: string): ReadonlyMap<string, number> {
   const counts = new Map<string, number>();
   for (const char of text) if ("`*~_".includes(char)) counts.set(char, (counts.get(char) ?? 0) + 1);
+  if (text.includes("](")) counts.set("[", 1);
   return counts;
 }
 
@@ -54,7 +55,7 @@ function escapeText(text: string, counts = delimiterCounts(text)): string {
     .replace(/\\(?=[!-/:-@[-`{-~])/gu, "\\\\")
     .replace(/[`*~]/gu, (char) => (paired(char) ? `\\${char}` : char))
     .replace(/(?<![\p{L}\p{N}])_|_(?![\p{L}\p{N}])/gu, (char) => (paired(char) ? "\\_" : char))
-    .replace(/\[(?=[^\]]*\]\()/gu, "\\[");
+    .replace(/\[/gu, (char) => (counts.has("[") ? "\\[" : char));
 }
 
 function renderText(
