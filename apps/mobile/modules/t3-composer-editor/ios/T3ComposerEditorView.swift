@@ -1,7 +1,7 @@
 import ExpoModulesCore
 import UIKit
 
-private struct ComposerTokenPayload: Decodable {
+private struct ComposerTokenPayload: Decodable, Equatable {
   let type: String
   let source: String
   let label: String
@@ -9,8 +9,16 @@ private struct ComposerTokenPayload: Decodable {
   let accent: String?
   let tintsIcon: Bool?
   let detail: String?
-  let start: Int
-  let end: Int
+  var start: Int
+  var end: Int
+
+  func rendersLike(_ other: Self) -> Bool {
+    var moved = other
+    moved.start = start
+    moved.end = end
+    // String == accepts canonically equivalent sources, but their UTF-16 lengths differ.
+    return moved == self && source.utf16.elementsEqual(other.source.utf16)
+  }
 }
 
 private struct ComposerSelectionPayload: Decodable, Equatable {
@@ -194,6 +202,26 @@ private final class ComposerTextView: UITextView {
       }
     }
     return super.canPerformAction(action, withSender: sender)
+  }
+
+  override func canPaste(_ itemProviders: [NSItemProvider]) -> Bool {
+    guard isEditable, !isReadOnly else { return false }
+    // UIKit checks canPaste before forwarding a drag to UITextDropDelegate.
+    if !itemProviders.isEmpty,
+       itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
+      return true
+    }
+    return super.canPaste(itemProviders)
+  }
+
+  override func paste(itemProviders: [NSItemProvider]) {
+    guard isEditable, !isReadOnly else { return }
+    if !itemProviders.isEmpty,
+       itemProviders.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) {
+      loadImages(from: itemProviders)
+      return
+    }
+    super.paste(itemProviders: itemProviders)
   }
 
   override func paste(_ sender: Any?) {
@@ -426,7 +454,9 @@ private final class ComposerTextView: UITextView {
 }
 
 public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIGestureRecognizerDelegate {
-  private let textView = ComposerTextView()
+  // This view reads `layoutManager`, which otherwise swaps a live TextKit 2 view to
+  // TextKit 1 mid-edit; that swap can leave typed text laid out but never drawn.
+  private let textView = ComposerTextView(usingTextLayoutManager: false)
   private let placeholderLabel = UILabel()
   private var value = ""
   private var tokensJson = "[]"
@@ -445,6 +475,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var isReadOnly = false
   private var isApplyingControlledValue = false
   private var nativeEventCount = 0
+  // Count of the latest intercepted paste, so a flush can tell whether JS has received it.
+  private var lastPasteEventCount = 0
+  private var hasControlledDocument = false
   private var resetGeneration = 0
   private var lastContentSize = CGSize.zero
   private var iconImages: [String: UIImage] = [:]
@@ -481,6 +514,14 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.alwaysBounceVertical = false
     textView.showsVerticalScrollIndicator = true
     textView.adjustsFontForContentSizeCategory = true
+    if #available(iOS 26.0, *) {
+      // UIKit can attach a nearby bar's scroll edge effect to this text view; its backdrop
+      // then draws over the typed text while the caret stays visible.
+      let edges = [textView.topEdgeEffect, textView.leftEdgeEffect, textView.bottomEdgeEffect, textView.rightEdgeEffect]
+      for edge in edges {
+        edge.isHidden = true
+      }
+    }
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
     }
@@ -488,6 +529,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       guard let self else { return }
       let selection = self.sourceSelection()
       self.nativeEventCount += 1
+      self.lastPasteEventCount = self.nativeEventCount
       var payload: [String: Any] = context
       payload["value"] = self.textView.serializedText()
       payload["eventCount"] = self.nativeEventCount
@@ -499,6 +541,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       guard let self else { return }
       let selection = self.sourceSelection()
       self.nativeEventCount += 1
+      self.lastPasteEventCount = self.nativeEventCount
       self.onComposerPasteText([
         "value": self.textView.serializedText(),
         "eventCount": self.nativeEventCount,
@@ -666,16 +709,23 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     if isReset {
       resetGeneration = document.resetGeneration
-      nativeEventCount = document.mostRecentEventCount
+      // JS drops a paste from before the reset by generation, so the flush must not wait for it.
+      lastPasteEventCount = 0
       endComposition()
     }
-    if document.isNativeEcho && !isReset && textView.serializedText() != document.value {
+    // iOS destroys this view under display: none and mounts a fresh one while JS keeps its
+    // revision and draft. Continue from them, or JS drops every event the new view sends.
+    nativeEventCount = document.mostRecentEventCount
+    if document.isNativeEcho && !isReset && hasControlledDocument && textView.serializedText() != document.value {
       return
     }
+    hasControlledDocument = true
     if tokensJson != document.tokensJson {
       tokensJson = document.tokensJson
-      tokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
-      tokensNeedRebuild = true
+      let nextTokens = decode([ComposerTokenPayload].self, from: document.tokensJson) ?? []
+      // Typing before a chip only moves its offsets; rebuilding then makes iOS autocorrect behind the caret.
+      tokensNeedRebuild = tokensNeedRebuild || !nextTokens.elementsEqual(tokens, by: { $0.rendersLike($1) })
+      tokens = nextTokens
     }
     let previousSelection = sourceSelection()
     value = document.value
@@ -699,6 +749,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func setPlaceholder(_ placeholder: String) {
     placeholderLabel.text = placeholder
+    textView.accessibilityLabel = placeholder
     setNeedsLayout()
   }
 
@@ -791,6 +842,17 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func blurEditor() {
     textView.resignFirstResponder()
+  }
+
+  func readState() -> [String: Any] {
+    let selection = sourceSelection()
+    return [
+      "value": value,
+      "selection": ["start": selection.start, "end": selection.end],
+      "eventCount": nativeEventCount,
+      "resetGeneration": resetGeneration,
+      "pasteEventCount": lastPasteEventCount,
+    ]
   }
 
   func setSelection(start: Int, end: Int) {
@@ -1279,7 +1341,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   private func documentMatchesExpectedTokens() -> Bool {
     let source = value as NSString
-    let expectedSources = tokens.compactMap { token -> String? in
+    let expectedChips = tokens.compactMap { token -> (Int, String)? in
       guard token.start >= 0,
             token.end > token.start,
             token.end <= source.length,
@@ -1288,18 +1350,22 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
             ) == token.source else {
         return nil
       }
-      return token.source
+      return (token.start, token.source)
     }
-    var renderedSources: [String] = []
+    var renderedChips: [(Int, String)] = []
+    var sourceOffset = 0
     textView.attributedText.enumerateAttribute(
       .attachment,
       in: NSRange(location: 0, length: textView.attributedText.length)
-    ) { value, _, _ in
+    ) { value, range, _ in
       if let attachment = value as? ComposerTextAttachment {
-        renderedSources.append(attachment.source)
+        renderedChips.append((sourceOffset, attachment.source))
+        sourceOffset += (attachment.source as NSString).length
+      } else {
+        sourceOffset += range.length
       }
     }
-    return renderedSources == expectedSources
+    return renderedChips.elementsEqual(expectedChips, by: ==)
   }
 }
 
