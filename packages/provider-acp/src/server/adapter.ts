@@ -1497,6 +1497,15 @@ interface ActiveAcpTurn {
     {
       readonly id: OrchestrationV2PlanArtifact["id"];
       readonly startedAt: DateTime.Utc;
+      /** The turn that first reported the plan; later turns update its rows. */
+      readonly origin: {
+        readonly runId: ActiveAcpTurn["input"]["runId"];
+        readonly rootNodeId: ActiveAcpTurn["input"]["rootNodeId"];
+        readonly providerThreadId: ActiveAcpTurn["input"]["providerThread"]["id"];
+        readonly providerTurnId: ActiveAcpTurn["providerTurnId"];
+        readonly nativeItemId: string;
+        readonly ordinal: number;
+      };
       latest: OrchestrationV2PlanArtifact | null;
     }
   >;
@@ -4576,33 +4585,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           const existing = plans.get(update.nativePlanId);
           if (update.kind === "removed" && existing === undefined) return;
-          const nativeItemId = `${context.nativeTurnId}:plan:${encodeURIComponent(update.nativePlanId)}`;
-          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
           const now = yield* DateTime.now;
-          const nodeId = providerNodeId(nativeItemId);
-          const turnItemId = providerTurnItemId(nativeItemId);
-          const planState = existing ?? {
-            id: yield* idAllocator.allocate.plan({
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              driver,
-            }),
-            startedAt: now,
-            latest: null,
-          };
+          let planState = existing;
+          if (planState === undefined) {
+            const nativeItemId = `${context.nativeTurnId}:plan:${encodeURIComponent(update.nativePlanId)}`;
+            planState = {
+              id: yield* idAllocator.allocate.plan({
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                driver,
+              }),
+              startedAt: now,
+              origin: {
+                runId: context.input.runId,
+                rootNodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemId,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+              },
+              latest: null,
+            };
+          }
+          const { origin } = planState;
+          const nodeId = providerNodeId(origin.nativeItemId);
+          const turnItemId = providerTurnItemId(origin.nativeItemId);
           const planId = planState.id;
-          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
+          const nativeItemRef = {
+            driver,
+            nativeId: origin.nativeItemId,
+            strength: "weak" as const,
+          };
           const base = {
             id: planId,
             threadId: context.input.threadId,
-            runId: context.input.runId,
+            runId: origin.runId,
             nodeId,
           } as const;
           let plan: OrchestrationV2PlanArtifact;
           if (update.kind === "removed") {
             if (planState.latest === null) return;
-            // Rebase onto this turn: run routing drops plan events for another run.
-            plan = { ...planState.latest, ...base, status: "superseded" };
+            plan = { ...planState.latest, status: "superseded" };
           } else if (update.kind === "items") {
             // A cancelled entry is not outstanding work, and plan steps have no
             // cancelled status, so drop it rather than show it as pending.
@@ -4656,14 +4679,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             node: {
               id: nodeId,
               threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
+              runId: origin.runId,
+              parentNodeId: origin.rootNodeId,
+              rootNodeId: origin.rootNodeId,
               kind: nodeKind,
               status: completed ? "completed" : "running",
               countsForRun: false,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
+              providerThreadId: origin.providerThreadId,
+              providerTurnId: origin.providerTurnId,
               nativeItemRef,
               runtimeRequestId: null,
               checkpointScopeId: null,
@@ -4678,13 +4701,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             turnItem: {
               id: turnItemId,
               threadId: context.input.threadId,
-              runId: context.input.runId,
+              runId: origin.runId,
               nodeId,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
+              providerThreadId: origin.providerThreadId,
+              providerTurnId: origin.providerTurnId,
               nativeItemRef,
               parentItemId: null,
-              ordinal,
+              ordinal: origin.ordinal,
               status: completed ? "completed" : "running",
               title: null,
               startedAt: planState.startedAt,

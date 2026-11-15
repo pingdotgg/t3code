@@ -3188,8 +3188,10 @@ describe("AcpAdapterV2", () => {
         removed,
         "plan_removed on a later turn must supersede the existing session plan",
       );
-      assert.equal(removed?.runId, second[2]!.runId);
-      assert.notEqual(removed?.runId, first[3]!.runId);
+      assert.equal(removed?.runId, first[3]!.runId);
+      assert.equal(replacement?.runId, first[4]!.runId);
+      assert.equal(removed?.nodeId, first[3]!.nodeId);
+      assert.equal(replacement?.nodeId, first[4]!.nodeId);
       assert.equal(
         replacement?.id,
         first[4]!.id,
