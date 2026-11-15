@@ -968,9 +968,8 @@ function TerminalSessionViewport({
             const pid = session.summary?.pid ?? null;
             const current = readInputSession();
             const currentPid = current.summary?.pid ?? null;
-            if (pid === null) return true;
             if (currentPid === null) return false;
-            if (currentPid !== pid) return true;
+            if (pid !== null && currentPid !== pid) return true;
             if (writableSessionGeneration(current, canWriteInput()) === null) return false;
             const result = await writeInputChunk("\x1b[201~");
             if (result._tag === "Success") return true;
