@@ -254,9 +254,6 @@ export default function DiffPanel({
       : null,
   );
   const activeCwd = activeThread?.worktreePath ?? activeProject?.workspaceRoot;
-  const activeRepositoryRoot = activeThread?.worktreePath
-    ? undefined
-    : activeProject?.repositoryIdentity?.rootPath;
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(activeThread?.environmentId ?? null),
   );
@@ -274,6 +271,9 @@ export default function DiffPanel({
         })
       : null,
   );
+  const activeRepositoryRoot =
+    gitStatusQuery.data?.workingTree.rootPath ??
+    (activeThread?.worktreePath ? undefined : activeProject?.repositoryIdentity?.rootPath);
   const diffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
@@ -778,12 +778,12 @@ export default function DiffPanel({
       return next;
     });
   });
-  // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
-  const unfoldDiffFile = useStableCallback((fileKey: string) => {
+  const setDiffFileCollapsed = useStableCallback((fileKey: string, collapsed: boolean) => {
     updateCollapsedDiffFiles((current) => {
-      if (!current.has(fileKey)) return current;
+      if (current.has(fileKey) === collapsed) return current;
       const next = new Set(current);
-      next.delete(fileKey);
+      if (collapsed) next.add(fileKey);
+      else next.delete(fileKey);
       return next;
     });
   });
@@ -1461,7 +1461,7 @@ export default function DiffPanel({
                           },
                         }
                       : {})}
-                    onRevealSearchMatch={unfoldDiffFile}
+                    onFileCollapsedChange={setDiffFileCollapsed}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
                       return (
                         <DiffFileCollapseToggle
