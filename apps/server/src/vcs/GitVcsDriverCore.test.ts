@@ -402,9 +402,10 @@ const commitInitialRepo = (cwd: string, initArgs: ReadonlyArray<string> = []) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
     yield* git(cwd, ["init", ...initArgs]);
+    // Newer Git detaches auto-maintenance after commit; its lock file would race the template copy.
     yield* fileSystem.writeFileString(
       pathService.join(cwd, ".git", "config"),
-      "[user]\n\temail = test@test.com\n\tname = Test\n",
+      "[user]\n\temail = test@test.com\n\tname = Test\n[maintenance]\n\tauto = false\n",
       { flag: "a" },
     );
     yield* writeTextFile(cwd, "README.md", "# test\n");
@@ -6646,6 +6647,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `refs/remotes/origin/${initialBranch}`,
           );
         }
+      }),
+    );
+
+    it.effect("gives parallel renames to one generated name distinct branches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const worktrees = yield* makeTmpDir("git-worktrees-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // A multi-model send launches one worktree per model with the same message, so their
+        // generated names often match and the renames can land together.
+        const temporaryBranches = ["t3/aaaa1111", "t3/bbbb2222", "t3/cccc3333"];
+        yield* Effect.forEach(temporaryBranches, (branch) =>
+          driver.createWorktree({
+            cwd,
+            path: path.join(worktrees, branch.replace("/", "-")),
+            refName: initialBranch,
+            newRefName: branch,
+          }),
+        );
+
+        const renamed = yield* Effect.forEach(
+          temporaryBranches,
+          (branch) =>
+            driver.renameBranch({
+              cwd: path.join(worktrees, branch.replace("/", "-")),
+              oldBranch: branch,
+              newBranch: "feat/add-search",
+            }),
+          { concurrency: "unbounded" },
+        );
+
+        assert.deepStrictEqual(renamed.map((result) => result.branch).toSorted(), [
+          "feat/add-search",
+          "feat/add-search-1",
+          "feat/add-search-2",
+        ]);
       }),
     );
 
