@@ -304,14 +304,10 @@ diff --git a/apps/web/src/components/sidebar/useUpdateEverything.ts b/apps/web/s
 index 05127d9885..47179ca513 100644
 --- a/apps/web/src/components/sidebar/useUpdateEverything.ts
 +++ b/apps/web/src/components/sidebar/useUpdateEverything.ts
-@@ -4,6 +4,7 @@ import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
- import { APP_VERSION } from "~/branding";
- import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
+@@ -6,2 +6,3 @@
  import { isElectron } from "~/env";
 +import { getServerUpdateTargetVersion } from "~/versionSkew";
  import { useEnvironments } from "~/state/environments";
- import { environmentIdsKey } from "~/state/environmentAtomList";
- import { environmentUpdateStatesAtom } from "~/state/server";
 @@ -52,7 +53,7 @@ export function useUpdateEverything(
    localUpdateVersion: string | null,
    channelSwitch?: ChannelSwitchRelease,
