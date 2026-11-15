@@ -180,6 +180,7 @@ function withFakeCodexEnv<A, E, R>(
     shadowHomePath?: string;
     homePath?: string;
     desktopConfig?: string;
+    gitInstructionsHome?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -221,6 +222,7 @@ function withFakeCodexEnv<A, E, R>(
             revision: "test",
           })
         : undefined,
+      input.gitInstructionsHome,
     );
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);
@@ -270,7 +272,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["environment", "default"] as const)(
+  it.effect.each(["environment", "default", "shared"] as const)(
     "reads Git instructions from the %s Codex home",
     (source) =>
       Effect.gen(function* () {
@@ -286,7 +288,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
         yield* withFakeCodexEnv(
           {
             output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
-            homePath: "",
+            homePath: source === "shared" ? path.join(home, "shadow") : "",
+            ...(source === "shared" ? { gitInstructionsHome: codexHome } : {}),
             environment: { CODEX_HOME: source === "environment" ? codexHome : "" },
             stdinMustContain: "Use the selected home instructions.",
           },
@@ -326,25 +329,30 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("includes Codex desktop instructions with the default GitManager commit policy", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
-        stdinMustContain: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\nInclude the issue number in each commit subject.`,
-        stdinMustNotContain: "PR-only instruction",
-        desktopConfig:
-          '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
-      },
-      (generation) =>
-        generation.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "fix/settings",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          policy: repositoryConventionsTextGenerationPolicy,
-        }),
-    ),
+  it.effect.each([false, true])(
+    "includes Codex desktop instructions with the default GitManager commit policy, long: %s",
+    (long) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+          stdinMustContain: `Include the issue number in each commit subject.\n\n${repositoryConventionsTextGenerationPolicy.commitInstructions}`,
+          stdinMustNotContain: "PR-only instruction",
+          desktopConfig:
+            '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
+        },
+        (generation) =>
+          generation.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "fix/settings",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            policy: {
+              ...repositoryConventionsTextGenerationPolicy,
+              commitInstructions: `${repositoryConventionsTextGenerationPolicy.commitInstructions}${long ? "x".repeat(20_000) : ""}`,
+            },
+          }),
+      ),
   );
 
   it.effect.each([false, true])(
@@ -357,7 +365,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
             '[desktop]\ngit-pr-instructions = "Include a rollout section."\ngit-commit-instructions = "Commit-only instruction"\n',
           stdinMustContain: override
             ? "Use the team PR format."
-            : `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\nInclude a rollout section.`,
+            : `Include a rollout section.\n\n${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}`,
           stdinMustNotContain: override ? "Include a rollout section." : "Commit-only instruction",
         },
         (generation) =>

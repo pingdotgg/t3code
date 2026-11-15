@@ -64,6 +64,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     import("@t3tools/contracts").ProviderSetupError,
     Scope.Scope
   >,
+  gitInstructionsHome?: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -416,14 +417,16 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const operations = TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
   const home = yield* HostProcess.HomeDirectory;
-  const gitSettingsHome = resolveRuntime
-    ? (yield* resolveCodexHomeLayout(codexConfig)).sharedHomePath
-    : expandHomePath(
-        codexConfig.homePath.trim() ||
-          resolvedEnvironment.CODEX_HOME?.trim() ||
-          path.join(home, ".codex"),
-        home,
-      );
+  const gitSettingsHome =
+    gitInstructionsHome ??
+    (resolveRuntime
+      ? (yield* resolveCodexHomeLayout(codexConfig)).sharedHomePath
+      : expandHomePath(
+          codexConfig.homePath.trim() ||
+            resolvedEnvironment.CODEX_HOME?.trim() ||
+            path.join(home, ".codex"),
+          home,
+        ));
   const withGitInstructions = Effect.fn("CodexTextGeneration.withGitInstructions")(function* (
     policy: TextGeneration.CommitMessageGenerationInput["policy"],
   ) {
@@ -436,7 +439,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       desktopInstructions: string | undefined,
     ) =>
       policy?.kind === "repo_conventions" && desktopInstructions
-        ? [styleInstructions, desktopInstructions].filter(Boolean).join("\n\n")
+        ? [desktopInstructions, styleInstructions].filter(Boolean).join("\n\n")
         : (styleInstructions ?? desktopInstructions);
     return {
       kind: "default" as const,

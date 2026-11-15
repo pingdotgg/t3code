@@ -282,6 +282,8 @@ export const CodexDriver: ProviderDriver<
       effectiveConfig,
       processEnv,
       snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+      undefined,
+      homeLayout.sharedHomePath,
     );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled
