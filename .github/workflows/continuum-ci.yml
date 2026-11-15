@@ -48,10 +48,38 @@ jobs:
             command: vp run --filter @t3tools/contracts --filter @t3tools/shared --filter @t3tools/client-runtime test
           - name: desktop
             command: vp run --filter @t3tools/desktop test
-          - name: server
-            command: vp run --filter t3 test
-          - name: web
-            command: vp run --filter @t3tools/web test
+          # The server suite takes over 45 minutes on one hosted runner.
+          - name: server 1/4
+            command: vp test run --shard 1/4
+            directory: apps/server
+          - name: server 2/4
+            command: vp test run --shard 2/4
+            directory: apps/server
+          - name: server 3/4
+            command: vp test run --shard 3/4
+            directory: apps/server
+          - name: server 4/4
+            command: vp test run --shard 4/4
+            directory: apps/server
+          - name: web (unit)
+            command: vp test run --passWithNoTests --project unit
+            directory: apps/web
+          # The browser project is sharded: one Chromium for every file runs out of memory here.
+          - name: web (browser 1/4)
+            command: vp test run --passWithNoTests --project browser --shard 1/4
+            directory: apps/web
+            browsers: true
+          - name: web (browser 2/4)
+            command: vp test run --passWithNoTests --project browser --shard 2/4
+            directory: apps/web
+            browsers: true
+          - name: web (browser 3/4)
+            command: vp test run --passWithNoTests --project browser --shard 3/4
+            directory: apps/web
+            browsers: true
+          - name: web (browser 4/4)
+            command: vp test run --passWithNoTests --project browser --shard 4/4
+            directory: apps/web
             browsers: true
           - name: scripts
             command: vp run --filter @t3tools/scripts test
@@ -73,6 +101,7 @@ jobs:
         run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
 
       - name: Test
+        working-directory: ${{ matrix.directory || '.' }}
         run: ${{ matrix.command }}
 
   desktop-build:

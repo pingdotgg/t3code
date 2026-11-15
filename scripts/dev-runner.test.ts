@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - builds real worktree layouts on disk.
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -849,8 +850,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
           const home = path.join(root, "home");
-          NodeFS.mkdirSync(path.join(home, ".t3", "userdata"), { recursive: true });
-          NodeFS.writeFileSync(path.join(home, ".t3", "userdata", "statev2.sqlite"), "");
+          NodeFS.mkdirSync(path.join(home, PRODUCT_BRAND.homeDirectoryName, "userdata"), {
+            recursive: true,
+          });
+          NodeFS.writeFileSync(
+            path.join(home, PRODUCT_BRAND.homeDirectoryName, "userdata", "statev2.sqlite"),
+            "",
+          );
 
           const spawnedArgs = (seed: boolean | undefined) =>
             Effect.gen(function* () {
@@ -903,7 +909,12 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             const path = yield* Path.Path;
             const root = yield* makeWorktree;
             const home = path.join(root, "home");
-            const source = path.join(home, ".t3", "userdata", "statev2.sqlite");
+            const source = path.join(
+              home,
+              PRODUCT_BRAND.homeDirectoryName,
+              "userdata",
+              "statev2.sqlite",
+            );
             NodeFS.mkdirSync(path.dirname(source), { recursive: true });
             NodeFS.writeFileSync(source, "");
             const spawned: Array<ReadonlyArray<string>> = [];
