@@ -133,9 +133,6 @@ export const isProviderTurnStartRunStateMissingError = Schema.is(
 const START_GAVE_UP_MESSAGE =
   "T3 Code could not start this turn. Send the message again; if it keeps failing, check the server logs.";
 
-const RESTART_RESUME_FAILED_MESSAGE =
-  "The agent could not reopen this conversation after the restart, and its last turn may still be running there. Send a message to continue in a new session.";
-
 const startFailureMessage = (error: Error): string => {
   const nestedCause = "cause" in error ? error.cause : undefined;
   return (
@@ -447,6 +444,15 @@ export const layer: Layer.Layer<
           .filter((transfer) => transfer.type === "subagent_result")
           .map((transfer) => transfer.id),
       );
+      // An accepted handoff of this thread's own history is in that native session, and a
+      // later fresh one gets a full summary of it. Fork and merge-back history is not in that summary.
+      const coveredByOwnHistory = (handoff: OrchestrationV2ContextHandoff) => {
+        if (handoff.transferId == null) return handoff.strategy === "delta_since_target_last_seen";
+        const transfer = projection.contextTransfers.find(
+          (candidate) => candidate.id === handoff.transferId,
+        );
+        return transfer === undefined || transfer.sourceThreadId === projection.thread.id;
+      };
       const isPendingForRun = (handoff: OrchestrationV2ContextHandoff, anyProviderThread = false) =>
         handoff.status === "ready" &&
         (handoff.targetRunId === run.id ||
@@ -454,11 +460,12 @@ export const layer: Layer.Layer<
             projection.runs.some(
               (source) =>
                 source.id === handoff.targetRunId &&
-                // An accepted delivery is in that native session; a later fresh one gets a full summary.
                 (((source.status === "failed" ||
                   source.status === "interrupted" ||
                   source.status === "cancelled") &&
-                  (handoff.delivery === undefined || handoff.delivery.status === "pending")) ||
+                  (handoff.delivery === undefined ||
+                    handoff.delivery.status === "pending" ||
+                    !coveredByOwnHistory(handoff))) ||
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
@@ -1400,24 +1407,6 @@ export const layer: Layer.Layer<
           resumed.failure._tag === "ProviderAdapterThreadInUseError"
         ) {
           return yield* loadFromProvider(Effect.fail(resumed.failure));
-        }
-        // The restart cut the source turn without the provider confirming it stopped, so
-        // a fresh session could repeat its work beside it. A message the user sends next falls back.
-        if (
-          resumed._tag === "Failure" &&
-          !uncertainDelivery &&
-          run.restartContinuationOfRunId !== undefined
-        ) {
-          return yield* loadFromProvider(
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterThreadInUseError({
-                driver: session.driver,
-                providerThreadId: providerThread.id,
-                detail: RESTART_RESUME_FAILED_MESSAGE,
-                cause: resumed.failure,
-              }),
-            ),
-          );
         }
 
         yield* Effect.logWarning("Recovering provider context in a fresh native session", {
