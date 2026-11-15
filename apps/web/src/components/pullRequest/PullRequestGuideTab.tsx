@@ -25,6 +25,7 @@ export function PullRequestGuideTab({
   title,
   workspaceRoot,
   active,
+  keysEnabled = true,
   canComment,
   rangeComments,
   completionScope,
@@ -39,6 +40,8 @@ export function PullRequestGuideTab({
   title: string | null;
   workspaceRoot: string;
   active: boolean;
+  /** False while another pane of a split panel has focus, so j and k reach only one guide. */
+  keysEnabled?: boolean;
   canComment: boolean;
   rangeComments: boolean;
   completionScope: PullRequestCompletionScope | null;
@@ -157,7 +160,7 @@ export function PullRequestGuideTab({
         reference={reference}
         guide={guide}
         banner={banner}
-        active={active}
+        active={active && keysEnabled}
         commenting={commenting}
         onAsk={
           onAskAboutStop === null

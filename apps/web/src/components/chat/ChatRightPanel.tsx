@@ -1,8 +1,11 @@
 import { usePreviewPanelInlineSize } from "../../hooks/usePreviewPanelInlineSize";
+import {
+  RightPanelSplitView,
+  type RightPanelSplitViewProps,
+} from "../../fork/rightPanelSplit/RightPanelSplitView";
 import { RightPanelSheet } from "../RightPanelSheet";
-import { RightPanelTabs, type RightPanelTabsProps } from "../RightPanelTabs";
 
-type ChatRightPanelProps = Omit<RightPanelTabsProps, "mode" | "inlineSize" | "maximized"> & {
+type ChatRightPanelProps = Omit<RightPanelSplitViewProps, "mode" | "inlineSize" | "maximized"> & {
   readonly sheet: boolean;
   readonly maximized: boolean;
   readonly workspaceLayoutElement: HTMLElement | null;
@@ -32,7 +35,9 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
     widthStorageKey,
   });
   if (!sheet) {
-    return <RightPanelTabs {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />;
+    return (
+      <RightPanelSplitView {...tabs} mode="inline" maximized={maximized} inlineSize={inlineSize} />
+    );
   }
   return (
     <RightPanelSheet
@@ -40,7 +45,7 @@ export function ChatRightPanel(props: ChatRightPanelProps) {
       open={tabs.open === true}
       onClose={onCloseSheet}
     >
-      <RightPanelTabs
+      <RightPanelSplitView
         {...tabs}
         mode="sheet"
         inlineSize={inlineSize}

@@ -108,6 +108,7 @@ interface Props {
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
   visible: boolean;
+  actionsEnabled?: boolean;
   onSendAnnotation?: (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -164,6 +165,7 @@ export function PreviewView({
   tabId: requestedTabId,
   configuredUrls,
   visible,
+  actionsEnabled = true,
   onSendAnnotation,
 }: Props) {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
@@ -947,7 +949,7 @@ export function PreviewView({
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to preview and desktop menu actions while the view is visible
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !actionsEnabled) return;
     const unsubscribeAction = subscribePreviewAction((action) => onPreviewAction(action));
     // A focused page swallows its own keydowns, so the desktop forwards these
     // shortcuts from the guest as menu actions instead.
@@ -962,7 +964,7 @@ export function PreviewView({
       unsubscribeAction();
       unsubscribeMenu?.();
     };
-  }, [visible]);
+  }, [visible, actionsEnabled]);
 
   return (
     <div

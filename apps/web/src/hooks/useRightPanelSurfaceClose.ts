@@ -47,9 +47,6 @@ export function useRightPanelSurfaceClose(input: {
   const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
-  const surfaces = useRightPanelStore(
-    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
-  );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
     // Without preview access, server state remains until an authorized close or restart.
@@ -156,15 +153,21 @@ export function useRightPanelSurfaceClose(input: {
       },
     );
   });
-  const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
-    closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),
+  // A menu passes its strip: one pane of a split, or every tab.
+  const closeOtherSurfaces = useStableCallback(
+    (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) =>
+      closeSurfaces(strip.filter((entry) => entry.id !== surface.id)),
   );
-  const closeSurfacesToRight = useStableCallback((surface: RightPanelSurface) => {
-    const surfaceIndex = surfaces.findIndex((entry) => entry.id === surface.id);
-    if (surfaceIndex < 0) return;
-    closeSurfaces(surfaces.slice(surfaceIndex + 1));
-  });
-  const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeSurfacesToRight = useStableCallback(
+    (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => {
+      const surfaceIndex = strip.findIndex((entry) => entry.id === surface.id);
+      if (surfaceIndex < 0) return;
+      closeSurfaces(strip.slice(surfaceIndex + 1));
+    },
+  );
+  const closeAllSurfaces = useStableCallback((strip: readonly RightPanelSurface[]) =>
+    closeSurfaces(strip),
+  );
 
   return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
 }

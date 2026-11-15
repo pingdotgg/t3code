@@ -25,14 +25,15 @@ import type {
 } from "@t3tools/contracts";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { dashboardSurfaceActions, ModeSurfaceIcon } from "~/fork/dashboard/dashboardSurface";
+import type { SplitMenuAction } from "~/fork/rightPanelSplit/splitLayout.logic";
 import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+  SplitPaneFrame,
+  useRightPanelPane,
+  useTabDragData,
+  useTabDragSensors,
+  useTabPress,
+} from "~/fork/rightPanelSplit/tabStrip";
+import { closestCenter, DndContext, type DragEndEvent } from "@dnd-kit/core";
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -130,9 +131,10 @@ export interface RightPanelTabsProps {
   onActivate: (surface: RightPanelSurface) => void;
   onRenameDevice?: (surfaceId: string, title: string) => void;
   onCloseSurface: (surface: RightPanelSurface) => void;
-  onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
-  onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
-  onCloseAllSurfaces: () => void;
+  /** `strip` is the strip that opened the menu: one pane of a split, or every tab. */
+  onCloseOtherSurfaces: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
+  onCloseSurfacesToRight: (surface: RightPanelSurface, strip: readonly RightPanelSurface[]) => void;
+  onCloseAllSurfaces: (strip: readonly RightPanelSurface[]) => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
@@ -842,7 +844,8 @@ function SortableTabList(props: {
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
   children: ReactNode;
 }) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useTabDragSensors();
+  const inDragScope = useRightPanelPane() !== null;
   const surfaceIds = props.surfaces.map((surface) => surface.id);
   const { onMove, surfaces } = props;
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -850,6 +853,12 @@ function SortableTabList(props: {
     const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
     if (toIndex >= 0) onMove?.(String(active.id), toIndex);
   };
+  const sortable = (
+    <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
+      {props.children}
+    </SortableContext>
+  );
+  if (inDragScope) return sortable;
   return (
     <DndContext
       sensors={sensors}
@@ -857,9 +866,7 @@ function SortableTabList(props: {
       modifiers={TAB_DRAG_MODIFIERS}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={surfaceIds} strategy={horizontalListSortingStrategy}>
-        {props.children}
-      </SortableContext>
+      {sortable}
     </DndContext>
   );
 }
@@ -910,9 +917,13 @@ function RightPanelTab(
     onStartRename,
     onFinishRename,
   } = props;
+  const press = useTabPress(surface, onActivate);
+  const inDragScope = useRightPanelPane() !== null;
+  const dragData = useTabDragData(props.title);
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: surface.id,
     disabled: props.dragDisabled,
+    data: dragData,
   });
   const sideChatShell = useQuietThreadShell(
     surface.kind === "side-chat" && props.environmentId !== null
@@ -991,12 +1002,12 @@ function RightPanelTab(
             render={
               <button
                 type="button"
+                data-tab-title
                 onDoubleClick={() => {
                   if (surface.kind === "device" && props.canRename) onStartRename(surface.id);
                 }}
                 className="cursor-pointer flex min-w-0 items-center"
                 aria-label={sideChatState === null ? undefined : `${title}, ${sideChatState}`}
-                onClick={() => onActivate(surface)}
               >
                 <span className="truncate">{title}</span>
               </button>
@@ -1020,11 +1031,19 @@ function RightPanelTab(
   return (
     <div
       data-active-tab={props.active}
-      onMouseDown={preventTabMiddleButtonDefault}
+      onMouseDown={(event) => {
+        preventTabMiddleButtonDefault(event);
+        press.onMouseDown(event);
+      }}
       onMouseUp={preventTabMiddleButtonDefault}
       onAuxClick={(event) => onAuxClick(event, surface)}
       onContextMenu={(event) => onContextMenu(event, surface)}
+      onClick={press.onClick}
       {...listeners}
+      onPointerDown={(event) => {
+        press.onPointerDown(event);
+        listeners?.onPointerDown?.(event);
+      }}
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(
@@ -1033,7 +1052,7 @@ function RightPanelTab(
         props.active
           ? "bg-accent text-foreground"
           : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-        isDragging && "relative z-10",
+        isDragging && (inDragScope ? "opacity-50" : "relative z-10"),
       )}
     >
       {content}
@@ -1074,12 +1093,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       setAddSurfaceMenuOpen(true);
     }
   });
+  // Inside ChatView's split view, which owns the shell and the split menu entries.
+  const pane = useRightPanelPane();
+  const takesNewSurfaceShortcut = props.open !== false && pane?.focused !== false;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
   useEffect(() => {
-    if (props.open === false) return;
+    if (!takesNewSurfaceShortcut) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
     return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
-  }, [props.open]);
+  }, [takesNewSurfaceShortcut]);
 
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1200,7 +1222,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
     if (surfaceIndex < 0) return;
 
-    const items: ContextMenuItem<TabContextMenuAction>[] = [];
+    const items: ContextMenuItem<TabContextMenuAction | SplitMenuAction>[] = [];
     if (surface.kind === "device" && props.onRenameDevice)
       items.push({ id: "rename", label: "Rename" });
     if (surface.kind === "file" && surface.attachment === undefined) {
@@ -1235,6 +1257,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         label: "Close all",
         disabled: props.surfaces.length === 0,
       },
+      ...(pane?.tabMenu.items(surface) ?? []),
     );
 
     const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
@@ -1261,16 +1284,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         props.onCloseSurface(surface);
         break;
       case "close-others":
-        props.onCloseOtherSurfaces(surface);
+        props.onCloseOtherSurfaces(surface, props.surfaces);
         break;
       case "close-to-right":
-        props.onCloseSurfacesToRight(surface);
+        props.onCloseSurfacesToRight(surface, props.surfaces);
         break;
       case "close-all":
-        props.onCloseAllSurfaces();
+        props.onCloseAllSurfaces(props.surfaces);
         break;
       case null:
         break;
+      default:
+        pane?.tabMenu.select(action, surface);
     }
   };
   const handleTabAuxClick = (event: ReactMouseEvent, surface: RightPanelSurface) => {
@@ -1336,8 +1361,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     };
   };
 
+  const Frame = pane ? SplitPaneFrame : PreviewPanelShell;
+  const atLeftEdge = pane?.side !== "right";
+  const atRightEdge = pane?.side !== "left";
   return (
-    <PreviewPanelShell
+    <Frame
       workspaceArea
       workspaceFocusKey={`panel:${props.environmentId}:${props.activeSurfaceId ?? "empty"}`}
       workspaceLabel={
@@ -1362,10 +1390,13 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
-          props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
+          props.mode === "inline" && !props.layoutControls && atRightEdge ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
-          props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+          ownsDesktopTitleBar && atRightEdge && "wco:pr-(--workspace-native-controls-inset)",
+          props.mode === "inline" &&
+            props.maximized &&
+            atLeftEdge &&
+            COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar
       >
@@ -1539,10 +1570,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           </div>
         ) : null}
         {props.layoutControls}
-        {ownsDesktopTitleBar && !props.layoutControls ? (
+        {ownsDesktopTitleBar && !props.layoutControls && atRightEdge ? (
           <span aria-hidden className="hidden w-24 shrink-0 wco:block" />
         ) : null}
-        {ownsDesktopTitleBar ? (
+        {ownsDesktopTitleBar && atRightEdge ? (
           <span
             aria-hidden
             className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
@@ -1577,7 +1608,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           props.children
         )}
       </div>
-    </PreviewPanelShell>
+    </Frame>
   );
 }
 

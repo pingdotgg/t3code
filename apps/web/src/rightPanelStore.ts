@@ -11,6 +11,17 @@ import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
+import {
+  applySplitChange,
+  isUserSplitChange,
+  mergePersistedRightPanelState,
+  persistedSplitFields,
+  reconcileSplit,
+  shownPanelKinds,
+  type RightPanelSplit,
+  type SplitChange,
+  type SplitWriteKind,
+} from "./fork/rightPanelSplit/splitLayout.logic";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -85,7 +96,7 @@ export type RightPanelSurface =
   | { id: "replies"; kind: "replies" };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 14;
+const RIGHT_PANEL_STORAGE_VERSION = 15;
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -101,6 +112,7 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
+  split?: RightPanelSplit;
 }
 
 export interface ThreadPanelVisibility {
@@ -184,6 +196,7 @@ interface RightPanelStoreState {
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
   moveSurface: (ref: ScopedThreadRef, surfaceId: string, toIndex: number) => void;
+  updateSplit: (ref: ScopedThreadRef, change: SplitChange) => void;
   reconcileBrowserSurfaces: (
     ref: ScopedThreadRef,
     tabIds: readonly string[],
@@ -332,9 +345,10 @@ const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  kind: SplitWriteKind,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const next = updater(current);
+  const next = reconcileSplit(current, updater(current), kind);
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
@@ -374,10 +388,11 @@ type RightPanelStoreData = Pick<
 const updateThread = (
   state: RightPanelStoreData,
   threadKey: string,
+  kind: SplitWriteKind,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): RightPanelStoreData => {
   const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater);
+  const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater, kind);
   const next = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   let threadPanelVisibilityByThreadKey = state.threadPanelVisibilityByThreadKey;
 
@@ -406,7 +421,7 @@ const automaticUpdate = (
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => ({
-  ...updateThread(state, threadKey, updater),
+  ...updateThread(state, threadKey, "automatic", updater),
 });
 
 // A side chat pane has no panel of its own, so its panel actions open in its parent's panel.
@@ -443,7 +458,7 @@ const userActionOnThread = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
   closesView: boolean,
 ): Partial<RightPanelStoreState> => ({
-  ...updateThread(state, threadKey, (current) => {
+  ...updateThread(state, threadKey, closesView ? "close" : "user", (current) => {
     const next = updater(current);
     if (next === current) return current;
     const removedDevices = current.surfaces.filter(
@@ -620,6 +635,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       }
                     : {}),
                   ...(validThreadState?.maximized === true ? { maximized: true as const } : {}),
+                  ...persistedSplitFields({ surfaces, activeSurfaceId }, validThreadState?.split),
                 },
               ];
             }),
@@ -676,13 +692,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           if (request.kind === "diff") {
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
-            const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
+            const shownPanels = shownPanelKinds(current);
             const pullRequestActive =
-              activePanel === "pull-request" || activePanel === "pull-requests";
+              shownPanels.includes("pull-request") || shownPanels.includes("pull-requests");
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
                 expectedUserActionRevision &&
-              activePanel !== "diff" &&
+              !shownPanels.includes("diff") &&
               !pullRequestActive;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
@@ -1038,13 +1054,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       moveSurface: (ref, surfaceId, toIndex) =>
         set((state) =>
-          updateThread(state, scopedThreadKey(ref), (current) => {
+          updateThread(state, scopedThreadKey(ref), "automatic", (current) => {
             const fromIndex = current.surfaces.findIndex((surface) => surface.id === surfaceId);
             if (fromIndex < 0 || fromIndex === toIndex) return current;
             const surfaces = [...current.surfaces];
             surfaces.splice(toIndex, 0, ...surfaces.splice(fromIndex, 1));
             return { ...current, surfaces };
           }),
+        ),
+      updateSplit: (ref, change) =>
+        set((state) =>
+          (isUserSplitChange(change) ? userAction : automaticUpdate)(
+            state,
+            scopedThreadKey(ref),
+            (current) => applySplitChange(current, change),
+          ),
         ),
       reconcileBrowserSurfaces: (ref, tabIds, hiddenTabIds) =>
         set((state) =>
@@ -1220,6 +1244,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       }),
       migrate: migratePersistedRightPanelState,
+      merge: mergePersistedRightPanelState,
     },
   ),
 );

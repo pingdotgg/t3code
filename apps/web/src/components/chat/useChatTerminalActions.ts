@@ -363,10 +363,14 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   };
   const splitPanelTerminalVerticalStable = useStableCallback(splitPanelTerminalVertical);
   const activatePanelTerminal = (terminalId: string) => {
-    if (!activeThreadRef || activeRightPanelSurface?.kind !== "terminal") return;
-    useRightPanelStore
-      .getState()
-      .activateTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId);
+    if (!activeThreadRef) return;
+    // Look the owner up: a press in a split panel's other pane runs before its focus change renders.
+    const store = useRightPanelStore.getState();
+    const surface = selectThreadRightPanelState(store.byThreadKey, activeThreadRef).surfaces.find(
+      (entry) => entry.kind === "terminal" && entry.terminalIds.includes(terminalId),
+    );
+    if (!surface) return;
+    store.activateTerminal(activeThreadRef, surface.id, terminalId);
     focusTerminal(activeThreadRef, terminalId);
   };
   const activatePanelTerminalStable = useStableCallback(activatePanelTerminal);
