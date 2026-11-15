@@ -15,13 +15,12 @@ test(
     });
 
     await t3.open("/usage");
-    await expect(screen.getByText("Weekly · Fable", { exact: false }).first()).toBeVisible({
-      timeout: 60_000,
-    });
+    // Setup waits are not assertions: a proof counts a failed `expect` as the bug.
+    await screen.getByText("Weekly · Fable", { exact: false }).first().waitFor({ timeout: 60_000 });
     await app.screenshot("limits");
     await app.open("/");
     await screen.getByRole("button", "New thread").first().tap();
-    await expect(screen.getByRole("textbox").first()).toBeVisible({ timeout: 30_000 });
+    await screen.getByRole("textbox").first().waitFor({ timeout: 30_000 });
     await app.screenshot("new-thread");
 
     await expect(screen.getByText("Opus 5.5", { exact: false }).first()).toBeVisible();
