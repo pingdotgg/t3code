@@ -168,7 +168,7 @@ vi.mock("../uiStateStore", () => ({
       select({
         markThreadVisited: () => state.localEffects.push("mark-visited"),
       }),
-    { getState: () => ({ threadPinnedSelectionsById: {} }) },
+    { getState: () => ({ threadPinnedSelectionsById: {}, clearPinnedSelections: vi.fn() }) },
   ),
 }));
 vi.mock("../lib/archivedThreadsState", () => ({

@@ -318,6 +318,26 @@ describe("uiStateStore persistence", () => {
       }).threadPinnedSelectionsById,
     ).toEqual({ "environment:thread-1": [pin] });
     expect(parsePersistedState({}).threadPinnedSelectionsById).toEqual({});
+    const state = makeUiState({
+      pullRequestMergeMethod: "squash",
+      threadPinnedSelectionsById: { "environment:thread-1": [pin] },
+    });
+    persistState(state);
+    expect(
+      parsePersistedState(JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!))
+        .threadPinnedSelectionsById,
+    ).toEqual(state.threadPinnedSelectionsById);
+    const setItem = localStorageStub.setItem.bind(localStorageStub);
+    using _quota = vi.spyOn(localStorageStub, "setItem").mockImplementation((key, value) => {
+      if (Object.keys(JSON.parse(value).threadPinnedSelectionsById ?? {}).length > 0)
+        throw new DOMException("quota", "QuotaExceededError");
+      setItem(key, value);
+    });
+    persistState({ ...state, pullRequestMergeMethod: "rebase" });
+    expect(
+      parsePersistedState(JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY)!))
+        .pullRequestMergeMethod,
+    ).toBe("rebase");
     expect(
       parsePersistedState({
         pinnedSelectionsVersion: 99,

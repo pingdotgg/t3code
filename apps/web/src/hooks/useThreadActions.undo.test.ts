@@ -57,7 +57,7 @@ vi.mock("../lib/composerDraftUploads", () => ({ releaseComposerDraftUploads: vi.
 vi.mock("../terminalUiStateStore", () => ({ useTerminalUiStateStore: () => vi.fn() }));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: Object.assign(() => vi.fn(), {
-    getState: () => ({ threadPinnedSelectionsById: {} }),
+    getState: () => ({ threadPinnedSelectionsById: {}, clearPinnedSelections: vi.fn() }),
   }),
 }));
 vi.mock("../lib/announce", () => ({ announce: vi.fn(), cancelAnnouncement: vi.fn() }));

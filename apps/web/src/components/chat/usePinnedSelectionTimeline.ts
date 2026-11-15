@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { readLocalApi } from "../../localApi";
 import {
   commitPinnedSelection,
+  finishPinnedSelectionReveal,
   installPinnedSelectionContextMenu,
 } from "../../pinnedSelectionReveal";
 import type { PinnedSelectionReveal } from "../../pinnedSelectionReveal";
@@ -110,16 +111,14 @@ function revealTarget(
 function paintPinnedSelection(root: ParentNode, pin: PinnedSelection | null) {
   if (typeof CSS === "undefined" || !CSS.highlights || typeof Highlight === "undefined")
     return null;
-  if (!pin) {
-    CSS.highlights.delete(PINNED_SELECTION_HIGHLIGHT_NAME);
-    return null;
-  }
+  if (!pin) return null;
   const message = messageElement(root, pin.messageId);
   if (!message) return null;
   const range = resolvePinnedSelectionRange(message, pin);
   if (!range) return null;
-  CSS.highlights.set(PINNED_SELECTION_HIGHLIGHT_NAME, new Highlight(range));
-  return message;
+  const highlight = new Highlight(range);
+  CSS.highlights.set(PINNED_SELECTION_HIGHLIGHT_NAME, highlight);
+  return { message, highlight };
 }
 
 export function usePinnedSelectionTimeline(
@@ -174,20 +173,14 @@ export function usePinnedSelectionTimeline(
     setTrackedNonce(revealNonce);
     setAttempt(0);
   }
-  if (
-    trackedNonce === revealNonce &&
-    revealNonce !== null &&
-    attempt >= PIN_SCROLL_ATTEMPTS &&
-    settledNonce !== revealNonce
-  ) {
-    setSettledNonce(revealNonce);
-  }
   const positioning = revealNonce !== null && settledNonce !== revealNonce;
   const pinRowId = rowIndex >= 0 ? rows[rowIndex]?.id : undefined;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the virtualized timeline until the pinned text is in view
   useEffect(() => {
-    if (revealNonce === null || settledNonce === revealNonce || attempt >= PIN_SCROLL_ATTEMPTS) {
+    if (revealNonce === null || settledNonce === revealNonce) return;
+    if (attempt >= PIN_SCROLL_ATTEMPTS) {
+      finishPinnedSelectionReveal(revealNonce);
       return;
     }
     if (!reveal || reveal.nonce !== revealNonce) return;
@@ -233,7 +226,11 @@ export function usePinnedSelectionTimeline(
       scrollHeight: scrollNode.scrollHeight,
       clientHeight: scrollNode.clientHeight,
     });
-    if (plan.type === "settled" || plan.type === "give-up") return settle();
+    if (plan.type === "give-up") {
+      finishPinnedSelectionReveal(revealNonce);
+      return;
+    }
+    if (plan.type === "settled") return settle();
     if (plan.type === "wait") {
       if (historyLoading) return;
       const frame = requestAnimationFrame(retry);
@@ -248,7 +245,8 @@ export function usePinnedSelectionTimeline(
         requestedPages.current.size >= PIN_SCROLL_ATTEMPTS
       ) {
         if (historyLoading) return;
-        return settle();
+        finishPinnedSelectionReveal(revealNonce);
+        return;
       }
       requestedPages.current.add(plan.cursor);
       callbacks.current.historyControls?.onLoadEarlier(plan.throughEntryId);
@@ -289,22 +287,29 @@ export function usePinnedSelectionTimeline(
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- paints a short highlight once the pinned range is mounted
   useEffect(() => {
     const root = viewport;
-    if (!root) return;
-    const nonce = reveal?.nonce ?? null;
+    if (!root || !reveal || !pin) return;
+    const nonce = reveal.nonce;
+    let ownedHighlight: Highlight | null = null;
+    const clearHighlight = () => {
+      if (
+        ownedHighlight &&
+        CSS.highlights?.get(PINNED_SELECTION_HIGHLIGHT_NAME) === ownedHighlight
+      ) {
+        CSS.highlights.delete(PINNED_SELECTION_HIGHLIGHT_NAME);
+      }
+    };
     let faded = false;
     let pulsed = false;
     let frame: number | null = null;
     let pulse: Animation | null = null;
     const paint = () => {
       frame = null;
-      if (faded || nonce === null) {
-        if (typeof CSS !== "undefined" && CSS.highlights) {
-          CSS.highlights.delete(PINNED_SELECTION_HIGHLIGHT_NAME);
-        }
-        return;
-      }
-      const message = paintPinnedSelection(root, pin);
-      if (!message || pulsed) return;
+      if (faded) return;
+      const painted = paintPinnedSelection(root, pin);
+      if (!painted) return;
+      ownedHighlight = painted.highlight;
+      if (pulsed) return;
+      const { message } = painted;
       pulsed = true;
       const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       const holdEnd = (PIN_HIGHLIGHT_TOTAL_MS - PIN_HIGHLIGHT_FADE_MS) / PIN_HIGHLIGHT_TOTAL_MS;
@@ -327,9 +332,8 @@ export function usePinnedSelectionTimeline(
         () => {
           faded = true;
           pulse = null;
-          if (typeof CSS !== "undefined" && CSS.highlights) {
-            CSS.highlights.delete(PINNED_SELECTION_HIGHLIGHT_NAME);
-          }
+          clearHighlight();
+          finishPinnedSelectionReveal(nonce);
         },
         () => {},
       );
@@ -344,11 +348,9 @@ export function usePinnedSelectionTimeline(
       if (frame !== null) cancelAnimationFrame(frame);
       observer.disconnect();
       pulse?.cancel();
-      if (typeof CSS !== "undefined" && CSS.highlights) {
-        CSS.highlights.delete(PINNED_SELECTION_HIGHLIGHT_NAME);
-      }
+      clearHighlight();
     };
-  }, [pin, reveal?.nonce, viewport]);
+  }, [pin, reveal, viewport]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- captures the selection before the native menu replaces it
   useEffect(() => {

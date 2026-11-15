@@ -243,6 +243,7 @@ function expireThreadUndos(target: ScopedThreadRef, kinds: readonly string[]) {
 }
 
 function clearDeletedThreadPanelState(ref: ScopedThreadRef) {
+  useUiStateStore.getState().clearPinnedSelections(scopedThreadKey(ref));
   clearThreadPreviewState(ref);
   useRightPanelStore.getState().removeThread(ref);
   useDiffPanelStore.getState().removeThread(ref);

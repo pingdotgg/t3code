@@ -213,7 +213,7 @@ export function capturePinnedMessageSelection(
   const anchor = selection.anchorNode;
   if (anchor === null || !viewport.contains(anchor)) return null;
   const element = anchor instanceof Element ? anchor : anchor.parentElement;
-  const message = element?.closest<HTMLElement>("[data-message-id]");
+  const message = element?.closest<HTMLElement>("[data-message-role][data-message-id]");
   if (!message || !viewport.contains(message)) return null;
   const messageId = message.dataset.messageId;
   if (!messageId) return null;

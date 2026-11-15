@@ -261,10 +261,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
                       />
                     ) : null}
-                    <PinnedSelectionsRow threadRef={activeThreadRef} />
+                    {props.isServerThread ? (
+                      <PinnedSelectionsRow threadRef={activeThreadRef} />
+                    ) : null}
                   </div>
                 </ThreadDetailsSection>
-              ) : (
+              ) : props.isServerThread ? (
                 <ThreadDetailsSection
                   headingId="thread-details-pins-heading"
                   title="Pinned"
@@ -273,7 +275,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 >
                   <PinnedSelectionsRow threadRef={activeThreadRef} />
                 </ThreadDetailsSection>
-              )}
+              ) : null}
 
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />

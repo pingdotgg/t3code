@@ -19,6 +19,8 @@ export interface PinnedSelectionReveal {
   readonly nonce: number;
 }
 
+let nextRevealNonce = 0;
+
 type RevealStore = {
   reveal: PinnedSelectionReveal | null;
   request: (input: Omit<PinnedSelectionReveal, "nonce">) => void;
@@ -28,8 +30,8 @@ type RevealStore = {
 export const usePinnedSelectionRevealStore = create<RevealStore>((set) => ({
   reveal: null,
   request: (input) =>
-    set((state) => ({
-      reveal: { ...input, nonce: (state.reveal?.nonce ?? 0) + 1 },
+    set(() => ({
+      reveal: { ...input, nonce: ++nextRevealNonce },
     })),
   clear: (pinId) =>
     set((state) =>
@@ -39,6 +41,12 @@ export const usePinnedSelectionRevealStore = create<RevealStore>((set) => ({
 
 export function requestPinnedSelectionReveal(input: Omit<PinnedSelectionReveal, "nonce">) {
   usePinnedSelectionRevealStore.getState().request(input);
+}
+
+export function finishPinnedSelectionReveal(nonce: number) {
+  if (usePinnedSelectionRevealStore.getState().reveal?.nonce === nonce) {
+    usePinnedSelectionRevealStore.getState().clear();
+  }
 }
 
 function clearPinnedSelectionReveal(pinId?: string) {

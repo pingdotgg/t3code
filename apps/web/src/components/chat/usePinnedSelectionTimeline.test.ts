@@ -2,6 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { planPinnedRevealScroll, type PinnedRevealRect } from "./usePinnedSelectionTimeline";
 
+import {
+  finishPinnedSelectionReveal,
+  requestPinnedSelectionReveal,
+  usePinnedSelectionRevealStore,
+} from "../../pinnedSelectionReveal";
+
 const scrollport = {
   messageId: "message-1",
   messageInEntries: true,
@@ -41,6 +47,17 @@ describe("planPinnedRevealScroll", () => {
         target: { top: 180, bottom: 260, height: 80 },
       }),
     ).toEqual({ type: "settled" });
+    const input = { threadKey: "env:thread", messageId: "message-1", pinId: "pin-1" };
+    requestPinnedSelectionReveal(input);
+    const first = usePinnedSelectionRevealStore.getState().reveal!.nonce;
+    finishPinnedSelectionReveal(first);
+    expect(usePinnedSelectionRevealStore.getState().reveal).toBeNull();
+    requestPinnedSelectionReveal(input);
+    const second = usePinnedSelectionRevealStore.getState().reveal!.nonce;
+    expect(second).toBeGreaterThan(first);
+    finishPinnedSelectionReveal(first);
+    expect(usePinnedSelectionRevealStore.getState().reveal?.nonce).toBe(second);
+    finishPinnedSelectionReveal(second);
   });
 
   it("scrolls to the row index when the message is virtualized out of the DOM", () => {

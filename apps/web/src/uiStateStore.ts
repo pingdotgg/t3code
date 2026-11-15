@@ -226,31 +226,51 @@ function sanitizePersistedThreadChangedFilesExpanded(
   return nextState;
 }
 
+function persistedPins(pinsByThread: UiThreadState["threadPinnedSelectionsById"]) {
+  const entries = Object.entries(pinsByThread)
+    .flatMap(([threadKey, pins]) => pins.map((pin) => ({ threadKey, pin })))
+    .sort((a, b) => b.pin.createdAt.localeCompare(a.pin.createdAt));
+  const result: UiThreadState["threadPinnedSelectionsById"] = {};
+  let remaining = 256_000;
+  for (const { threadKey, pin } of entries) {
+    remaining -= JSON.stringify([threadKey, pin]).length;
+    if (remaining < 0) break;
+    result[threadKey] = [pin, ...(result[threadKey] ?? [])];
+  }
+  return result;
+}
+
 export function persistState(state: UiState): void {
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.setItem(
-      PERSISTED_STATE_KEY,
-      JSON.stringify({
-        projectExpandedById: state.projectExpandedById,
-        projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
-        defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
-        // Older clients read only this field.
-        sidebarProjectScopeKey:
-          state.sidebarProjectScopeKeys.length === 1
-            ? (state.sidebarProjectScopeKeys[0] ?? null)
-            : null,
-        threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
-        threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
-        pinnedSelectionsVersion: PINNED_SELECTIONS_VERSION,
-        threadPinnedSelectionsById: state.threadPinnedSelectionsById,
-        pullRequestMergeMethod: state.pullRequestMergeMethod,
-      } satisfies PersistedUiState),
-    );
+    const persisted = {
+      projectExpandedById: state.projectExpandedById,
+      projectOrder: state.projectOrder,
+      threadLastVisitedAtById: state.threadLastVisitedAtById,
+      defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+      sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
+      // Older clients read only this field.
+      sidebarProjectScopeKey:
+        state.sidebarProjectScopeKeys.length === 1
+          ? (state.sidebarProjectScopeKeys[0] ?? null)
+          : null,
+      threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
+      threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+      pinnedSelectionsVersion: PINNED_SELECTIONS_VERSION,
+      threadPinnedSelectionsById: persistedPins(state.threadPinnedSelectionsById),
+      pullRequestMergeMethod: state.pullRequestMergeMethod,
+    } satisfies PersistedUiState;
+    try {
+      window.localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(persisted));
+    } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
+      window.localStorage.setItem(
+        PERSISTED_STATE_KEY,
+        JSON.stringify({ ...persisted, threadPinnedSelectionsById: {} }),
+      );
+    }
     if (!legacyKeysCleanedUp) {
       legacyKeysCleanedUp = true;
       for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -447,6 +467,7 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   addPinnedSelection: (threadKey: string, draft: PinnedSelectionDraft) => PinnedSelection;
   removePinnedSelection: (threadKey: string, pinId: string) => void;
+  clearPinnedSelections: (threadKey: string) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
@@ -478,6 +499,12 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       });
     }
     return inserted.pin;
+  },
+  clearPinnedSelections: (threadKey) => {
+    if (!(threadKey in get().threadPinnedSelectionsById)) return;
+    const threadPinnedSelectionsById = { ...get().threadPinnedSelectionsById };
+    delete threadPinnedSelectionsById[threadKey];
+    set({ threadPinnedSelectionsById });
   },
   removePinnedSelection: (threadKey, pinId) => {
     const current = get().threadPinnedSelectionsById[threadKey];
