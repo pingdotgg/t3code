@@ -411,7 +411,8 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
       </div>
     </RegistryContext.Provider>,
   );
-  await userEvent.click(screen.getByText("src/a.ts", { exact: true }));
+  // A narrow header shows the redesign's basename, which carries the full path.
+  await userEvent.click(screen.getByText("a.ts", { exact: true }));
   await vi.waitFor(() =>
     expect(
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
