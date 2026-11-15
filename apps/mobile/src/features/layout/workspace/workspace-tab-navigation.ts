@@ -13,6 +13,7 @@ type RouteLike = {
 };
 type ThreadSelection = NonNullable<WorkspaceSelections["threads"]>;
 type PullRequestSelection = NonNullable<WorkspaceSelections["pullRequests"]>;
+type IssueSelection = NonNullable<WorkspaceSelections["issues"]>;
 
 /** Opened when Settings has columns and none of its pages has been opened yet. */
 export const DEFAULT_SETTINGS_PAGE = "SettingsEnvironments" satisfies SettingsPageTarget;
@@ -38,10 +39,11 @@ export function rememberedSettingsPage(selections: WorkspaceSelections): Setting
     : DEFAULT_SETTINGS_PAGE;
 }
 
-/** Whether a remembered chat or pull request can still be opened. */
+/** Whether a remembered chat, pull request or issue can still be opened. */
 export interface WorkspaceSelectionCheck {
   readonly thread: (selection: ThreadSelection) => boolean;
   readonly pullRequest: (selection: PullRequestSelection) => boolean;
+  readonly issue: (selection: IssueSelection) => boolean;
 }
 
 function stringParam(params: object | undefined, key: string) {
@@ -83,8 +85,32 @@ function samePullRequest(
   );
 }
 
+const ISSUE_IDENTITY = ["environmentId", "projectId", "tracker", "scope", "issueKey"] as const;
+
+function issueSelection(params: object | undefined): Omit<IssueSelection, "key"> | undefined {
+  const value = params as Record<string, unknown> | undefined;
+  if (ISSUE_IDENTITY.some((key) => typeof value?.[key] !== "string")) return undefined;
+  const identity = value as Record<(typeof ISSUE_IDENTITY)[number], string>;
+  return {
+    environmentId: identity.environmentId,
+    projectId: identity.projectId,
+    tracker: identity.tracker,
+    scope: identity.scope,
+    issueKey: identity.issueKey,
+    ...(typeof value?.host === "string" ? { host: value.host } : {}),
+  };
+}
+
+function sameIssue(left: IssueSelection | undefined, right: Omit<IssueSelection, "key">) {
+  return (
+    left !== undefined &&
+    ISSUE_IDENTITY.every((key) => left[key] === right[key]) &&
+    left.host === right.host
+  );
+}
+
 /**
- * The page each tab shows in a root route chain: the newest chat, the newest pull request, and
+ * The page each tab shows in a root route chain: the newest chat, pull request and issue, and
  * the Settings page directly above the Settings route. Returns `previous` when nothing changed.
  */
 export function workspaceSelectionsIn(
@@ -121,6 +147,11 @@ export function workspaceSelectionsIn(
   ) {
     next = { ...next, pullRequests: { ...pullRequest, key: pullRequestRoute?.key } };
   }
+  const issueRoute = routes.findLast((route) => route.name === "Issue");
+  const issue = issueSelection(issueRoute?.params);
+  if (issue && (!sameIssue(next.issues, issue) || next.issues?.key !== issueRoute?.key)) {
+    next = { ...next, issues: { ...issue, key: issueRoute?.key } };
+  }
   const list = routes.findIndex((route) => route.name === "Settings");
   const page = list < 0 ? undefined : routes[list + 1];
   if (
@@ -133,7 +164,10 @@ export function workspaceSelectionsIn(
   return next;
 }
 
-function identityOf({ key: _key, ...identity }: PullRequestSelection) {
+function identityOf<Selection extends { readonly key?: string }>({
+  key: _key,
+  ...identity
+}: Selection) {
   return identity;
 }
 
@@ -148,7 +182,7 @@ function keyed<Route extends RouteLike>(route: Route): Route & { readonly key: s
 
 function detailRoute(
   state: { readonly routes: readonly RouteLike[] },
-  tab: "threads" | "pullRequests",
+  tab: "threads" | "pullRequests" | "issues",
   selections: WorkspaceSelections,
   check: WorkspaceSelectionCheck,
   seedPullRequest?: (identity: Omit<PullRequestSelection, "key">) => object,
@@ -177,6 +211,16 @@ function detailRoute(
         name: "Thread",
         params: { environmentId: thread.environmentId, threadId: thread.threadId },
       }
+    );
+  }
+  if (tab === "issues") {
+    const issue = selections.issues;
+    if (!issue || !check.issue(issue)) return undefined;
+    return (
+      state.routes.find((route) => {
+        const shown = route.name === "Issue" ? issueSelection(route.params) : undefined;
+        return shown !== undefined && sameIssue(issue, shown);
+      }) ?? { key: issue.key, name: "Issue", params: identityOf(issue) }
     );
   }
   const pullRequest = selections.pullRequests;

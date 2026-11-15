@@ -24,6 +24,7 @@ import { WorkspaceTabToolbarButtons } from "./WorkspaceSectionToolbar";
 const SEARCH_LABELS = {
   threads: "Search threads",
   pullRequests: "Search pull requests",
+  issues: "Search issues",
   settings: "Search settings",
 } as const;
 

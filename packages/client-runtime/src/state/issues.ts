@@ -3,12 +3,15 @@ import {
   type EnvironmentId,
   type IssueComment,
   type IssueListEntry,
+  type IssueListInput,
   type IssueListProjectError,
   type IssueListResult,
   type IssueRef,
 } from "@t3tools/contracts";
+import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
-import { Atom, type AtomRegistry } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -172,4 +175,72 @@ export function createIssueEnvironmentAtoms<R, E>(
   };
 }
 
-export type IssueListAnswer = IssueListResult;
+export interface IssueListTarget {
+  readonly environmentId: EnvironmentId;
+  readonly input: IssueListInput;
+}
+
+export interface MergedIssueList {
+  /** One answer per environment that has one, in target order. */
+  readonly answers: ReadonlyArray<readonly [EnvironmentId, IssueListResult]>;
+  /** The first environment that failed outright; the others may still have answered. */
+  readonly error: string | null;
+  readonly isPending: boolean;
+}
+
+const NO_ISSUE_LISTS: MergedIssueList = { answers: [], error: null, isPending: false };
+
+/**
+ * One listing read across every environment at once: React cannot subscribe to a list of atoms
+ * whose length changes, so the fan-out lives in one derived atom keyed by the targets. An
+ * environment that fails contributes nothing rather than blanking the list.
+ */
+export function createMergedIssueListAtoms<E>(
+  list: (target: IssueListTarget) => Atom.Atom<AsyncResult.AsyncResult<IssueListResult, E>>,
+  formatError: (cause: Cause.Cause<E>) => string,
+) {
+  const empty = Atom.make(NO_ISSUE_LISTS).pipe(Atom.withLabel("issues:merged-list:empty"));
+  const family = Atom.family((key: string) =>
+    Atom.make((get): MergedIssueList => {
+      const answers: Array<readonly [EnvironmentId, IssueListResult]> = [];
+      let error: string | null = null;
+      let isPending = false;
+      for (const target of JSON.parse(key) as ReadonlyArray<IssueListTarget>) {
+        const result = get(list(target));
+        isPending ||= result.waiting;
+        if (result._tag === "Failure" && error === null) error = formatError(result.cause);
+        const value = Option.getOrNull(AsyncResult.value(result));
+        if (value !== null) answers.push([target.environmentId, value]);
+      }
+      return { answers, error, isPending };
+    }).pipe(Atom.withLabel(`issues:merged-list:${key}`)),
+  );
+  const refresh = (
+    registry: AtomRegistry.AtomRegistry,
+    targets: ReadonlyArray<IssueListTarget>,
+  ) => {
+    for (const target of targets) registry.refresh(list(target));
+  };
+  // Every listing asked for, so a write made elsewhere can refresh the ones still shown.
+  const asked = new Map<string, ReadonlyArray<IssueListTarget>>();
+  return {
+    atom: (targets: ReadonlyArray<IssueListTarget>) => {
+      if (targets.length === 0) return empty;
+      const key = JSON.stringify(targets);
+      asked.set(key, targets);
+      return family(key);
+    },
+    refresh,
+    /** Refreshes each listing of `environmentId` that something still reads. */
+    refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
+      const live = new Set(registry.getNodes().keys());
+      for (const [key, targets] of asked) {
+        if (!live.has(family(key))) continue;
+        refresh(
+          registry,
+          targets.filter((target) => target.environmentId === environmentId),
+        );
+      }
+    },
+  };
+}

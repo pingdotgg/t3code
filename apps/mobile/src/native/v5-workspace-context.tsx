@@ -33,6 +33,7 @@ export const NativePrimaryColumnContext = createContext<{
   readonly presented: boolean;
   readonly selectedThreadKey: string | null;
   readonly selectedPullRequestKey: string | null;
+  readonly selectedIssueKey: string | null;
 } | null>(null);
 export const NativeWorkspaceInspectorContext = createContext<{
   readonly content: InspectorContent | undefined;
