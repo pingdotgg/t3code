@@ -4,6 +4,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import {
   findExistingAddProject,
+  getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
   getCloneDirectoryLeafName,
   getCloneDirectoryName,
@@ -11,10 +12,19 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  sortAddProjectProviderSources,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
+  it("offers only GitHub until other hosts are turned on", () => {
+    const ready = () => ({ ready: true, hint: null });
+    expect(sortAddProjectProviderSources(ready, {})).toEqual(["github"]);
+    expect(sortAddProjectProviderSources(ready, { gitlab: true, github: false })).toEqual([
+      "gitlab",
+    ]);
+  });
+
   it("asks for a repository name when GitHub input is only an owner path", () => {
     const github = SourceControlProviderKind.make("github");
     expect(githubIncompleteOwnerRepositoryMessage(github, "pingdotgg/")).toBe(
@@ -160,6 +170,23 @@ describe("add project shared logic", () => {
     expect(getCloneDirectoryName("https://github.com/acme/123.git")).toBe("123");
     expect(getCloneDirectoryName("https://github.com/acme/123")).toBe("123");
     expect(getCloneDirectoryName("git@github.com:acme/123.git")).toBe("123");
+  });
+
+  it("resolves a native-picker folder like an in-app clone selection", () => {
+    const pick = (pickedPath: string, caseSensitive = true) =>
+      getCloneDestinationForPickedFolder({
+        pickedPath,
+        cloneDirectoryName: "repo",
+        caseSensitive,
+      });
+
+    expect(pick("/Users/me/code")).toBe("/Users/me/code/repo");
+    expect(pick("/Users/me/code/")).toBe("/Users/me/code/repo");
+    expect(pick("/Users/me/repo")).toBe("/Users/me/repo/");
+    expect(pick("/Users/me/Repo")).toBe("/Users/me/Repo/repo");
+    expect(pick("C:\\Projects\\Repo", false)).toBe("C:\\Projects\\Repo\\");
+    expect(pick("C:\\Projects", false)).toBe("C:\\Projects\\repo");
+    expect(pick("/")).toBe("/repo");
   });
 
   it("finds existing projects by normalized path in the target environment", () => {
