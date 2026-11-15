@@ -10,6 +10,24 @@ import * as Schema from "effect/Schema";
 const UpdateMarker = Schema.fromJsonString(
   Schema.Struct({ startedAt: Schema.Number, expiresAt: Schema.Number }),
 );
+const encodeUpdateMarker = Schema.encodeEffect(UpdateMarker);
+
+/**
+ * Makes SSH launches wait for the server that replaces this one instead of starting their own.
+ * The server writes it, so it also covers a boot service whose launcher predates its own lock.
+ */
+export const publish = Effect.fn("DesktopUpdateMarker.publish")(function* (markerFile: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const startedAt = yield* Clock.currentTimeMillis;
+  const contents = yield* encodeUpdateMarker({
+    startedAt,
+    expiresAt: startedAt + DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
+  });
+  // Renamed into place: a launch must never read a half-written marker.
+  const temporary = `${markerFile}.tmp`;
+  yield* fileSystem.writeFileString(temporary, contents);
+  yield* fileSystem.rename(temporary, markerFile);
+});
 
 export class DesktopUpdateMarker extends Context.Service<
   DesktopUpdateMarker,

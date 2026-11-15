@@ -635,13 +635,12 @@ const make = Effect.gen(function* () {
 
   const resolve: PeerLinks["Service"]["resolve"] = Effect.fn("PeerLinks.resolve")(
     function* (environmentId) {
+      const notLinked = new PeerLinkError({
+        reason: "unknown_link",
+        message: `This environment is not linked to ${environmentId}. t3_environment_links lists the linked ones.`,
+      });
       const row = yield* readRow(environmentId);
-      if (Option.isNone(row)) {
-        return yield* new PeerLinkError({
-          reason: "unknown_link",
-          message: `This environment is not linked to ${environmentId}. t3_environment_links lists the linked ones.`,
-        });
-      }
+      if (Option.isNone(row)) return yield* notLinked;
       const link = yield* toLink(row.value);
       if (DateTime.isLessThanOrEqualTo(link.expiresAt, yield* DateTime.now)) {
         return yield* new PeerLinkError({
@@ -651,6 +650,8 @@ const make = Effect.gen(function* () {
       }
       const stored = yield* secrets.get(row.value.secret_name).pipe(Effect.catch(failStorage));
       if (Option.isNone(stored)) {
+        // An unlink between the two reads removes the row before its secret.
+        if (Option.isNone(yield* readRow(environmentId))) return yield* notLinked;
         return yield* new PeerLinkError({
           reason: "unknown_link",
           message: `The link to ${link.label} lost its credential. Link it again.`,
