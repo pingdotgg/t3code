@@ -36,6 +36,8 @@ function subscribeViewerSize(onChange: () => void) {
 
 export interface ZoomableImageHandle {
   pan: (key: string) => boolean;
+  /** A zoomed image keeps horizontal gestures for panning instead of paging the gallery. */
+  pansHorizontally: () => boolean;
 }
 
 export function ZoomableImage({
@@ -109,6 +111,10 @@ export function ZoomableImage({
             return false;
         }
         return true;
+      },
+      pansHorizontally() {
+        const viewport = viewportRef.current;
+        return viewport !== null && zoom > 1 && viewport.scrollWidth > viewport.clientWidth;
       },
     }),
     [zoom],
