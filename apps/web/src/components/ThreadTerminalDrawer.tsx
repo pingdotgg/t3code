@@ -929,7 +929,7 @@ function TerminalSessionViewport({
         });
       const sendTerminalInput = (data: string, fallbackError: string) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
-        // Input belongs to the shell and surface it was typed into; a restart drops what is left.
+        // Input belongs to the shell and surface it was typed into; a restart the client has seen drops what is left.
         const session = readTerminalSession();
         const generation = writableSessionGeneration(session, hasTerminalWriteAccess());
         const lifecycleVersion = session.lifecycleVersion;
