@@ -315,7 +315,6 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenMedia: onOpenMedia !== undefined,
   });
   const useBrowserPrimaryAction = shouldUseMarkdownFileBrowserPrimaryAction({
-    iconPath,
     canOpenInEditor,
     canOpenInBrowser,
     canOpenInPanel,
