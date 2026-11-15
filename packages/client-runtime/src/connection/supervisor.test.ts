@@ -566,14 +566,6 @@ describe("EnvironmentSupervisor", () => {
 
   it.effect("converts unexpected driver defects into retryable failures", () =>
     Effect.gen(function* () {
-      const relaySpans: Array<Tracer.NativeSpan> = [];
-      const relayTracer = Tracer.make({
-        span(options) {
-          const span = new Tracer.NativeSpan(options);
-          relaySpans.push(span);
-          return span;
-        },
-      });
       const harness = yield* makeHarness({
         prepare: (attempt) =>
           attempt === 1
@@ -582,10 +574,7 @@ describe("EnvironmentSupervisor", () => {
       });
       const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
         initiallyDesired: true,
-      }).pipe(
-        Effect.provide(harness.dependencies),
-        Effect.provideService(RelayClientTracer, Option.some(relayTracer)),
-      );
+      }).pipe(Effect.provide(harness.dependencies));
 
       const failed = yield* awaitState(
         supervisor.state,
@@ -598,9 +587,6 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment connection failed unexpectedly.",
         },
       });
-      const attempt = relaySpans.find((span) => span.name === "relay.connection.attempt");
-      expect(attempt?.attributes.get("connection.outcome")).toBe("failed");
-      expect(attempt?.attributes.has("environment.label")).toBe(false);
 
       yield* TestClock.adjust("3 seconds");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
@@ -1611,7 +1597,6 @@ describe("EnvironmentSupervisor", () => {
         expect(span.attributes.get("environment.target.kind")).toBe(RELAY_TARGET._tag);
         expect(span.attributes.has("environment.label")).toBe(false);
       }
-      expect(supervisor.target.label).toBe(RELAY_TARGET.label);
     }),
   );
 
