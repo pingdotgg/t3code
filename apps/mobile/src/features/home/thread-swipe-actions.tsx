@@ -52,6 +52,8 @@ const COMPACT_ACTION_CIRCLE_SIZE = 28;
 const COMPACT_ACTION_ICON_SIZE = 13;
 // At the default app text size, "Unarchive", the longest label, fills its slot at about 1.12x.
 const ACTION_LABEL_MAX_FONT_SCALE = 1.1;
+const ACTION_LABEL_MIN_HEIGHT = 14;
+const ACTION_LABEL_OFFSET = 2;
 
 const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
 const THREAD_SWIPE_SPRING = {
@@ -80,6 +82,11 @@ interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
   return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+}
+
+function fullActionStackHeight(labelLineHeight: number, fontScale: number) {
+  const labelHeight = labelLineHeight * Math.min(fontScale, ACTION_LABEL_MAX_FONT_SCALE);
+  return ACTION_CIRCLE_SIZE + ACTION_LABEL_OFFSET + Math.max(ACTION_LABEL_MIN_HEIGHT, labelHeight);
 }
 
 function resolveSecondaryAction(input: {
@@ -422,7 +429,11 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const handleSwipeableClose = useCallback(() => {
     if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
   }, [onSwipeableClose]);
-  const compactActions = props.compactActions === true;
+  const { fontScale } = useWindowDimensions();
+  const fullActionsHeight = fullActionStackHeight(useScaledTextRole("micro").lineHeight, fontScale);
+  // State flips only when a layout crosses the threshold, so height changes don't re-render rows.
+  const [rowTooShort, setRowTooShort] = useState(false);
+  const compactActions = props.compactActions === true || rowTooShort;
   const { secondaryAction, threadTitle } = props;
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
@@ -490,6 +501,7 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
       <View
         onLayout={({ nativeEvent: { layout } }) => {
           rowHeight.set(layout.height);
+          setRowTooShort(layout.height < fullActionsHeight);
           rowWidth.set(layout.width);
         }}
       >
@@ -691,7 +703,11 @@ function SwipeActionButton(props: {
       {/* An offset, not padding: padding would grow the box and move the circle at 1x. */}
       <Animated.View
         style={[
-          { justifyContent: "center", minHeight: 14, top: props.compact ? 0 : 2 },
+          {
+            justifyContent: "center",
+            minHeight: ACTION_LABEL_MIN_HEIGHT,
+            top: props.compact ? 0 : ACTION_LABEL_OFFSET,
+          },
           labelStyle,
         ]}
       >
