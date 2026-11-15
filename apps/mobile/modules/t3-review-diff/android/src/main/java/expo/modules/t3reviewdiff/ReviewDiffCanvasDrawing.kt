@@ -423,7 +423,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     var x = codeX
     var column = 0
     splitAtNote(runs, noteStart).forEach { (run, note) ->
-      configureCodePaint(if (note) theme.warningText else run.color ?: theme.text, run.fontStyle, style)
+      configureCodePaint(
+        if (note) theme.warningText else run.color ?: theme.text,
+        run.fontStyle,
+        style,
+      )
       var start = 0
       while (start < run.content.length) {
         while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
