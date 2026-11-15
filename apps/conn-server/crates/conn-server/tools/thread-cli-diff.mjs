@@ -4,7 +4,7 @@
 // CLI and on the Conn Server with ours. Same settings, same project, same commands; stdout,
 // stderr and the exit code are compared after ids, tokens, times and folders are replaced.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/thread-cli-diff.mjs <conn-server> [--keep]
+//   node crates/conn-server/tools/thread-cli-diff.mjs <conn-server> [--keep]
 //
 // No model is called. Both servers find `codex` through a stand-in login shell whose PATH holds
 // only a wrapper around the Codex conformance stub (`crates/conn-provider-codex/tools/codex-stub.mjs`).

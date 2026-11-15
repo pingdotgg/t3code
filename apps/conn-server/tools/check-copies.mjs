@@ -4,7 +4,7 @@
 // the wire constants in crates/conn-wire/src/lib.rs, and the Claude launch lists in
 // crates/conn-provider-claude/src/launch.rs. Fails with each difference.
 //
-//   CONN_MONOREPO=<conn checkout> node tools/check-copies.mjs
+//   node tools/check-copies.mjs
 //
 // The Rust side is read from the source text, so a renamed constant fails here too.
 import * as NodeFS from "node:fs";

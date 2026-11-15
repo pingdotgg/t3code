@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 // Orbit's idle check against the T3 server and the Conn Server, in the same states.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/idle-diff.mjs [--keep] [--info] [--only a,b] <conn-server>
+//   node crates/conn-server/tools/idle-diff.mjs [--keep] [--info] [--only a,b] <conn-server>
 //
 // Orbit decides whether a container may sleep from one `GET /api/orchestration/shell` with
 // `x-t3-orchestration-protocol: 2` (`ConnAgentActivity.php`), and the Gateway's thread index
 // reads the same route (`ConnThreadIndex.php` through `HttpT3ServerClient.php`). A wrong
 // "idle" freezes a container in the middle of a turn; a wrong "active" keeps it awake.
 //
-// Each scenario starts a pair: the T3 server from CONN_MONOREPO (its own temp T3CODE_HOME and
+// Each scenario starts a pair: the T3 server from the monorepo (its own temp T3CODE_HOME and
 // a free port) and the Conn Server (a temp `--state-dir`). Both run Codex through the stub of
 // the Codex conformance check (`crates/conn-provider-codex/tools/codex-stub.mjs`), found as
 // `codex` on a PATH that holds only the stub and the system folders. The stub replays a

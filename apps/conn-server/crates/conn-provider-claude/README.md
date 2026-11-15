@@ -214,8 +214,8 @@ mapper and compares the events with what `ClaudeAdapterV2` emitted for the same 
 (`testdata/ts`). Eight recordings match: a simple turn, a second turn, an interrupt, a
 permission turn, a background subagent with its continuation turn, a foreground subagent, a
 steer, and an image. Both live inside this crate; the tests need no monorepo.
-`tools/capture-ts` regenerates `testdata/ts` from a Conn monorepo checkout (`CONN_MONOREPO`,
-no default); see its README.
+`tools/capture-ts` regenerates `testdata/ts` from the Conn monorepo this crate sits in; see
+its README.
 
 Normalized in the comparison:
 

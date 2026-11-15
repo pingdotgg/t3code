@@ -5,7 +5,7 @@ and tool needs from outside the server. The order of work follows the "Needs" co
 server can do alone comes first. `crates/conn-features/README.md` says what the Conn Server
 serves of it today.
 
-Source: the T3 server at `conn.pin`. `S/` means `apps/server/src/`, `C/` means
+Source: the T3 server in the monorepo (written at Conn `b12470dcad`). `S/` means `apps/server/src/`, `C/` means
 `packages/contracts/src/`, M the monorepo root. Scopes come from
 `crates/conn-server/src/scopes/generated.rs`. "unconfirmed" marks what was not verified.
 

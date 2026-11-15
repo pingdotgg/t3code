@@ -4,13 +4,12 @@ Proves that the `claude` CLI gets the same start and the same input from the Con
 from the T3 server. No model is called.
 
 ```sh
-CONN_MONOREPO=/path/to/conn ./run.sh            # all scenarios
+./run.sh            # all scenarios
 ./run.sh fork image                              # some
 ```
 
-Needs: `npm ci` in `helpers/sdk-host`, and `vp i` in the Conn monorepo checkout at the pinned
-commit, given as `CONN_MONOREPO` (there is no default). Rerun it on
-every SDK, CLI or pinned-commit change. Exit 0 means no difference.
+Needs: `npm ci` in `helpers/sdk-host`, and `vp i` at the Conn monorepo root. Rerun it on
+every SDK or CLI change and after an upstream sync. Exit 0 means no difference.
 
 ## How it works
 

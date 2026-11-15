@@ -5,10 +5,10 @@ writes the events it emits to `testdata/ts/<name>.json` (`{note, offered, events
 The Rust replay tests compare against those files.
 
 ```sh
-CONN_MONOREPO=/path/to/conn ./run.sh     # required; there is no default
+./run.sh     # after vp i at the monorepo root
 ```
 
-Variables: `CONN_MONOREPO` (monorepo root), `CAPTURE_CLI_DIR` (default `testdata/cli`),
+Variables: `CAPTURE_CLI_DIR` (default `testdata/cli`),
 `CAPTURE_OUT_DIR` (default `testdata/ts`; point it elsewhere to diff before overwriting),
 `CAPTURE_LOG_DIR` (unset: no harness logs; set it to keep one `<name>.log` per transcript).
 

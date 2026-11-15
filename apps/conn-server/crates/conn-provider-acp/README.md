@@ -249,11 +249,11 @@ This server must not download or install; the choice is Nick's.
 
 ```sh
 cargo test -p conn-provider-acp                                                 # offline
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/conformance.mjs   # the wire check
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/probe-conformance.mjs   # the status probe
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/gen-instructions.mjs --check
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/make-scenarios.mjs   # the hand-made scenarios
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-events.mjs grok   # regenerate testdata
+node crates/conn-provider-acp/tools/conformance.mjs   # the wire check
+node crates/conn-provider-acp/tools/probe-conformance.mjs   # the status probe
+node crates/conn-provider-acp/tools/gen-instructions.mjs --check
+node crates/conn-provider-acp/tools/make-scenarios.mjs   # the hand-made scenarios
+node crates/conn-provider-acp/tools/capture-ts-events.mjs grok   # regenerate testdata
 ```
 
 - **Replay (`src/replay_tests.rs`, in `cargo test`):** every Grok transcript of the T3 test

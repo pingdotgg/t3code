@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regenerates testdata/cli and testdata/ts from the Conn monorepo at CONN_MONOREPO (after
+// Regenerates testdata/cli and testdata/ts from the Conn monorepo (after
 // `vp i`): `node crates/conn-provider-codex/tools/capture-ts-events.mjs [name ...]`. Offline: it
 // replays recorded transcripts, no model is called. It adds one temporary test to
 // apps/server/src/orchestration-v2/testkit, named with this run's PID so runs side by side on

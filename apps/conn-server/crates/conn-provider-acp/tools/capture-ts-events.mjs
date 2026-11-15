@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Regenerates testdata/<flavor>/*.json from the Conn monorepo at CONN_MONOREPO (after `vp i`):
+// Regenerates testdata/<flavor>/*.json from the Conn monorepo (after `vp i`):
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-events.mjs <flavor> [fixture ...]
+//   node crates/conn-provider-acp/tools/capture-ts-events.mjs <flavor> [fixture ...]
 //
 // <flavor> is grok, kiro, fx or acpRegistry. Offline: it replays the T3 test kit's recorded
 // ACP transcripts through T3's own fixture runner and adapter; no agent starts, no model is

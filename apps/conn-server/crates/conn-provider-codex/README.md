@@ -303,13 +303,13 @@ Typed upstream definitions were measured and not used:
 ## Tests
 
 ```sh
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/conformance.mjs  # the wire check
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/gen-instructions.mjs --check
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check
-CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/probe-conformance/run.mjs
+node crates/conn-provider-codex/tools/conformance.mjs  # the wire check
+node crates/conn-provider-codex/tools/gen-instructions.mjs --check
+node crates/conn-provider-codex/tools/gen-model-catalog.mjs --check
+node crates/conn-provider-codex/tools/probe-conformance/run.mjs
 cargo test -p conn-provider-codex                                                # offline
 cargo test -p conn-provider-codex live_ -- --ignored --test-threads=1 --nocapture  # real CLI
-CONN_MONOREPO=/path/to/conn node tools/capture-ts-events.mjs   # regenerate testdata, offline
+node tools/capture-ts-events.mjs   # regenerate testdata, offline
 ```
 
 - `tools/conformance.mjs` (in `tools/check.sh`) proves the launch and the wire equal to the

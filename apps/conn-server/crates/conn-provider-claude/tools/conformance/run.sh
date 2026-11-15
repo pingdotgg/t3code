@@ -2,7 +2,7 @@
 # Conformance check: what the claude CLI receives from the T3 server's ClaudeAdapterV2 and from
 # the Conn Server's Claude provider, for the same inputs. No model is called. See README.md.
 #
-#   CONN_MONOREPO=/path/to/conn ./run.sh [scenario...]
+#   ./run.sh [scenario...]
 #
 # Exit 0 when nothing differs beyond the listed normalizations; 1 otherwise. The report is
 # printed and written to $OUT/report.txt.
@@ -11,14 +11,15 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
 workspace_root="$(cd "$crate/../.." && pwd)"
-repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
+# The Conn monorepo root: the same tree, after `vp i` there.
+repo="$(cd "$here/../../../../../.." && pwd)"
 adapters="$repo/apps/server/src/orchestration-v2/Adapters"
 # The copy's name carries this run's PID, so runs side by side on one checkout do not collide.
 name="claudeConformance.$$.tmp.test.ts"
 copy="$adapters/$name"
 node_bin="$(dirname "$(command -v node)")"
 
-[ -d "$adapters" ] || { echo "CONN_MONOREPO=$repo has no apps/server Adapters directory" >&2; exit 1; }
+[ -d "$adapters" ] || { echo "$repo has no apps/server Adapters directory" >&2; exit 1; }
 [ -d "$workspace_root/helpers/sdk-host/node_modules" ] || {
   echo "run 'npm ci' in helpers/sdk-host first" >&2
   exit 1

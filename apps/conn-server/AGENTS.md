@@ -42,8 +42,9 @@ Engine, method table), the wire, and the checks. Each crate has its own `README.
    after a push. To run them on a Linux host that has the pinned Rust version as its own
    toolchain, set `RUSTUP_TOOLCHAIN=stable RUSTUP_AUTO_INSTALL=0`, or `rustup` installs a
    second copy.
-9. **Commit locally.** The remote is `hardimpactdev/conn-server` (private). Push or open a
-   pull request only when Nick asks.
+9. **Commit locally.** The Conn Server lives in the Conn monorepo (`nckrtl/conn`, public),
+   in `apps/conn-server`. Push or open a pull request only when Nick asks. Its history up to
+   2026-11-15 came from `hardimpactdev/conn-server`, which it replaces.
 
 ## Providers
 
@@ -63,7 +64,7 @@ shutdown. Follow it byte for byte where a provider can see it.
   by hand. If the T3 server uses an SDK, we use that SDK.
 - Never read, store or pass on a provider's credentials, and never call a provider's API from
   the server. Only the official binary or SDK does that.
-- Pin the same SDK and CLI versions as the T3 server at the pinned Conn commit.
+- Pin the same SDK and CLI versions as the T3 server in this tree.
 - A change to a provider needs a comparison of what we send with what the T3 server sends for
   the same input, from recordings or a stub executable. Reading the code is not proof.
 - The Node helper is the SDK host, `helpers/sdk-host` (protocol in its `PROTOCOL.md`). It runs
@@ -71,7 +72,7 @@ shutdown. Follow it byte for byte where a provider can see it.
 - The proofs for Claude: `crates/conn-provider-claude/tools/conformance/run.sh` (a stub CLI
   records argv, environment and stdin from both servers; they must be equal) and
   `tools/t3-replay/run.sh` (the T3 server's own Claude transcripts against our session). Rerun
-  both on every SDK, CLI or pin change.
+  both on every SDK or CLI change, and after an upstream sync.
 
 ## Safety
 
@@ -105,19 +106,19 @@ shutdown. Follow it byte for byte where a provider can see it.
   default. A live proof uses the cheapest model (Claude Haiku), few turns, behind an explicit
   flag or `--ignored`.
 - Stop every process you start, by PID. Never `killall` or `pkill`.
-- Never read or change the working tree of a shared Conn checkout. Use your own checkout
-  (`tools/conn-checkout`).
+- Never read or change the working tree of a shared Conn checkout. Work in your own checkout
+  or worktree of the monorepo; the capture tools write temporary test files into its
+  `apps/server`.
 
 ## Commands
 
 ```sh
-tools/check.sh                                   # the Rust checks; says what it skipped
-CONN_MONOREPO=<conn checkout> tools/check.sh     # every check that needs no model
-eval "$(tools/conn-checkout --source <conn git dir or URL>)"    # a Conn checkout at conn.pin
-CONN_MONOREPO=<checkout at the new commit> tools/bump-conn.sh <commit>   # move the pin, regenerate, check, report
+(cd ../.. && vp i)                               # once: the monorepo's node_modules
+tools/check.sh                                   # every check that needs no model
+tools/follow-conn.sh [--capture]                 # follow Conn: regenerate, check, report
 cargo run -p conn-server -- serve --state-dir /tmp/conn-state --project <dir>   # sealed; CONN_UNSEALED=1 for a real login
 (cd helpers/sdk-host && npm ci)                  # once, so Claude can run from a checkout
-CONN_MONOREPO=<conn checkout> crates/conn-provider-claude/tools/conformance/run.sh
+crates/conn-provider-claude/tools/conformance/run.sh
 ```
 
 `tools/check.sh` runs format, clippy with warnings as errors, the tests, the release build,
@@ -128,18 +129,21 @@ the `/mcp` parity check and Orbit's container flow on the fake provider.
 
 The contract (`packages/contracts`), the web client that the recorder drives, and the
 TypeScript server and adapters used for comparison live in the Conn monorepo (`nckrtl/conn`,
-a fork of T3 Code). This repository pins one Conn commit in `conn.pin`.
+a fork of T3 Code). The Conn Server sits inside it, in `apps/conn-server`, so it always
+follows the Conn commit it is part of. There is no pin.
 
-- Run every tool from this repository. The Node tools take the monorepo root from
-  `CONN_MONOREPO`, a Conn checkout at the pin after `vp i`. There is no default path.
+- Run every tool from `apps/conn-server`. The Node tools read the monorepo two levels up
+  (`tools/monorepo.mjs`) and resolve packages from its `node_modules`: run `vp i` at the
+  monorepo root first.
 - Generated files: `crates/conn-contract/src/generated.rs` and `methods.json`, the `/mcp` tool
   catalog and instruction texts in `crates/conn-mcp/src`, the keybinding defaults, and the
   upstream tables from `tools/gen-upstream.mjs` (`crates/conn-server/src/scopes/generated.rs`,
   `crates/conn-server/src/settings/generated.rs`, `crates/conn-contract/src/upstream.rs` with
   `T3_SERVER_VERSION`, `tools/upkeep/http-routes.json`). Never edit one by hand; change its
   generator and regenerate.
-- `docs/upkeep.md` says how the pin moves and what to do when a bump is red. A nightly bot
-  merges upstream T3 Code into Conn; the Conn Server follows with `tools/bump-conn.sh`.
+- `docs/upkeep.md` says how the Conn Server follows Conn and what to do when a check is red.
+  A nightly bot merges upstream T3 Code into Conn and does not run the Conn Server's checks
+  (Nick, 2026-11-15); the next Conn Server change or `tools/follow-conn.sh` picks up the drift.
 - Do not change TypeScript in the Conn monorepo for Conn Server work.
 
 ## Where things go
@@ -153,7 +157,7 @@ a fork of T3 Code). This repository pins one Conn commit in `conn.pin`.
 | A provider | a crate that implements `Provider` and `Session` from `crates/conn-provider`; shared parts go in `crates/conn-provider-support` | replay tests against the T3 adapter's events, and the comparison in [Providers](#providers) |
 | A settings rule | `crates/conn-server/src/settings.rs` | add a case to `crates/conn-server/tools/settings-cases.json`; `settings-diff.mjs` runs it against the T3 server's own functions |
 | A capability or `ServerConfig` flag | `capabilities` / `config_flags` in `crates/conn-server/src/environment.rs` | advertise only what the server serves |
-| A part that follows upstream files | a pathspec in `tools/upkeep/followed-files.txt` | the bump report then prints that part's upstream commits |
+| A part that follows upstream files | a pathspec in `tools/upkeep/followed-files.txt` | the `follow-conn.sh` report then prints that part's upstream commits |
 | A helper two crates need (time, hex, base64, HMAC, atomic file write, ids) | `crates/conn-support`: std only (plus `sha2`, `uuid`, `getrandom`), no async, no state | a test there |
 | A dependency | the workspace `Cargo.toml` | state why and what it costs; `cargo deny` must pass |
 

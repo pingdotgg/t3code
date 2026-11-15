@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Prints the report of a Conn pin bump: what moved in the contract, /mcp, keybindings, scopes,
-// engine commands, HTTP routes and the upstream files each part follows, and what the Conn
-// Server does not serve. tools/bump-conn.sh calls it.
+// Prints the report of what moved in Conn since the Conn Server last followed it: the contract,
+// /mcp, keybindings, scopes, engine commands, HTTP routes and the upstream files each part
+// follows, and what the Conn Server does not serve. tools/follow-conn.sh calls it.
 //
 //   node tools/bump-report.mjs --before <snapshot dir> --from <old sha> --to <new sha>
 //        [--checks <file>] [--binary <conn-server>] [--reference-events <file>]
 //   node tools/bump-report.mjs --tool-digests <gen-tools --all output> <out>
 //
-// --before holds the generated files as they were at the old pin, at their repository paths.
+// --before holds the generated files as they were before regeneration, at their repository paths.
 // The files of this repository are the state after the bump. `--checks` has one line per check:
 // `ok <name>`, `FAIL <name>` or `skip <name>`. `--binary` is started once with a temp state
 // folder to read its method coverage line, then stopped. `--reference-events` is the output of
-// tools/reference-events.mjs after --capture. Reads CONN_MONOREPO with `git` only.
+// tools/reference-events.mjs after --capture. Reads the monorepo's Git history only.
 //
 // The report starts with "What to do": the red checks, the served methods and /mcp tools whose
 // shape changed, the provider files that moved with the result of their conformance checks,
@@ -21,7 +21,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { repoRoot } from "./monorepo.mjs";
+import { monorepoRoot, repoRoot } from "./monorepo.mjs";
 import { binaryCoverage, registeredTags, servedCount as countOf } from "./served.mjs";
 import { gitEnv } from "./sealed-env.mjs";
 
@@ -60,7 +60,7 @@ if (!before || !from || !to) {
   console.error("usage: bump-report.mjs --before <dir> --from <sha> --to <sha> [--checks <file>] [--binary <path>]");
   process.exit(2);
 }
-const monorepo = process.env.CONN_MONOREPO;
+const monorepo = monorepoRoot;
 
 const readText = (root, rel) => {
   const file = NodePath.join(root, rel);
@@ -107,7 +107,7 @@ const direction =
         ? `${back} commits back`
         : `${commits} commits forward, ${back} back`
     : "commit distance unknown";
-line(`# Conn bump ${short(from)} → ${short(to)} (${direction})`);
+line(`# Conn changes ${short(from)} → ${short(to)} (${direction})`);
 
 const oldMethods = readJson(before, "crates/conn-contract/methods.json");
 const newMethods = readJson(repoRoot, "crates/conn-contract/methods.json");
@@ -326,7 +326,7 @@ line(
     (newReport ? `; opaque fallbacks ${oldReport?.opaqueFallbacks ?? "?"} → ${newReport.opaqueFallbacks}` : ""),
 );
 if (newReport && oldReport && newReport.opaqueFallbacks > oldReport.opaqueFallbacks) {
-  line("  RED: more Opaque fallbacks: the generator met a shape it cannot map (generated/report.json); bump-conn.sh fails the `opaque fallbacks` step.");
+  line("  RED: more Opaque fallbacks: the generator met a shape it cannot map (generated/report.json); follow-conn.sh fails the `opaque fallbacks` step.");
 }
 
 // ---- /mcp --------------------------------------------------------------------------------
@@ -588,9 +588,7 @@ const NO_TESTS = [
 ];
 line();
 const parts = followedParts();
-if (!monorepo) {
-  line("## Followed files: CONN_MONOREPO is not set");
-} else if (parts.length === 0) {
+if (parts.length === 0) {
   line(`## Followed files: ${FOLLOWED} is missing or empty`);
 } else {
   // A backward bump (a bisect) lists the commits it takes out.
@@ -601,7 +599,7 @@ if (!monorepo) {
   for (const part of parts) {
     const log = git("log", "--no-merges", "--format=%h %s", range, "--", ...part.specs, ...NO_TESTS);
     if (log === undefined) {
-      line(`  ${part.name}: git log failed: is the old commit in CONN_MONOREPO's Git data?`);
+      line(`  ${part.name}: git log failed: is the old commit in the monorepo's Git data?`);
       continue;
     }
     const rows = log.split("\n").filter(Boolean);
@@ -672,7 +670,7 @@ if (!monorepo) {
 const referenceFile = option("--reference-events");
 line();
 if (referenceFile === undefined) {
-  line("## Reference events (provider testdata/ts): not regenerated (bump-conn.sh --capture)");
+  line("## Reference events (provider testdata/ts): not regenerated (follow-conn.sh --capture)");
 } else {
   const rows = NodeFS.existsSync(referenceFile)
     ? NodeFS.readFileSync(referenceFile, "utf8").split("\n").filter(Boolean)

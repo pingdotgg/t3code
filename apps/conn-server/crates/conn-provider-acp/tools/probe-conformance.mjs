@@ -2,7 +2,7 @@
 // Conformance check for Grok's status probe: does conn-provider-acp probe the Grok CLI and
 // build the `ServerProvider` entry exactly as the T3 server does?
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/probe-conformance.mjs [--keep] [--verbose] [scenario ...]
+//   node crates/conn-provider-acp/tools/probe-conformance.mjs [--keep] [--verbose] [scenario ...]
 //
 // No real CLI runs and no model is called. Each scenario gives a stub `grok`
 // (tools/grok-cli-stub.mjs) a behaviour: a missing or broken CLI, one that hangs, an old one

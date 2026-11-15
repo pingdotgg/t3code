@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Upstream churn per followed part: commits and changed lines in the Conn monorepo over a
-// window that ends at the pinned commit. Reads tools/upkeep/followed-files.txt.
+// window that ends at HEAD. Reads tools/upkeep/followed-files.txt.
 //
-//   CONN_MONOREPO=<conn checkout> node tools/upkeep/churn.mjs [--days 30] [--by-pathspec]
+//   node tools/upkeep/churn.mjs [--days 30] [--by-pathspec]
 //
 // Counts non-merge commits (`git log --no-merges`), so a change counts once, at its own
 // commit, also when it came in through an upstream merge. Test files are left out, as in the
@@ -12,21 +12,16 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
+import { monorepoRoot as repo } from "../monorepo.mjs";
 import { gitEnv } from "../sealed-env.mjs";
 
-const repo = process.env.CONN_MONOREPO;
-if (!repo) {
-  console.error("Set CONN_MONOREPO to a Conn checkout.");
-  process.exit(2);
-}
 const args = process.argv.slice(2);
 const daysAt = args.indexOf("--days");
 const days = daysAt >= 0 ? Number(args[daysAt + 1]) : 30;
 const byPathspec = args.includes("--by-pathspec");
 
 const here = NodePath.dirname(new URL(import.meta.url).pathname);
-const root = NodePath.resolve(here, "../..");
-const pin = NodeFS.readFileSync(NodePath.join(root, "conn.pin"), "utf8").trim();
+const pin = "HEAD";
 
 const git = (argv) =>
   NodeChildProcess.execFileSync("git", ["-C", repo, ...argv], {
@@ -75,7 +70,7 @@ function measure(specs) {
   return { commits: commits.size, lines };
 }
 
-console.log(`Window: ${days} days to the pin ${pin.slice(0, 10)} (${since.slice(0, 10)} .. pin)`);
+console.log(`Window: ${days} days to HEAD (${since.slice(0, 10)} .. HEAD)`);
 console.log("part\tcommits\tlines");
 for (const part of parts) {
   const m = measure(part.specs);

@@ -1,6 +1,6 @@
 // Decodes the engine's stream output as the RPC client does, applies it with the client's
 // reducers, and checks the resulting state. Input: `examples/export_turn.rs` output.
-// Run: CONN_MONOREPO=<conn checkout> node crates/conn-engine/tools/client-check.mjs <export.json>
+// Run: node crates/conn-engine/tools/client-check.mjs <export.json>
 import * as NodeAssert from "node:assert/strict";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";

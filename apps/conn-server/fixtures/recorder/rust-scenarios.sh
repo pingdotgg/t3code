@@ -4,7 +4,7 @@
 #   fixtures/recorder/rust-scenarios.sh fake [record.mjs options]   # no model call
 #   fixtures/recorder/rust-scenarios.sh live [record.mjs options]   # Claude Haiku, 27 turns
 #
-# Needs CONN_MONOREPO (a Conn checkout with the web client built: tools/conn-checkout --web),
+# Needs the monorepo's web client built (`vp build` in apps/web, after `vp i` at the root),
 # `cargo build --release -p conn-server --bins --examples`, and for `live` `npm ci` in
 # helpers/sdk-host and a logged-in `claude`. Recordings go to a new temp folder unless
 # `--out <dir>` is given; CONN_RECORDER_SHOTS=<dir> keeps the screenshots. Every server gets
@@ -45,7 +45,6 @@ case "$mode" in
     ;;
 esac
 
-[ -n "${CONN_MONOREPO:-}" ] || { echo "rust-scenarios: set CONN_MONOREPO" >&2; exit 2; }
 [ -x "$binary" ] || { echo "rust-scenarios: build $binary first" >&2; exit 2; }
 
 out=()

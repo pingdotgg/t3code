@@ -67,11 +67,12 @@ conn-server-<version>-linux-x64/
     └── node_modules/    @anthropic-ai/claude-agent-sdk only (npm ci --omit=dev --ignore-scripts)
 ```
 
-**Release.** `.github/workflows/release.yml` builds it on `ubuntu-24.04` when a tag `v*` is
-pushed. The tag must be `v` plus the `conn-server` crate version. The run makes a GitHub
-Release with the tarball and its `.sha256`. `workflow_dispatch` on a branch only keeps the
-tarball as a workflow artifact. No tag has been pushed and no release made: Nick has not
-decided whether the repository goes public, and Orbit's fetch needs a URL it can read.
+**Release.** `.github/workflows/conn-server-release.yml` in the Conn monorepo
+(`nckrtl/conn`, public) builds it on `ubuntu-24.04` when a tag `conn-server-v*` is pushed.
+The tag must be `conn-server-v` plus the `conn-server` crate version. The run makes a GitHub
+Release on `nckrtl/conn` with the tarball and its `.sha256`, not marked Latest.
+`workflow_dispatch` on a branch only keeps the tarball as a workflow artifact. No tag has been
+pushed and no release made yet.
 
 **How the server finds the SDK host.** Orbit links `bin/conn-server` to
 `../conn-server/conn-server-<version>-linux-x64/conn-server`. The server follows that link
@@ -88,7 +89,7 @@ Node 24.22.1); the agent folder has none.
     "version": "0.1.0",
     "artifacts": {
         "amd64": {
-            "url": "https://github.com/hardimpactdev/conn-server/releases/download/v0.1.0/conn-server-0.1.0-linux-x64.tar.gz",
+            "url": "https://github.com/nckrtl/conn/releases/download/conn-server-v0.1.0/conn-server-0.1.0-linux-x64.tar.gz",
             "sha256": "<the .sha256 of the release>"
         }
     },
@@ -273,8 +274,8 @@ The Conn Server moves to its own repository, `conn-server`. For delivery:
   (`conn-server 0.1.0 (T3 server 0.1.9 contract, Conn commit 415dd48…)`). Release notes name
   the same three.
 - **The contract commit.** `crates/conn-contract/methods.json` pins the Conn commit whose
-  `packages/contracts` generated the types; `gen-contract.mjs --check` against a Conn
-  checkout (`CONN_MONOREPO`) shows when Conn's contract moved. A Conn release that changes the
+  `packages/contracts` generated the types; `gen-contract.mjs --check` against the monorepo
+  it sits in shows when Conn's contract moved. A Conn release that changes the
   contract needs a Conn Server release built from it before Orbit or the desktop takes both.
 - **Which server a client talks to.** The descriptor (`/.well-known/t3/environment`) stays
   T3's: `serverVersion` is the T3 version whose contract is served, so clients' version checks
@@ -283,5 +284,4 @@ The Conn Server moves to its own repository, `conn-server`. For delivery:
   route. A typed field (for example `serverImplementation` in the descriptor) would need a
   contract change in Conn first.
 - **Tools that need Conn.** `tools/gen-keybindings.mjs`, `fixtures/recorder` and the other
-  Node tools read the monorepo from `$CONN_MONOREPO`. There is no default
-  (`tools/monorepo.mjs` at the repository root).
+  Node tools read the monorepo two levels above `apps/conn-server` (`tools/monorepo.mjs`).

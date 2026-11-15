@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// After the provider capture tools ran (tools/bump-conn.sh --capture): compares each reference
+// After the provider capture tools ran (tools/follow-conn.sh --capture): compares each reference
 // file with its copy from before, puts back every file whose content did not change, and
 // prints the files that did. So `git diff` shows only real changes.
 //

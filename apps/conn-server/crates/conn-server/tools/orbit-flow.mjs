@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { monorepoRoot } from "../../../tools/monorepo.mjs";
 import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -56,11 +57,9 @@ delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;
 
 // model-manifest.json comes from a loopback stub, never from GitHub (the test seam
-// CONN_MODEL_MANIFEST_URL). It serves the manifest bundled at the pin when CONN_MONOREPO is
-// set, else a small one that lists the model this flow uses.
-const bundledFile =
-  process.env.CONN_MONOREPO &&
-  NodePath.join(process.env.CONN_MONOREPO, "apps/server/src/provider/model-manifest.json");
+// CONN_MODEL_MANIFEST_URL). It serves the manifest the monorepo bundles, else a small one
+// that lists the model this flow uses.
+const bundledFile = NodePath.join(monorepoRoot, "apps/server/src/provider/model-manifest.json");
 const manifestText =
   bundledFile && NodeFS.existsSync(bundledFile)
     ? NodeFS.readFileSync(bundledFile, "utf8")

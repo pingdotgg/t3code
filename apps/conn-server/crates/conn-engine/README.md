@@ -243,10 +243,10 @@ server crate and an `Engine` method for a page.
   frame through files in the scenario folder; the ACP stub has none yet. About 3 minutes; `--only <fixture>/<driver>` runs one,
   `--keep` keeps the work folder (each fixture's plan, stub log, database and result).
 - `tools/client-check.mjs`: the client's own decoders and reducers over
-  `examples/export_turn.rs` output. Needs the Conn monorepo in `CONN_MONOREPO`. From the
-  repository root:
+  `examples/export_turn.rs` output. Needs `vp i` at the monorepo root. From
+  `apps/conn-server`:
 
   ```sh
   cargo run -p conn-engine --features fake-provider --example export_turn -- /tmp/x.json
-  CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/client-check.mjs /tmp/x.json
+  node crates/conn-engine/tools/client-check.mjs /tmp/x.json
   ```

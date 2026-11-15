@@ -4,7 +4,7 @@
 // scenario that passed fails now, when a listed one passes now (remove it from the list), or
 // when the replay did not report every scenario in scenarios.json.
 //
-//   CONN_MONOREPO=/path/to/conn node check.mjs
+//   node check.mjs
 
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

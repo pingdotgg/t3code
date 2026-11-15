@@ -3,7 +3,7 @@
 // same state folders. Each server must read every secret the other stored, and no secret may
 // be lost or written to `settings.json` in clear text.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/secrets-interop.mjs <release dir>
+//   node crates/conn-server/tools/secrets-interop.mjs <release dir>
 //
 // `<release dir>` holds `conn-server` and `examples/settings_secrets`. The second opens a state
 // folder as the server does at start and compares what it reads with the expected values (it

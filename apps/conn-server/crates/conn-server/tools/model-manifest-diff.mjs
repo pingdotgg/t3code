@@ -4,7 +4,7 @@
 // server writes (`examples/model_manifest_cache`), for the manifest bundled at the pin. Also
 // checks that both accept that manifest. No network, no model.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/model-manifest-diff.mjs <examples/model_manifest_cache>
+//   node crates/conn-server/tools/model-manifest-diff.mjs <examples/model_manifest_cache>
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 

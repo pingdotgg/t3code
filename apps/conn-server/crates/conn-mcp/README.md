@@ -322,8 +322,8 @@ is the cost that grows. It also always answers over SSE. Ours is about 300 lines
   both servers on throwaway state (the T3 server gets a temp `T3CODE_HOME` and a free port),
   same inputs, outcomes and result shapes compared. By default it calls no model: it skips the thread launch
   and every step on that thread. `--model` runs them too, with one Haiku turn on the T3 server.
-- The tools take the Conn monorepo root from `CONN_MONOREPO` (the root `tools/monorepo.mjs`).
-  There is no default. Run them from the repository root.
+- The tools read the Conn monorepo two levels above `apps/conn-server`
+  (`tools/monorepo.mjs`). Run them from `apps/conn-server`.
 
 ## Agent wiring
 

@@ -1,5 +1,5 @@
 // Drives a conn-server binary with Conn's client-runtime pairing and Effect's RpcClient.
-// With CONN_MONOREPO set (after `vp i` there): `node <this file> target/debug/conn-server`, or
+// After `vp i` at the monorepo root: `node <this file> target/debug/conn-server`, or
 // `node <this file> target/debug/examples/effect_fixture --fixture` for the ack window.
 // With DECODE_COVERAGE=<file>, appends each tag whose answer decoded with the client's own
 // decoders, for decode-coverage.mjs. Every folder it touches is a temp folder.

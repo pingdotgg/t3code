@@ -1,7 +1,7 @@
 // Settings differential check: the same stored settings and patch go through the T3 server's
 // own functions and through a conn-server binary, and the results must agree.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/settings-diff.mjs <conn-server binary>
+//   node crates/conn-server/tools/settings-diff.mjs <conn-server binary>
 //
 // For each case in settings-cases.json, on a fresh temp state folder:
 // - conn-server: settings.json holds `stored`; the tool pairs, calls `server.updateSettings`

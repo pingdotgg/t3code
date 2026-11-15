@@ -2,7 +2,7 @@
 // Writes src/catalog.jsonl: the tools in tools.implemented, as apps/server's tools/list sends
 // them, built in process from McpHttpServer.layerTools. `--check` exits 1 on drift;
 // `--all <file>` writes every tool, with `x-conn-hiddenFor` on filtered ones. Needs `vp i`
-// in the monorepo (`CONN_MONOREPO`).
+// in the monorepo.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";

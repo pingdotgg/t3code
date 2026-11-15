@@ -1,6 +1,6 @@
 // Replays fixtures/sessions/<scenario>.ndjson against a conn-server binary through Effect's
 // RpcClient and checks every answer decodes or is the explicit not-supported defect.
-// With CONN_MONOREPO set: node <this file> target/debug/examples/replay_server [scenario...].
+// After `vp i` at the monorepo root: node <this file> target/debug/examples/replay_server [scenario...].
 // `replay_server` runs the engine's fake provider, so no model is called.
 // With DECODE_COVERAGE=<file>, appends each tag whose answer decoded (a value, a first stream
 // item, a stream that ended, or a typed error) for decode-coverage.mjs.

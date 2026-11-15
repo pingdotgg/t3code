@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Records real web-client sessions against the TypeScript server in CONN_MONOREPO.
+// Records real web-client sessions against the TypeScript server in the monorepo.
 // Usage: record.mjs [scenario ...] [--explore] [--rust <binary> | --rust-url <pairingUrl>]
 //   [--rust-sample <command>] [--out <dir>]. rust-* scenarios pair the Rust server as a remote
 //   environment. `--out` writes the recordings there instead of ../sessions. See ../README.md.

@@ -2,7 +2,7 @@
 // The T3 server's own replay fixtures (`apps/server/src/orchestration-v2/testkit`) through
 // this engine and our providers, judged by T3's own assertions.
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver> | --only '*/<driver>']
+//   node crates/conn-engine/tools/t3-fixture-replay/check.mjs [--keep] [--only <fixture>/<driver> | --only '*/<driver>']
 //
 // How: one temporary vitest file in that testkit folder registers T3's fixture tests
 // (`itRunsReplayFixtures`, one per fixture and driver) and runs each with T3's own
@@ -13,7 +13,7 @@
 // `cargo run --example t3_fixture_replay` (this engine, the real provider, a stub CLI that
 // replays the recorded transcript) and returns that run's events, projections and shell
 // snapshots, decoded with the contract's own schemas. So the fixtures, the steps and the
-// assertions all come from `CONN_MONOREPO`, and an upstream change shows here.
+// assertions all come from the monorepo, and an upstream change shows here.
 //
 // The temporary file is created only when no other run's file is there, and is removed on
 // exit. No model is called.

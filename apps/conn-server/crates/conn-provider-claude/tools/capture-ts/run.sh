@@ -4,13 +4,14 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
-repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
+# The Conn monorepo root: the same tree, after `vp i` there.
+repo="$(cd "$here/../../../../../.." && pwd)"
 adapters="$repo/apps/server/src/orchestration-v2/Adapters"
 # The copy's name carries this run's PID, so runs side by side on one checkout do not collide.
 name="claudeCapture.$$.tmp.test.ts"
 copy="$adapters/$name"
 
-[ -d "$adapters" ] || { echo "CONN_MONOREPO=$repo has no apps/server Adapters directory" >&2; exit 1; }
+[ -d "$adapters" ] || { echo "$repo has no apps/server Adapters directory" >&2; exit 1; }
 
 export CAPTURE_CLI_DIR="${CAPTURE_CLI_DIR:-$crate/testdata/cli}"
 export CAPTURE_OUT_DIR="${CAPTURE_OUT_DIR:-$crate/testdata/ts}"

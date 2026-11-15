@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Regenerates src/model_catalog.json from the T3 server's bundled Claude model catalog.
-#   CONN_MONOREPO=/path/to/conn ./run.sh [--check]
+#   ./run.sh [--check]
 # --check writes to a temp file and exits 1 when src/model_catalog.json differs from it.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 crate="$(cd "$here/../.." && pwd)"
-repo="${CONN_MONOREPO:?set CONN_MONOREPO to a Conn monorepo checkout at conn.pin, after vp i}"
+# The Conn monorepo root: the same tree, after `vp i` there.
+repo="$(cd "$here/../../../../../.." && pwd)"
 # The copy's name carries this run's PID, so runs side by side on one checkout do not collide.
 name="claudeCatalogDump.$$.tmp.test.ts"
 copy="$repo/apps/server/src/$name"

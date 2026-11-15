@@ -1,7 +1,7 @@
 // Registry differential check: T3's host definition registry and ours answer the same cases,
 // and every answer must be equal.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-source-control/tools/registry-diff.mjs <examples/registry_cases binary>
+//   node crates/conn-source-control/tools/registry-diff.mjs <examples/registry_cases binary>
 //
 // T3's side is `builtInSourceControlDefinitions` (packages/source-control-definitions) and
 // `makeThreadPullRequests` bound to it, loaded from the monorepo. Ours is

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Writes the hand-made ACP scenarios in testdata/<flavor>-scenarios/ from recorded T3 test kit
-// transcripts in the Conn monorepo at CONN_MONOREPO:
+// transcripts in the Conn monorepo:
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/make-scenarios.mjs
+//   node crates/conn-provider-acp/tools/make-scenarios.mjs
 //
 // A scenario covers a path that no T3 recording has. Each is a recorded transcript with turns
 // changed or added by the rules below, and an `input.json` (T3's `OrchestratorFixtureInput`).

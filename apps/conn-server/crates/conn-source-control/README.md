@@ -5,7 +5,7 @@ Bitbucket and Azure DevOps (the T3 server's order). We reach each host exactly a
 server's driver does: the same CLI calls with the same argv and environment, the same API
 requests with the same method, path, headers and body. The T3 sources are
 `packages/source-control-*` and `apps/server/src/{sourceControl,pullRequest,git}` in the Conn
-monorepo at `conn.pin`.
+monorepo.
 
 ## What is served now
 

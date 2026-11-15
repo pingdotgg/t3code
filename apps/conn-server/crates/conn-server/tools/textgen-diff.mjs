@@ -2,7 +2,7 @@
 // server's run the same cases against one loopback model API stub, and the answers and the
 // requests must agree.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/textgen-diff.mjs <examples/text_generation binary>
+//   node crates/conn-server/tools/textgen-diff.mjs <examples/text_generation binary>
 //
 // - Requests: `TextGenerators.listModels` and a thread title through `TextGenerators.runner`
 //   and `fromRunner(...).generateThreadTitle` (apps/server/src/textGeneration,

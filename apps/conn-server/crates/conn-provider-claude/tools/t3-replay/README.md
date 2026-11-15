@@ -8,7 +8,7 @@ projection of the options, `prompt.offer`, `query.interrupt`, `permission.respon
 calls, so the same transcripts test the Conn Server's Claude session:
 
 ```sh
-CONN_MONOREPO=/path/to/conn ./run.sh            # needs node
+./run.sh            # needs node
 ```
 
 `fake-host.mjs` stands in for the SDK host and replays one transcript; `examples/t3_replay.rs`
@@ -28,7 +28,7 @@ texts come from the transcript). Every outbound frame must equal the recorded on
 `turn_interrupt_mid_tool`, `turn_interrupt_restart`.
 
 Each scenario's runtime policy comes from T3's own fixture table: `policies.mjs` imports
-`testkit/fixtures/index.ts` from `CONN_MONOREPO` and prints the thread's modes and the
+`testkit/fixtures/index.ts` from the monorepo and prints the thread's modes and the
 scenario's `runtimePolicyOverride`, which T3's harness lays over the policy
 (`RuntimePolicy.layerWithOverride`).
 

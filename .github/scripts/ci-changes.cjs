@@ -10,6 +10,9 @@ const INERT = [
   /^\.(agents|cursor|vscode|devcontainer|macroscope|repos)\//,
   /^[^/]+\.md$/,
   /^LICENSE$/,
+  // The Conn Server (Rust) has its own workflows (conn-server-*.yml); no Conn job reads it.
+  /^apps\/conn-server\//,
+  /^\.github\/workflows\/conn-server-/,
 ];
 
 // Shared test setup and vendored mobile dependencies affect every package.

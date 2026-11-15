@@ -2,7 +2,7 @@
 // Conformance check for Codex's status probe: does conn-provider-codex probe `codex
 // app-server` and build the `ServerProvider` entry exactly as the T3 server does?
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/probe-conformance/run.mjs [--keep] [scenario ...]
+//   node crates/conn-provider-codex/tools/probe-conformance/run.mjs [--keep] [scenario ...]
 //
 // No real CLI runs and no model is called. Each scenario gives a stub `codex`
 // (stub-codex.mjs) a behaviour: missing, an old CLI without app-server, hanging, failing,

@@ -2,7 +2,7 @@
 // Conformance check for Claude's status probe: does conn-provider-claude probe the `claude`
 // CLI and build the `ServerProvider` entry exactly as the T3 server does?
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-claude/tools/probe-conformance/run.mjs [--keep] [scenario ...]
+//   node crates/conn-provider-claude/tools/probe-conformance/run.mjs [--keep] [scenario ...]
 //
 // No real CLI runs and no model is called. Each scenario gives a stub `claude`
 // (stub-claude.mjs) a behaviour: missing, failing or hanging on `--version`, an old version,

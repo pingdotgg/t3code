@@ -4,7 +4,7 @@
 // be equal.
 //
 //   cargo build --release -p conn-features --examples
-//   CONN_MONOREPO=<conn checkout> node crates/conn-features/tools/webhook-diff.mjs target/release/examples/webhook_functions
+//   node crates/conn-features/tools/webhook-diff.mjs target/release/examples/webhook_functions
 //
 // The cases: every case of T3's three test files, and edge cases (currency signs, nested
 // wildcards, numbers, duplicate keys, key order, malformed percent escapes, form bodies,

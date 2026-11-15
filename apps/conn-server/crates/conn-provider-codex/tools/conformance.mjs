@@ -2,7 +2,7 @@
 // Conformance check for the Codex launch and wire: does conn-provider-codex start
 // `codex app-server` and write to it exactly as the T3 server's CodexAdapterV2 does?
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/conformance.mjs [--keep] [scenario ...]
+//   node crates/conn-provider-codex/tools/conformance.mjs [--keep] [scenario ...]
 //
 // No model is called. Both sides start a stub `codex` (tools/codex-stub.mjs) that records its
 // argv, environment and every stdin line, and replays a recorded app-server transcript:

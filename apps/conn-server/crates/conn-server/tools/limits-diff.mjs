@@ -3,7 +3,7 @@
 // case's `ok`. The Rust test `limits::tests::cases_agree_with_the_contract` runs the same cases
 // through `limits::check`, so both sides agree on every case.
 //
-//   CONN_MONOREPO=<conn checkout> node crates/conn-server/tools/limits-diff.mjs
+//   node crates/conn-server/tools/limits-diff.mjs
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 

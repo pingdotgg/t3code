@@ -8,7 +8,8 @@ the T3 server (`apps/server` in the Conn monorepo, TypeScript on Effect) with a 
 memory footprint. We reproduce behaviour at three boundaries (the client contract, `/mcp`, the
 provider protocols). We do not translate the TypeScript.
 
-**Base:** Conn `origin/main` at `b12470dcadd6320324abb28f90d224660c9c04c8` (2026-11-14). `conn.pin` holds it.
+**Base:** the Conn monorepo this folder sits in (`apps/conn-server` of `nckrtl/conn`). The tools
+read the contract, the web client and `apps/server` from the same tree.
 **Contract:** `crates/conn-contract/methods.json` records the commit in which `packages/contracts`
 last changed.
 
@@ -57,24 +58,28 @@ browser) does not work; use Connections.
 
 ## Checks
 
-Run every check from this repository. One command runs all checks that need no model:
+Run every check from `apps/conn-server`. One command runs all checks that need no model:
 
 ```sh
-CONN_MONOREPO=/path/to/conn tools/check.sh
+(cd ../.. && vp i)                    # once: the monorepo's node_modules
+(cd helpers/sdk-host && npm ci)       # once: else the Claude checks are skipped
+tools/check.sh
 ```
 
-`CONN_MONOREPO` names a Conn monorepo checkout at the pinned commit, after `vp i`. It holds the
-contract, the client code and the TypeScript server that the Node tools load; they resolve
-`effect`, `@t3tools/*` and Playwright from its `node_modules`. This repository has no
-`node_modules` of its own. There is no default: a tool that needs the monorepo stops with one
-line when the variable is missing. Without it, `tools/check.sh` runs the Rust checks and
-`orbit-flow.mjs`, and lists what it skipped.
+The Node tools load the contract, the client code and the TypeScript server from the monorepo
+two levels up (`tools/monorepo.mjs`), and resolve `effect`, `@t3tools/*` and Playwright from its
+`node_modules`. The Conn Server has no `node_modules` of its own. `tools/check.sh` stops with
+one line when the monorepo has no `node_modules`.
+
+In CI, `.github/workflows/conn-server-ci.yml` runs the Rust jobs on changes to
+`apps/conn-server`, and `conn-server-checks.yml` runs `tools/check.sh` on changes to
+`apps/conn-server` or `packages/contracts`. The nightly upstream sync runs neither.
 
 `tools/check.sh` runs, in order:
 
 | Check               | Command                                                                                                                         | Proves                                                                                               |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Toolchain pin       | `rust-toolchain.toml` against `RUST_TOOLCHAIN` in `.github/workflows/ci.yml`                                                    | CI builds with the pinned toolchain                                                                  |
+| Toolchain pin       | `rust-toolchain.toml` against `RUST_TOOLCHAIN` in the monorepo's `.github/workflows/conn-server-*.yml`                          | CI builds with the pinned toolchain                                                                  |
 | Format, lint, tests | `cargo fmt --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`           | All crates, offline, under the lint set (`CRATES.md`, "Lint set")                                    |
 | Release build       | `cargo build --release --workspace --bins --examples`                                                                           | The binaries below build                                                                             |
 | Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
@@ -134,11 +139,11 @@ Checks that call a model are not in `tools/check.sh`:
 - `orbit-flow.mjs target/release/conn-server`: one Haiku turn.
 - The recorder with `--rust target/release/conn-server`.
 
-**Real web client.** The recorder (`fixtures/recorder`) drives the web client built in
-`CONN_MONOREPO` in headless Chromium. On the fake provider:
+**Real web client.** The recorder (`fixtures/recorder`) drives the monorepo's web client in
+headless Chromium. On the fake provider:
 
 ```sh
-(cd "$CONN_MONOREPO/apps/web" && vp build)
+(cd ../web && vp build)
 node fixtures/recorder/record.mjs pairing rust-turn rust-restart rust-vcs rust-files \
   rust-terminal rust-settings rust-search rust-worktree \
   --rust target/release/examples/replay_server --out /tmp/conn-recordings
@@ -148,13 +153,15 @@ See [`fixtures/README.md`](fixtures/README.md) for every scenario and which need
 
 ## Upkeep
 
-`conn.pin` is the one place the Conn commit is written. Two commands keep it current; see
-[`docs/upkeep.md`](docs/upkeep.md) for what the nightly bot runs.
+The Conn Server follows the Conn commit it is part of. When Conn moves (an upstream sync, a
+contract change), `tools/follow-conn.sh` regenerates every generated file, runs
+`tools/check.sh` and prints what changed since the Conn Server last followed. It does not
+commit. See [`docs/upkeep.md`](docs/upkeep.md).
 
-- `tools/conn-checkout --source <git dir or URL>` makes a Conn checkout at the pin (or updates
-  one) and prints the `CONN_MONOREPO` line to export.
-- `CONN_MONOREPO=<checkout at the new commit> tools/bump-conn.sh` moves the pin, regenerates,
-  runs `tools/check.sh` and prints what changed. It does not commit.
+Releases: push a tag `conn-server-v<version>` (the `conn-server` crate's version) to
+`nckrtl/conn`. `.github/workflows/conn-server-release.yml` builds
+`conn-server-<version>-linux-x64.tar.gz` and its `.sha256` and attaches them to a GitHub
+Release, which Orbit downloads.
 
 ## Crates
 
@@ -554,7 +561,7 @@ host for all sessions: about 44 MB of private memory on macOS arm64.
   proves that the `claude` CLI gets the same argv, environment and stdin from the Conn Server
   as from the T3 server. `crates/conn-provider-claude/tools/t3-replay/run.sh` replays the T3
   server's own Claude transcripts against our session (18 of 39 pass, all that it drives; its
-  README lists the rest with reasons). Both need `CONN_MONOREPO`, and `tools/check.sh` runs both.
+  README lists the rest with reasons). `tools/check.sh` runs both.
 - **Live:** `cargo test -p conn-provider-claude live_ -- --ignored --test-threads=1` runs
   11 tests on Claude Haiku through the SDK host.
 

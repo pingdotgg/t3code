@@ -2,7 +2,7 @@
 // Conformance check for the ACP launch and wire: does conn-provider-acp start an agent and
 // write to it exactly as the T3 server's adapter does?
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/conformance.mjs [--keep] [fixture ...]
+//   node crates/conn-provider-acp/tools/conformance.mjs [--keep] [fixture ...]
 //
 // No agent starts and no model is called. Both sides start a stub agent (tools/acp-stub.mjs)
 // that records its argv, environment and every stdin line, and answers with the T3 server's

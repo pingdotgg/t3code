@@ -1,74 +1,37 @@
 // The one way the tools find their inputs.
-// - `repoRoot`: this repository (conn-server).
-// - `monorepo()`: the Conn monorepo root from `CONN_MONOREPO`. There is no default: without
-//   the variable the tool stops with one line that says what to set. It warns once when the
-//   checkout is not at the commit in `conn.pin` (make one with `tools/conn-checkout`).
-// - `pinnedCommit()`: the Conn commit in `conn.pin`, the one place the pin is written.
+// - `repoRoot`: the Conn Server (`apps/conn-server`).
+// - `monorepo()`: the Conn monorepo root, two levels up: the same tree, so the contract, the web
+//   client and `apps/server` are always the ones this commit carries.
 // Packages such as `effect`, `@t3tools/*` and `playwright-core` resolve from the monorepo's
-// `node_modules`; this repository has none of its own.
-import * as NodeChildProcess from "node:child_process";
+// `node_modules` (`vp i` at the root); the Conn Server has none of its own.
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { gitEnv } from "./sealed-env.mjs";
 
 export const repoRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "..",
 );
 
+/** The Conn monorepo root, whether or not it is installed. */
+export const monorepoRoot = NodePath.resolve(repoRoot, "../..");
+
 let cached;
 
-/** The Conn commit this repository pins (`conn.pin`), or undefined when the file is missing. */
-export function pinnedCommit() {
-  const file = NodePath.join(repoRoot, "conn.pin");
-  if (!NodeFS.existsSync(file)) return undefined;
-  return NodeFS.readFileSync(file, "utf8").split("\n")[0].trim();
-}
-
-function warnWhenNotPinned(root) {
-  const pin = pinnedCommit();
-  if (pin === undefined) return;
-  let head;
-  try {
-    head = NodeChildProcess.execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      env: gitEnv(),
-    }).trim();
-  } catch {
-    return;
-  }
-  if (head !== pin) {
-    console.error(
-      `warning: CONN_MONOREPO is at ${head.slice(0, 10)}, conn.pin says ${pin.slice(0, 10)} (tools/conn-checkout makes a checkout at the pin).`,
-    );
-  }
-}
-
-/** The Conn monorepo root. Exits 2 with one line when `CONN_MONOREPO` is unset or wrong. */
+/** The Conn monorepo root. Exits 2 with one line when it has no `node_modules`. */
 export function monorepo() {
   if (cached !== undefined) return cached;
-  const value = process.env.CONN_MONOREPO;
-  if (value === undefined || value === "") {
-    console.error(
-      "CONN_MONOREPO is not set: set it to a Conn monorepo checkout after `vp i` (CONN_MONOREPO=/path/to/conn).",
-    );
+  if (!NodeFS.existsSync(NodePath.join(monorepoRoot, "packages/contracts/package.json"))) {
+    console.error(`${monorepoRoot} is not the Conn monorepo (no packages/contracts).`);
     process.exit(2);
   }
-  const root = NodePath.resolve(value);
-  if (!NodeFS.existsSync(NodePath.join(root, "packages/contracts/package.json"))) {
-    console.error(`CONN_MONOREPO=${root} is not a Conn monorepo (no packages/contracts).`);
+  if (!NodeFS.existsSync(NodePath.join(monorepoRoot, "node_modules"))) {
+    console.error(`${monorepoRoot} has no node_modules: run \`vp i\` at the monorepo root first.`);
     process.exit(2);
   }
-  if (!NodeFS.existsSync(NodePath.join(root, "node_modules"))) {
-    console.error(`CONN_MONOREPO=${root} has no node_modules: run \`vp i\` there first.`);
-    process.exit(2);
-  }
-  warnWhenNotPinned(root);
-  cached = root;
-  return root;
+  cached = monorepoRoot;
+  return cached;
 }
 
 /** A path inside the monorepo. */

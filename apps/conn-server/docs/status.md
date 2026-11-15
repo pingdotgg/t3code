@@ -4,8 +4,24 @@
 says where the work stands, what is proven, and what is left, in order. Keep it true: update
 it with every merged step.
 
-Nothing in the Conn repository depends on this repository yet. No container, desktop or mobile
-client uses the Conn Server.
+Since 2026-11-15 the Conn Server lives in the Conn monorepo, in `apps/conn-server`. Nothing in
+Conn depends on it yet. No container, desktop or mobile client uses the Conn Server.
+
+## Moved into the monorepo (2026-11-15)
+
+The history of `hardimpactdev/conn-server` (main at `e336738`) came in with `git subtree`.
+`conn.pin`, `CONN_MONOREPO`, `tools/conn-checkout` and `tools/bump-conn.sh` are gone: the tools
+read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and reports.
+
+- **Proven:** with the monorepo at the old pin (`b12470dcad`) and the move applied,
+  `tools/check.sh` passes 44 of 44, none skipped, the canary clean (macOS).
+- **Not yet followed:** Conn `main` moved past the old pin (the 2026-11-15 sync). On that tree
+  `tools/follow-conn.sh --since b12470dcad` is red: the review diff's new `changeType` (ported
+  on a branch), `canonicalRepositoryKey` now percent-encodes (`registry-diff`), T3's Claude
+  launch sends a Stop hook and `rename_session` (`claude conformance`), the Codex harness needs
+  a `PortDiscovery` mock (`codex conformance`), and `claude_background_monitor_wake` changed
+  (`t3 fixture replay`). Until that lands, `conn-server-checks.yml` is red on this tree.
+- The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
 
 ## Why it was parked for a day, and what that means
 

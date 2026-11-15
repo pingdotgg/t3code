@@ -503,7 +503,7 @@ function lintFiles() {
       if (["node_modules", "target", ".git", "generated"].includes(entry.name)) continue;
       const full = NodePath.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.(rs|mjs|js|cjs|ts|sh)$/.test(entry.name) || /^(run|stub-claude|conn-checkout|bump-conn)/.test(entry.name)) out.push(full);
+      else if (/\.(rs|mjs|js|cjs|ts|sh)$/.test(entry.name) || /^(run|stub-claude|follow-conn)/.test(entry.name)) out.push(full);
     }
   };
   for (const dir of ["tools", "crates", "helpers", "fixtures/recorder"]) walk(NodePath.join(repo, dir));

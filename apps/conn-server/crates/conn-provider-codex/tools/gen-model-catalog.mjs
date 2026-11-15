@@ -4,7 +4,7 @@
 // the `codex` driver. The status probe applies it as `applyCodexModelCatalog` does (legacy
 // models, the default, and models that need a newer CLI).
 //
-//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-codex/tools/gen-model-catalog.mjs [--check]
+//   node crates/conn-provider-codex/tools/gen-model-catalog.mjs [--check]
 //
 // `--check` exits 1 when the file is out of date. Plain JSON: no T3 code runs.
 import * as NodeFS from "node:fs";

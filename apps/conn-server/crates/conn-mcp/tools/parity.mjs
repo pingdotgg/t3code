@@ -4,7 +4,7 @@
 // the thread launch and every step on its thread are skipped. `--model` runs them too, with
 // one Haiku turn on the T3 server. `--no-model` is accepted and is the default.
 // Usage: parity.mjs [--model] [--record-tools-list <file>] <conn-server-binary>. Needs `vp i`
-// in `CONN_MONOREPO`. `--record-tools-list` also writes the T3 server's `tools/list` reply to
+// in the monorepo. `--record-tools-list` also writes the T3 server's `tools/list` reply to
 // <file>: after a pin bump, refresh `fixtures/ts-tools-list.json` with it (docs/upkeep.md).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";

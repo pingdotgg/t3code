@@ -1,6 +1,6 @@
 // Writes packages/shared's default keybindings to keybindings.defaults.json (compiled in) and
 // their TypeScript compile to keybindings.resolved.json (tests). `--check` fails when stale.
-// Needs a Conn checkout after `vp i` in `CONN_MONOREPO`.
+// Needs `vp i` at the Conn monorepo root.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";

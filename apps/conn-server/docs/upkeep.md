@@ -1,64 +1,54 @@
 # Upkeep: keep the Conn Server in step with Conn
 
-The Conn Server follows one Conn commit. `conn.pin` holds it. Each night the bot merges
-upstream T3 Code into Conn. After that merge, the same run moves the pin here and checks
-what broke. No step calls a model.
+The Conn Server lives in the Conn monorepo (`apps/conn-server`), so it always meets the Conn
+commit it is part of. Every generator reads this tree, and a generated file that differs from
+it fails a check. No step calls a model.
+
+## When the checks run
+
+- `.github/workflows/conn-server-ci.yml` (format, clippy, tests, cargo-deny, the musl build)
+  runs on pull requests and pushes to `main` that change `apps/conn-server`.
+- `.github/workflows/conn-server-checks.yml` (`tools/check.sh`, every check against the
+  monorepo) runs on pull requests and pushes to `main` that change `apps/conn-server` or
+  `packages/contracts`.
+- **The nightly upstream sync skips both, for now** (Nick, 2026-11-15). ForkBot's `sync/*`
+  branches are not watched, and each job skips a push or pull request that carries a ForkBot
+  commit (`forkbot@nckrtl.local`) or comes from a `sync/*` branch. So the sync can move the
+  contract or `apps/server` without a red Conn Server check, and the drift shows at the next
+  Conn Server change or contract change. Run `tools/follow-conn.sh` after a sync to see it
+  early.
 
 ## The tools
 
 | Command | What it does |
 | --- | --- |
-| `tools/conn-checkout --source <git dir or URL> [--commit <sha>] [--dest <dir>] [--web]` | Makes or updates a Conn checkout, runs `vp i` when the lockfile changed, and prints `export CONN_MONOREPO=…`. From a local Git directory it adds a detached worktree and never touches that repository's working tree. |
-| `CONN_MONOREPO=<checkout> tools/bump-conn.sh [<commit>] [--capture]` | Writes `conn.pin`, regenerates the contract, the `/mcp` catalog and texts, the keybindings, the upstream tables (`tools/gen-upstream.mjs`: scopes, settings keys, HTTP routes, the T3 server version, settings secrets), the Codex instruction text and the Claude model catalog, runs `tools/check.sh`, and prints the report. `--capture` also regenerates the provider crates' reference events (about 2 minutes). It never commits. It exits 1 when a step fails, or when the contract has more Opaque fallbacks than before. |
-| `CONN_MONOREPO=<checkout> tools/check.sh` | Every check that needs no model. |
+| `tools/follow-conn.sh [--since <commit>] [--capture] [--no-checks]` | Regenerates the contract, the `/mcp` catalog and texts, the keybindings, the upstream tables (`tools/gen-upstream.mjs`: scopes, settings keys, HTTP routes, the T3 server version, settings secrets), the Codex and ACP instruction texts and the Claude model catalog, runs `tools/check.sh`, and prints the report of what moved in Conn since `<commit>` (default: the last commit that changed `apps/conn-server`). `--capture` also regenerates the provider crates' reference events (about 2 minutes). It never commits. It exits 1 when a step fails, or when the contract has more Opaque fallbacks than before. |
+| `tools/check.sh` | Every check that needs no model. |
 
-`bump-conn.sh` keeps its log and report in `target/bump-conn/<commit>.{log,report.txt}`.
-
-## What the bot runs
-
-Run this in a clean checkout of `conn-server`, on a new branch, after the sync merge is on
-Conn `main`. `<conn>` is a Conn Git directory or a URL with read access to `nckrtl/conn`.
-`<sha>` is the new Conn `main` commit.
-
-```sh
-git switch -c conn-bump/$(date +%F)
-eval "$(tools/conn-checkout --source <conn> --commit <sha>)"
-(cd helpers/sdk-host && npm ci)    # else the Claude conformance check is skipped
-tools/bump-conn.sh <sha> --capture | tee bump-report.txt
-```
-
-1. The checkout must be the bot's own. Never point `CONN_MONOREPO` at a checkout that
-   another job uses.
-2. `tools/conn-checkout` keeps one checkout in `~/.cache/conn-server/conn` and moves it to
-   each new commit. The second night costs one `vp i` at most.
-3. Install `cargo-deny` on the bot's machine. Without it, `check.sh` skips that check and
-   says so.
+`follow-conn.sh` keeps its log and report in `target/follow-conn/<commit>.{log,report.txt}`.
+Run it in your own checkout or worktree, after `vp i` at the root and `npm ci` in
+`helpers/sdk-host`: `--capture` puts temporary test files into the monorepo's `apps/server`.
 
 ## Green (exit 0)
 
-1. Commit every change on `conn-bump/<date>`, with the report as the commit body.
-2. Merge it into `main` here. (When this repository has a remote: push the branch and
-   open a pull request, only when Nick allows it.)
-3. Post the report where the Conn sync result goes. Read **What to do** at its top first:
-   it lists the red checks, the served methods and `/mcp` tools that changed shape, the
-   provider parts with upstream commits and the state of their conformance checks, pins that
-   differ, and changed reference events. A green bump can still list work there.
+1. Commit every change on a branch, with the report as the commit body, and open a pull
+   request when Nick allows it. The Conn Server checks run on it.
+2. Read **What to do** at the top of the report: it lists the red checks, the served methods
+   and `/mcp` tools that changed shape, the provider parts with upstream commits and the state
+   of their conformance checks, pins that differ, and changed reference events. A green run
+   can still list work there.
 
-A green run can still need work. A new method that we do not serve stays unregistered and
-answers "not supported": that is correct, not a failure. A changed provider file means the
-provider crate may need to follow it.
+A new method that we do not serve stays unregistered and answers "not supported": that is
+correct, not a failure. A changed provider file means the provider crate may need to follow it.
 
 ## Red (exit 1)
 
-1. Do not merge. `main` here keeps the old pin, so it stays green.
-2. Commit the bumped tree as it is on `conn-bump/<date>`, with `WIP: red` in the subject and
-   the report as the body. Keep `target/bump-conn/<commit>.log`.
-3. Post the report with the failed steps. Hand the branch to a person or an agent.
+The tree keeps the regenerated state. Fix it as below, or commit it on a branch with `WIP: red`
+in the subject and the report as the body, and hand the branch to a person or an agent.
 
-## Fix a red bump
+## Fix a red run
 
-Start on the `conn-bump/<date>` branch, with `CONN_MONOREPO` at the new commit. Read the
-report, then the log. Then:
+Read the report, then the log. Then:
 
 | Failed step | Usual cause | Fix |
 | --- | --- | --- |
@@ -76,22 +66,22 @@ report, then the log. Then:
 | `cargo clippy`, `cargo test`, `release build` | A changed method type | Follow the **changed** lines of the report in `crates/conn-server/src/methods`. |
 | `effect-client`, `replay`, `client-check` | The wire, the frame parts or the client reducers moved | Compare with `packages/shared/src/socketFrameParts.ts` and the `effect` version in the lockfile. |
 | `parity` | `/mcp` answers moved | Compare with the T3 server's `/mcp` for the tools in the report. |
-| `cargo test` in `conn-mcp` catalog | `fixtures/ts-tools-list.json` is a T3 `tools/list` from the old pin | `node crates/conn-mcp/tools/parity.mjs --record-tools-list crates/conn-mcp/fixtures/ts-tools-list.json target/release/examples/replay_server` |
+| `cargo test` in `conn-mcp` catalog | `fixtures/ts-tools-list.json` is a T3 `tools/list` from an older Conn | `node crates/conn-mcp/tools/parity.mjs --record-tools-list crates/conn-mcp/fixtures/ts-tools-list.json target/release/examples/replay_server` |
 | `codex conformance`, `claude conformance` | What a CLI is sent moved upstream (argv, environment, the spawn script, a prompt text) | Follow the adapter commits in the report. The diff names the field. A launch difference is a defect, never a listed exception. |
 | `claude t3-replay` | A T3 Claude transcript changed its result | Fix the session; if it is a known gap, list it in `crates/conn-provider-claude/tools/t3-replay/expected-failures.txt` with the reason. A listed one that passes fails too: remove it. |
-| `claude catalog --check` | T3's bundled Claude models moved | `crates/conn-provider-claude/tools/gen-catalog/run.sh` (bump-conn.sh runs it). |
+| `claude catalog --check` | T3's bundled Claude models moved | `crates/conn-provider-claude/tools/gen-catalog/run.sh` (follow-conn.sh runs it). |
 | `gen-upstream` says a settings key "needs …" | A settings patch key needs a new scope set | Teach `gen-upstream.mjs` and `scopes.rs` `settings_scopes` the domain. |
 | `cargo deny` | A new advisory | Plan the crate change; add a dated exception to `deny.toml` only with a reason. |
 
-Then run `tools/check.sh` until it is green, commit, and merge as for a green run.
+Then run `tools/check.sh` until it is green, and commit as for a green run.
 
 For each part in **Upstream commits per part** that changed, read the commits (the report
 prints the subjects) and the diff in Conn (`git diff <old> <new> -- <the part's files>`), and
 compare them with that part here. A served method whose shape changed needs the same: the
 report groups them by the types that moved. When the report says a pin differs
 (`← differs`), move the pin (`helpers/sdk-host/package.json` and `npm install` for the Claude
-Agent SDK; `check-copies` fails until it matches T3's lockfile), then run the bump again with
-`--capture`.
+Agent SDK; `check-copies` fails until it matches T3's lockfile), then run `follow-conn.sh`
+again with `--capture`.
 
 `--capture` runs both capture tools. `tools/reference-events.mjs` then puts back every
 reference file whose events did not change (uuids, capture-day times, temp folder names and
@@ -99,21 +89,24 @@ notes are normalized), so `git diff` shows only real changes, and the report lis
 
 ## Notes
 
-- The bump also works backwards (`tools/bump-conn.sh <older sha>`), for example to find
-  the Conn commit that broke a check.
+- To find the Conn commit that broke a check, check out older commits of the monorepo in a
+  worktree and run `tools/check.sh` there.
 - `tools/upkeep/followed-files.txt` maps Conn pathspecs to the part here that follows them
   (crates and some files of `conn-server`). Add a pathspec when a part starts to follow a
   file. The report lists new upstream files no part follows; that list is for reading, and
-  never fails a bump.
+  never fails a run.
 - `tools/upkeep/http-routes.json` is generated: the T3 server's HTTP routes. The report
   compares it with the routes this server registers.
 - A new upstream method, route or command type that we do not serve is reported, not
   failed. A changed scope, settings secret field or server version changes a generated file
   and shows in the report.
 - `tools/upkeep/mcp-tools.json` holds a digest of each T3 `/mcp` tool. It lets the next
-  bump say which tool changed and which part.
+  run say which tool changed and which part.
 
 ## Bumps
+
+Before the move into the monorepo (2026-11-15) the Conn Server pinned one Conn commit in
+`conn.pin` and moved it with `tools/bump-conn.sh`. These are the records of those bumps.
 
 ### 2026-11-14: b685417bb6 → b12470dcad
 

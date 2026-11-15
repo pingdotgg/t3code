@@ -1,6 +1,6 @@
 # Session recordings
 
-Real client sessions against the TypeScript server at the pinned contract commit, and against
+Real client sessions against the TypeScript server at the contract of this tree, and against
 the Conn Server (`rust-*`). They are the ground truth for what a Conn client sends and
 expects, and the first replay input for `conn-server`. [CONNECT.md](CONNECT.md) reads them for you.
 
@@ -56,13 +56,12 @@ not on an empty list. `remote` records only the second server's traffic.
 
 ## Rerun
 
-Run the recorder from this repository. `CONN_MONOREPO` names a Conn monorepo checkout after
-`vp i`: the recorder runs its TypeScript server and serves its web build, and takes
-Playwright from its `node_modules`. Build the web client there once:
+Run the recorder from `apps/conn-server`, after `vp i` at the monorepo root: the recorder runs
+the monorepo's TypeScript server and serves its web build, and takes Playwright from its
+`node_modules`. Build the web client once:
 
 ```sh
-export CONN_MONOREPO=/path/to/conn
-(cd "$CONN_MONOREPO/apps/web" && vp build)
+(cd ../web && vp build)
 node fixtures/recorder/record.mjs
 ```
 
@@ -131,9 +130,9 @@ and a `failure.png`, and the run exits 1. Do not commit partial files.
 
 ### What the recorder does
 
-- Builds `apps/web` in `CONN_MONOREPO` first if `apps/web/dist` is missing. The server serves
+- Builds the monorepo's `apps/web` first if `apps/web/dist` is missing. The server serves
   that build.
-- Runs `apps/server/src/bin.ts` from `CONN_MONOREPO` under `env -i` with only `HOME`, `USER`,
+- Runs the monorepo's `apps/server/src/bin.ts` under `env -i` with only `HOME`, `USER`,
   `PATH` and `T3CODE_HOME` set, on a free port, with its base directory in a new temp folder.
   It never touches `~/.t3` or a running T3 server. It stops the servers it started by their
   PIDs and deletes the temp folders.

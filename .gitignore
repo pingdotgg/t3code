@@ -12,6 +12,8 @@ packages/*/dist
 .env
 .env.local
 build/
+# The Conn Server's SDK host keeps its build manifest in a folder named build.
+!/apps/conn-server/helpers/sdk-host/build/
 .logs/
 release/
 release-mock/

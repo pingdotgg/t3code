@@ -254,9 +254,9 @@ are moot: `unsafe_code` is `forbid`.
 
 ## A separate repository
 
-`conn-server` now has its own repo. `tools/check.sh` runs every check that needs no model;
-the Node tools take the Conn monorepo from `CONN_MONOREPO` (`tools/monorepo.mjs`). These
-checks keep the repo healthy, with the tool I recommend for each. Recall records an earlier decision (2026-11-04/05) of "no Rust CI for now" for the
+Written when `conn-server` had its own repo; since 2026-11-15 it lives in the Conn monorepo
+(`apps/conn-server`) and the Node tools read the monorepo it sits in (`tools/monorepo.mjs`).
+`tools/check.sh` runs every check that needs no model. These checks keep the repo healthy, with the tool I recommend for each. Recall records an earlier decision (2026-11-04/05) of "no Rust CI for now" for the
 monorepo. A separate repo changes that context, so this needs Nick's call.
 
 | Need | Tool | Notes |
