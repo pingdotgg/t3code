@@ -508,7 +508,7 @@ export const make = Effect.gen(function* () {
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: branch }));
         }).pipe(
           Effect.mapError((cause) =>
-            cause instanceof SourceControlProviderError
+            Schema.is(SourceControlProviderError)(cause)
               ? cause
               : error(
                   "checkoutChangeRequest",
