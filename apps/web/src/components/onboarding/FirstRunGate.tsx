@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   ensureClientSettingsHydrated,
@@ -187,17 +188,18 @@ function FirstRunRecovery({
   readonly reason: "settings" | "connection";
   readonly retrying?: boolean;
 }) {
+  const { t } = useTranslation("onboarding");
   const settingsReadFailed = reason === "settings";
   return (
     <main className="flex h-dvh min-h-0 items-center justify-center bg-background px-6 text-foreground">
       <div className="flex max-w-sm flex-col items-center text-center">
         <h1 className="text-lg font-semibold">
-          {settingsReadFailed ? "Could not read settings" : "Still connecting"}
+          {settingsReadFailed ? t("firstRun.couldNotReadSettings") : t("firstRun.stillConnecting")}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
           {settingsReadFailed
-            ? "Your saved settings could not be loaded."
-            : "T3 Code could not confirm this workspace."}
+            ? t("firstRun.couldNotReadSettingsDescription")
+            : t("firstRun.stillConnectingDescription")}
         </p>
         <Button
           className="mt-5"
@@ -213,7 +215,7 @@ function FirstRunRecovery({
           }}
         >
           <RefreshIcon refreshing={retrying} />
-          {settingsReadFailed ? "Retry" : "Reload"}
+          {settingsReadFailed ? t("firstRun.retry") : t("firstRun.reload")}
         </Button>
       </div>
     </main>

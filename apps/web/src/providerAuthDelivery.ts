@@ -2,6 +2,7 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 
 import { toastManager } from "./components/ui/toast";
+import { translateDynamic } from "./i18nCore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentPresentations } from "./state/presentation";
 import { serverEnvironment } from "./state/server";
@@ -53,15 +54,15 @@ async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<voi
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "ChatGPT sign-in couldn't finish",
-        description: "Return to the provider and try again.",
+        title: translateDynamic("onboarding:providerAuth.chatgptFailedTitle"),
+        description: translateDynamic("onboarding:providerAuth.chatgptFailedReturn"),
       });
     }
   } catch {
     toastManager.add({
       type: "error",
-      title: "ChatGPT sign-in couldn't finish",
-      description: "Reconnect to the environment and try again.",
+      title: translateDynamic("onboarding:providerAuth.chatgptFailedTitle"),
+      description: translateDynamic("onboarding:providerAuth.chatgptFailedReconnect"),
     });
   }
 }

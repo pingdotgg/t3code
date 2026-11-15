@@ -1,0 +1,219 @@
+{
+  "welcome": {
+    "heading": "欢迎使用 T3 Code",
+    "settingUp": "正在设置 <0>{{label}}</1>。",
+    "thisComputer": "这台电脑",
+    "startWithoutAgent": "不配置代理直接开始",
+    "setUpOneAgentToStart": "配置一个代理即可开始。",
+    "importing": "正在导入…",
+    "starting": "正在启动…",
+    "importAndStart_one": "导入 {{count}} 个项目并开始",
+    "importAndStart_other": "导入 {{count}} 个项目并开始",
+    "importThreadsAndStart": "导入线程并开始",
+    "start": "开始"
+  },
+  "toasts": {
+    "finishingSetup": "正在完成设置",
+    "oneMoment": "请稍候。",
+    "someHistoryNotImported": "部分历史记录未导入",
+    "importedThreads_one": "已导入 {{count}} 条线程",
+    "importedThreads_other": "已导入 {{count}} 条线程",
+    "couldNotFinishSetup": "无法完成设置",
+    "couldNotFinishSetupDescription": "设置保存失败，请重试。",
+    "couldNotTurnOn": "无法开启 {{name}}",
+    "couldNotSaveCodexSetup": "无法保存 Codex 设置"
+  },
+  "telemetry": {
+    "notice": "T3 Code 会收集匿名使用数据以改进应用。",
+    "optOut": "如需关闭，请参阅<0>隐私政策</1>。",
+    "see": "请参阅<0>隐私政策</1>。"
+  },
+  "agents": {
+    "title": "代理",
+    "checking": "正在检查 {{label}}…",
+    "cannotControlTerminals": "此连接无法控制终端。",
+    "cannotManageAgents": "此连接无法管理代理。",
+    "addMoreAgents": "添加更多代理",
+    "setUpAnAgent": "配置一个代理",
+    "moreInAcpRegistry": "ACP 注册表中有更多代理",
+    "browse": "浏览",
+    "notInstalled": "未安装",
+    "ready": "就绪",
+    "checkingShort": "正在检查…"
+  },
+  "action": {
+    "turnOn": "开启",
+    "update": "更新",
+    "setUp": "配置",
+    "signIn": "登录",
+    "details": "详情",
+    "install": "安装",
+    "turnOnAria": "开启：{{name}}",
+    "genericAria": "{{action}}：{{name}}"
+  },
+  "terminal": {
+    "run": "在此终端中运行 <0>{{command}}</1>。",
+    "review": "确认命令后按 Enter 运行。",
+    "couldNotOpen": "无法打开设置终端。",
+    "preparing": "正在准备命令...",
+    "retry": "重试",
+    "close": "关闭",
+    "terminalLabel": "安装 {{driver}}"
+  },
+  "projects": {
+    "title": "项目",
+    "looking": "正在从你的 {{sources}} 历史中查找项目…",
+    "couldNotCheck": "无法检查项目。{{error}}",
+    "couldNotCheckAgain": "无法再次检查项目。{{error}}",
+    "scanLimit": "已达扫描上限，部分项目或会话可能缺失。",
+    "retry": "重试",
+    "importSelected_one": "导入 {{count}} 个项目及其线程",
+    "importSelected_other": "导入 {{count}} 个项目及其线程",
+    "importDefault": "导入项目及其线程",
+    "fromHistory": "来自你的 {{sources}} 历史",
+    "hide": "收起",
+    "reviewAll": "查看全部 {{count}} 个",
+    "selectedOf": "已选 {{selected}} / {{total}}",
+    "selectAll": "全选",
+    "selectNone": "全不选",
+    "cannotImport": "此连接无法导入项目或线程历史。",
+    "otherFolders": "其他文件夹",
+    "folderCount_one": "{{count}} 个文件夹",
+    "folderCount_other": "{{count}} 个文件夹",
+    "now": "刚刚"
+  },
+  "importWarning": {
+    "notImportedThreads_one": "{{count}} 条线程未能导入。",
+    "notImportedThreads_other": "{{count}} 条线程未能导入。",
+    "someNotImported": "部分线程历史未能导入。",
+    "couldNotImport": "无法导入线程历史。"
+  },
+  "phone": {
+    "title": "手机",
+    "use": "在手机上使用 T3 Code",
+    "hide": "收起",
+    "setUp": "设置",
+    "scan": "用手机扫码获取应用。",
+    "qrTitle": "iPhone 和 Android 版 T3 Code 应用",
+    "checkingConnect": "正在检查 T3 Connect…",
+    "couldNotCheckConnect": "无法检查 T3 Connect。",
+    "checkConnect": "检查 T3 Connect",
+    "reachable": "你的手机可以连接到这台电脑。请在应用中使用同一账号登录。",
+    "connectOn": "这台电脑已开启 T3 Connect。请在应用中使用同一账号登录。",
+    "connectOnUnreachable": "T3 Connect 已开启，但应用无法连接到这台电脑。",
+    "signedInShare": "已登录。请共享这台电脑，应用才能连接到它。",
+    "setUpConnect": "设置 T3 Connect",
+    "signInHere": "先在这里登录 T3 Connect，再在应用中使用同一账号登录。",
+    "signInButton": "登录 T3 Connect"
+  },
+  "cli": {
+    "added": "已添加到 {{file}}。打开一个新终端即可使用 <0>t3</1>。",
+    "use": "在任意终端中使用 <0>t3</1>。会在 {{file}} 中添加一行。",
+    "addToPath": "添加到 PATH"
+  },
+  "firstRun": {
+    "couldNotReadSettings": "无法读取设置",
+    "stillConnecting": "仍在连接中",
+    "couldNotReadSettingsDescription": "已保存的设置无法加载。",
+    "stillConnectingDescription": "T3 Code 无法确认此工作区。",
+    "retry": "重试",
+    "reload": "重新加载"
+  },
+  "auth": {
+    "context": "代理登录",
+    "incompleteTitle": "此登录链接不完整",
+    "startAgain": "请关闭此页面，并从你的代理重新开始登录。",
+    "ownWindowTitle": "请在独立窗口中打开此页面",
+    "ownWindowDescription": "为安全起见，代理登录不能在其他网站内批准。",
+    "connectingTitle": "正在连接 T3 Connect",
+    "connectingDescription": "正在加载你的账号，请稍候。",
+    "signInToApproveTitle": "登录以批准",
+    "signInToApproveDescription": "请使用此环境所关联的账号登录 T3 Connect。",
+    "signIn": "登录",
+    "useCodeInstead": "改用登录码",
+    "useAnotherAccount": "使用其他账号"
+  },
+  "connect": {
+    "checkingTitle": "正在检查登录请求",
+    "checkingDescription": "此环境正在验证代理的请求，请稍候。",
+    "cannotContinueTitle": "此登录无法继续",
+    "title": "连接 {{name}}",
+    "description": "此代理想使用 <0>{{host}}</1> 上每个项目中的线程。",
+    "app": "应用",
+    "nameSetByApp": "{{name}} <0>· 名称由该应用设置</1>",
+    "accessGoesTo": "访问权授予",
+    "onThisComputer": "（在打开此页面的电脑上）",
+    "whoeverRunsIt": "· 运行它的任何人都会获得此访问权",
+    "onlyApproveJustStarted": "只批准你刚刚发起的登录。",
+    "signInCode": "登录码",
+    "pasteCode": "粘贴登录码",
+    "getCode": "可从「在其他应用中使用 T3 Code」(MCP)、「设置 → 共享与访问」获取，或在这台机器上运行 <0>t3 auth pairing create</1>。",
+    "access": "访问级别",
+    "whatItMayDo": "它可以做什么",
+    "beyondReadOnly": "除只读外，它还可以启动、发送消息和停止线程；任何线程的运行权限都不会超过你选择的模式。",
+    "couldNotContinue": "登录无法继续。",
+    "approving": "正在批准…",
+    "chooseWhatItMayDo": "请选择它可以做什么",
+    "approveLevel": "批准「{{level}}」",
+    "denying": "正在拒绝…",
+    "deny": "拒绝",
+    "unsafeRedirect": "环境返回的地址此页面不会打开。",
+    "unreachable": "无法连接到此环境，请重试。"
+  },
+  "access": {
+    "readOnly": {
+      "label": "只读",
+      "description": "读取项目和线程。无法启动、发送消息或做任何更改。"
+    },
+    "approvalRequired": {
+      "label": "受监督",
+      "description": "执行命令和文件更改前先询问。"
+    },
+    "autoAcceptEdits": {
+      "label": "自动接受编辑",
+      "description": "自动批准编辑，其他操作前先询问。"
+    },
+    "auto": {
+      "label": "自动",
+      "description": "受支持的提供商会批准常规操作；其余仍会询问。"
+    },
+    "fullAccess": {
+      "label": "完全访问",
+      "description": "允许命令和编辑，无需确认。"
+    }
+  },
+  "pairing": {
+    "pendingTitle": "正在与此环境配对",
+    "pendingDescription": "正在验证配对链接并准备会话。",
+    "title": "与此环境配对",
+    "trustedCredential": "此环境需要受信任的配对凭据，应用才能连接。",
+    "enterToken": "输入配对令牌以开始与此环境的会话。",
+    "tokenLabel": "配对令牌",
+    "placeholder": "粘贴一次性令牌或配对密钥",
+    "pairing": "正在配对...",
+    "continue": "继续",
+    "reloadApp": "重新加载应用",
+    "desktopAndOneTime": "此环境同时接受桌面管理的配对和一次性配对令牌。",
+    "desktopManaged": "此环境由桌面应用管理。请从桌面应用打开它，或在明确签发时粘贴引导凭据。",
+    "oneTimeOnly": "此环境接受一次性配对令牌。配对链接可直接打开此页面，你也可以在这里粘贴令牌。",
+    "backendPaired": "后端已配对",
+    "backendFailed": "配对失败",
+    "pairingBackend": "正在配对后端",
+    "connectingBackend": "正在连接此后端。",
+    "missingHost": "此配对链接缺少后端主机或令牌。",
+    "tokenAlreadySubmitted": "此一次性配对令牌已提交过。请重新获取配对链接。",
+    "requestNewLink": "如果后端已接受此一次性令牌，请在重试前重新获取配对链接。",
+    "environmentSaved": "{{label}} 已保存到此浏览器。",
+    "defaultEnvironmentLabel": "该环境",
+    "verifyReachable": "请确认此后端可从此浏览器访问、为托管客户端支持 CORS，并且从此页面以 HTTPS 打开时后端也通过 HTTPS 提供。",
+    "host": "主机",
+    "tryAgain": "再试一次",
+    "openApp": "打开应用",
+    "authFailed": "认证失败。"
+  },
+  "providerAuth": {
+    "chatgptFailedTitle": "ChatGPT 登录未能完成",
+    "chatgptFailedReturn": "请返回提供商并重试。",
+    "chatgptFailedReconnect": "请重新连接环境并重试。"
+  }
+}

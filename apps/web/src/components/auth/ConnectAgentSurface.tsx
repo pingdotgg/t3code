@@ -15,8 +15,10 @@ import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
+import { i18n, translateDynamic } from "~/i18nCore";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
 import {
@@ -45,7 +47,6 @@ export const accessConfig: Record<
 };
 
 const ARM_DELAY_MS = 700;
-const UNSAFE_REDIRECT = "The environment returned an address this page will not open.";
 
 function followRedirect(url: string): boolean {
   const safe = agentRedirectUrl(url);
@@ -62,7 +63,18 @@ type Loaded =
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "ready"; readonly details: AuthMcpApprovalDetails };
 
-const UNREACHABLE = "Could not reach this environment. Try again.";
+/** Maps an access level to its i18n key under `access`; the config keeps the icons. */
+const ACCESS_I18N_KEYS: Record<AuthMcpClientAccess, string> = {
+  "read-only": "access.readOnly",
+  "approval-required": "access.approvalRequired",
+  "auto-accept-edits": "access.autoAcceptEdits",
+  auto: "access.auto",
+  "full-access": "access.fullAccess",
+};
+const accessLabel = (access: AuthMcpClientAccess): string =>
+  translateDynamic(`${ACCESS_I18N_KEYS[access]}.label`);
+const accessDescription = (access: AuthMcpClientAccess): string =>
+  translateDynamic(`${ACCESS_I18N_KEYS[access]}.description`);
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 export type McpApprovalAnswer<A> =
@@ -97,11 +109,16 @@ function runApproval<A>(
       Effect.catch((error) =>
         Effect.succeed<McpApprovalAnswer<A>>({
           kind: "error",
-          message: isApprovalError(error) ? error.message : UNREACHABLE,
+          message: isApprovalError(error)
+            ? error.message
+            : i18n.t("onboarding:connect.unreachable"),
         }),
       ),
     ),
-  ).catch((): McpApprovalAnswer<A> => ({ kind: "error", message: UNREACHABLE }));
+  ).catch((): McpApprovalAnswer<A> => ({
+    kind: "error",
+    message: i18n.t("onboarding:connect.unreachable"),
+  }));
 }
 
 /** This environment's own page, approving with a code or this browser's session. */
@@ -145,6 +162,7 @@ export function McpConsent({
   readonly environmentLabel?: string | undefined;
   readonly footer?: ReactNode;
 }) {
+  const { t } = useTranslation("onboarding");
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
   const [pairingCode, setPairingCode] = useState("");
@@ -166,7 +184,8 @@ export function McpConsent({
     void transport.load(authorization).then((answer) => {
       if (cancelled) return;
       if (answer.kind === "redirect") {
-        if (!followRedirect(answer.url)) setLoaded({ status: "invalid", message: UNSAFE_REDIRECT });
+        if (!followRedirect(answer.url))
+          setLoaded({ status: "invalid", message: t("connect.unsafeRedirect") });
         return;
       }
       setLoaded(
@@ -178,7 +197,7 @@ export function McpConsent({
     return () => {
       cancelled = true;
     };
-  }, [authorization, transport]);
+  }, [authorization, t, transport]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps Approve off briefly after the page shows or regains focus, so a click aimed at another window cannot land on it
   useEffect(() => {
@@ -215,8 +234,8 @@ export function McpConsent({
       answer.kind === "error"
         ? answer.message
         : answer.kind === "redirect"
-          ? UNSAFE_REDIRECT
-          : "The sign-in could not continue.",
+          ? t("connect.unsafeRedirect")
+          : t("connect.couldNotContinue"),
     );
   };
 
@@ -224,8 +243,8 @@ export function McpConsent({
     return (
       <StandalonePage>
         <ConnectAgentHeading
-          title="Checking the sign-in request"
-          description="One moment while this environment verifies the agent's request."
+          title={t("connect.checkingTitle")}
+          description={t("connect.checkingDescription")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </StandalonePage>
@@ -235,10 +254,11 @@ export function McpConsent({
   if (loaded.status === "invalid") {
     return (
       <StandalonePage>
-        <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
-        <p className="mt-4 text-sm text-muted-foreground">
-          Close this page and start the sign-in again from your agent.
-        </p>
+        <ConnectAgentHeading
+          title={t("connect.cannotContinueTitle")}
+          description={loaded.message}
+        />
+        <p className="mt-4 text-sm text-muted-foreground">{t("auth.startAgain")}</p>
         {footer}
       </StandalonePage>
     );
@@ -257,39 +277,41 @@ export function McpConsent({
   return (
     <StandalonePage>
       <ConnectAgentHeading
-        title={`Connect ${details.clientName}`}
+        title={t("connect.title", { name: details.clientName })}
         description={
           <>
-            This agent wants to use the threads in every project on{" "}
-            <span className="font-medium text-foreground">
-              {environmentLabel ?? details.environmentHost}
-            </span>
-            {environmentLabel ? ` (${details.environmentHost})` : null}.
+            <Trans
+              i18nKey={"connect.description" as never}
+              values={{ host: environmentLabel ?? details.environmentHost }}
+              components={[<span className="font-medium text-foreground" key="0" />]}
+            />
+            {environmentLabel ? ` (${details.environmentHost})` : null}
           </>
         }
       />
       <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm">
-        <dt className="text-muted-foreground">App</dt>
+        <dt className="text-muted-foreground">{t("connect.app")}</dt>
         <dd className="min-w-0 break-words">
-          {details.clientName} <span className="text-muted-foreground">· name set by the app</span>
+          <Trans
+            i18nKey={"connect.nameSetByApp" as never}
+            values={{ name: details.clientName }}
+            components={[<span className="text-muted-foreground" key="0" />]}
+          />
         </dd>
-        <dt className="text-muted-foreground">Access goes to</dt>
+        <dt className="text-muted-foreground">{t("connect.accessGoesTo")}</dt>
         <dd className="min-w-0 break-words font-medium">
           {details.redirectHost}
           {redirectsToThisComputer(details.redirectHost) ? (
             <span className="font-normal text-muted-foreground">
               {" "}
-              on the computer that opened this page
+              {t("connect.onThisComputer")}
             </span>
           ) : (
-            <span className="font-normal text-muted-foreground">
-              {" "}
-              · whoever runs it gets this access
-            </span>
+            <span className="font-normal text-muted-foreground"> {t("connect.whoeverRunsIt")}</span>
           )}
         </dd>
       </dl>
-      <p className="mt-2 text-xs text-muted-foreground">Only approve a sign-in you just started.</p>
+      <p className="mt-2 text-xs text-muted-foreground">{t("connect.onlyApproveJustStarted")}</p>
 
       <form
         className="mt-6 space-y-5"
@@ -301,7 +323,7 @@ export function McpConsent({
         {acceptsCode ? (
           <div className="space-y-2">
             <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
-              Sign-in code
+              {t("connect.signInCode")}
             </label>
             <Input
               id="connect-agent-pairing-code"
@@ -311,26 +333,25 @@ export function McpConsent({
               disabled={pending !== null}
               nativeInput
               onChange={(event) => setPairingCode(event.currentTarget.value)}
-              placeholder="Paste a code"
+              placeholder={t("connect.pasteCode")}
               spellCheck={false}
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or{" "}
-              <code>t3 auth pairing create</code> on this machine.
+              <Trans i18nKey={"connect.getCode" as never} components={[<code key="0" />]} />
             </p>
           </div>
         ) : null}
 
         {codeAccess ? (
           <p className="text-sm">
-            <span className="text-muted-foreground">Access</span>{" "}
-            <span className="font-medium">{accessConfig[codeAccess].label}</span>
+            <span className="text-muted-foreground">{t("connect.access")}</span>{" "}
+            <span className="font-medium">{accessLabel(codeAccess)}</span>
           </p>
         ) : (
           <div className="space-y-2">
             <span id="connect-agent-access-label" className="text-sm font-medium">
-              What it may do
+              {t("connect.whatItMayDo")}
             </span>
             <RadioGroup
               aria-labelledby="connect-agent-access-label"
@@ -346,10 +367,7 @@ export function McpConsent({
                 />
               ))}
             </RadioGroup>
-            <p className="text-xs text-muted-foreground">
-              Beyond read only, it can start, message and stop threads, and none of them can run
-              with more than the mode you pick.
-            </p>
+            <p className="text-xs text-muted-foreground">{t("connect.beyondReadOnly")}</p>
           </div>
         )}
 
@@ -362,10 +380,10 @@ export function McpConsent({
         <div className="flex flex-wrap gap-2">
           <Button disabled={!canApprove} type="submit">
             {pending === "approve"
-              ? "Approving…"
+              ? t("connect.approving")
               : approveLevel === null
-                ? "Choose what it may do"
-                : `Approve ${accessConfig[approveLevel].label}`}
+                ? t("connect.chooseWhatItMayDo")
+                : t("connect.approveLevel", { level: accessLabel(approveLevel) })}
           </Button>
           <Button
             disabled={pending !== null}
@@ -373,7 +391,7 @@ export function McpConsent({
             type="button"
             variant="outline"
           >
-            {pending === "deny" ? "Denying…" : "Deny"}
+            {pending === "deny" ? t("connect.denying") : t("connect.deny")}
           </Button>
         </div>
       </form>
@@ -389,7 +407,10 @@ function ConnectAgentHeading({
   readonly title: string;
   readonly description: ReactNode;
 }) {
-  return <StandalonePageHeader context="Agent sign-in" title={title} description={description} />;
+  const { t } = useTranslation("onboarding");
+  return (
+    <StandalonePageHeader context={t("auth.context")} title={title} description={description} />
+  );
 }
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
@@ -414,9 +435,10 @@ export function AccessOption({
   readonly disabledReason: string | undefined;
   readonly description?: string | null;
 }) {
-  const { label, icon: Icon } = accessConfig[access];
+  const { icon: Icon } = accessConfig[access];
+  const label = accessLabel(access);
   const detail =
-    disabledReason ?? (description === undefined ? accessConfig[access].description : description);
+    disabledReason ?? (description === undefined ? accessDescription(access) : description);
   return (
     <RadioPrimitive.Root
       value={access}

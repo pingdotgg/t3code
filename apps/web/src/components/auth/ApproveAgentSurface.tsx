@@ -9,8 +9,10 @@ import { type AuthMcpApprovalDetails, EnvironmentId } from "@t3tools/contracts";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { isElectron } from "../../env";
+import { translateDynamic } from "../../i18nCore";
 import { runConnectMcpApproval } from "../../state/connectMcpApproval";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
@@ -44,7 +46,7 @@ function connectTransport(
         kind: "error",
         message: isUnavailable(result.failure)
           ? result.failure.message
-          : "Could not reach this environment. Try again.",
+          : translateDynamic("onboarding:connect.unreachable"),
       };
     }
     onEnvironment({
@@ -73,6 +75,7 @@ function connectTransport(
  * T3 Connect here and approves with that session, so no sign-in code is needed.
  */
 export function ApproveAgentSurface() {
+  const { t } = useTranslation("onboarding");
   const [environmentId] = useState(readEnvironmentId);
   const [authorization] = useState(readAuthorizationRequest);
   // Another site could frame this page and steer a click onto Approve.
@@ -101,20 +104,12 @@ export function ApproveAgentSurface() {
   }, [framed, isLoaded, isSignedIn]);
 
   if (environmentId === null || transport === null) {
-    return (
-      <Message
-        title="This sign-in link is incomplete"
-        description="Close this page and start the sign-in again from your agent."
-      />
-    );
+    return <Message title={t("auth.incompleteTitle")} description={t("auth.startAgain")} />;
   }
 
   if (framed) {
     return (
-      <Message
-        title="Open this page in its own window"
-        description="For your safety, agent sign-ins cannot be approved inside another site."
-      />
+      <Message title={t("auth.ownWindowTitle")} description={t("auth.ownWindowDescription")} />
     );
   }
 
@@ -122,9 +117,9 @@ export function ApproveAgentSurface() {
     return (
       <StandalonePage>
         <StandalonePageHeader
-          context="Agent sign-in"
-          title="Connecting to T3 Connect"
-          description="One moment while your account loads."
+          context={t("auth.context")}
+          title={t("auth.connectingTitle")}
+          description={t("auth.connectingDescription")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
       </StandalonePage>
@@ -134,12 +129,12 @@ export function ApproveAgentSurface() {
   if (!isSignedIn) {
     return (
       <Message
-        title="Sign in to approve"
-        description="Sign in to T3 Connect with the account this environment is linked to."
+        title={t("auth.signInToApproveTitle")}
+        description={t("auth.signInToApproveDescription")}
       >
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            {t("auth.signIn")}
           </Button>
         </div>
       </Message>
@@ -164,7 +159,7 @@ export function ApproveAgentSurface() {
                 <a href={`${new URL("/connect-agent", environment.url).toString()}?${search}`} />
               }
             >
-              Use a sign-in code instead
+              {t("auth.useCodeInstead")}
             </Button>
           ) : null}
           <Button
@@ -173,7 +168,7 @@ export function ApproveAgentSurface() {
             onClick={() => void clerk.signOut({ redirectUrl: window.location.href })}
             type="button"
           >
-            Use another account
+            {t("auth.useAnotherAccount")}
           </Button>
         </div>
       }
@@ -190,9 +185,10 @@ function Message({
   readonly description: string;
   readonly children?: ReactNode;
 }) {
+  const { t } = useTranslation("onboarding");
   return (
     <StandalonePage>
-      <StandalonePageHeader context="Agent sign-in" title={title} description={description} />
+      <StandalonePageHeader context={t("auth.context")} title={title} description={description} />
       {children}
     </StandalonePage>
   );
