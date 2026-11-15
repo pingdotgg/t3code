@@ -1,7 +1,5 @@
 /// <reference lib="dom" />
-// The DOM lib types the functions these helpers run in the page.
-// Opens the composer's file suggestions under a tall draft, wheels them to one end, and finds
-// where a pointer can still hit a row, for scenarios about short windows.
+// Helpers for composer suggestion scenarios in short windows; the DOM lib types their page code.
 import type { Browser } from "@e2e-dev/web";
 import { expect, type Screen } from "e2e";
 
@@ -96,24 +94,8 @@ export const findHittableRow = (browser: Browser, which: "first" | "last") =>
     { which, names: [...FILE_NAMES, "README.md", "src"] },
   );
 
-/** Clicks a point with the primary pointer button. */
 export async function clickAt(browser: Browser, point: { readonly x: number; readonly y: number }) {
   await browser.mouse.move(point.x, point.y);
   await browser.mouse.down();
   await browser.mouse.up();
 }
-
-/** A point inside the window where `elementFromPoint` lands in the element, or `null`. */
-export const findHitPoint = (browser: Browser, selector: string) =>
-  browser.evaluate((selector) => {
-    const element = document.querySelector(selector);
-    if (!element) return null;
-    const rect = element.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    for (let y = Math.ceil(rect.top) + 1; y < rect.bottom - 1; y += 2) {
-      if (y < 0 || y >= window.innerHeight) continue;
-      const hit = document.elementFromPoint(x, y);
-      if (hit && element.contains(hit)) return { x, y };
-    }
-    return null;
-  }, selector);
