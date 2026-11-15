@@ -53,6 +53,7 @@ describe("resolveTimelineRevealedMessageId", () => {
     const runId = RunId.make("turn-zen-pin");
     const earlierId = MessageId.make("assistant-earlier");
     const laterId = MessageId.make("assistant-later");
+    const citedId = MessageId.make("assistant-cited");
     const message = (id: MessageId, text: string): TimelineEntry => ({
       kind: "message",
       id,
@@ -67,7 +68,11 @@ describe("resolveTimelineRevealedMessageId", () => {
         updatedAt: at,
       },
     });
-    const timelineEntries = [message(earlierId, "First"), message(laterId, "Last")];
+    const timelineEntries = [
+      message(earlierId, "First"),
+      message(citedId, "Cited commentary"),
+      message(laterId, "Last"),
+    ];
     const base = {
       timelineEntries,
       isWorking: false,
@@ -76,8 +81,12 @@ describe("resolveTimelineRevealedMessageId", () => {
       supportsConversationRollback: false,
       toolCallVisibility: "zen" as const,
     };
-    const messageIds = (revealedMessageId: MessageId | null) =>
-      deriveMessagesTimelineRows({ ...base, revealedMessageId })
+    const messageIds = (revealedMessageId: MessageId | null, citedMessageId?: MessageId) =>
+      deriveMessagesTimelineRows({
+        ...base,
+        revealedMessageId,
+        citedMessageId: citedMessageId ?? null,
+      })
         .filter((row) => row.kind === "message")
         .map((row) => row.id);
 
@@ -86,6 +95,8 @@ describe("resolveTimelineRevealedMessageId", () => {
       laterId,
     ]);
     expect(messageIds(resolveTimelineRevealedMessageId(laterId, null))).toEqual([laterId]);
+    expect(messageIds(earlierId, citedId)).toEqual([earlierId, citedId, laterId]);
+    expect(messageIds(citedId, earlierId)).toEqual([earlierId, citedId, laterId]);
   });
 });
 

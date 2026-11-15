@@ -1487,6 +1487,7 @@ function timelineRowEntries(
     | "timelineEntries"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "citedMessageId"
     | "isWorking"
     | "latestRun"
     | "runningRunId"
@@ -1513,6 +1514,7 @@ function timelineRowEntries(
       return (
         message.role !== "assistant" ||
         message.id === input.revealedMessageId ||
+        message.id === input.citedMessageId ||
         steerAnswerIds.has(message.id) ||
         retainedReplyIds.has(entry.id) ||
         (terminalIds.has(message.id) &&
@@ -1580,6 +1582,7 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   toolCallVisibility?: ToolCallVisibility;
   revealedMessageId?: MessageId | null;
+  citedMessageId?: MessageId | null;
 }): MessagesTimelineRow[] {
   const timelineEntries = timelineRowEntries(input);
   const embeddedResultRunIds = new Set<RunId>();
