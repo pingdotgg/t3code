@@ -85,6 +85,6 @@ describe("getChangedBrowserSettingLabels", () => {
         ...DEFAULT_UNIFIED_SETTINGS,
         browserCustomSearchUrl: "https://search.example/?q=%s",
       }),
-    ).toEqual(["Search engine"]);
+    ).toEqual(["restore.searchEngine"]);
   });
 });
