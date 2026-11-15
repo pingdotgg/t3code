@@ -74,6 +74,8 @@ import {
   RotateCcwIcon,
   SettingsIcon,
   MonitorIcon,
+  SquareSplitHorizontalIcon,
+  SquareSplitVerticalIcon,
   PinIcon,
   PinOffIcon,
   PlugIcon,
@@ -235,6 +237,11 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent, type PendingInputSelection } from "./CommandPaletteContent";
 import { buildLayoutPaletteItems, buildOpenBesidePaletteItem } from "../layout/layoutPaletteItems";
 import {
+  findTerminalSplitTarget,
+  queueTerminalFocusFromPalette,
+  restoreTerminalFocusFromPalette,
+} from "../lib/terminalFocus";
+import {
   selectCommandPaletteClientSettings,
   useEnvironmentLookups,
   useProjectLookups,
@@ -394,7 +401,7 @@ function CommandPaletteDialog(props: {
       data-testid="command-palette"
       // Focus goes to the composer, or back to what opened the palette (Settings' Add project) when there is none.
       finalFocus={() => {
-        if (restoreWorkspaceFocusFromPalette()) return false;
+        if (restoreWorkspaceFocusFromPalette() || restoreTerminalFocusFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
         if (returnFocus === false) return false;
         const opener = commandPaletteFocus.openerRef.current;
@@ -478,6 +485,7 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  const [opener] = useState(() => commandPaletteFocus.openerRef.current);
   const resultListRef = useRef<LegendListRef | null>(null);
   // A pushed view drops the typed highlight until the user moves it again.
   const highlightClearedRef = useRef(viewStack.length > 0);
@@ -1634,6 +1642,43 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+  }
+
+  // What the terminal's split keys act on, from where focus was when the palette opened.
+  const terminalSplitTarget = findTerminalSplitTarget(
+    opener,
+    previewPanelThreadRef ? scopedThreadKey(previewPanelThreadRef) : null,
+  );
+  if (terminalSplitTarget !== null) {
+    const target = terminalSplitTarget;
+    actionItems.push(
+      {
+        kind: "action",
+        value: "action:terminal-split",
+        searchTerms: ["split terminal", "terminal", "split", "horizontal"],
+        title: "Split terminal",
+        icon: <SquareSplitHorizontalIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "terminal.split",
+        disabled: !target.canSplit(),
+        run: async () => {
+          target.split("horizontal");
+          queueTerminalFocusFromPalette(target.focusActive);
+        },
+      },
+      {
+        kind: "action",
+        value: "action:terminal-split-vertical",
+        searchTerms: ["split terminal vertically", "terminal", "split", "vertical"],
+        title: "Split terminal vertically",
+        icon: <SquareSplitVerticalIcon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "terminal.splitVertical",
+        disabled: !target.canSplit(),
+        run: async () => {
+          target.split("vertical");
+          queueTerminalFocusFromPalette(target.focusActive);
+        },
+      },
+    );
   }
 
   // The side pane's tabs and the terminal, beside the focused chat.
