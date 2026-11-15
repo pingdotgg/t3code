@@ -37,6 +37,7 @@ export interface ClaudeCatalogModel {
   readonly compatibility: ClaudeCodeCompatibility;
   /** What to send Claude Code instead of the slug, from its own model list. */
   readonly apiModel?: string;
+  readonly passthroughOptions?: boolean;
 }
 
 export interface ClaudeModelCatalog {
@@ -193,6 +194,7 @@ export function scopeClaudeModelCatalog(
         ? { contextWindowTokens: { "1m": 1_000_000, "200k": 200_000 } }
         : {},
       compatibility: {},
+      ...(!entry.capabilities ? { passthroughOptions: true } : {}),
     });
   }
 
@@ -533,7 +535,8 @@ export function resolveClaudeCatalogEffort(
   model: string | null | undefined,
   raw: string | null | undefined,
 ): string | undefined {
-  if (!resolveClaudeCatalogModel(catalog, model)) {
+  const entry = resolveClaudeCatalogModel(catalog, model);
+  if (!entry || entry.passthroughOptions) {
     const effort = raw?.trim();
     return effort && (CLAUDE_EFFORT_LEVELS as ReadonlyArray<string>).includes(effort)
       ? effort

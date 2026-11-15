@@ -46,7 +46,8 @@ export function compileClaudeModelSelection(
   const fastMode = supportsBoolean("fastMode")
     ? (getModelSelectionBooleanOptionValue(selection, "fastMode") ?? false)
     : undefined;
-  const inCatalog = resolveClaudeCatalogModel(catalog, selection.model) !== undefined;
+  const entry = resolveClaudeCatalogModel(catalog, selection.model);
+  const inCatalog = entry !== undefined && !entry.passthroughOptions;
   const thinking =
     !inCatalog || supportsBoolean("thinking")
       ? getModelSelectionBooleanOptionValue(selection, "thinking")
