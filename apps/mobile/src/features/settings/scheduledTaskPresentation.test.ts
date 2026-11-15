@@ -1,7 +1,10 @@
 import { ScheduledTaskId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { displayedScheduledTaskEnabled } from "./scheduledTaskPresentation";
+import {
+  displayedScheduledTaskEnabled,
+  formatNextScheduledTaskRun,
+} from "./scheduledTaskPresentation";
 
 const id = ScheduledTaskId.make("task-1");
 
@@ -44,5 +47,15 @@ describe("displayedScheduledTaskEnabled", () => {
         requested,
       ),
     ).toBe(false);
+  });
+});
+
+describe("formatNextScheduledTaskRun", () => {
+  it("names the rounded unit for a run later today", () => {
+    const now = new Date(2026, 10, 3, 10, 0, 0).getTime();
+    const at = (minutes: number) => new Date(now + minutes * 60_000).toISOString();
+    expect(formatNextScheduledTaskRun(at(59), now)).toBe("Next run in 59 minutes");
+    expect(formatNextScheduledTaskRun(at(59.5), now)).toBe("Next run in 1 hour");
+    expect(formatNextScheduledTaskRun(at(150), now)).toBe("Next run in 3 hours");
   });
 });

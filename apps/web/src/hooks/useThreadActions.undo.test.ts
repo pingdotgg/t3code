@@ -18,6 +18,7 @@ const commands = vi.hoisted(() => ({
   unsettle: vi.fn(),
   snooze: vi.fn(),
   unsnooze: vi.fn(),
+  reorderActive: vi.fn(),
 }));
 const router = vi.hoisted(() => {
   const listeners = new Set<(event: { action: { type: string } }) => void>();
@@ -61,6 +62,8 @@ const threadShell = vi.hoisted(() => ({
   title: "Thread",
   pinOrderKey: "a0",
   pinnedAt: null as string | null,
+  activeOrderKey: null as string | null,
+  unsettledAt: null as string | null,
   snoozedUntil: null as string | null,
   projectId: "project",
   environmentId: "undo-env",
@@ -94,6 +97,8 @@ vi.mock("../state/use-atom-command", () => ({
         return commands.snooze;
       case threadEnvironment.unsnooze:
         return commands.unsnooze;
+      case threadEnvironment.reorderActive:
+        return commands.reorderActive;
       default:
         return vi.fn();
     }
@@ -119,6 +124,8 @@ beforeEach(() => {
   router.state.location.href = "/";
   router.state.matches[0]!.params = {};
   threadShell.pinnedAt = null;
+  threadShell.activeOrderKey = null;
+  threadShell.unsettledAt = null;
   threadShell.snoozedUntil = null;
   shellLoaded.current = true;
 });
@@ -309,6 +316,35 @@ describe("settle and snooze Undo", () => {
       environmentId: target.environmentId,
       input: { threadId: target.threadId, snoozedUntil },
     });
+  });
+
+  it("puts a manually ordered thread back in its active position", async () => {
+    threadShell.activeOrderKey = "b5";
+    await useThreadActions().settleThread(target);
+    await currentUndo()();
+    expect(commands.unsettle).toHaveBeenCalledOnce();
+    expect(commands.reorderActive).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, orderKey: "b5" },
+    });
+    expect(commands.unsettle.mock.invocationCallOrder[0]).toBeLessThan(
+      commands.reorderActive.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it("puts an automatically ordered thread back at its Active anchor", async () => {
+    threadShell.unsettledAt = "2026-01-02T00:00:00.000Z";
+    await useThreadActions().settleThread(target);
+    await currentUndo()();
+    expect(commands.unsettle).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: {
+        threadId: target.threadId,
+        reason: "user",
+        restoreUnsettledAt: "2026-01-02T00:00:00.000Z",
+      },
+    });
+    expect(commands.reorderActive).not.toHaveBeenCalled();
   });
 
   it("stops settle restoration if restoring the pin fails", async () => {
