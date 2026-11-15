@@ -14,6 +14,7 @@ import {
   isDetailBehindShell,
 } from "@t3tools/client-runtime/state/thread-activity-announcement";
 import {
+  canResumeThread,
   deriveProviderSubagentStatus,
   deriveProviderExtensionStatuses,
   deriveResumableRunId,
@@ -411,6 +412,9 @@ export function useThreadComposerState(input: {
   const resumableRunId = selectedThreadProjection
     ? deriveResumableRunId(selectedThreadProjection.projection, selectedThreadRuntime)
     : null;
+  const canResume = selectedThreadProjection
+    ? canResumeThread(selectedThreadProjection.projection, resumableRunId, queueHeld)
+    : queueHeld;
 
   const runlessWorkStartedAt = selectedThreadProjection
     ? deriveRunlessWorkStartedAt(selectedThreadProjection.projection)
@@ -499,6 +503,14 @@ export function useThreadComposerState(input: {
       Dialog.alert(
         "Too many attachments",
         `Remove attachments until there are at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS}.`,
+      );
+      return;
+    }
+    // A queued message stays in its thread, so saving `/side` would send it to main.
+    if (parseSideChatCommand(text)) {
+      Dialog.alert(
+        "Queued message not updated",
+        "A queued message can't move to a side chat. Remove /side or /btw to save it.",
       );
       return;
     }
@@ -843,7 +855,7 @@ export function useThreadComposerState(input: {
           context: draft.context,
           attachments: [],
         });
-        appendComposerDraftAttachments(threadKey, attachments, { allowOverflow: true });
+        appendComposerDraftAttachments(threadKey, attachments, { restore: true });
         if (freshContext) setFreshSessionPending(threadKey, true);
         setThreadComposerError(
           threadKey,
@@ -948,6 +960,7 @@ export function useThreadComposerState(input: {
     canSteerActiveTurn,
     queueHeld,
     resumableRunId,
+    canResume,
     queuedRunEdit,
     isSavingQueuedEdit,
     cancelQueuedRunEdit,

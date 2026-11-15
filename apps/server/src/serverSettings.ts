@@ -320,7 +320,7 @@ function ensureProviderInstanceMutationAllowed(
   }
   if (
     mutation.operation === "create" &&
-    settings.providerInstances[mutation.instanceId] !== undefined
+    Object.hasOwn(settings.providerInstances, mutation.instanceId)
   ) {
     return Effect.fail(
       new ServerSettingsError({

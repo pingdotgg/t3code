@@ -1,4 +1,5 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 export interface FloatingStatusAction {
   readonly label: string;
@@ -10,10 +11,10 @@ export interface FloatingStatusAction {
 export type FloatingWorkingStatus =
   | {
       readonly kind: "working";
+      readonly environmentId: EnvironmentId;
       readonly startedAt: string;
       readonly action: FloatingStatusAction | null;
     }
-  | { readonly kind: "syncing"; readonly label: string }
   | { readonly kind: "compacting" }
   | {
       readonly kind: "child-input";
@@ -59,6 +60,7 @@ export type FloatingWorkingStatus =
 export function connectionFloatingStatus(input: {
   readonly connectionError: string | null;
   readonly connectionState: EnvironmentConnectionPhase;
+  readonly connectionAwaitingApproval?: boolean;
   readonly environmentLabel: string | null;
   readonly onReconnect: () => void;
 }): FloatingWorkingStatus | null {
@@ -70,6 +72,14 @@ export function connectionFloatingStatus(input: {
     onPress: input.onReconnect,
   });
 
+  if (input.connectionState === "reconnecting" && input.connectionAwaitingApproval) {
+    return {
+      kind: "connection",
+      tone: "reconnecting",
+      label: `Waiting for ${environmentLabel} to approve this device`,
+      onPress: input.onReconnect,
+    };
+  }
   switch (input.connectionState) {
     case "connecting":
     case "reconnecting":

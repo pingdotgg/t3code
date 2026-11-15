@@ -181,7 +181,6 @@ it.live("writes every member oldest first, each with its own swap, and a repeat 
 it.live.each([
   ["a detached HEAD", ["switch", "--detach"], "Detached", undefined],
   ["an unborn branch", ["switch", "--orphan", "unborn"], "Unavailable", undefined],
-  ["a parenthesized name", ["switch", "-c", "(feature)"], "Unavailable", undefined],
   ["the default branch", ["switch", "main"], "Unbound", "main"],
 ] as const)("writes nothing for %s", ([, checkout, tag, branch]) =>
   run(

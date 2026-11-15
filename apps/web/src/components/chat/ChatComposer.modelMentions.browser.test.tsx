@@ -109,6 +109,14 @@ function setup() {
   const noop = () => {};
   const props: ChatComposerProps = {
     composerDraftTarget: target,
+    getShortcutContext: () => ({
+      terminalFocus: false,
+      terminalOpen: false,
+      previewFocus: false,
+      previewOpen: false,
+      isWeb: true,
+      isDesktop: false,
+    }),
     environmentId: thread.environmentId,
     canOperateThread: true,
     attachmentUploadsCapabilityKnown: false,
@@ -144,11 +152,7 @@ function setup() {
     pendingApprovals: [],
     onHeldRequestIdsChange: noop,
     pendingUserInputs: [],
-    activePendingProgress: null,
-    activePendingResolvedAnswers: null,
     activePendingIsResponding: false,
-    activePendingDraftAnswers: {},
-    activePendingQuestionIndex: 0,
     respondingRequestIds: [],
     showPlanFollowUpPrompt: false,
     activeProposedPlan: null,

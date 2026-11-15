@@ -802,7 +802,7 @@ it.effect("queued logout prompts resolve the current controller after provider r
     assert.isTrue(yield* Fiber.join(queued));
     assert.isTrue(replacementLoggedOut);
     assert.strictEqual(harness.actions.filter((action) => action === "native-logout").length, 1);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect.each(["start", "logout", "prompt"] as const)(
@@ -873,7 +873,7 @@ it.effect.each(["start", "logout", "prompt"] as const)(
       const blocked = yield* Effect.flip(harness.service.logout({ instanceId }));
       assert.include(blocked.detail, "shared sign-in");
       assert.equal(replacementMutations, 0);
-    }).pipe(Effect.scoped),
+    }),
 );
 
 it.effect.each(["selection", "drain"] as const)(
@@ -914,5 +914,5 @@ it.effect.each(["selection", "drain"] as const)(
       assert.notInclude(harness.actions, "stop:peer-persisted");
       assert.isFalse(harness.sessions.has(ThreadId.make("target-draining")));
       assert.include(harness.actions, "native-logout");
-    }).pipe(Effect.scoped),
+    }),
 );

@@ -80,7 +80,8 @@ jobs:
         run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
       - name: Validate changed files
         if: github.event_name == 'pull_request'
-        run: vp run check:changed HEAD^1 --concurrency 1
+        # The test jobs run the full suites; a large merge has too many tests beside changes for one step.
+        run: vp run check:changed HEAD^1 --concurrency 1 --skip-tests
       - name: Validate full repository
         if: github.event_name != 'pull_request'
         run: |
@@ -228,7 +229,7 @@ jobs:
     name: Mobile native checks
     needs: changes
     if: needs.changes.outputs.mobile_native != 'false'
-    runs-on: macos-26
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -249,8 +250,9 @@ jobs:
               - --filter=@t3tools/scripts...
       - name: Install native analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
+      # vp run loads every package config, and the server config needs packages this job skips.
       - name: Lint mobile native sources
-        run: vp run lint:mobile
+        run: node scripts/mobile-native-static-check.ts
 
   check:
     name: Fork Check

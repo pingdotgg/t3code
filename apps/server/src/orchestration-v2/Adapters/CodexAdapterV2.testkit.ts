@@ -14,6 +14,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { ProviderAdapterDriverCreateError } from "@t3tools/provider-core/server/adapterDriver";
+import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import {
   makeReplayServerConfig,
@@ -163,6 +164,7 @@ export function layer(input: {
           ...process.env,
           T3_GH_SHIM_DIR: undefined,
         }),
+        PortScanner.layerTest,
       ),
     ),
   );

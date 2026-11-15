@@ -1,73 +1,180 @@
-import { RegistryContext } from "@effect/atom-react";
-import { EnvironmentId, PeerLinkError } from "@t3tools/contracts";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import { EnvironmentId, PeerLinkError, type PeerLinkSummary } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { expect, it, vi } from "vite-plus/test";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
+import { peerLinkEnvironment } from "~/state/peerLinks";
 import { render } from "../../../test/render";
+import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 
-const state = vi.hoisted(() => ({ link: vi.fn(), toast: vi.fn() }));
+const hostId = EnvironmentId.make("mac");
+const vmLink: PeerLinkSummary = {
+  environmentId: EnvironmentId.make("vm"),
+  label: "boat-task",
+  urls: ["http://boat-task.example.ts.net:3773"],
+  access: "full-access",
+  linkedAt: DateTime.makeUnsafe("2026-11-01T00:00:00.000Z"),
+  expiresAt: DateTime.makeUnsafe("2099-01-01T00:00:00.000Z"),
+  lastReachedAt: null,
+  lastError: null,
+  status: "reachable",
+};
 
-vi.mock(import("../../state/peerLinks"), async (original) => {
+// What the host's `peerLinks.list` answers. The CLI and agents link machines without this client.
+const server = vi.hoisted(() => ({
+  links: [] as Array<PeerLinkSummary>,
+  started: 0,
+  interrupted: 0,
+  answer: Promise.resolve(),
+  canLink: false,
+  link: vi.fn(),
+  toast: vi.fn(),
+}));
+
+function setup(options: { readonly canLink?: boolean } = {}) {
+  server.links = [];
+  server.started = 0;
+  server.interrupted = 0;
+  server.answer = Promise.resolve();
+  server.canLink = options.canLink ?? false;
+  server.link.mockReset();
+  server.toast.mockReset();
+}
+
+vi.mock(import("~/state/peerLinks"), async (original) => {
   const actual = await original();
+  const { Atom: AtomModule } = await import("effect/reactivity");
+  const EffectModule = await import("effect/Effect");
+  // The real list query's options: stale-while-revalidate, revalidating only when it is built.
+  const list = AtomModule.make(
+    EffectModule.gen(function* () {
+      server.started += 1;
+      yield* EffectModule.promise(() => server.answer);
+      return { links: [...server.links] };
+    }).pipe(
+      EffectModule.onInterrupt(() =>
+        EffectModule.sync(() => {
+          server.interrupted += 1;
+        }),
+      ),
+    ),
+  ).pipe(AtomModule.swr({ staleTime: 10_000, revalidateOnMount: true }));
+  const allowed = AtomModule.make(true);
+  const denied = AtomModule.make(false);
   return {
     ...actual,
     peerLinkEnvironment: {
       ...actual.peerLinkEnvironment,
+      list: (() => list) as never,
       link: {
         ...actual.peerLinkEnvironment.link,
-        run: state.link,
-        permissionAtom: () => Atom.make(true),
+        run: server.link,
+        permissionAtom: () => (server.canLink ? allowed : denied),
       },
+      unlink: { ...actual.peerLinkEnvironment.unlink, permissionAtom: () => denied },
     },
     useLinkableMachines: () => [],
   };
 });
-vi.mock(import("../../state/query"), async (original) => ({
-  ...(await original()),
-  useEnvironmentQuery: (() => ({ data: { links: [] }, error: null })) as never,
-}));
-vi.mock(import("../../state/session"), async (original) => ({
+vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
   usePreparedConnection: () => Option.none(),
   useEnvironmentScope: () => false,
 }));
 vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
-  return { ...actual, toastManager: { ...actual.toastManager, add: state.toast } };
+  return { ...actual, toastManager: { ...actual.toastManager, add: server.toast } };
 });
 
-import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
+/** Stands in for the chat composer, which reads the same list while a thread is open. */
+function ComposerReader() {
+  const result = useAtomValue(peerLinkEnvironment.list({ environmentId: hostId, input: {} }));
+  return AsyncResult.isSuccess(result) ? <p>Composer loaded</p> : null;
+}
 
-it.each(["failure", "defect"] as const)(
-  "keeps a pairing request's %s out of console and error toasts",
-  async (kind) => {
-    const pairingCode = "test-pairing-secret";
-    const failure = new PeerLinkError({
-      reason: "pairing_rejected",
-      message: `The peer could not process pairingCode=${pairingCode}`,
-      cause: { request: { decision: { _tag: "pairing-code", code: pairingCode } } },
+describe("LinkedEnvironmentsSettings", () => {
+  it("shows a link made elsewhere while the composer keeps the list loaded", async () => {
+    setup();
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using composer = await render(
+      <RegistryContext.Provider value={registry}>
+        <ComposerReader />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(composer.getByText("Composer loaded")).toBeVisible();
+
+    server.links = [vmLink];
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings
+          environmentId={hostId}
+          environmentLabel={null}
+          isSearchTarget={false}
+        />
+      </RegistryContext.Provider>,
+    );
+
+    await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
+  });
+
+  it("leaves a list that is still loading to answer", async () => {
+    setup();
+    // useLiveRefresh remembers each view's last read across mounts, so this view gets its own host.
+    const loadingHostId = EnvironmentId.make("mac-loading");
+    let answer = () => {};
+    server.answer = new Promise((resolve) => {
+      answer = resolve;
     });
-    state.link
-      .mockReset()
-      .mockResolvedValue(
+    server.links = [vmLink];
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <LinkedEnvironmentsSettings
+          environmentId={loadingHostId}
+          environmentLabel={null}
+          isSearchTarget={false}
+        />
+      </RegistryContext.Provider>,
+    );
+    await expect.element(screen.getByRole("status")).toBeVisible();
+
+    answer();
+    await expect.element(screen.getByRole("heading", { name: "boat-task" })).toBeVisible();
+    expect(server).toMatchObject({ started: 1, interrupted: 0 });
+  });
+
+  it.each(["failure", "defect"] as const)(
+    "keeps a pairing request's %s out of console and error toasts",
+    async (kind) => {
+      setup({ canLink: true });
+      const pairingCode = "test-pairing-secret";
+      const failure = new PeerLinkError({
+        reason: "pairing_rejected",
+        message: `The peer could not process pairingCode=${pairingCode}`,
+        cause: { request: { decision: { _tag: "pairing-code", code: pairingCode } } },
+      });
+      server.link.mockResolvedValue(
         AsyncResult.failure(kind === "failure" ? Cause.fail(failure) : Cause.die(failure)),
       );
-    state.toast.mockReset();
-    using warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    using error = vi.spyOn(console, "error").mockImplementation(() => {});
-    const registry = AtomRegistry.make();
-    try {
+      using warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      using error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const registry = AtomRegistry.make();
+      using _registry = { [Symbol.dispose]: () => registry.dispose() };
       await using screen = await render(
-        <RegistryContext value={registry}>
+        <RegistryContext.Provider value={registry}>
           <LinkedEnvironmentsSettings
             environmentId={EnvironmentId.make("source")}
             environmentLabel="Source"
             isSearchTarget={false}
           />
-        </RegistryContext>,
+        </RegistryContext.Provider>,
       );
       await userEvent.click(screen.getByRole("button", { name: "Link", exact: true }));
       const dialog = page.getByRole("dialog", { name: "Link an environment" });
@@ -75,11 +182,11 @@ it.each(["failure", "defect"] as const)(
       await userEvent.fill(dialog.getByRole("textbox", { name: "Pairing code" }), pairingCode);
       await userEvent.keyboard("{Enter}");
 
-      expect(state.link).toHaveBeenCalledExactlyOnceWith(
+      expect(server.link).toHaveBeenCalledExactlyOnceWith(
         registry,
         expect.objectContaining({ input: expect.objectContaining({ pairingCode }) }),
       );
-      expect(state.toast).toHaveBeenCalledExactlyOnceWith(
+      expect(server.toast).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           title: "Could not link the environment",
           description: "Could not answer the request. Try again.",
@@ -91,8 +198,6 @@ it.each(["failure", "defect"] as const)(
       expect(
         error.mock.calls.filter(([message]) => String(message).startsWith("[atom-command]")),
       ).toEqual([]);
-    } finally {
-      registry.dispose();
-    }
-  },
-);
+    },
+  );
+});

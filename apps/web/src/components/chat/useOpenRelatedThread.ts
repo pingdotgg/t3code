@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useRef } from "react";
@@ -8,8 +8,7 @@ import { environmentShell } from "../../state/shell";
 import { serverEnvironment } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { toastManager } from "../ui/toast";
-import { openSideChatTab } from "../../lib/sideChatPane";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 
@@ -17,7 +16,6 @@ export function useOpenRelatedThread(input: {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
-  readonly activeThreadRef?: ScopedThreadRef | null | undefined;
 }) {
   const { environmentId, routeThreadKey, currentRouteThreadKeyRef } = input;
   const navigate = useNavigate();
@@ -50,10 +48,11 @@ export function useOpenRelatedThread(input: {
       toastManager.add({ type: "info", title: "This thread is no longer available" });
       return;
     }
-    if (input.activeThreadRef && openSideChatTab(input.activeThreadRef, shell)) return;
+    const routeRef = resolveThreadOpenRoute(threadRef, shell);
+    if (scopedThreadKey(routeRef) === routeThreadKey) return;
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
+      params: buildThreadRouteParams(routeRef),
     });
   };
   return onOpenRelatedThread;

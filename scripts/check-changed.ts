@@ -158,6 +158,47 @@ export const git = Effect.fn("checkChanged.git")(function* (
 export const gitLines = (cwd: string, args: ReadonlyArray<string>) =>
   git(cwd, args).pipe(Effect.map((stdout) => stdout.toString().split("\n").filter(Boolean)));
 
+// Ignored files that checks read: generated sources, declarations, and env files.
+const checkInput = /(^|\/)\.(generated|astro)\/|\.d\.ts$|(^|\/)\.env[^/]*$/;
+const inNodeModules = /(^|\/)node_modules\//;
+
+// Pathspecs don't stop git from walking an ignored directory, and on Windows it follows pnpm's
+// junctions in node_modules until MAX_PATH. `--directory` lists one without entering it.
+export const ignoredCheckInputs = Effect.fn("checkChanged.ignoredCheckInputs")(function* (
+  root: string,
+) {
+  const list = (args: ReadonlyArray<string>) =>
+    git(root, ["ls-files", "-z", ...args]).pipe(
+      Effect.map((stdout) => stdout.toString().split("\0").filter(Boolean)),
+    );
+  const ignored = ["--others", "--ignored", "--exclude-standard"];
+  // `--directory` hides a directory where the index has a file; `-k` lists those.
+  const [listed, replaced] = yield* Effect.all(
+    [list([...ignored, "--directory"]), list(["-k", "--directory"])],
+    { concurrency: 2 },
+  );
+  const entries = [...new Set([...listed, ...replaced])].sort();
+  // git lists an untracked directory whose contents are all ignored together with them;
+  // listing it again would walk its node_modules.
+  const directories = entries.filter(
+    (entry, index) =>
+      entry.endsWith("/") && !inNodeModules.test(entry) && !entries[index + 1]?.startsWith(entry),
+  );
+  const files = entries.filter((entry) => !entry.endsWith("/"));
+  // Calls fit Windows' 32,767-character command line: 16 covers `:(literal)`, quotes, a space.
+  // `.git/` matches nothing; it stops git starting its walk inside a nested repository.
+  const longest = directories.reduce((max, dir) => Math.max(max, dir.length), 0);
+  const size = Math.max(1, Math.floor(30_000 / (longest + 16)));
+  for (let start = 0; start < directories.length; start += size) {
+    const batch = directories.slice(start, start + size).map((dir) => `:(literal)${dir}`);
+    files.push(...(yield* list([...ignored, "--", ":(literal).git/", ...batch])));
+  }
+  // A nested repository is listed by its directory, as the old pathspecs listed it.
+  return files
+    .filter((file) => !inNodeModules.test(file) && (file.endsWith("/") || checkInput.test(file)))
+    .sort();
+});
+
 export const comparisonBase = Effect.fn("checkChanged.comparisonBase")(function* (
   root: string,
   explicitRef: Option.Option<string>,
@@ -229,6 +270,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
   readonly timeout: Option.Option<number>;
+  readonly skipTests: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -285,18 +327,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         "--",
       ]),
     );
-    const ignored = yield* lines(
-      "ls-files",
-      "--others",
-      "--ignored",
-      "--exclude-standard",
-      "--",
-      ":(glob)**/.generated/**",
-      ":(glob)**/.astro/**",
-      ":(glob)**/*.d.ts",
-      ":(glob)**/.env*",
-      ":(exclude,glob)**/node_modules/**",
-    );
+    const ignored = yield* ignoredCheckInputs(root);
     for (const file of [
       // Raw bytes of changed files too: .gitattributes normalizes line endings in
       // the diff, but the formatter reads the file as it is on disk.
@@ -563,7 +594,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       return isMemoryTest(file) ? needsMemory(step) : step;
     }),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(vitestTests.length > 0
+    ...(vitestTests.length > 0 && !input.skipTests
       ? [
           {
             ...(serverTests ? needsMemory(vitestStep) : vitestStep),
@@ -619,6 +650,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   if (ciOnly.length > 0) summary.push(`  CI also runs: ${ciOnly.join(", ")}`);
   if (!runPatchCheck) summary.push("  unused patch check skipped: no dependency files changed");
   if (!runKnip) summary.push("  knip skipped: no code or manifest changed");
+  if (input.skipTests && vitestTests.length > 0)
+    summary.push(`  tests skipped: --skip-tests left ${vitestTests.length} files to the test jobs`);
   yield* Console.log(`\n${summary.join("\n")}`);
 
   if (results.some((result) => result.outcome !== "pass")) return false;
@@ -654,6 +687,12 @@ export const checkChangedCommand = Command.make(
         "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
       ),
       Flag.optional,
+    ),
+    skipTests: Flag.Boolean("skip-tests").pipe(
+      Flag.withDescription(
+        "Skip the tests beside changes, for CI where the test jobs run the full suites.",
+      ),
+      Flag.withDefault(false),
     ),
   },
   (input) =>

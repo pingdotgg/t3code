@@ -147,7 +147,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       expect(closedRequest).toBe(true);
       expect(Exit.isFailure(yield* Fiber.await(request))).toBe(true);
       expect(yield* harness.auth.readApiKey).toBeUndefined();
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("completes a remote browser login, saves its key and refreshes provider status", () =>
@@ -175,7 +175,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       expect(harness.changes).toEqual([true]);
       expect(Object.values(succeeded)).not.toContain("browser-key");
       expect(yield* Effect.promise(() => harness.store.load())).toEqual(harness.credentials);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps the login link private to its owner and rejects other clients' mutations", () =>
@@ -200,7 +200,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
         ),
       ).toBe(true);
       expect((yield* phase(auth, "waiting")).authorizationUrl).toBe(authorizationUrl);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("aborts cancellation and ignores a late successful SDK login", () => {
@@ -250,7 +250,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       yield* harness.auth.controller.start(owner);
       yield* phase(harness.auth, "succeeded");
       expect(yield* harness.auth.requireApiKey).toBe("browser-key");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("shows a fixed reason when browser login fails and logs the SDK cause", () => {
@@ -287,7 +287,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(yield* other.auth.requireApiKey).toBe("other-key");
       expect(harness.changes).toEqual([false]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("cancels a pending sign-in on logout without saving its eventual key", () =>
@@ -300,7 +300,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       yield* Effect.sync(() => harness.complete.resolve());
       yield* Effect.promise(() => harness.returned.promise);
       expect(yield* harness.auth.readApiKey).toBeUndefined();
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("retains credentials if sessions cannot be stopped for logout", () =>
@@ -320,7 +320,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       );
       expect(Exit.isFailure(result)).toBe(true);
       expect(yield* harness.auth.requireApiKey).toBe("browser-key");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect(
@@ -336,7 +336,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
         ).toBe(true);
         expect(harness.loginOptions()).toBeUndefined();
         expect((yield* Effect.promise(() => harness.store.load()))?.apiKey).toBe("browser-key");
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("ignores expired browser credentials and rejects disabled sign-in", () =>
@@ -347,6 +347,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CursorAuth", (it
       );
       expect(yield* harness.auth.readApiKey).toBeUndefined();
       expect(Exit.isFailure(yield* Effect.exit(harness.auth.controller.start(owner)))).toBe(true);
-    }).pipe(Effect.scoped),
+    }),
   );
 });

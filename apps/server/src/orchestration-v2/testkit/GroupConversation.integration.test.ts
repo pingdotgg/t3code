@@ -492,7 +492,10 @@ const makeHarness = Effect.fn("GroupConversationTest.makeHarness")(function* (
   return { control, layer };
 });
 
-const startThread = Effect.fn("GroupConversationTest.startThread")(function* (threadId: ThreadId) {
+const startThread = Effect.fn("GroupConversationTest.startThread")(function* (
+  threadId: ThreadId,
+  title = "Group conversation",
+) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const createdAt = DateTime.formatIso(yield* DateTime.now);
@@ -524,7 +527,7 @@ const startThread = Effect.fn("GroupConversationTest.startThread")(function* (th
     projectId,
     createdBy: "user",
     creationSource: "web",
-    title: "Group conversation",
+    title,
     modelSelection: PRIMARY,
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -1727,7 +1730,7 @@ describe("group conversations", () => {
         yield* withReactor(
           Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
-            yield* startThread(threadId);
+            yield* startThread(threadId, "New thread");
             const seat = yield* invite(threadId, ASTRA);
             yield* orchestrator.dispatch({
               type: "message.dispatch",
@@ -2262,6 +2265,15 @@ describe("group conversations", () => {
               yield* script(harness.control, seat, ["never finished", "ANSWER AFTER RESTART"]);
               yield* say(threadId, "question", "Ask the seat", [seat]);
               yield* Deferred.await(seatHold.started);
+              yield* until(
+                orchestrator
+                  .getThreadProjection(seat)
+                  .pipe(
+                    Effect.map((row) =>
+                      row.providerTurns.some((turn) => turn.status === "running"),
+                    ),
+                  ),
+              );
               const asking = yield* orchestrator.getThreadProjection(seat);
               const run = asking.runs.at(-1)!;
               const session = asking.providerSessions[0]!;

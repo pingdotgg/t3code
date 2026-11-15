@@ -70,6 +70,7 @@ it.live.each(
       };
       const layerInstaller = Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "/isolated/tools/codex",
+        checkForUpdate: Effect.void,
         resolve: () => Effect.succeed(executable),
         acquire: () =>
           Effect.gen(function* () {

@@ -54,7 +54,7 @@ describe("discoverFxSkills", () => {
           "home-claude",
         ],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // For `$review` with two skills of exactly that name, fx's model loads the
@@ -163,7 +163,7 @@ describe("discoverFxSkills", () => {
           ["Review", path.join(home, ".claude/skills/review/SKILL.md")],
         ],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // Nix home-manager and dotfile setups link ~/.fx/skills; fx then loads
@@ -201,6 +201,6 @@ describe("discoverFxSkills", () => {
         skills.map((skill) => skill.name),
         ["compat"],
       );
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

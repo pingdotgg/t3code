@@ -1,4 +1,7 @@
-import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+} from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
   OrchestratorMcpFailure,
@@ -15,18 +18,32 @@ import * as Effect from "effect/Effect";
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
+import { fencingLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
+const delegatedTaskPrefix = "thread:delegated-task:";
+
+const suggestedThreadId = (threadId: ThreadId) => {
+  if (!threadId.startsWith(delegatedTaskPrefix)) return ThreadId.make(`mcp:${threadId}`);
+  const rest = threadId.slice(delegatedTaskPrefix.length);
+  // encodeURIComponent throws on lone surrogates, which a JSON string can carry.
+  if (!rest.isWellFormed()) return null;
+  const encoded = encodeURIComponent(rest);
+  return encoded === rest ? null : ThreadId.make(`${delegatedTaskPrefix}${encoded}`);
+};
+
 /**
- * Agents paste the bare uuid of an `mcp:<uuid>` thread, or the session id their provider exposes.
- * The id is never rewritten, so permission checks keyed on it still hold; the miss only names a
- * live thread the caller could read by its full id.
+ * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, or the session
+ * id their provider exposes. The id is never rewritten, so permission checks keyed on it still
+ * hold; the miss only names a live thread the caller could read by its full id. Ids from another
+ * machine miss here too. The link hint is static: listing links probes peers.
  */
 export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")(function* (
   threads: Pick<
     ThreadManagement.ThreadManagementService["Service"],
     "getThreadShell" | "findThreadIdByNativeThreadId"
   >,
+  scope: McpInvocationContext.McpInvocationScope,
   threadId: ThreadId,
   message: string,
 ) {
@@ -35,22 +52,30 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
       Effect.map((shell) => shell !== null && shell.deletedAt === null),
       Effect.orElseSucceed(() => false),
     );
-  const prefixed = ThreadId.make(`mcp:${threadId}`);
-  if (yield* isLive(prefixed)) {
-    return yield* new OrchestratorMcpFailure({
-      code: "thread_not_found",
-      message: `${message} Did you mean \`${prefixed}\`?`,
-    });
-  }
-  const owner = yield* threads
-    .findThreadIdByNativeThreadId(threadId)
-    .pipe(Effect.orElseSucceed(() => null));
+  const suggested = suggestedThreadId(threadId);
+  const suggestedLive = suggested !== null && (yield* isLive(suggested));
+  const owner = suggestedLive
+    ? null
+    : yield* threads.findThreadIdByNativeThreadId(threadId).pipe(Effect.orElseSucceed(() => null));
+  const idHint = suggestedLive
+    ? ` Did you mean \`${suggested}\`?`
+    : owner !== null && (yield* isLive(owner))
+      ? ` That is a provider's session id. This thread's T3 id is \`${owner}\`.`
+      : "";
+  const caller =
+    scope.thread === undefined
+      ? null
+      : yield* threads.getThreadShell(scope.thread.threadId).pipe(Effect.orElseSucceed(() => null));
+  // A peer link's caller would be pointed at this machine's links, and a fenced one may not use them.
+  const linksHint =
+    scope.linkedEnvironments === false ||
+    scope.client?.linked === true ||
+    fencingLinkOrigin({ scope, caller: caller ?? undefined }) !== undefined
+      ? ""
+      : " Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.";
   return yield* new OrchestratorMcpFailure({
     code: "thread_not_found",
-    message:
-      owner !== null && (yield* isLive(owner))
-        ? `${message} That is a provider's session id. This thread's T3 id is \`${owner}\`.`
-        : message,
+    message: `${message}${idHint}${linksHint}`,
   });
 });
 
@@ -130,11 +155,18 @@ export const loadCaller = Effect.fn("mcp.loadCaller")(function* () {
 
 export const assertTargetWithinLimits = (
   limits: CallerLimits,
-  target: { readonly runtimeMode: RuntimeMode; readonly interactionMode: ProviderInteractionMode },
+  target: Pick<OrchestrationV2ThreadShell, "id" | "runtimeMode" | "interactionMode">,
 ) =>
   resolveRuntimeMode(limits.runtimeMode, target.runtimeMode).pipe(
     Effect.andThen(resolveInteractionMode(limits.interactionMode, target.interactionMode)),
     Effect.asVoid,
+    Effect.mapError(
+      (error) =>
+        new OrchestratorMcpFailure({
+          code: error.code,
+          message: `Thread "${target.id}" runs in ${target.runtimeMode}/${target.interactionMode}, above this caller's ${limits.runtimeMode}/${limits.interactionMode} limit. For linked calls, this limit is also capped by the link's approved access. This call does not create an approval request. Have the user act directly in the target thread through an authorized client.`,
+        }),
+    ),
   );
 
 /**
@@ -206,16 +238,22 @@ const resolveThreadId = (context: Caller, threadId: ThreadId | undefined) =>
 
 export const readThread = Effect.fn("mcp.readThread")(function* <
   K extends ProjectionRecordField = never,
->(threadId?: ThreadId, fields: ReadonlyArray<K> = []) {
+>(threadId?: ThreadId, fields: ReadonlyArray<K> = [], filter?: ProjectionRecordFilter) {
   const context = yield* readCaller();
   const targetId = yield* resolveThreadId(context, threadId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (shell === null || shell.deletedAt !== null) {
-    return yield* threadNotFound(context.threads, targetId, "The thread was not found.");
+    return yield* threadNotFound(
+      context.threads,
+      context.scope,
+      targetId,
+      "The thread was not found.",
+    );
   }
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
       turnItemTypes: ["user_input_request"],
+      ...filter,
     })
     .pipe(
       Effect.mapError((error) =>

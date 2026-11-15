@@ -71,7 +71,8 @@ import * as HolographicMemory from "../knowledge/HolographicMemory.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
 import { deliveredKnowledgeForHistory } from "../knowledge/composer.ts";
 import * as ConversationSummaries from "./ConversationSummaries.ts";
-import { runMigrations } from "../../persistence/Migrations.ts";
+import Migration0094 from "../../persistence/Migrations/094_ConversationSummaryPosition.ts";
+import Migration0096 from "../../persistence/Migrations/096_ProjectKnowledgeViews.ts";
 import { leafPosition } from "./conversationSummaryTree.ts";
 import {
   ConversationSummaryPassError,
@@ -1622,7 +1623,6 @@ it.effect("rolls up summaries written before migration 094 in conversation order
     // message share.
     yield* sql`DROP TABLE project_knowledge_views`;
     yield* sql`ALTER TABLE conversation_summaries RENAME COLUMN position TO first_source_at`;
-    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id >= 94`;
     for (let index = 0; index < 4; index++) {
       const sources = Array.from({ length: 5 }, (_, part) => ({
         kind: "message" as const,
@@ -1660,7 +1660,9 @@ it.effect("rolls up summaries written before migration 094 in conversation order
         )
       `;
     }
-    yield* runMigrations();
+    // Later migrations are not rerunnable, so apply only the two this test undid.
+    yield* Migration0094;
+    yield* Migration0096;
     yield* summarize;
     assert.deepEqual(
       model.calls.find(isRollup)?.messages.map((message) => message.text),

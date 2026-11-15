@@ -68,6 +68,7 @@ it.effect.each(["adapter", "probe"] as const)(
               environment: runtime.environment,
               cwd: "/project",
               managedMcpConfig: false,
+              spawnVia: undefined,
               config: runtime.config,
             });
       expect(options.settings).toMatchObject({

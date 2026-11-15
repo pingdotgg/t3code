@@ -10,10 +10,24 @@ const V2_PREFIX = `${THREAD_LINK_PROTOCOL}://v2/`;
 const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
-// Code comes first in an alternation so a link written inside a code span or fence is skipped.
+const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
+// A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
+const LABEL = String.raw`[^[\]\n]*`;
+// A code span cannot cross a blank line, and an unclosed fence runs to the end of the text.
 const CODE = String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|(?![\s\S])))|(?<span>(\`+)(?:(?!(?:\r\n|\r(?!\n)|\n)[ \t]*(?:\r\n|\r(?!\n)|\n))[\s\S])*?\4)`;
+// Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
+// nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`${CODE}|\[(?<label>[^\]\n]*)\]\((?:<(?<angleHref>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<href>t3-thread:\/\/v[12]\/[^\s>)]+|${HOSTED_LINK}))\)|<(?<autolink>t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  [
+    String.raw`\\[!-/:-@[-\`{-~]`,
+    CODE,
+    // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
+    String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
+    String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
+    String.raw`<(?<autolink>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>`,
+    // After a URL character the hosted link is part of a longer URL, such as a redirect target.
+    String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
+  ].join("|"),
   "g",
 );
 

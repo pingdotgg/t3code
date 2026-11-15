@@ -114,6 +114,9 @@ import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { isRichTextFormattingShortcut } from "~/keybindings";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { isThreadNavigationShortcut } from "~/keybindings";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryServerKeybindingsAtom } from "~/state/server";
 import { hasCommandForKeyDown } from "~/shortcuts/dispatcher";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
@@ -138,6 +141,10 @@ import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitati
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
 import { importPastedComposerText, readPastedPlainText } from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
+import {
+  captureComposerAttachmentInsertion,
+  type ComposerAttachmentInsertion,
+} from "./composerAttachmentInsertion";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
@@ -145,6 +152,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -449,7 +457,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
 
   const removeOnCancel = commentTarget?.removeOnCancel;
   const onRemove = () => {
-    if (!editor.isEditable || !removeOnCancel) return;
+    if (!removeOnCancel) return;
     const pos = nodePos();
     if (pos === null) return;
     const { doc } = editor.state;
@@ -458,7 +466,9 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const end = pos + current.nodeSize;
     const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
     const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
-    editor.chain().focus().deleteRange({ from, to }).run();
+    // A read-only composer (dictation) can still receive a new citation, so Cancel must undo it.
+    const chain = editor.chain();
+    (editor.isEditable ? chain.focus() : chain).deleteRange({ from, to }).run();
   };
 
   const sentRef = useRef(false);
@@ -1125,6 +1135,13 @@ function ComposerPromptEditorTiptapInner(
             !event.ctrlKey &&
             !event.isComposing
           ) {
+            if (
+              isThreadNavigationShortcut(event, appAtomRegistry.get(primaryServerKeybindingsAtom), {
+                context: { editableFocus: true },
+              })
+            ) {
+              return false;
+            }
             const selection = window.getSelection();
             if (
               selection?.anchorNode &&
@@ -1593,6 +1610,12 @@ function ComposerPromptEditorTiptapInner(
     selectMarkdownOffset(editor, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
     if (isFocused) scrollTiptapCaretIntoView(editor);
+    // A redraw later in this commit drops the editor's scroll offset, so reveal on the next frame.
+    else if (initialSelection) {
+      window.requestAnimationFrame(() => {
+        if (!editor.isDestroyed) revealCaretInEditor(editor);
+      });
+    }
     if (pendingCitation) {
       citationRequestRef.current = null;
       const target = map.runs.find(
@@ -1706,6 +1729,8 @@ function ComposerPromptEditorTiptapInner(
         readSnapshot();
         return selectionRangeRef.current;
       },
+      captureAttachmentInsertion: () =>
+        editor ? captureComposerAttachmentInsertion(editor) : undefined,
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;
@@ -1894,6 +1919,19 @@ function selectMarkdownOffset(editor: TiptapEditor, offset: number): void {
 /** Native scrolling follows only real input; explicitly reveal programmatically placed carets. */
 function scrollTiptapCaretIntoView(editor: TiptapEditor): void {
   editor.view.dispatch(editor.state.tr.scrollIntoView());
+}
+
+/** Scrolls only the editor's own box: a mounting composer must not move the timeline or page. */
+function revealCaretInEditor(editor: TiptapEditor): void {
+  const scroller = editor.view.dom;
+  const caret = editor.view.coordsAtPos(editor.state.selection.head);
+  const box = scroller.getBoundingClientRect();
+  // Padding can be reserved for controls drawn over the box, such as mobile pending-answer actions.
+  const style = getComputedStyle(scroller);
+  const bottom = box.bottom - parseFloat(style.paddingBottom);
+  const top = box.top + parseFloat(style.paddingTop);
+  if (caret.bottom > bottom) scroller.scrollTop += caret.bottom - bottom;
+  else if (caret.top < top) scroller.scrollTop -= top - caret.top;
 }
 
 function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {

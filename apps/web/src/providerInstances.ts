@@ -54,6 +54,11 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
+/** Status dots share one corner per user, so a badge on one row can't move only that row's dot. */
+export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>): boolean {
+  return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
+}
+
 /** Disabled instances may retain ready status until reconciliation. */
 export function isProviderInstancePickerReady(
   entry: Pick<ProviderInstanceEntry, "enabled" | "isAvailable" | "status" | "snapshot">,

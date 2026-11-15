@@ -69,6 +69,7 @@ const inferenceError = (detail: string) => new PiRpcError({ operation: "inferenc
 export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
+  cwd?: string,
 ) {
   const command = piSettings.binaryPath || "pi";
   const spawnCommand = yield* resolveSpawnCommand(command, ["--version"], { env: environment });
@@ -77,6 +78,7 @@ export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionComma
     ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       env: environment,
       shell: spawnCommand.shell,
+      ...(cwd === undefined ? {} : { cwd }),
     }),
   );
 });

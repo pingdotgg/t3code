@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { EnvironmentId } from "@t3tools/contracts";
 import { it as effectIt } from "@effect/vitest";
 import type * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
+import * as ServerEnvironment from "./ServerEnvironment.ts";
 import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
@@ -137,6 +139,36 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
+  it("skips NixOS container and systemd-nspawn veths, which only this machine reaches", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-jellyfin": virtualInterface("192.168.53.193"),
+      "ve-qbittorrent": virtualInterface("192.168.55.225"),
+      "vb-jellyfin": virtualInterface("192.168.100.1"),
+      "vz-machine": virtualInterface("192.168.101.1"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+    ]);
+  });
+
+  it("keeps a Windows alias matching a Linux container prefix eligible", () => {
+    const interfaces = {
+      ...INTERFACES,
+      "ve-office": virtualInterface("192.168.1.30"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
+    ]);
+  });
+
   it("omits Windows host-only adapters without excluding guest NICs or explicit binds", () => {
     const interfaces = {
       ...INTERFACES,
@@ -246,6 +278,17 @@ describe("resolveBoundEndpoints", () => {
     ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
   });
 
+  it("reports an explicit bind to Tailscale's IPv6 address as the tailnet route", () => {
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "fd7a:115c:a1e0::1",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://[fd7a:115c:a1e0::1]:3773/" }]);
+  });
+
   it("never reports an IPv4-mapped host, which can name the client's own loopback", () => {
     expect(
       resolveBoundEndpoints({
@@ -321,6 +364,12 @@ const layerServeConfig = (host = "127.0.0.1") =>
   ).pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
     Layer.provide(NodeServices.layer),
+    Layer.merge(
+      Layer.succeed(ServerEnvironment.ServerEnvironment, {
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("serve-test")),
+        getDescriptor: Effect.die("unused"),
+      }),
+    ),
   );
 
 const resolveWithServe = (probeStatus: number) =>
@@ -399,7 +448,6 @@ describe("DirectEndpoints Tailscale Serve", () => {
         expect(yield* Fiber.join(revalidating)).toEqual(bound);
         expect(yield* service.resolveAvailable()).toEqual(bound);
       }).pipe(
-        Effect.scoped,
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Hostname, "bb-1"),
       ),
@@ -436,7 +484,6 @@ describe("DirectEndpoints Bonjour name", () => {
       expect(yield* service.resolveAvailable()).toEqual(expected);
       expect(yield* Ref.get(spawns)).toBe(1);
     }).pipe(
-      Effect.scoped,
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Hostname, "dhcp-12.corp.example"),
     ),
@@ -467,7 +514,6 @@ describe("DirectEndpoints Bonjour name", () => {
       const recovered = yield* service.resolveAvailable();
       expect(recovered.at(-1)?.httpBaseUrl).toBe("http://Studio.local:3773/");
     }).pipe(
-      Effect.scoped,
       Effect.provideService(HostProcess.Platform, "darwin"),
       Effect.provideService(HostProcess.Hostname, "dhcp-12.corp.example"),
     ),
@@ -490,6 +536,6 @@ describe("DirectEndpoints Bonjour name", () => {
       );
       expect(yield* service.resolveAvailable()).toEqual([]);
       expect(yield* Ref.get(spawns)).toBe(0);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "darwin")),
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
   );
 });
