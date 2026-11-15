@@ -1,43 +1,35 @@
 ---
 name: maestro-worker
-description: Implement one GitHub issue as a maestro worker, from worktree to merged PR. The argument is the issue number.
-disable-model-invocation: true
-argument-hint: "<issue>"
+description: Implement one GitHub issue as a maestro worker, from branch to merged PR. Use when a task says to use the maestro-worker skill for an issue.
 ---
 
-You are a maestro worker. `$ARGUMENTS` is the GitHub issue to implement, and you own it end to end. You implement it, verify it, open the PR, and merge it. The daemon that started you reads GitHub, not this terminal. Once the issue is closed it removes your worktree and ends this session. Your session sits at the repo root. The work happens in a worktree under `.worktree/<issue>`, which is gitignored.
+You are a maestro worker. Your task names the issue `<n>` and the repo. You own it end to end: implement, verify, open the PR, merge. The maestro reads GitHub, not this thread. You already run in an isolated checkout prepared for you.
 
 ## Pick up
 
-1. `gh issue view <issue>`. Read it whole, and read its parent issue for context: `gh api repos/{owner}/{repo}/issues/<issue>/parent --jq '.number, .title, .body'`. Older issues name the parent with a `Part of #<epic>` line instead.
-2. Create the worktree. If `origin/task/<issue>` already exists, a previous round left work behind. Start from it instead of `origin/main` and read `gh pr view task/<issue> --comments` for what went wrong.
-
-   ```bash
-   git fetch origin && git worktree add -b task/<issue> .worktree/<issue> origin/main
-   ```
-
-   From here on every command runs inside `.worktree/<issue>`. Install dependencies there if the project needs them.
-
-3. If the issue lacks what you need to start, ask for help (see below) and stop. Do not guess.
+1. `gh issue view <n>`. Read it whole, and its parent for context: `gh api repos/{owner}/{repo}/issues/<n>/parent --jq '.number, .title, .body'`. Older issues name the parent with a `Part of #<epic>` line instead.
+2. Put the checkout on the task branch: `git fetch origin && git checkout -B task/<n> origin/main`. If `origin/task/<n>` exists, an earlier round left work behind: use `git checkout -B task/<n> origin/task/<n>` instead and read `gh pr view task/<n> --comments` for what went wrong.
+3. If `.t3/setup-done` is missing and `.t3/setup-running` names no live PID, run the repo's install step.
+4. If the issue lacks what you need to start, ask for help (below). Do not guess.
 
 ## Implement
 
-4. Implement the issue.
-5. Verify, in order:
-   1. The project's lint and test suite, until both pass.
-   2. `/simplify`, as a subagent: spawn an agent whose prompt is to invoke the skill on the working tree, so its output stays out of your context.
-   3. `/code-review` at medium, as a subagent the same way. Fix what it finds.
+5. Implement the issue.
+6. Verify, in order:
+   1. The project's lint and tests, until both pass.
+   2. A simplify pass over your diff: reuse, simplification, dead code. Do it yourself or delegate it to a subagent.
+   3. Delegate to a subagent (in T3 Code: `delegate_task`, `role: "review"`) that follows the `diff-review` skill against `origin/main`. Fix what it finds.
    4. Lint and tests again.
-   5. If the change is visible in a UI, start the dev server from the worktree and look at it with Chrome DevTools: open the screen, exercise the change, read the console. Stop the server afterwards.
-6. Commit and push: `git push -u origin task/<issue>`.
+   5. If the change is visible in a UI, use the project's verification skill if it has one. Otherwise start the dev server, look at it with T3 Code's `preview_*` tools, exercise the change, read the console, and stop the server.
+7. Commit and push: `git push -u origin task/<n>`.
 
 ## Merge
 
-7. Bring the branch up to date with `git fetch origin && git rebase origin/main`. Resolve conflicts when the resolution is obvious, rerun the tests, and force-push with `--force-with-lease`. When a conflict touches logic you do not understand, or resolving it would drop someone else's change, stop rebasing and ask for help.
-8. Open the PR and merge it:
+8. `git fetch origin && git rebase origin/main`. Resolve obvious conflicts, rerun the tests, and `git push --force-with-lease`. If a conflict touches logic you do not understand, or resolving it would drop someone else's work, stop and ask for help.
+9. Open the PR and merge it. Do not wait for CI and do not watch the PR.
 
    ```bash
-   gh pr create --fill --body "Closes #<issue>. <what changed, a sentence or two>"
+   gh pr create --fill --body "Closes #<n>. <what changed, a sentence or two>"
    gh pr merge --squash --delete-branch
    ```
 
@@ -45,13 +37,18 @@ You are a maestro worker. `$ARGUMENTS` is the GitHub issue to implement, and you
 
 ## Ask for help
 
-Some things the master decides, not you. Ask for help instead of merging when the change adds or edits a database migration, when the rebase in step 7 is not safe, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over:
+Do not merge when the change adds or edits a database migration, when the rebase in step 8 is not safe, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over:
 
 ```bash
-gh issue edit <issue> --add-label needs-help
-gh issue comment <issue> --body "<what needs a decision, and what you would do>"
+gh issue edit <n> --add-label needs-help
+gh issue comment <n> --body "<what needs a decision, and what you would do>"
 ```
 
-Then stop. Do not merge.
+## Final message
 
-A Stop hook enforces this: until the issue is closed or labelled `needs-help`, ending your turn puts you back to work with a reminder. After three such reminders it labels the issue `needs-help` for you.
+Exactly one line, nothing else:
+
+- `#<n> merged <PR url>`
+- `#<n> needs-help: <why>`
+
+If the maestro tells you the issue is still open, finish it or ask for help, then end with that line again.

@@ -1,59 +1,108 @@
 ---
 name: maestro
-description: Make this session the master orchestrator. It interviews requirements, files them as GitHub issues, and starts the maestro daemon, which spawns one maestro-worker session per issue. Workers implement, verify, and merge on their own and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel. Do not use for a single task this session can do itself, and confirm with the user before starting the daemon.
+description: Orchestrate parallel workers from GitHub issues inside T3 Code. The master (the user's thread) interviews requirements and files them as issues. A dedicated maestro thread dispatches one maestro-worker child per frontier issue. Workers implement, verify, and merge on their own, and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel, or when a thread is told to run as the maestro dispatcher. Do not use for a single task this session can do itself.
 ---
 
-This session is the master orchestrator. It interviews, plans, and decides. The daemon dispatches. Workers implement and merge through the `maestro-worker` skill. All coordination state lives in GitHub labels, so this session reads GitHub, never a worker's terminal.
+Two roles, two threads. GitHub labels and native blocked-by edges are the only queue state, so the queue moves without the two threads talking.
 
-## Setup
+- **Master**: the user's thread. It does intake, answers questions, and decides on `needs-help`. It never watches the queue.
+- **Maestro**: one long-lived top-level thread per repo, titled `maestro <owner/repo>`. Its only job is dispatch.
 
-Ask the user once and keep the answers for the session.
+If this thread was started with "run as the maestro dispatcher", skip to [Dispatcher](#dispatcher). Otherwise you are the master.
 
-1. **Workers.** How many at once. The daemon starts each one as a fresh `claude` session in its own tmux window, named `mw-<issue>-<title>`, with `--dangerously-skip-permissions` and `--model opus`, and kills it once its issue is closed. One session per task keeps every worker's context clean.
-2. **Parallel checkouts.** Workers build, test, and run dev servers in `./.worktree/<issue>`. If the project cannot run two copies at once (shared ports, one database), set workers to one.
+## Master
 
-Then prepare the repo:
+### Start the maestro
 
-- Add `.worktree/` to `.gitignore` and commit it on main. The daemon keeps its state there too.
-- Start the daemon in this tmux session. It lives in the plugin at `scripts/maestro-daemon.sh`, two directories up from this skill's base directory:
+Ask the user once: how many workers at once (default 2; use 1 if the project cannot run two dev stacks, for shared ports or one database), and confirm before starting. Check `t3_thread_list` for an existing `maestro <owner/repo>` thread first and nudge it instead of starting a second. Otherwise start it with `t3_thread_launch` (or ask the user to create the thread by hand) on the project root, titled `maestro <owner/repo>`, with this message:
 
-  ```bash
-  tmux new-window -d -n maestro-daemon "bash <plugin-root>/scripts/maestro-daemon.sh --max-workers <N>"
-  ```
+```
+Use the `maestro` skill and run as the maestro dispatcher for <owner/repo>. Master thread: <master thread id>. Max workers: <N>.
+```
 
-  It creates the labels it needs, polls GitHub every 30 seconds, and logs to `.worktree/.maestro/daemon.log`. Pass `--dry-run --once` first to see what it would do. Sessions it spawns carry `MAESTRO_ROLE` in their environment. The plugin's Stop hook reads it and keeps a worker working until its issue is closed or it has asked for help.
+### Intake
 
-## Intake
+Stress-test each requirement with `grilling`, then file tasks with `plan-to-issues`, or with `to-spec` and `to-tickets`. Plan very large work with `wayfinder` first. All of them write sub-issues of a parent, native blocking edges (`gh issue edit <n> --add-blocked-by <m>`), and `ready-for-agent`. Reach for `research`, `domain-modeling`, or `replan` when a requirement is unclear, not as a fixed step. After filing, send the maestro one line with `t3_thread_send`: `dispatch now`.
 
-Stress-test each requirement with `grilling`, then file the tasks with `/plan-to-issues`, or with `to-spec` and `to-tickets`. Both write the same shape: sub-issues of a parent, native GitHub blocking edges, and the `ready-for-agent` label. The daemon starts a worker for each **frontier** issue as soon as a slot is free. An issue is on the frontier when it is open, labelled `ready-for-agent`, has no open blocker, and nobody has claimed it. The daemon computes that every tick, so a blocked ticket starts as soon as its last blocker closes. Reach for `research`, `domain-modeling`, or `/replan` when a requirement is unclear, not as a fixed step.
+To run an issue on another provider, label it `provider:<instanceId>`, for example `provider:grok`.
+
+### needs-help
+
+The only message the maestro sends you is `#<n> needs-help: <reason> <issue url>`. The issue carries a comment saying what is needed. Decide, or ask the user. Then either finish the task yourself (merge the PR, close the issue), or comment your decision and remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up. Nudge the maestro afterwards.
 
 ## Labels
 
-The labels are the triage vocabulary of the vendored Matt Pocock skills plus two of the daemon's own. Blocking is never a label. It lives in GitHub's native issue dependencies (`gh issue edit <n> --add-blocked-by <m>`).
+Blocking is never a label. It lives in GitHub's native issue dependencies.
 
-| label             | meaning                                                                                                                 |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `ready-for-agent` | specified well enough for an agent to take. Stays on while the ticket is blocked or claimed                             |
-| `ready-for-human` | not the daemon's: a task a person does by hand, or one this session does itself. The daemon never claims or requeues it |
-| `in-progress`     | a worker owns it                                                                                                        |
-| `needs-help`      | the worker wants a decision from this session or the user                                                               |
+| label                 | meaning                                                                                                   |
+| --------------------- | --------------------------------------------------------------------------------------------------------- |
+| `ready-for-agent`     | specified well enough for an agent to take. Stays on while the ticket is blocked or claimed               |
+| `ready-for-human`     | not the maestro's: a task a person does by hand, or one the master does itself. Never claimed or requeued |
+| `in-progress`         | a worker owns it                                                                                          |
+| `needs-help`          | a worker or the maestro wants a decision from the master or the user                                      |
+| `provider:<instance>` | optional: dispatch this issue's worker on that provider instance instead of the maestro's own             |
 
-Keep an issue away from the daemon with `ready-for-human`, never with `needs-help`. `needs-help` means a worker stopped and is waiting on a decision, and that is how dashboards read it: an issue parked under it shows up as someone blocked on you. Label the hands-on tasks `ready-for-human` when you file them, and drop `in-progress` when you take one back from a worker. `wayfinder` tickets carry only `wayfinder:*` labels, so the daemon never touches them.
+Keep an issue away from the maestro with `ready-for-human`, never with `needs-help`. `needs-help` means someone is blocked on you. Drop `in-progress` when you take a task back from a worker. `wayfinder` tickets carry only `wayfinder:*` labels, so the maestro never touches them.
 
-Workers merge their own PRs. They stop and label `needs-help` instead when the change carries a database migration, when a rebase would risk dropping someone else's work, or when they are stuck. Nobody re-verifies a merged PR. When something on main turns out broken, file an issue and it becomes a task like any other.
+Workers merge their own PRs. Nobody re-verifies a merged PR. When something on main turns out broken, file an issue and it becomes a task like any other.
 
-## While it runs
+## Dispatcher
 
-Run `/loop` at a slow pace, fifteen minutes or so. Each tick:
+Runs only in the maestro thread. There are no loops and no sleeps: each tick runs once and the turn ends. A tick runs when:
+
+- the thread starts or the master nudges it;
+- a worker finishes, which wakes this thread with `Delegated task <id> (<title>) [completed|failed|...]: <result>`;
+- the heartbeat fires.
+
+### First tick
+
+1. Create the labels: `for l in ready-for-agent ready-for-human in-progress needs-help task epic; do gh label create "$l" --force --color ededed; done`
+2. Call `orchestrator_capabilities` once.
+3. Find your own thread id: `t3_thread_list` with `titleContains: "maestro <owner/repo>"`.
+4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue with no running child is an orphan; treat it under Requeue.
+5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 900000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
+
+### Each tick
+
+**1. Reap.** For a finished worker, read the issue: `gh issue view <n> --json state,labels,url`.
+
+- Closed: done. Drop it from the map.
+- Open with `needs-help`: done. Remove `in-progress` and notify the master (below).
+- Open without `needs-help`, task `completed`: the worker quit early. `t3_thread_send` its child thread: `#<n> is still open. Finish it: verify, push, open the PR, rebase on main, merge with gh pr merge --squash --delete-branch. If it needs a decision, label it needs-help with a comment.` The send starts a new task in the same context; record its `taskId`. After 3 nudges for the same issue, label it `needs-help` yourself (below) instead.
+- Open without `needs-help`, task `failed`, `interrupted` or `cancelled`: the worker vanished. Requeue.
+
+**2. Requeue.** An open orphan without `needs-help` or `ready-for-human` gets one retry. If the issue has no `maestro: requeued` comment, comment `maestro: requeued after the worker ended without finishing.` and `gh issue edit <n> --remove-label in-progress`. If it already has one, label it `needs-help` with `worker disappeared twice without finishing.`
+
+**3. Dispatch** while fewer than N workers run:
 
 ```bash
-gh issue list --label needs-help --state open
+gh issue list --label ready-for-agent --state open --limit 50 \
+  --search "-is:blocked -label:in-progress -label:needs-help -label:ready-for-human sort:created-asc" \
+  --json number,title,labels
 ```
 
-Each hit carries a comment saying what the worker needs. The daemon never closes a session over it, so the worker's window is still there to read. Decide, or take it to the user. Then either finish the task yourself (merge the PR, close the issue) or remove `needs-help` so the issue rejoins the frontier and a fresh worker picks it up with your comment. New input from the user goes through Intake while the loop keeps running.
+Search lags by a few seconds, so re-check each one before claiming:
 
-Once there are no open task issues and the user has nothing pending, kill the `maestro-daemon` window.
+```bash
+gh issue view <n> --json state,labels \
+  --jq '.state == "OPEN" and (any(.labels[]; .name == "in-progress" or .name == "needs-help" or .name == "ready-for-human") | not)'
+```
 
-## Without tmux
+On `true`, `gh issue edit <n> --add-label in-progress`, then delegate to a subagent (in T3 Code: `delegate_task`) with `isolation: "worktree"`, `mode: "async"`, `role: "implementation"`, `title: "mw-<n> <short title>"`, and the task:
 
-On a subagent or agent-team transport there is no daemon. Run `/loop` yourself: read `<plugin-root>/skills/maestro-worker/SKILL.md` and put its body in each worker's prompt with the issue number.
+```
+Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <your thread id>.
+```
+
+Name the skill; never paste its body. Use your own provider and model unless the issue has a `provider:<instanceId>` label, then set `target.providerInstanceId` to it. If that instance is not in `orchestrator_capabilities`, label `needs-help` with the reason.
+
+**4. Heartbeat.** Pause it (`schedule_task` with the id and `enabled: false`) when the frontier is empty and no worker runs; re-enable it on the next nudge. Delete it with `delete_scheduled_task` when no `ready-for-agent` issue is left open, then end.
+
+### Labelling needs-help
+
+```bash
+gh issue edit <n> --add-label needs-help --remove-label in-progress
+gh issue comment <n> --body "maestro: needs help. <reason>"
+```
+
+Every time an issue gains `needs-help`, from a worker or from you, `t3_thread_send` the master exactly one line, once per occurrence: `#<n> needs-help: <reason> <issue url>`. Default `mode: "auto"` queues it if the master is busy. Never send the master anything else.
