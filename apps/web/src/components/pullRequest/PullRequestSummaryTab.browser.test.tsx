@@ -169,6 +169,49 @@ it("updates comment ages without another panel render", async () => {
   expect(time.textContent).toBe("6m ago");
 });
 
+it("opens a sparse description and preserves its collapse choice as conversation grows", async () => {
+  const sparse = {
+    ...detail,
+    body: Array.from({ length: 12 }, (_, index) => `Description paragraph ${index + 1}.`).join(
+      "\n\n",
+    ),
+  };
+  await using screen = await render(sparse);
+  await expect
+    .element(screen.getByRole("button", { name: "Show less", exact: true }))
+    .toBeVisible();
+  await expect
+    .element(screen.getByText("Description paragraph 12.", { exact: true }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show less", exact: true }));
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await screen.rerender(
+    tab({
+      ...sparse,
+      commentCount: 3,
+      comments: Array.from({ length: 3 }, (_, index) => ({
+        id: `comment-${index}`,
+        kind: "issue-comment",
+        author: detail.author,
+        body: `Conversation entry ${index + 1}`,
+        createdAt: detail.createdAt,
+        url: null,
+        path: null,
+        reviewState: null,
+      })),
+    }),
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Read more", exact: true }));
+  await expect
+    .element(screen.getByRole("button", { name: "Show less", exact: true }))
+    .toBeVisible();
+});
+
 it("keeps an unsaved description when collapsed and reopened, and after a failed save", async () => {
   setup();
   state.update.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
