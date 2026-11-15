@@ -1940,6 +1940,41 @@ it.layer(
     }),
   );
 
+  it.effect("keeps a startup failure in the snapshot every later attachment receives", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      ptyAdapter.spawnFailures.push(new Error("forkpty(3) failed."));
+      const startupFailure = {
+        type: "snapshot",
+        snapshot: {
+          status: "error",
+          error: expect.stringContaining("Failed to spawn PTY process"),
+        },
+      };
+      const record = (events: TerminalAttachStreamEvent[]) => (event: TerminalAttachStreamEvent) =>
+        Effect.sync(() => events.push(event));
+
+      const creating: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream(openInput(), record(creating)))();
+      const resumed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.attachStream({ ...openInput(), resume: true }, record(resumed)))();
+      const observed: TerminalAttachStreamEvent[] = [];
+      (yield* manager.observeStream(
+        { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID },
+        record(observed),
+      ))();
+      expect([creating, resumed, observed]).toMatchObject([
+        [startupFailure],
+        [startupFailure],
+        [startupFailure],
+      ]);
+
+      const restarted = yield* manager.open(openInput());
+      expect(restarted.status).toBe("running");
+      expect(restarted).not.toHaveProperty("error");
+    }),
+  );
+
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
       const platform = yield* HostProcess.Platform;

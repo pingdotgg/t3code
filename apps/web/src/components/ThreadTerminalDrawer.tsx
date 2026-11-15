@@ -191,7 +191,7 @@ export function synchronizeTerminalOutput(
   return update.cursor;
 }
 
-/** Writes what changed between two session notifications: new output, then a new error. */
+/** Writes what changed between two session notifications: new output, then the error, again after a reset. */
 export function synchronizeTerminalSession(
   terminal: Parameters<typeof synchronizeTerminalOutput>[0],
   previous: Pick<TerminalSessionState, "output" | "version" | "error">,
@@ -203,7 +203,12 @@ export function synchronizeTerminalSession(
       ? cursor
       : synchronizeTerminalOutput(terminal, session, cursor);
   // An attach failure can change only the error, keeping the last buffer.
-  if (session.error !== null && session.error !== previous.error) {
+  if (
+    session.error !== null &&
+    (session.error !== previous.error ||
+      nextCursor.generation !== cursor.generation ||
+      nextCursor.resetVersion !== cursor.resetVersion)
+  ) {
     writeSystemMessage(terminal, session.error);
   }
   return nextCursor;
