@@ -465,7 +465,14 @@ export interface ShellSnapshotOptions {
 /** What a shell subscriber's trims read from an active thread, without building its shell. */
 export interface ActiveShellIndexEntry extends Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pinnedAt" | "snoozedUntil"
+  | "id"
+  | "projectId"
+  | "lineage"
+  | "settledOverride"
+  | "settledAt"
+  | "pinnedAt"
+  | "pinOrderKey"
+  | "snoozedUntil"
 > {
   /** False only when no run, request, work item, or watch can make the shell live. */
   readonly mayBeLive: boolean;
@@ -2171,17 +2178,30 @@ function shellFromState(input: {
   };
 }
 
+// Dynamic tool output the client renders inline (HTML, MCP apps, viewed images, delegated
+// tasks, messages sent to the user), so its work group never defers. Mirrors the LIKE backfill
+// in migration 095, where a tool name counts anywhere after the first toolName. Searching from
+// that first one once avoids rescanning the payload for every nested toolName.
+const INLINE_WORK_OUTPUT = new RegExp(
+  `htmlRender|${MCP_APP_OUTPUT_KEY}|"viewedImagePath"|sentMessage`,
+  "i",
+);
+const TOOL_NAME_PREFIX = /"toolName":"/i;
+const INLINE_TOOL_NAME = /(?:delegate.task|send.to.user)"/is;
+
+const isInlineWorkOutput = (payloadJson: string) => {
+  if (INLINE_WORK_OUTPUT.test(payloadJson)) return true;
+  const toolName = TOOL_NAME_PREFIX.exec(payloadJson);
+  return (
+    toolName !== null &&
+    INLINE_TOOL_NAME.test(payloadJson.slice(toolName.index + toolName[0].length))
+  );
+};
+
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
   ProjectionStoreV2,
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-
-    const inlineWorkOutput = sql`item.type = 'dynamic_tool' AND (
-      item.payload_json LIKE '%htmlRender%' OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
-      OR item.payload_json LIKE '%"viewedImagePath"%'
-      OR item.payload_json LIKE '%"toolName":"%delegate_task"%'
-      OR item.payload_json LIKE '%"toolName":"%send_to_user"%'
-      OR item.payload_json LIKE '%sentMessage%')`;
 
     // SQLite uses the partial conversation index of migration 082 only for this exact predicate.
     const CONVERSATION_INDEX_EXCLUDED_TYPES = sql.literal(
@@ -2932,7 +2952,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type,
                 status,
                 updated_at,
-                payload_json
+                payload_json,
+                inline_work_output
               )
               VALUES (
                 ${event.payload.id},
@@ -2946,7 +2967,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ${event.payload.type},
                 ${event.payload.status},
                 ${updatedAt},
-                ${payloadJson}
+                ${payloadJson},
+                ${event.payload.type === "dynamic_tool" && isInlineWorkOutput(payloadJson) ? 1 : 0}
               )
               ON CONFLICT(turn_item_id)
               DO UPDATE SET
@@ -2960,7 +2982,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 type = excluded.type,
                 status = excluded.status,
                 updated_at = excluded.updated_at,
-                payload_json = excluded.payload_json
+                payload_json = excluded.payload_json,
+                inline_work_output = excluded.inline_work_output
             `;
               break;
             }
@@ -3182,7 +3205,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const eligible = sql`
                 WITH eligible AS NOT MATERIALIZED (
                   SELECT item.rowid AS item_rowid, item.payload_json, item.ordinal, item.turn_item_id,
-                    item.run_id, item.node_id, item.type, item.status, run.status AS run_status,
+                    item.run_id, item.node_id, item.type, item.status, item.inline_work_output,
+                    run.status AS run_status,
                     attempt.attempt_id, attempt.status AS attempt_status
                   FROM orchestration_v2_projection_turn_items AS item
                   LEFT JOIN orchestration_v2_projection_runs AS run
@@ -3473,7 +3497,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
                       AND type IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
-                      AND NOT (${inlineWorkOutput})
+                      AND inline_work_output = 0
                       AND run_id NOT IN (SELECT run_id FROM blocked_runs)
                       THEN 1 ELSE 0 END AS can_defer
                   FROM eligible AS item
@@ -4659,7 +4683,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE failure.type = 'error' AND failure.status = 'failed'
                 AND json_extract(failure.payload_json, '$.failure.class') = 'usage_limit'
             )
-            AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+            AND t.archived_at IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
             AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
@@ -5265,14 +5289,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE latest.thread_id = ${threadId}
                     ORDER BY latest.ordinal DESC LIMIT 1
                   )
-                  -- Retain the latest run for each provider thread with lost
-                  -- background work, including owners used before a handoff.
+                  -- Retain the latest ended run for each provider thread with lost
+                  -- background work, including owners used before a handoff. An
+                  -- unfinished run is read above and may prove never started.
                   OR run.run_id IN (
                     SELECT (
                       SELECT ended.run_id FROM orchestration_v2_projection_runs AS ended
                       WHERE ended.thread_id = ${threadId}
                         AND ended.provider_thread_id = roster.provider_thread_id
-                        AND ended.status NOT IN ('queued', 'rolled_back')
+                        AND ended.status NOT IN (
+                          'queued', 'preparing', 'starting', 'running', 'waiting', 'rolled_back'
+                        )
                         -- A run that never started (see neverStarted) owns no work.
                         AND NOT (
                           json_type(ended.payload_json, '$.startedAt') = 'null'
@@ -6288,45 +6315,62 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError(controlReadError(threadId)),
       );
 
-    // A live run fork shows its source's history through the fork run without copying it.
-    const shownByLiveFork = (threadId: ThreadId, runIdColumn: string) => sql`
-      EXISTS (
-        SELECT 1
-        FROM orchestration_v2_projection_threads AS fork
-        JOIN orchestration_v2_projection_runs AS fork_run
-          ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
-        LEFT JOIN orchestration_v2_projection_runs AS item_run
-          ON item_run.run_id = ${sql.literal(runIdColumn)}
-        WHERE fork_run.thread_id = ${threadId}
-          AND fork.deleted_at IS NULL
-          AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
-          AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
-          AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
-          AND (${sql.literal(runIdColumn)} IS NULL OR item_run.ordinal <= fork_run.ordinal)
-      )
+    // A run fork shows its source's history through the fork run without copying it, and every
+    // run fork below it shows that history too. Returns the last source run live forks show, with
+    // and without `leavingForkId`.
+    const lastRunsShownByLiveForks = (threadId: ThreadId, leavingForkId: ThreadId) =>
+      sql<{ with_fork: number | null; without_fork: number | null }>`
+        WITH RECURSIVE showing(thread_id, deleted_at, through) AS (
+          SELECT fork.thread_id, fork.deleted_at, fork_run.ordinal
+          FROM orchestration_v2_projection_context_transfers AS transfer
+          JOIN orchestration_v2_projection_threads AS fork
+            ON fork.thread_id = transfer.target_thread_id
+          JOIN orchestration_v2_projection_runs AS fork_run
+            ON fork_run.run_id = json_extract(fork.payload_json, '$.forkedFrom.runId')
+          WHERE transfer.source_thread_id = ${threadId}
+            AND transfer.type = 'fork'
+            AND fork_run.thread_id = ${threadId}
+            AND json_extract(fork.payload_json, '$.forkedFrom.type') = 'run'
+            AND json_extract(fork.payload_json, '$.forkedFrom.threadId') = ${threadId}
+            AND json_extract(fork.payload_json, '$.lineage.sideChat') IS NOT 1
+          UNION
+          SELECT child.thread_id, child.deleted_at, showing.through
+          FROM showing
+          JOIN orchestration_v2_projection_context_transfers AS transfer
+            ON transfer.source_thread_id = showing.thread_id AND transfer.type = 'fork'
+          JOIN orchestration_v2_projection_threads AS child
+            ON child.thread_id = transfer.target_thread_id
+          WHERE json_extract(child.payload_json, '$.forkedFrom.type') = 'run'
+            AND json_extract(child.payload_json, '$.forkedFrom.threadId') = showing.thread_id
+            AND json_extract(child.payload_json, '$.lineage.sideChat') IS NOT 1
+        )
+        SELECT
+          MAX(through) AS with_fork,
+          MAX(CASE WHEN thread_id <> ${leavingForkId} THEN through END) AS without_fork
+        FROM showing
+        WHERE deleted_at IS NULL
+      `.pipe(Effect.map((rows) => rows[0] ?? { with_fork: null, without_fork: null }));
+
+    // A row with no run predates every run (-1), so any live fork shows it.
+    const runOrdinalBetween = (runIdColumn: string, from: number, through: number) => sql`
+      COALESCE((
+        SELECT run.ordinal FROM orchestration_v2_projection_runs AS run
+        WHERE run.run_id = ${sql.literal(runIdColumn)}
+      ), -1) BETWEEN ${from} AND ${through}
     `;
 
-    // Thread deletion keeps what a live fork still shows; a reference check must count it.
-    const exceptShownByLiveFork = (
+    const runAttachmentIds = Effect.fn("ProjectionStore.runAttachmentIds")(function* (
       threadId: ThreadId,
-      runIdColumn: string,
-      options: { readonly includeShownByLiveFork?: boolean } | undefined,
-    ) =>
-      options?.includeShownByLiveFork === true
-        ? sql``
-        : sql`AND NOT ${shownByLiveFork(threadId, runIdColumn)}`;
-
-    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = (
-      threadId,
-      options,
-    ) =>
-      Effect.all([
+      from: number,
+      through: number,
+    ) {
+      const [messages, renders, answerFiles] = yield* Effect.all([
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
       FROM orchestration_v2_projection_messages AS message,
         json_each(message.payload_json, '$.attachments') AS attachment
       WHERE message.thread_id = ${threadId}
-        ${exceptShownByLiveFork(threadId, "message.run_id", options)}
+        AND ${runOrdinalBetween("message.run_id", from, through)}
     `,
         sql<{ payload_json: string }>`
       SELECT item.payload_json
@@ -6336,7 +6380,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         AND (item.payload_json LIKE '%htmlRender%'
           OR item.payload_json LIKE ${`%${MCP_APP_OUTPUT_KEY}%`}
           OR item.payload_json LIKE '%preview_recording_stop%')
-        ${exceptShownByLiveFork(threadId, "item.run_id", options)}
+        AND ${runOrdinalBetween("item.run_id", from, through)}
     `,
         sql<{ id: string }>`
       SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
@@ -6345,37 +6389,98 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         json_each(question.value) AS attachment
       WHERE item.thread_id = ${threadId}
         AND item.type = 'user_input_request'
-        ${exceptShownByLiveFork(threadId, "item.run_id", options)}
+        AND ${runOrdinalBetween("item.run_id", from, through)}
     `,
-        // A guest's waiting files are pending uploads that no message row holds yet.
-        sql<{ id: string }>`
-      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
-      FROM orchestration_v2_projection_threads AS thread,
-        json_each(thread.payload_json, '$.guestShare.messages') AS message,
-        json_each(message.value, '$.attachments') AS attachment
-      WHERE thread.thread_id = ${threadId}
-        AND json_extract(message.value, '$.status') = 'pending'
-    `,
-      ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
-          ...new Set([
-            ...messages.map((row) => row.id),
-            ...guestFiles.map((row) => row.id),
-            ...answerFiles.map((row) => row.id),
-            ...threadHtmlRenderAttachmentIds(
-              threadId,
-              renders.map((row) => {
-                const item = parseEncodedPayload(row.payload_json);
-                return {
-                  toolName: typeof item.toolName === "string" ? item.toolName : null,
-                  output: item.output,
-                };
-              }),
+      ]);
+      return [
+        ...messages.map((row) => row.id),
+        ...answerFiles.map((row) => row.id),
+        ...threadHtmlRenderAttachmentIds(
+          threadId,
+          renders.map((row) => {
+            const item = parseEncodedPayload(row.payload_json);
+            return {
+              toolName: typeof item.toolName === "string" ? item.toolName : null,
+              output: item.output,
+            };
+          }),
+        ),
+      ];
+    });
+
+    const unshownRunAttachmentIds = Effect.fn("ProjectionStore.unshownRunAttachmentIds")(function* (
+      threadId: ThreadId,
+      from: number,
+      through: number,
+    ) {
+      const candidates = yield* runAttachmentIds(threadId, from, through);
+      if (from <= -1 || candidates.length === 0) return candidates;
+      const retained = new Set(yield* runAttachmentIds(threadId, -1, from - 1));
+      return candidates.filter((id) => !retained.has(id));
+    });
+
+    // Deleting a fork also frees what its deleted sources kept only for it.
+    const getThreadAttachmentIds: ProjectionStoreV2Shape["getThreadAttachmentIds"] = Effect.fn(
+      "ProjectionStore.getThreadAttachmentIds",
+    )(
+      function* (threadId, options) {
+        const deletedSources = yield* sql<{ thread_id: ThreadId }>`
+          WITH RECURSIVE source(thread_id) AS (
+            SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId')
+            FROM orchestration_v2_projection_threads AS thread
+            WHERE thread.thread_id = ${threadId}
+              AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+            UNION
+            SELECT json_extract(thread.payload_json, '$.forkedFrom.threadId')
+            FROM orchestration_v2_projection_threads AS thread
+            JOIN source USING (thread_id)
+            WHERE thread.deleted_at IS NOT NULL
+              AND json_extract(thread.payload_json, '$.forkedFrom.type') = 'run'
+              AND json_extract(thread.payload_json, '$.lineage.sideChat') IS NOT 1
+          )
+          SELECT thread.thread_id
+          FROM source
+          JOIN orchestration_v2_projection_threads AS thread USING (thread_id)
+          WHERE thread.deleted_at IS NOT NULL
+        `;
+        const afterRun = (ordinal: number | null) => (ordinal === null ? -1 : ordinal + 1);
+        const own = yield* lastRunsShownByLiveForks(threadId, threadId);
+        const released = yield* Effect.forEach(
+          options?.includeShownByLiveFork ? [] : deletedSources,
+          ({ thread_id: source }) =>
+            lastRunsShownByLiveForks(source, threadId).pipe(
+              Effect.flatMap((shown) =>
+                shown.with_fork === null
+                  ? Effect.succeed([])
+                  : unshownRunAttachmentIds(source, afterRun(shown.without_fork), shown.with_fork),
+              ),
             ),
+        );
+        // A guest's waiting files are pending uploads that no message row holds yet.
+        const guestFiles = yield* sql<{ id: string }>`
+          SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+          FROM orchestration_v2_projection_threads AS thread,
+            json_each(thread.payload_json, '$.guestShare.messages') AS message,
+            json_each(message.value, '$.attachments') AS attachment
+          WHERE thread.thread_id = ${threadId}
+            AND json_extract(message.value, '$.status') = 'pending'
+        `;
+        return [
+          ...new Set([
+            ...(yield* unshownRunAttachmentIds(
+              threadId,
+              options?.includeShownByLiveFork ? -1 : afterRun(own.with_fork),
+              Number.MAX_SAFE_INTEGER,
+            )),
+            ...guestFiles.map((row) => row.id),
+            ...released.flat(),
           ]),
-        ]),
-        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
-      );
+        ];
+      },
+      (effect, threadId) =>
+        effect.pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause }))),
+    );
 
     const getMessagesById = Effect.fn("ProjectionStore.getMessagesById")(
       function* (threadId: ThreadId, messageIds: ReadonlyArray<MessageId>) {
@@ -6669,9 +6774,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }>`SELECT item.turn_item_id, item.run_id, item.node_id, item.parent_item_id, item.type, item.status, item.ordinal,
           ${includePersistentOutput ? sql`attempt.attempt_id` : sql`NULL`} AS attempt_id,
           ${includePersistentOutput ? sql`attempt.status` : sql`NULL`} AS attempt_status,
-          ${
-            includePersistentOutput ? sql`CASE WHEN ${inlineWorkOutput} THEN 1 ELSE 0 END` : sql`0`
-          } AS persistent_output,
+          ${includePersistentOutput ? sql`item.inline_work_output` : sql`0`} AS persistent_output,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.inputIntent') END AS input_intent,
           CASE WHEN item.type = 'user_message' THEN json_extract(item.payload_json, '$.createdBy') END AS created_by,
           CASE WHEN item.type IN ('user_message', 'assistant_message') THEN json_extract(item.payload_json, '$.messageId') END AS message_id
@@ -7225,7 +7328,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           CROSS JOIN orchestration_v2_projection_turn_items AS item
             ON item.thread_id = json_extract(wanted.value, '$.threadId')
             AND item.run_id IS json_extract(wanted.value, '$.id')
-          WHERE item.status = 'completed' AND ${inlineWorkOutput}`;
+          WHERE item.status = 'completed' AND item.inline_work_output = 1`;
                 if (found.length === 0) break;
                 for (const row of found)
                   persistentOutputs.add(`${row.thread_id}:${row.turn_item_id}`);
@@ -8371,7 +8474,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT thread_id, json_extract(payload_json, '$.worktreePath') AS worktree_path
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL
-          ${options?.includeArchived === true ? sql`` : sql`AND json_extract(payload_json, '$.archivedAt') IS NULL`}
+          ${options?.includeArchived === true ? sql`` : sql`AND archived_at IS NULL`}
           AND json_extract(payload_json, '$.worktreePath') IS NOT NULL
       `.pipe(
         Effect.map((rows) =>
@@ -8823,7 +8926,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT thread_id
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL
-          AND json_extract(payload_json, '$.archivedAt') IS NULL
+          AND archived_at IS NULL
           AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
       `;
         return rows.map((row) => ThreadId.make(row.thread_id));
@@ -8849,6 +8952,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly settled_override: string | null;
         readonly settled_at: string | null;
         readonly pinned_at: string | null;
+        readonly pin_order_key: string | null;
         readonly snoozed_until: string | null;
         readonly may_be_live: number;
         readonly has_remote_tasks: number;
@@ -8863,6 +8967,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledOverride') AS settled_override,
           json_extract(t.payload_json, '$.settledAt') AS settled_at,
           json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
+          json_extract(t.payload_json, '$.pinOrderKey') AS pin_order_key,
           json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
           -- and pending background work.
@@ -8921,6 +9026,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             : null,
         settledAt: row.settled_at === null ? null : DateTime.makeUnsafe(row.settled_at),
         pinnedAt: row.pinned_at === null ? null : DateTime.makeUnsafe(row.pinned_at),
+        pinOrderKey: row.pin_order_key,
         snoozedUntil: row.snoozed_until === null ? null : DateTime.makeUnsafe(row.snoozed_until),
         mayBeLive: row.may_be_live === 1,
         hasRemoteTasks: row.has_remote_tasks === 1,
@@ -9040,7 +9146,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.settledAt') AS settled_at
         FROM orchestration_v2_projection_threads t
         WHERE t.deleted_at IS NULL
-          AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+          AND t.archived_at IS NULL
           AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
           AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
           AND json_extract(t.payload_json, '$.settledOverride') = 'settled'

@@ -319,6 +319,8 @@ export const PullRequestCapabilities = Schema.Struct({
    * reported rather than that the repository runs none. Absent means an empty list says nothing.
    */
   checksAlwaysReport: Schema.optional(Schema.Boolean),
+  /** The diff can read one file the paged diff withheld as too large (`PullRequestDiffInput.path`). */
+  withheldFileDiff: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
@@ -725,6 +727,8 @@ export const PullRequestDiffInput = Schema.Struct({
   ...PullRequestRef.fields,
   cursor: Schema.optional(TrimmedNonEmptyString),
   commit: Schema.optional(TrimmedNonEmptyString),
+  /** Reads one file the paged diff withheld as too large; ignores `cursor`. */
+  path: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestDiffInput = typeof PullRequestDiffInput.Type;
 
@@ -741,6 +745,8 @@ export const PullRequestDiffResult = Schema.Struct({
   truncated: Schema.Boolean,
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
   omittedFileStats: Schema.optional(Schema.Array(PullRequestOmittedFileStat)),
+  /** On the first page: files this diff withholds can be read one at a time with `path`. */
+  withheldFilesReadable: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDiffResult = typeof PullRequestDiffResult.Type;
 
