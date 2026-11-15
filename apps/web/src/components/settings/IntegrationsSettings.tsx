@@ -34,10 +34,13 @@ import {
   type BrowserImportSource,
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
+  managedCapabilityDenial,
 } from "@t3tools/contracts";
+import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
 import { PREVIEW_VIEWPORT_PRESETS } from "@t3tools/shared/previewViewport";
 import { MoreVertical, Plus as PlusIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useRef, useState } from "react";
 
 import { ScreenRotationIcon } from "~/browser/ScreenRotationIcon";
@@ -172,18 +175,34 @@ const zoomLabel = (zoomFactor: number) => `${Math.round(zoomFactor * 100)}%`;
 
 /** IPC carries reason tokens inside messages; treat unknown tokens as read failures without exposing raw
  * text. */
-class ProfileLimitReachedError extends Error {
-  constructor() {
-    super("Browser profile limit reached.");
-    this.name = "ProfileLimitReachedError";
+class ProfileLimitReachedError extends Schema.TaggedError<ProfileLimitReachedError>()(
+  "ProfileLimitReachedError",
+  {},
+) {
+  override get message(): string {
+    return "Browser profile limit reached.";
   }
 }
+
+const isProfileLimitReachedError = Schema.is(ProfileLimitReachedError);
 
 export const importFailureReason = (cause: unknown): BrowserImportFailureReason => {
   const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
   return (
     BrowserImportFailureReason.literals.find((reason) => message.includes(`failed: ${reason}.`)) ??
     "readFailed"
+  );
+};
+
+/**
+ * The desktop's refusal when the machine's managed policy forbids cookie import. IPC wraps the
+ * message in its own prefixes, so the sentence is matched on the contract's wording.
+ */
+export const importPolicyRefusal = (cause: unknown): string | undefined => {
+  const message = String((cause as { message?: unknown } | undefined)?.message ?? "");
+  return (
+    /The managed policy at .* importing browser cookies is not allowed\./u.exec(message)?.[0] ??
+    /(?:^|: )([^:]*'s policy does not allow importing browser cookies\.)/u.exec(message)?.[1]
   );
 };
 
@@ -243,8 +262,9 @@ async function importBrowserCookiesIntoTarget(
           await clearBrowserProfileData(bridge, [environmentId], input.target.profileId).catch(
             () => undefined,
           );
-          const reason =
-            cause instanceof ProfileLimitReachedError ? "profileLimitReached" : "profileNotSaved";
+          const reason = isProfileLimitReachedError(cause)
+            ? "profileLimitReached"
+            : "profileNotSaved";
           throw new Error(`Importing cookies from ${source.id} failed: ${reason}.`, { cause });
         }
       } else {
@@ -261,7 +281,10 @@ async function importBrowserCookiesIntoTarget(
       targetName,
     };
   } catch (cause) {
-    return { kind: "blocked", reason: importFailureReason(cause) };
+    const policyRefusal = importPolicyRefusal(cause);
+    return policyRefusal !== undefined
+      ? { kind: "blocked", reason: "readFailed", message: policyRefusal }
+      : { kind: "blocked", reason: importFailureReason(cause) };
   }
 }
 
@@ -299,7 +322,7 @@ const rotateViewport = (
 
 function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   const viewport = useClientSettings((settings) => settings.browserDefaultViewport);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   const sized = viewport._tag === "fill" ? null : viewport;
   const presentedSize = {
@@ -346,6 +369,7 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
+      devicePreference
       description="Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar."
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
@@ -449,11 +473,12 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
 
 function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
   const zoomFactor = useClientSettings((settings) => settings.browserDefaultZoomFactor);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-default-zoom")}
+      devicePreference
       description="Page zoom applied to new browser tabs."
       resetAction={
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
@@ -492,11 +517,12 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
 
 function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) {
   const appearance = useClientSettings((settings) => settings.browserDefaultAppearance);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-default-appearance")}
+      devicePreference
       description="The color scheme pages are told to prefer. System follows your OS setting."
       resetAction={
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
@@ -539,11 +565,12 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
 function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolean }) {
   const showKeys = useClientSettings((settings) => settings.browserRecordingShowKeyPresses);
   const showMouse = useClientSettings((settings) => settings.browserRecordingShowMousePresses);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
   return (
     <>
       <SettingsRow
         {...searchableSetting("browser-recording-key-presses")}
+        devicePreference
         description="Show pressed keys and shortcuts in new recordings. Password fields are excluded."
         control={
           <Switch
@@ -558,6 +585,7 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
       />
       <SettingsRow
         {...searchableSetting("browser-recording-mouse-presses")}
+        devicePreference
         description="Highlight mouse presses and held buttons in new recordings."
         control={
           <Switch
@@ -576,11 +604,12 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
 
 function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boolean }) {
   const frameRate = useClientSettings((settings) => settings.browserRecordingFrameRate);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-recording-frame-rate")}
+      devicePreference
       description="Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother."
       resetAction={
         !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
@@ -630,11 +659,12 @@ const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
 
 function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-link-target")}
+      devicePreference
       description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
@@ -683,12 +713,13 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
 function BrowserSearchEngineSetting() {
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <>
       <SettingsRow
         {...searchableSetting("browser-search-engine")}
+        devicePreference
         description="What the address bar searches when you type something that isn't a URL."
         resetAction={
           engine !== DEFAULT_BROWSER_SEARCH_ENGINE || customUrl !== "" ? (
@@ -729,6 +760,7 @@ function BrowserSearchEngineSetting() {
       {engine === "custom" ? (
         <SettingsRow
           title="Custom search URL"
+          devicePreference
           description="Use %s where the search terms go."
           status={
             isValidSearchUrlTemplate(customUrl)
@@ -894,7 +926,7 @@ function DeviceIntegrationControls({
                   .finally(() => setPending(null));
               }}
             >
-              {pending === `update-${tool}` ? "Updating…" : `Update to v${version.requiredVersion}`}
+              {pending === `update-${tool}` ? "Updating…" : "Update"}
             </Button>
           ) : null}
           {state.supportsToolInspection ? (
@@ -1052,11 +1084,12 @@ function AgentBrowserAccessSetting() {
 
 function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled: boolean }) {
   const autoShow = useClientSettings((settings) => settings.browserAutoShowFloatingPreview);
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsRow
       {...searchableSetting("browser-auto-show-floating-preview")}
+      devicePreference
       description="Show the floating preview when an agent opens a browser or device unless the agent says otherwise."
       resetAction={
         !disabled && autoShow !== DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW ? (
@@ -1088,9 +1121,19 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
+  // Profile edits pair with profile data on disk, so they save for this device in every scope.
   const updateSettings = useUpdatePrimarySettings();
+  const updateDefaultProfile = useUpdateScopedSettings();
+  const { scope } = useSettingsScope();
+  // The default profile is a device preference, which a project cannot override.
+  const defaultProfileReadOnly = scope.kind === "project" || scope.kind === "checkout";
   const { environments, isReady: environmentsReady } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
+  // Cookie import runs on this desktop, whose policy the primary environment reports.
+  const cookieImportDenial = managedCapabilityDenial(
+    usePrimaryManagedPolicy(),
+    "browserCookieImport",
+  );
   const [sources, setSources] = useState<ReadonlyArray<BrowserImportSource> | null>(null);
   const [importSession, setImportSession] = useState<{
     readonly source: BrowserImportSource;
@@ -1298,7 +1341,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             <MenuSeparator />
             <MenuGroup>
               <MenuGroupLabel>Import from</MenuGroupLabel>
-              {sources === null ? (
+              {cookieImportDenial !== undefined ? (
+                <MenuItem disabled>{cookieImportDenial}</MenuItem>
+              ) : sources === null ? (
                 <MenuItem disabled>Looking for browsers…</MenuItem>
               ) : importableSources.length === 0 ? (
                 <MenuItem disabled>No supported browsers found</MenuItem>
@@ -1389,10 +1434,10 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                 </MenuTrigger>
                 <MenuPopup align="end">
                   <MenuItem
-                    disabled={!settingsHydrated || isDefault}
+                    disabled={!settingsHydrated || isDefault || defaultProfileReadOnly}
                     onClick={() => {
                       if (settingsHydrated) {
-                        updateSettings({ browserDefaultProfileId: profile.id });
+                        updateDefaultProfile({ browserDefaultProfileId: profile.id });
                       }
                     }}
                   >

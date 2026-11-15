@@ -3,9 +3,7 @@ import { type Config, kVoid } from "../Config.ts";
 import { Config as CapnpConfig } from "./config.capnp.ts";
 
 function capitalize<S extends string>(str: S): Capitalize<S> {
-  return (
-    str[0] ? str[0].toUpperCase() + str.substring(1) : str
-  ) as Capitalize<S>;
+  return (str[0] ? str[0].toUpperCase() + str.substring(1) : str) as Capitalize<S>;
 }
 
 // Dynamically encode a capnp struct based on keys and the types of values.
@@ -15,11 +13,7 @@ function capitalize<S extends string>(str: S): Capitalize<S> {
 //
 // TODO: generate `./workerd.ts` and corresponding encoders automatically
 //  from the `.capnp` file.
-function encodeCapnpStruct(
-  obj: any,
-  struct: Struct,
-  path: ReadonlyArray<string> = [],
-) {
+function encodeCapnpStruct(obj: any, struct: Struct, path: ReadonlyArray<string> = []) {
   const anyStruct = struct as any;
   for (const [key, value] of Object.entries(obj)) {
     const capitalized = capitalize(key);
@@ -44,10 +38,7 @@ function encodeCapnpStruct(
       const newList: List<any> = callInit(value.length);
       for (let i = 0; i < value.length; i++) {
         if (typeof value[i] === "object") {
-          encodeCapnpStruct(value[i], newList.get(i), [
-            ...childPath,
-            String(i),
-          ]);
+          encodeCapnpStruct(value[i], newList.get(i), [...childPath, String(i)]);
         } else {
           newList.set(i, value[i]);
         }
@@ -85,9 +76,7 @@ function previewValue(value: unknown): string {
           ? `${v.slice(0, 117)}...`
           : v,
     );
-    return json && json.length > 500
-      ? `${json.slice(0, 497)}...`
-      : (json ?? String(value));
+    return json && json.length > 500 ? `${json.slice(0, 497)}...` : (json ?? String(value));
   } catch {
     return String(value);
   }

@@ -125,10 +125,16 @@ of `main` for that work, never the tag-pinned diagnosis clone.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- If `gh` is not authenticated, offer `gh auth login`, or build a prefilled
-  https://github.com/pingdotgg/t3code/issues/new URL with title and body query
-  parameters; print the URL, and open it in their browser only after they
-  approve.
+- Post with `gh issue create --repo pingdotgg/t3code --label via-triage` only
+  if `gh api repos/pingdotgg/t3code --jq .permissions.triage` prints `true`.
+- Otherwise, or if `gh` is not authenticated, build a prefilled
+  https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml URL.
+  The form applies the label whoever submits it. Add `title` plus one
+  URL-encoded query parameter per form field id: `what-happened`, `diagnosis`,
+  `steps`, `version`, `environment`, `evidence`, `related`, `workaround` and
+  `agent`. Keep the full encoded URL below 6,000 characters by shortening any
+  fields as needed. Give the user any omitted text to paste into the form before
+  submitting. Print the URL, and open it in their browser only after they approve.
 - If the user pasted screenshots, remind them to drag the images into the issue
   after it is created; they cannot be attached from here.
 

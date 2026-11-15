@@ -34,6 +34,10 @@ export function createSourceControlEnvironmentAtoms<R, E>(
       label: "environment-data:source-control:check-starred",
       tag: WS_METHODS.sourceControlStarred,
     }),
+    star: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:star",
+      tag: WS_METHODS.sourceControlStar,
+    }),
     repository: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:source-control:repository",
       tag: WS_METHODS.sourceControlLookupRepository,

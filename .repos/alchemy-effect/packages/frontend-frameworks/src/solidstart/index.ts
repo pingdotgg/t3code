@@ -68,15 +68,13 @@ export {
  * nitro overrides ride on {@link SolidStartOptions} instead.
  */
 export interface HarnessOptions {
-  readonly solidstart?:
-    | { readonly nitro?: Record<string, unknown> | undefined }
-    | undefined;
+  readonly solidstart?: { readonly nitro?: Record<string, unknown> | undefined } | undefined;
 }
 
 /** Map the harness's options onto {@link SolidStartOptions}. */
-export const fromHarnessOptions = (
-  options: HarnessOptions,
-): SolidStartOptions => ({ nitro: options.solidstart?.nitro });
+export const fromHarnessOptions = (options: HarnessOptions): SolidStartOptions => ({
+  nitro: options.solidstart?.nitro,
+});
 
 /**
  * The e2e-harness factory contract

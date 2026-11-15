@@ -149,6 +149,14 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it("tells agents how to open a blank tab and which URLs are accepted", () => {
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(
+      /preview_open, omit url when creating a new tab[^.]*blank tab/i,
+    );
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/http\(s\)/i);
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/schemeless host/i);
+  });
+
   it("rejects unparseable input without retaining credentials or tokens", () => {
     const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
     try {
@@ -170,5 +178,19 @@ describe("normalizePreviewUrl", () => {
         /user|password|access_token|secret|fragment/,
       );
     }
+  });
+
+  it("reports explicit non-web schemes instead of reading them as a host", () => {
+    for (const [rawUrl, protocol] of [
+      ["about:blank", "about:"],
+      ["mailto:alice@example.com", "mailto:"],
+      ["javascript:alert(1)", "javascript:"],
+    ] as const) {
+      expect(() => normalizePreviewUrl(rawUrl)).toThrow(
+        expect.objectContaining({ reason: "unsupported-protocol", protocol }),
+      );
+    }
+    expect(normalizePreviewUrl("localhost:3000")).toBe("http://localhost:3000/");
+    expect(normalizePreviewUrl("devbox:8080")).toBe("https://devbox:8080/");
   });
 });
