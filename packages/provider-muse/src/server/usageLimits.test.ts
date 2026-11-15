@@ -1,7 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import type { MuseSubscriptionUsage } from "./protocol.ts";
-import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
+import {
+  isMuseUsageLimitFailure,
+  museUsageLimitResetAt,
+  museUsageToLimits,
+} from "./usageLimits.ts";
 
 const usage = {
   observedAtMs: 1791447762610,
@@ -52,5 +56,33 @@ describe("Muse usage limit failures", () => {
     expect(museUsageLimitResetAt(sessionOut, usage.window.resetsAtMs)).toBeNull();
     const afterNamedReset = Date.parse("2026-10-14T00:00:00Z");
     expect(museUsageLimitResetAt(undefined, afterNamedReset, { message: realRefusal })).toBeNull();
+  });
+});
+
+describe("Muse account usage", () => {
+  it("reports the session and weekly windows, capped at 100, with the tier as plan", () => {
+    expect(museUsageToLimits({ ...usage, window: { ...usage.window, usedPercent: 103 } })).toEqual({
+      checkedAt: "2026-10-08T08:22:42.610Z",
+      authLabel: "tier-1",
+      windows: [
+        {
+          id: "session",
+          kind: "session",
+          label: "Session",
+          usedPercent: 100,
+          resetsAt: "2026-10-08T13:19:17.000Z",
+          windowDurationMins: 300,
+        },
+        {
+          id: "weekly",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 5,
+          resetsAt: "2026-10-12T00:00:00.000Z",
+          windowDurationMins: 10080,
+        },
+      ],
+    });
+    expect(museUsageToLimits({ ...usage, tier: " " })).not.toHaveProperty("authLabel");
   });
 });
