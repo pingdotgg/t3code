@@ -1,5 +1,4 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off
-import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type * as Ffi from "ffi-rs";
 
@@ -14,7 +13,6 @@ if (!executable.endsWith(" Helper")) {
       "../../Frameworks",
       `${executable} Helper.app/Contents/MacOS/${executable} Helper`,
     );
-    if (!NodeFS.existsSync(helper)) throw new Error(`${helper} is missing`);
     const { DataType, load, open, unwrapPointer } = require("ffi-rs") as typeof Ffi;
     const { External, I32, I64 } = DataType;
     open({ library: "libSystem", path: "/usr/lib/libSystem.B.dylib" });

@@ -4,7 +4,6 @@ import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
-import { copyUsageDescriptionsToHelper } from "../../../scripts/after-pack-macos.ts";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -19,7 +18,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 21;
+const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -395,7 +394,6 @@ function buildMacLauncher(electronBinaryPath) {
     isDevelopment ? developmentPaths.launcherExecutableName : "Electron",
   );
   patchHelperBundleInfoPlists(targetAppBundlePath);
-  copyUsageDescriptionsToHelper(targetAppBundlePath, "Electron");
   if (isDevelopment) {
     // Electron.app's executable name keeps default-app mode active without making app.isPackaged true.
     writeDevelopmentEnvironmentScript();

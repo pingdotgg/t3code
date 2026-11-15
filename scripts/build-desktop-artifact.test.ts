@@ -5,7 +5,6 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { createPackageWithOptions, extractFile } from "@electron/asar";
 import { assert, it } from "@effect/vitest";
-import Plist from "plist";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -68,7 +67,6 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   wslRuntimeArchiveStem,
 } from "./build-desktop-artifact.ts";
-import { copyUsageDescriptionsToHelper } from "./after-pack-macos.ts";
 import {
   ReleasePackageManifestError,
   releasePackageFiles,
@@ -1524,28 +1522,6 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });
-
-  it.effect("copies the app's privacy strings into the macOS backend Helper", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const app = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-after-pack-" });
-        const helperPlist = path.join(app, "Contents/Frameworks/T3 Helper.app/Contents/Info.plist");
-        yield* fs.makeDirectory(path.dirname(helperPlist), { recursive: true });
-        yield* fs.writeFileString(
-          path.join(app, "Contents/Info.plist"),
-          Plist.build({ CFBundleIdentifier: "com.t3tools.t3code", NSCameraUsageDescription: "c" }),
-        );
-        yield* fs.writeFileString(helperPlist, Plist.build({ LSUIElement: true }));
-        copyUsageDescriptionsToHelper(app, "T3");
-        assert.deepStrictEqual(Plist.parse(yield* fs.readFileString(helperPlist)), {
-          LSUIElement: true,
-          NSCameraUsageDescription: "c",
-        });
-      }),
-    ),
-  );
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
     const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };
