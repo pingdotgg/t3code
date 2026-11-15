@@ -125,7 +125,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("checks for newer releases after an update has been downloaded", () => {
+  it.effect("re-checks an offered update without announcing it again", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -138,14 +138,23 @@ describe("DesktopUpdates", () => {
           releaseNotes: "## What's changed\n- fix: queued update",
         });
         yield* flushCallbacks;
+        const offeredStates = harness.sentStates.length;
+
+        yield* updates.check("poll");
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, offeredStates);
+
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
+        const downloadedStates = harness.sentStates.length;
 
         const result = yield* updates.check("poll");
         assert.isTrue(result.checked);
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, downloadedStates);
 
         const unchangedState = yield* updates.getState;
         assert.equal(unchangedState.status, "downloaded");
@@ -267,15 +276,26 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect(
-    "rejects install while a refresh check is in progress and releases the reservation",
-    () =>
+  it.effect.each([
+    { action: "download", offer: "update-available", found: null, accepted: true },
+    { action: "install", offer: "update-downloaded", found: null, accepted: true },
+    { action: "download", offer: "update-available", found: "1.2.5", accepted: true },
+    { action: "install", offer: "update-downloaded", found: "1.2.5", accepted: false },
+  ] as const)(
+    "a $action waiting out a refresh check acts on what it found ($found)",
+    ({ action, offer, found, accepted }) =>
       Effect.gen(function* () {
         const checkStarted = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const harness = makeHarness({
           checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseCheck)),
+            // electron-updater emits the check's outcome before its promise resolves.
+            Effect.andThen(
+              Effect.sync(() => {
+                if (found !== null) harness.emit("update-available", { version: found });
+              }),
+            ),
           ),
         });
 
@@ -283,22 +303,20 @@ describe("DesktopUpdates", () => {
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
-            harness.emit("update-downloaded", { version: "1.2.4" });
+            harness.emit(offer, { version: "1.2.4" });
             yield* flushCallbacks;
 
-            const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+            const checkFiber = yield* updates.check("poll").pipe(Effect.forkScoped);
             yield* Deferred.await(checkStarted);
-
-            const installResult = yield* updates.install;
-            assert.isFalse(installResult.accepted);
+            const actionFiber = yield* updates[action].pipe(Effect.forkScoped);
+            yield* flushCallbacks;
 
             yield* Deferred.succeed(releaseCheck, undefined);
-            const checkResult = yield* Fiber.join(checkFiber);
-            assert.isTrue(checkResult.checked);
-
-            const followUpCheck = yield* updates.check("manual");
-            assert.isTrue(followUpCheck.checked);
-            assert.equal(harness.checkCount(), 2);
+            assert.isTrue((yield* Fiber.join(checkFiber)).checked);
+            assert.equal((yield* Fiber.join(actionFiber)).accepted, accepted);
+            const state = yield* updates.getState;
+            assert.equal(state.availableVersion, found ?? "1.2.4");
+            if (action === "download") assert.equal(state.status, "downloading");
           }),
         ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
       }),
