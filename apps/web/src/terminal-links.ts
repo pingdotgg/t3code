@@ -172,11 +172,10 @@ export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: 
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
   const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path));
   const position = splitFilePathPosition("", fileUrl.hash);
-  if (splitFilePathPosition(path).path === path)
-    return formatFilePathPosition({ ...position, path });
-  // Metadata, the launcher and editors read a trailing `:line:column` off the target, so a
-  // filename that ends like one keeps a full position after it to stay whole.
-  return `${path}:${position.line ?? 1}:${position.column ?? 1}`;
+  // Consumers strip a trailing `:line:column`, so a filename ending like one gets a full one appended.
+  if (splitFilePathPosition(path).path !== path)
+    return `${path}:${position.line ?? 1}:${position.column ?? 1}`;
+  return formatFilePathPosition({ ...position, path });
 }
 
 export function collectWrappedTerminalLinkLine(

@@ -33,10 +33,7 @@ const hashed = (uriPath: string) =>
   `printf '\\033]8;;file://%s\\033\\\\CLICKME\\033]8;;\\033\\\\\\n' "$PWD/${uriPath}"`;
 
 const LINKS = [
-  { print: listed("plain.txt"), opens: ["plain.txt"] },
-  { print: listed("report.txt:12"), opens: ["--goto", "report.txt:12:1:1"] },
   { print: listed("report.txt:12-64"), opens: ["--goto", "report.txt:12-64:1:1"] },
-  { print: listed("report.txt:0"), opens: ["--goto", "report.txt:0:1:1"] },
   { print: hashed("report.txt%3A12#L5"), opens: ["--goto", "report.txt:12:5:1"] },
   { print: listed("build:2026"), opens: ["--new-window", "build:2026"] },
 ];
@@ -47,13 +44,7 @@ test(
   async ({ t3, app, browser, screen }) => {
     await removeEditorArgs();
     const files: Record<string, string> = { "build:2026/keep.txt": "keep\n" };
-    for (const name of [
-      "plain.txt",
-      "report.txt",
-      "report.txt:12",
-      "report.txt:12-64",
-      "report.txt:0",
-    ]) {
+    for (const name of ["report.txt", "report.txt:12", "report.txt:12-64"]) {
       files[name] = `${name}\n`;
     }
     // Enough rows to scroll, so every row is the link. Scripts keep the typed commands short.

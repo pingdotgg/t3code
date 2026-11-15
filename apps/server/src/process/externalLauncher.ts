@@ -140,7 +140,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
-  folder: string | undefined,
+  folder: Option.Option<string>,
   projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
@@ -150,7 +150,7 @@ function resolveCommandEditorArgs(
       return [target];
     case "goto":
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      if (folder !== undefined) return ["--new-window", folder];
+      if (Option.isSome(folder)) return ["--new-window", folder.value];
       return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
@@ -535,22 +535,22 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     }
     const { command, baseArgs } = resolved.value;
     const fileSystem = yield* FileSystem.FileSystem;
-    const isFolder = (path: string) =>
-      fileSystem.stat(path).pipe(
-        Effect.map((info) => info.type === "Directory"),
-        Effect.orElseSucceed(() => false),
-      );
     // An existing folder wins over a position: `build:2026` is a legal folder name, and
     // `build:2026:1:1` names that folder at a position.
-    const positioned = parseTargetPathAndPosition(input.cwd);
     const folder =
-      editorDef.launchStyle !== "goto"
-        ? undefined
-        : (yield* isFolder(input.cwd))
-          ? input.cwd
-          : Option.isSome(positioned) && (yield* isFolder(positioned.value.path))
-            ? positioned.value.path
-            : undefined;
+      editorDef.launchStyle === "goto"
+        ? yield* Effect.findFirst(
+            [
+              input.cwd,
+              ...Option.toArray(parseTargetPathAndPosition(input.cwd)).map(({ path }) => path),
+            ],
+            (path) =>
+              fileSystem.stat(path).pipe(
+                Effect.map((info) => info.type === "Directory"),
+                Effect.orElseSucceed(() => false),
+              ),
+          )
+        : Option.none<string>();
     return {
       editor: editorDef.id,
       target: input.cwd,
