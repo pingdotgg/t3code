@@ -40,6 +40,7 @@ import {
   boatCloudReady,
   clearBoatCloudStartProgress,
   prepareBoatCloudProject,
+  prewarmBoatCloudProject,
   usePrimaryBoatCloudStatus,
 } from "../../boatCloud";
 
@@ -161,37 +162,46 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
    * keeping its model, base branch, attachments and access settings. Cloud
    * threads always start in a new worktree.
    */
-  const moveToBoatCloud = async () => {
-    if (!draftId) return false;
-    const originalDraft = getDraftSession(draftId);
-    if (!originalDraft) return false;
-    const warn = (title: string, description: string) => {
-      toastManager.add({ type: "warning", id: "boat-cloud-send", title, description });
-      return false;
-    };
+  /** What starting this draft on Boat cloud needs, or why it cannot start. */
+  const boatCloudStart = (draft: NonNullable<ReturnType<typeof getDraftSession>>) => {
     if (boatCloud.holderEnvironmentId === null || !boatCloudReady(boatCloud.status)) {
-      return warn("Boat cloud is not set up", "Finish setup in Settings, Cloud.");
+      return { title: "Boat cloud is not set up", description: "Finish setup in Settings, Cloud." };
     }
     const project = allProjects.find(
       (candidate) =>
-        candidate.environmentId === originalDraft.environmentId &&
-        candidate.id === originalDraft.projectId,
+        candidate.environmentId === draft.environmentId && candidate.id === draft.projectId,
     );
     // A fork's own remote, where the agent can push, rather than the upstream it groups under.
     const identity = project?.repositoryIdentity;
     const repositoryUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
     if (!repositoryUrl) {
-      return warn("Boat cloud needs a git remote", "Push this project to a remote Boat can clone.");
+      return {
+        title: "Boat cloud needs a git remote",
+        description: "Push this project to a remote Boat can clone.",
+      };
     }
-    if (!originalDraft.branch) {
-      return warn("Choose a base branch", "Boat cloud starts a new worktree from it.");
+    if (!draft.branch) {
+      return {
+        title: "Choose a base branch",
+        description: "Boat cloud starts a new worktree from it.",
+      };
     }
-    const target = await prepareBoatCloudProject({
-      draftId,
+    return {
       holderEnvironmentId: boatCloud.holderEnvironmentId,
       repositoryUrl,
-      baseBranch: originalDraft.branch,
-    });
+      baseBranch: draft.branch,
+    };
+  };
+  const moveToBoatCloud = async () => {
+    if (!draftId) return false;
+    const originalDraft = getDraftSession(draftId);
+    if (!originalDraft) return false;
+    const start = boatCloudStart(originalDraft);
+    if ("title" in start) {
+      toastManager.add({ type: "warning", id: "boat-cloud-send", ...start });
+      return false;
+    }
+    const target = await prepareBoatCloudProject({ draftId, ...start });
     if (!target) return false;
     const currentDraft = getDraftSession(draftId);
     if (
@@ -337,6 +347,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       envMode: "worktree",
       worktreePath: null,
     });
+    // The VM starts while the message is written; the send reuses this start.
+    const draft = getDraftSession(draftId);
+    const start = draft ? boatCloudStart(draft) : null;
+    if (start && !("title" in start)) prewarmBoatCloudProject({ draftId, ...start });
   };
   const onCloudEnvironmentStable = useStableCallback(onCloudEnvironment);
   const onLeaveCloudEnvironment = () => {

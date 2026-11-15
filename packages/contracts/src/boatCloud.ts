@@ -82,6 +82,7 @@ export type BoatCloudMachine = typeof BoatCloudMachine.Type;
 /**
  * Starting a thread on Boat cloud, in order. `server` and `repository` run at
  * the same time; the holder reports the first three and the client the rest.
+ * Acquire returns once the server is up, so `repository` can still be running.
  */
 export const BOAT_CLOUD_START_STEPS = [
   "machine",
@@ -168,6 +169,15 @@ export const BoatCloudAcquireInput = Schema.Struct({
   baseBranch: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
   /** Names this start in `BoatCloudStatus.starts`. */
   requestId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  /** Boat cloud VMs the client already paired with; picking one of them skips the pairing code. */
+  paired: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        environmentId: EnvironmentId,
+        httpBaseUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+      }),
+    ).check(Schema.isMaxLength(64)),
+  ),
 });
 export type BoatCloudAcquireInput = typeof BoatCloudAcquireInput.Type;
 
@@ -183,7 +193,8 @@ export const BoatCloudSession = Schema.Struct({
   sandboxId: TrimmedNonEmptyString,
   environmentId: EnvironmentId,
   httpBaseUrl: TrimmedNonEmptyString,
-  pairingCode: TrimmedNonEmptyString,
+  /** Null when the client is already paired with this environment and reconnects instead. */
+  pairingCode: Schema.NullOr(TrimmedNonEmptyString),
   /** Repository checkout on the VM; null for a wake. */
   workspaceRoot: Schema.NullOr(TrimmedNonEmptyString),
 });

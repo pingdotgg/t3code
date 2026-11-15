@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -23,19 +24,20 @@ import {
   type MachineCandidate,
   MACHINE_LABEL_FILTER,
   MACHINE_LABELS,
+  PAIRING_MARKER,
   type ParsedRepository,
   SETUP_LABEL_FILTER,
   SETUP_LABELS,
   VM_T3_PORT,
-  addProjectAndPairScript,
   checkoutScript,
-  ensureServerScript,
   machineLabelOf,
   machineStateOf,
   measureScript,
   parseMeasure,
+  pairScript,
   pickMachine,
   prepareSnapshotScript,
+  startServerScript,
   subdomainOfHttpBaseUrl,
 } from "./boatCloudVm.ts";
 
@@ -90,21 +92,48 @@ export const waitRunning = (api: BoatApi, sandboxId: string) =>
       return Effect.fail(vmFailure(`The VM is still ${sandbox.state}.`, "starting"));
     }),
     Effect.retry({
-      schedule: Schedule.spaced(Duration.millis(500)),
-      times: 600,
+      schedule: Schedule.spaced(Duration.millis(250)),
+      times: 1200,
       while: (error) => error.code === "starting",
     }),
   );
 
-const ensureServer = (api: BoatApi, sandboxId: string) =>
-  exec(api, sandboxId, ensureServerScript, 90, "T3 Code did not start on the VM.").pipe(
-    Effect.flatMap((output) =>
-      Option.match(decodeDescriptor(output), {
-        onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not describe itself.")),
-        onSome: (descriptor) => Effect.succeed(descriptor.environmentId),
-      }),
-    ),
+const PAIRING_LABEL = "Boat cloud";
+
+const pairingOf = (output: string): Effect.Effect<string, BoatApiError> =>
+  Option.match(decodePairing(output), {
+    onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not issue a pairing code.")),
+    onSome: (pairing) => Effect.succeed(pairing.credential),
+  });
+
+/** Starts the server and, when asked, mints a pairing code in the same command. */
+const startServer = Effect.fn("BoatCloud.startServer")(function* (
+  api: BoatApi,
+  sandboxId: string,
+  pair: boolean,
+) {
+  const output = yield* exec(
+    api,
+    sandboxId,
+    startServerScript(pair ? PAIRING_LABEL : null),
+    90,
+    "T3 Code did not start on the VM.",
   );
+  const markerAt = output.indexOf(PAIRING_MARKER);
+  const descriptor = decodeDescriptor(
+    (markerAt === -1 ? output : output.slice(0, markerAt)).trim(),
+  );
+  if (Option.isNone(descriptor)) {
+    return yield* vmFailure("T3 Code on the VM did not describe itself.");
+  }
+  const pairingCode = pair
+    ? yield* pairingOf(output.slice(markerAt + PAIRING_MARKER.length))
+    : null;
+  return { environmentId: descriptor.value.environmentId, pairingCode };
+});
+
+const ensureServer = (api: BoatApi, sandboxId: string) =>
+  startServer(api, sandboxId, false).pipe(Effect.map((started) => started.environmentId));
 
 /** Boat routes a hosted port only when it is registered after the server listens on it. */
 const hostServer = (api: BoatApi, sandboxId: string) =>
@@ -115,27 +144,24 @@ const hostServer = (api: BoatApi, sandboxId: string) =>
     }),
   );
 
-const pair = (api: BoatApi, sandboxId: string, workspaceRoot: string | null) =>
+const pair = (api: BoatApi, sandboxId: string) =>
   exec(
     api,
     sandboxId,
-    addProjectAndPairScript(workspaceRoot, "Boat cloud"),
-    120,
+    pairScript(PAIRING_LABEL),
+    60,
     "T3 Code on the VM did not issue a pairing code.",
-  ).pipe(
-    Effect.flatMap((output) =>
-      Option.match(decodePairing(output), {
-        onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not issue a pairing code.")),
-        onSome: (pairing) => Effect.succeed(pairing.credential),
-      }),
-    ),
-  );
+  ).pipe(Effect.flatMap(pairingOf));
+
+/** Boat serves the hosted port here once it is registered; the list carries the subdomain. */
+const hostedUrlOf = (sandbox: BoatSandbox) =>
+  sandbox.subdomain ? `https://${sandbox.subdomain}-${VM_T3_PORT}.on.boat.dev` : null;
 
 const GIT_AUTH_FAILURE = /could not read Username|Authentication failed|Repository not found/u;
 
 /**
- * Clones or refreshes the checkout. Boat clones with the GitHub access set up in its
- * dashboard; without it git only says it cannot log in.
+ * Gets the checkout and adds it as a project. Boat clones with the GitHub access set
+ * up in its dashboard; without it git only says it cannot log in.
  */
 const checkout = (
   api: BoatApi,
@@ -190,15 +216,25 @@ export interface StartedMachine {
   readonly sandboxId: string;
   readonly environmentId: EnvironmentId;
   readonly httpBaseUrl: string;
-  readonly pairingCode: string;
+  /** Null when the client already paired with this VM and only reconnects. */
+  readonly pairingCode: string | null;
   readonly workspaceRoot: string;
   readonly created: boolean;
+  /** The checkout and its project, still running: the client connects meanwhile. */
+  readonly checkout: Effect.Effect<void, BoatApiError>;
+}
+
+/** A VM the client already paired with, by the URL it reaches it at. */
+export interface PairedEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly httpBaseUrl: string;
 }
 
 /**
  * Picks a VM for the repository (a free running one, then a stopped one, then a
- * new one from the snapshot), then starts its server while it clones or
- * refreshes the checkout, and mints a pairing code for the client.
+ * new one from the snapshot), then starts its server while it clones the
+ * checkout. Returns once the server answers: a client already paired with the
+ * VM reconnects, any other gets a pairing code, and the checkout carries on.
  */
 export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input: {
   readonly api: BoatApi;
@@ -207,8 +243,11 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
   readonly baseBranch: string | null;
   /** The Boat environment a new VM starts on and a reused one must already run; Boat's default when null. */
   readonly environment: string | null;
+  /** Boat's list of VMs, when the caller just read it. */
+  readonly sandboxes?: ReadonlyArray<BoatSandbox>;
   /** Checkouts the holder remembers on stopped VMs, which cannot be asked. */
   readonly knownWorkspaceRoots: (sandboxId: string) => ReadonlyArray<string>;
+  readonly paired?: ReadonlyArray<PairedEnvironment>;
   readonly report: ReportStep;
   readonly onCreated?: (sandbox: BoatSandbox) => Effect.Effect<void>;
   /** Runs before an existing VM is resumed or reused, so an idle sweep leaves it on. */
@@ -216,8 +255,8 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
 }) {
   const { api, repository, report } = input;
   yield* report("machine", "active", "Looking for a VM");
-  const choice = yield* Effect.gen(function* () {
-    const sandboxes = yield* api.listSandboxes(MACHINE_LABEL_FILTER);
+  const { choice, sandboxes } = yield* Effect.gen(function* () {
+    const sandboxes = input.sandboxes ?? (yield* api.listSandboxes(MACHINE_LABEL_FILTER));
     const candidates = yield* Effect.forEach(
       sandboxes.filter((sandbox) => machineStateOf(sandbox.state) !== "starting"),
       (sandbox): Effect.Effect<MachineCandidate> => {
@@ -232,7 +271,8 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
             workspaceRoots: input.knownWorkspaceRoots(sandbox.id),
           });
         }
-        return exec(api, sandbox.id, measureScript, 20).pipe(
+        // The load decides between sharing this VM and starting another, even when it is the only one.
+        return exec(api, sandbox.id, measureScript(repository.workspaceRoot), 20).pipe(
           Effect.map(parseMeasure),
           Effect.orElseSucceed(() => null),
           Effect.map((measure) => ({
@@ -246,7 +286,10 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
       },
       { concurrency: 8 },
     );
-    return pickMachine(candidates, repository.workspaceRoot, input.environment);
+    return {
+      choice: pickMachine(candidates, repository.workspaceRoot, input.environment),
+      sandboxes,
+    };
   }).pipe(Effect.tapError(() => report("machine", "failed", "Looking for a VM")));
 
   const machineDetail =
@@ -255,12 +298,11 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
       : choice.kind === "resume"
         ? `Resuming ${machineLabelOf(choice.sandboxId)}`
         : `Using ${machineLabelOf(choice.sandboxId)}`;
-  const sandboxId = yield* runStep(
+  const sandbox = yield* runStep(
     report,
     "machine",
     machineDetail,
     Effect.gen(function* () {
-      let id: string;
       if (choice.kind === "create") {
         const created = yield* api.createSandbox({
           name: "Boat cloud",
@@ -272,53 +314,67 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
           ...(input.environment === null ? {} : { environment: input.environment }),
         });
         if (input.onCreated) yield* input.onCreated(created);
-        id = created.id;
-      } else if (choice.kind === "resume") {
-        if (input.onReused) yield* input.onReused(choice.sandboxId);
+        return yield* waitRunning(api, created.id);
+      }
+      if (input.onReused) yield* input.onReused(choice.sandboxId);
+      if (choice.kind === "resume") {
         // No environment on resume: Boat keeps the VM on the one it started with.
         yield* api.resume(choice.sandboxId, IDLE_TTL_SECONDS);
-        id = choice.sandboxId;
-      } else {
-        if (input.onReused) yield* input.onReused(choice.sandboxId);
-        // A reused VM may be minutes from its deadline; the new thread restarts it.
-        yield* api.extend(choice.sandboxId, IDLE_TTL_SECONDS);
-        id = choice.sandboxId;
+        return yield* waitRunning(api, choice.sandboxId);
       }
-      yield* waitRunning(api, id);
-      return id;
+      // Listed running a moment ago, so it needs no wait. The new deadline is set
+      // alongside the server start below.
+      return sandboxes.find((listed) => listed.id === choice.sandboxId)!;
     }),
   );
+  const sandboxId = sandbox.id;
 
-  // The server and the checkout are independent until the project is added.
-  const [server] = yield* Effect.all(
-    [
-      runStep(
-        report,
-        "server",
-        null,
-        Effect.gen(function* () {
-          const environmentId = yield* ensureServer(api, sandboxId);
-          const httpBaseUrl = yield* hostServer(api, sandboxId);
-          return { environmentId, httpBaseUrl };
-        }),
-      ),
-      runStep(
-        report,
-        "repository",
-        repository.name,
-        checkout(api, sandboxId, repository, input.baseBranch),
-      ),
-    ],
-    { concurrency: 2 },
+  // Its failure carries the reason, since the client learns it from the step alone.
+  const checkoutFiber = yield* report("repository", "active", repository.name).pipe(
+    Effect.andThen(checkout(api, sandboxId, repository, input.baseBranch)),
+    Effect.tap(() => report("repository", "done", repository.name)),
+    Effect.tapError((error) => report("repository", "failed", error.message)),
+    Effect.forkDetach,
   );
-  const pairingCode = yield* pair(api, sandboxId, repository.workspaceRoot);
+
+  // A client paired with this VM reconnects with its saved credential, so it needs no new code.
+  const expected = sandbox.subdomain
+    ? (input.paired?.find(
+        (environment) => subdomainOfHttpBaseUrl(environment.httpBaseUrl) === sandbox.subdomain,
+      ) ?? null)
+    : null;
+  const server = yield* runStep(
+    report,
+    "server",
+    null,
+    Effect.gen(function* () {
+      // A reused VM may be minutes from its deadline; the new thread restarts it.
+      const [started] = yield* Effect.all(
+        [
+          startServer(api, sandboxId, expected === null),
+          choice.kind === "use" ? api.extend(sandboxId, IDLE_TTL_SECONDS) : Effect.void,
+        ],
+        { concurrency: 2 },
+      );
+      // Its state was reset since the client paired, so the saved credential no longer works.
+      const pairingCode =
+        expected !== null && started.environmentId !== expected.environmentId
+          ? yield* pair(api, sandboxId)
+          : started.pairingCode;
+      // Boat keeps a hosted port across server restarts but not across a stop.
+      const listedUrl = choice.kind === "use" ? hostedUrlOf(sandbox) : null;
+      const httpBaseUrl = listedUrl ?? (yield* hostServer(api, sandboxId));
+      return { environmentId: started.environmentId, pairingCode, httpBaseUrl };
+    }),
+  ).pipe(Effect.onError(() => Fiber.interrupt(checkoutFiber)));
   return {
     sandboxId,
     environmentId: server.environmentId,
     httpBaseUrl: server.httpBaseUrl,
-    pairingCode,
+    pairingCode: server.pairingCode,
     workspaceRoot: repository.workspaceRoot,
     created: choice.kind === "create",
+    checkout: Fiber.join(checkoutFiber),
   } satisfies StartedMachine;
 });
 
@@ -340,6 +396,7 @@ export const findSandboxByHttpBaseUrl = Effect.fn("BoatCloud.findSandboxByHttpBa
 export const wakeMachine = Effect.fn("BoatCloud.wakeMachine")(function* (
   api: BoatApi,
   sandboxId: string,
+  options?: { readonly pair: boolean },
 ) {
   const sandbox = yield* api.getSandbox(sandboxId);
   if (sandbox === null) return yield* vmFailure("Boat deleted this VM.", "gone");
@@ -349,13 +406,10 @@ export const wakeMachine = Effect.fn("BoatCloud.wakeMachine")(function* (
     yield* api.extend(sandboxId, IDLE_TTL_SECONDS);
   }
   yield* waitRunning(api, sandboxId);
-  const environmentId = yield* ensureServer(api, sandboxId);
+  const started = yield* startServer(api, sandboxId, options?.pair === true);
   const httpBaseUrl = yield* hostServer(api, sandboxId);
-  return { environmentId, httpBaseUrl };
+  return { ...started, httpBaseUrl };
 });
-
-/** A pairing code for a VM that is running, such as one just woken from a backup. */
-export const issuePairing = (api: BoatApi, sandboxId: string) => pair(api, sandboxId, null);
 
 const waitSnapshot = (api: BoatApi) =>
   api.getSnapshotStatus(BOAT_CLOUD_SNAPSHOT_NAME).pipe(

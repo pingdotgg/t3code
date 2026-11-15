@@ -6,12 +6,18 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  connectionCatalogDisplayUrl,
+  type EnvironmentConnectionPhase,
+} from "@t3tools/client-runtime/connection";
 import {
   AuthOrchestrationOperateScope,
+  type BoatCloudAcquireInput,
   type BoatCloudSession,
+  type BoatCloudStartStep,
   type BoatCloudStatus,
   type EnvironmentId,
+  isBoatCloudHttpBaseUrl,
 } from "@t3tools/contracts";
 import { boatCloudProviderDrivers, parseRepository } from "@t3tools/shared/boatCloudVm";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -26,11 +32,12 @@ import {
 } from "./boatCloudStart.logic";
 import type { DraftId } from "./composerDraftStore";
 import { stackedThreadToast, toastManager } from "./components/ui/toast";
+import { environmentCatalog } from "./connection/catalog";
 import { connectPairing } from "./connection/onboarding";
 import { randomUUID } from "./lib/utils";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { useEnvironment, usePrimaryEnvironmentId } from "./state/environments";
-import { environmentSummaries } from "./state/presentation";
+import { environmentPresentations, environmentSummaries } from "./state/presentation";
 import { environmentSession, sessionHasScope } from "./state/session";
 import { environmentProjects } from "./state/projects";
 import { useEnvironmentQuery } from "./state/query";
@@ -43,6 +50,7 @@ import { waitForAtomValue } from "./state/waitForAtomValue";
  */
 
 const PROJECT_APPEAR_TIMEOUT_MS = 60_000;
+const RECONNECT_TIMEOUT_MS = 15_000;
 
 /** An environment's Boat cloud status, while it is connected. */
 export function useBoatCloudStatus(environmentId: EnvironmentId | null): BoatCloudStatus | null {
@@ -52,6 +60,33 @@ export function useBoatCloudStatus(environmentId: EnvironmentId | null): BoatClo
       ? serverEnvironment.boatCloudStatus({ environmentId, input: {} })
       : null,
   ).data;
+}
+
+/**
+ * Each connected machine's Boat status: null while it loads, "unsupported" when its
+ * T3 Code predates Boat cloud and cannot take the key.
+ */
+const boatCloudKeyHolderStatesAtom = Atom.make((get) => {
+  const states = new Map<EnvironmentId, BoatCloudStatus | "unsupported" | null>();
+  for (const environmentId of get(environmentSummaries.connectedEnvironmentIdsAtom)) {
+    const config = get(serverEnvironment.configValueAtom(environmentId));
+    if (config === null) {
+      states.set(environmentId, null);
+    } else if (config.environment.capabilities.boatCloud !== true) {
+      states.set(environmentId, "unsupported");
+    } else {
+      const status = get(serverEnvironment.boatCloudStatus({ environmentId, input: {} }));
+      states.set(
+        environmentId,
+        AsyncResult.getOrElse(status, () => null),
+      );
+    }
+  }
+  return states;
+}).pipe(Atom.withLabel("boat-cloud:key-holder-states"));
+
+export function useBoatCloudKeyHolderStates() {
+  return useAtomValue(boatCloudKeyHolderStatesAtom);
 }
 
 /** The status of this machine, which hands out VMs for the threads started here. */
@@ -104,13 +139,44 @@ function updateProgress(
 
 /** Ends the draft's start, once its thread is created or it leaves Boat cloud. */
 export function clearBoatCloudStartProgress(draftId: DraftId) {
+  prewarmed.delete(draftId);
   appAtomRegistry.set(boatCloudStartProgressAtom(draftId), null);
 }
 
-/** Pairs this client with the VM unless it is already connected. Returns the failure text. */
+/** Boat cloud VMs this client already paired with, so the holder skips their pairing code. */
+function pairedBoatCloudEnvironments(): NonNullable<BoatCloudAcquireInput["paired"]> {
+  const paired: Array<{ environmentId: EnvironmentId; httpBaseUrl: string }> = [];
+  for (const [environmentId, presentation] of appAtomRegistry.get(
+    environmentPresentations.presentationsAtom,
+  )) {
+    const httpBaseUrl = connectionCatalogDisplayUrl(presentation.entry);
+    if (httpBaseUrl !== null && isBoatCloudHttpBaseUrl(httpBaseUrl)) {
+      paired.push({ environmentId, httpBaseUrl });
+    }
+  }
+  return paired;
+}
+
+const isConnected = (environmentId: EnvironmentId) =>
+  appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom).includes(environmentId);
+
+/**
+ * Connects this client to the VM: with its saved credential when the holder sent
+ * no pairing code, else by pairing. Returns the failure text.
+ */
 async function attach(session: BoatCloudSession): Promise<string | null> {
-  const connected = appAtomRegistry.get(environmentSummaries.connectedEnvironmentIdsAtom);
-  if (connected.includes(session.environmentId)) return null;
+  if (isConnected(session.environmentId)) return null;
+  if (session.pairingCode === null) {
+    // A stopped VM left its connection backing off; retry now that the server is up.
+    void environmentCatalog.retryNow.run(appAtomRegistry, session.environmentId);
+    const reconnected = await waitForAtomValue({
+      registry: appAtomRegistry,
+      atom: environmentSummaries.connectedEnvironmentIdsAtom,
+      predicate: (ids) => ids.includes(session.environmentId),
+      timeoutMs: RECONNECT_TIMEOUT_MS,
+    });
+    return reconnected ? null : "Could not reconnect to the VM.";
+  }
   const paired = await runAtomCommand(
     appAtomRegistry,
     connectPairing,
@@ -125,94 +191,171 @@ async function attach(session: BoatCloudSession): Promise<string | null> {
   return failureMessage(paired);
 }
 
+interface BoatCloudPrepareInput {
+  readonly draftId: DraftId;
+  readonly holderEnvironmentId: EnvironmentId;
+  readonly repositoryUrl: string;
+  readonly baseBranch: string;
+}
+
 /**
  * Gets a VM with the repository checked out and returns its project there,
  * so the draft can move onto it and send. Progress goes to the draft's
  * `boatCloudStartProgressAtom`; the caller completes the "thread" step.
  * Null when it failed, with the failure in the progress.
  */
-export async function prepareBoatCloudProject(input: {
-  readonly draftId: DraftId;
-  readonly holderEnvironmentId: EnvironmentId;
-  readonly repositoryUrl: string;
-  readonly baseBranch: string;
-}): Promise<EnvironmentProject | null> {
+async function prepareBoatCloudProjectNow(
+  input: BoatCloudPrepareInput,
+): Promise<EnvironmentProject | null> {
   const { draftId } = input;
-  const requestId = randomUUID();
   appAtomRegistry.set(
     boatCloudStartProgressAtom(draftId),
     startingProgress(parseRepository(input.repositoryUrl)?.name ?? null),
   );
-  const fail = (error: string) => {
-    updateProgress(draftId, (progress) => failProgress(progress, error));
+  const fail = (error: string, step?: BoatCloudStartStep) => {
+    updateProgress(draftId, (progress) => failProgress(progress, error, step));
     return null;
   };
-  // The holder reports its steps under the request id until the acquire returns.
+  let requestId = randomUUID();
+  // The holder reports its steps under the request id, the checkout's after the acquire returns.
+  let repositoryFailed: (error: string) => void = () => undefined;
+  const checkoutFailure = new Promise<string>((resolve) => {
+    repositoryFailed = resolve;
+  });
   const stopWatchingHolder = appAtomRegistry.subscribe(
     serverEnvironment.boatCloudStatus({ environmentId: input.holderEnvironmentId, input: {} }),
     (result) => {
       const start = AsyncResult.getOrElse(result, () => null)?.starts.find(
         (candidate) => candidate.requestId === requestId,
       );
-      if (start) updateProgress(draftId, (progress) => withHolderSteps(progress, start.steps));
+      if (!start) return;
+      updateProgress(draftId, (progress) => withHolderSteps(progress, start.steps));
+      const repository = start.steps.find((entry) => entry.step === "repository");
+      if (repository?.state === "failed") {
+        repositoryFailed(repository.detail ?? "Could not get the repository on the VM.");
+      }
     },
   );
-  const acquired = await runAtomCommand(
-    appAtomRegistry,
-    serverEnvironment.acquireBoatCloud,
-    {
-      environmentId: input.holderEnvironmentId,
-      input: { repositoryUrl: input.repositoryUrl, baseBranch: input.baseBranch, requestId },
-    },
-    { label: serverEnvironment.acquireBoatCloud.label, reportFailure: false, reportDefect: true },
-  ).finally(stopWatchingHolder);
-  if (acquired._tag === "Failure") {
-    if (isAtomCommandInterrupted(acquired)) {
-      clearBoatCloudStartProgress(draftId);
-      return null;
+  try {
+    const acquire = (paired: BoatCloudAcquireInput["paired"]) =>
+      runAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.acquireBoatCloud,
+        {
+          environmentId: input.holderEnvironmentId,
+          input: {
+            repositoryUrl: input.repositoryUrl,
+            baseBranch: input.baseBranch,
+            requestId,
+            paired,
+          },
+        },
+        {
+          label: serverEnvironment.acquireBoatCloud.label,
+          reportFailure: false,
+          reportDefect: true,
+        },
+      );
+    let acquired = await acquire(pairedBoatCloudEnvironments());
+    if (acquired._tag === "Failure") {
+      if (isAtomCommandInterrupted(acquired)) {
+        clearBoatCloudStartProgress(draftId);
+        return null;
+      }
+      return fail(failureMessage(acquired));
     }
-    return fail(failureMessage(acquired));
-  }
-  updateProgress(draftId, markAcquired);
-  const session = acquired.value;
-  const attachFailure = await attach(session);
-  if (attachFailure !== null) return fail(attachFailure);
-  updateProgress(draftId, (progress) => completeStep(progress, "connect"));
+    updateProgress(draftId, markAcquired);
+    let attachFailure = await attach(acquired.value);
+    if (attachFailure !== null && acquired.value.pairingCode === null) {
+      // The saved credential no longer works, so pair as a new client.
+      requestId = randomUUID();
+      acquired = await acquire([]);
+      if (acquired._tag === "Failure") {
+        if (isAtomCommandInterrupted(acquired)) {
+          clearBoatCloudStartProgress(draftId);
+          return null;
+        }
+        return fail(failureMessage(acquired), "connect");
+      }
+      attachFailure = await attach(acquired.value);
+    }
+    if (attachFailure !== null) return fail(attachFailure, "connect");
+    updateProgress(draftId, (progress) => completeStep(progress, "connect"));
+    const session = acquired.value;
 
-  // Uploads need the VM's server config and the send needs its operate grant,
-  // so the draft moves once all three have arrived.
-  const findProject = (projects: ReadonlyArray<EnvironmentProject>) =>
-    projects.find(
-      (project) =>
-        project.environmentId === session.environmentId &&
-        project.workspaceRoot === session.workspaceRoot,
+    // Uploads need the VM's server config and the send needs its operate grant,
+    // so the draft moves once all three have arrived.
+    const findProject = (projects: ReadonlyArray<EnvironmentProject>) =>
+      projects.find(
+        (project) =>
+          project.environmentId === session.environmentId &&
+          project.workspaceRoot === session.workspaceRoot,
+      );
+    const arrived = await Promise.race([
+      Promise.all([
+        waitForAtomValue({
+          registry: appAtomRegistry,
+          atom: environmentProjects.projectsAtom,
+          predicate: (projects) => findProject(projects) !== undefined,
+          timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
+        }),
+        waitForAtomValue({
+          registry: appAtomRegistry,
+          atom: environmentServerConfigsAtom,
+          predicate: (configs) => configs.has(session.environmentId),
+          timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
+        }),
+        waitForAtomValue({
+          registry: appAtomRegistry,
+          atom: environmentSession.sessionStateAtom(session.environmentId),
+          predicate: (result) => sessionHasScope(result, AuthOrchestrationOperateScope),
+          timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
+        }),
+      ]),
+      checkoutFailure,
+    ]);
+    if (typeof arrived === "string") return fail(arrived, "repository");
+    const project = findProject(appAtomRegistry.get(environmentProjects.projectsAtom));
+    if (arrived.includes(false) || !project) return fail("The VM did not open the project.");
+    // The project is added after the checkout, so it appearing means the checkout is done.
+    updateProgress(draftId, (progress) =>
+      completeStep(completeStep(progress, "repository"), "project"),
     );
-  const [projectAppeared, configArrived, grantArrived] = await Promise.all([
-    waitForAtomValue({
-      registry: appAtomRegistry,
-      atom: environmentProjects.projectsAtom,
-      predicate: (projects) => findProject(projects) !== undefined,
-      timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
-    }),
-    waitForAtomValue({
-      registry: appAtomRegistry,
-      atom: environmentServerConfigsAtom,
-      predicate: (configs) => configs.has(session.environmentId),
-      timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
-    }),
-    waitForAtomValue({
-      registry: appAtomRegistry,
-      atom: environmentSession.sessionStateAtom(session.environmentId),
-      predicate: (result) => sessionHasScope(result, AuthOrchestrationOperateScope),
-      timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
-    }),
-  ]);
-  const project = findProject(appAtomRegistry.get(environmentProjects.projectsAtom));
-  if (!projectAppeared || !configArrived || !grantArrived || !project) {
-    return fail("The VM did not open the project.");
+    return project;
+  } finally {
+    stopWatchingHolder();
   }
-  updateProgress(draftId, (progress) => completeStep(progress, "project"));
-  return project;
+}
+
+/** The start each draft began when Boat cloud was picked, so its send can reuse it. */
+const prewarmed = new Map<
+  DraftId,
+  { readonly repositoryUrl: string; readonly project: Promise<EnvironmentProject | null> }
+>();
+
+/**
+ * Starts getting a VM as soon as the draft picks Boat cloud, so it is usually
+ * ready by the time the message is written. VMs stop by themselves when unused.
+ */
+export function prewarmBoatCloudProject(input: BoatCloudPrepareInput) {
+  if (prewarmed.get(input.draftId)?.repositoryUrl === input.repositoryUrl) return;
+  prewarmed.set(input.draftId, {
+    repositoryUrl: input.repositoryUrl,
+    project: prepareBoatCloudProjectNow(input),
+  });
+}
+
+/** The draft's pre-warmed start when it is for this repository and did not fail, else a new one. */
+export async function prepareBoatCloudProject(
+  input: BoatCloudPrepareInput,
+): Promise<EnvironmentProject | null> {
+  const started = prewarmed.get(input.draftId);
+  prewarmed.delete(input.draftId);
+  if (started?.repositoryUrl === input.repositoryUrl) {
+    const project = await started.project;
+    if (project !== null) return project;
+  }
+  return prepareBoatCloudProjectNow(input);
 }
 
 const WAKE_CONNECT_TIMEOUT_MS = 90_000;
@@ -253,19 +396,16 @@ function wakeBoatCloudMachine(input: {
       reportFailure("Could not wake the Boat cloud machine", woken);
       return false;
     }
-    // A restored VM has a new address, so pair again rather than wait for the old one.
-    const paired = await runAtomCommand(
-      appAtomRegistry,
-      connectPairing,
-      {
-        host: woken.value.httpBaseUrl,
-        pairingCode: woken.value.pairingCode,
-        expectedEnvironmentId: woken.value.environmentId,
-      },
-      { label: connectPairing.label, reportFailure: false, reportDefect: true },
-    );
-    if (paired._tag === "Failure") {
-      reportFailure("Could not reconnect to Boat cloud", paired);
+    // A restored VM has a new address, so the holder pairs again rather than wait for the old one.
+    const attachFailure = await attach(woken.value);
+    if (attachFailure !== null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not reconnect to Boat cloud",
+          description: attachFailure,
+        }),
+      );
       return false;
     }
     // The send that follows needs the VM's grant too, which loads just after it connects.

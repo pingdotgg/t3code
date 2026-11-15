@@ -58,23 +58,40 @@ export function completeStep(
 }
 
 /**
- * A successful acquire means the holder finished its steps, even when the
- * status stream dropped the last update before the start was removed.
+ * A successful acquire means the VM and its server are up, even when the status
+ * stream dropped the last update. The checkout may still run while this client connects.
  */
 export function markAcquired(progress: BoatCloudStartProgress): BoatCloudStartProgress {
-  let next = progress;
-  for (const step of HOLDER_STEPS) next = completeStep(next, step);
-  return next;
+  return {
+    ...progress,
+    steps: progress.steps.map((entry) => {
+      if (entry.step === "machine" || entry.step === "server") return { ...entry, state: "done" };
+      if (entry.step === "connect") return { ...entry, state: "active" };
+      if (entry.step === "repository" && entry.state === "pending") {
+        return { ...entry, state: "active" };
+      }
+      return entry;
+    }),
+  };
 }
 
 /**
- * Keeps a failure the holder reported, and stops the steps that ran beside it;
- * otherwise fails whatever was running, or the next step when nothing was.
+ * Keeps a failure the holder reported, or fails `step` when given, and stops the
+ * steps that ran beside it; otherwise fails whatever was running, or the next step.
  */
 export function failProgress(
   progress: BoatCloudStartProgress,
   error: string,
+  step?: BoatCloudStartStep,
 ): BoatCloudStartProgress {
+  if (step !== undefined && !progress.steps.some((entry) => entry.state === "failed")) {
+    progress = {
+      ...progress,
+      steps: progress.steps.map((entry) =>
+        entry.step === step ? { ...entry, state: "failed" as const } : entry,
+      ),
+    };
+  }
   if (progress.steps.some((entry) => entry.state === "failed")) {
     return {
       error,

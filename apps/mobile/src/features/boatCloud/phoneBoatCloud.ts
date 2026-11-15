@@ -1,10 +1,12 @@
 import {
   BOAT_CLOUD_SNAPSHOT_NAME,
   type BoatCloudEnvironmentAccess,
+  type BoatCloudSession,
   type BoatCloudStatus,
 } from "@t3tools/contracts";
 import { BoatApiError, cloudEnvironments, makeBoatApi } from "@t3tools/shared/boatCloudApi";
 import {
+  type PairedEnvironment,
   type ReportStep,
   buildSnapshot,
   exec,
@@ -176,6 +178,13 @@ export async function connectPhoneBoatCloud(apiKey: string): Promise<string | nu
   return null;
 }
 
+/** The key this phone keeps, so it can hand it to machines that lack it. */
+export function readPhoneBoatCloudKey(): Promise<string | null> {
+  return run(MobileSecureStorage.use((storage) => storage.getItem(API_KEY_STORAGE_KEY))).catch(
+    () => null,
+  );
+}
+
 export async function disconnectPhoneBoatCloud(): Promise<void> {
   keyGeneration += 1;
   await run(
@@ -249,12 +258,16 @@ export async function runPhoneBoatCloudSetup(): Promise<void> {
   }
 }
 
-/** Gets a VM ready for the repository from the phone, reporting each step as it goes. */
+/**
+ * Gets a VM ready for the repository from the phone, reporting each step as it
+ * goes. Resolves once its server is up; the checkout reports its own step after.
+ */
 export function startOnPhone(input: {
   readonly repositoryUrl: string;
   readonly baseBranch: string | null;
+  readonly paired?: ReadonlyArray<PairedEnvironment> | undefined;
   readonly report: ReportStep;
-}) {
+}): Promise<BoatCloudSession> {
   const repository = parseRepository(input.repositoryUrl);
   if (repository === null) {
     return Promise.reject(new Error("Boat cloud cannot clone this project's remote."));
@@ -262,15 +275,25 @@ export function startOnPhone(input: {
   return run(
     Effect.gen(function* () {
       const api = yield* phoneApi;
-      return yield* startMachine({
+      const started = yield* startMachine({
         api,
         repository,
         baseBranch: input.baseBranch,
         environment: appAtomRegistry.get(phoneBoatCloudAtom).environment,
         // The phone keeps no record of stopped VMs, so it resumes them only for load.
         knownWorkspaceRoots: () => [],
+        paired: input.paired ?? [],
         report: input.report,
       });
+      // Its failure already reached the report, so the join only waits for it.
+      yield* started.checkout.pipe(Effect.ignore, Effect.forkDetach);
+      return {
+        sandboxId: started.sandboxId,
+        environmentId: started.environmentId,
+        httpBaseUrl: started.httpBaseUrl,
+        pairingCode: started.pairingCode,
+        workspaceRoot: started.workspaceRoot,
+      };
     }),
   ).finally(() => void refreshPhoneBoatCloud());
 }

@@ -11,6 +11,7 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   BOAT_CLOUD_START_STEPS,
+  type BoatCloudAcquireInput,
   type BoatCloudSession,
   type BoatCloudStartStep,
   type BoatCloudStatus,
@@ -24,6 +25,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
 import * as Dialog from "../../components/ui/Dialog";
+import { environmentCatalog } from "../../connection/catalog";
 import { connectPairingCode } from "../../connection/onboarding";
 import { uuidv4 } from "../../lib/uuid";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -44,6 +46,7 @@ import {
  */
 
 const PROJECT_APPEAR_TIMEOUT_MS = 60_000;
+const RECONNECT_TIMEOUT_MS = 15_000;
 
 interface BoatCloudHolder {
   readonly environmentId: EnvironmentId;
@@ -64,6 +67,16 @@ export const boatCloudMachinesAtom = Atom.make((get) => {
   }
   return machines;
 }).pipe(Atom.withLabel("mobile-boat-cloud:machines"));
+
+/** Connected machines whose T3 Code predates Boat cloud, so they cannot take the key yet. */
+export const boatCloudOutdatedMachinesAtom = Atom.make((get): ReadonlyArray<EnvironmentId> => {
+  const machines = get(boatCloudMachinesAtom);
+  return get(connectedEnvironmentIdsAtom).filter((environmentId) => {
+    if (machines.has(environmentId)) return false;
+    const config = get(serverEnvironment.configValueAtom(environmentId));
+    return config !== null && config.environment.capabilities.boatCloud !== true;
+  });
+}).pipe(Atom.withLabel("mobile-boat-cloud:outdated-machines"));
 
 /** Connected machines that answer for Boat cloud, without the VMs, which answer too. */
 export const boatCloudHoldersAtom = Atom.make((get): ReadonlyArray<BoatCloudHolder> => {
@@ -129,11 +142,48 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
-/** Pairs this app with the VM unless it is already connected. Throws what failed. */
+/** Paired VMs as the holder takes them, so it skips their pairing code. */
+const pairedBoatCloudEnvironments = (): NonNullable<BoatCloudAcquireInput["paired"]> =>
+  [...appAtomRegistry.get(boatCloudMachinesAtom)].map(([environmentId, httpBaseUrl]) => ({
+    environmentId,
+    httpBaseUrl,
+  }));
+
+const reconnectFailed = new Error("Could not reconnect to the Boat cloud machine.");
+
+/** Resolves once the environment is connected, or false after `timeoutMs`. */
+function waitForConnected(environmentId: EnvironmentId, timeoutMs: number): Promise<boolean> {
+  const connected = () => appAtomRegistry.get(connectedEnvironmentIdsAtom).includes(environmentId);
+  if (connected()) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (result: boolean) => {
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve(result);
+    };
+    const timeout = setTimeout(() => finish(false), timeoutMs);
+    const unsubscribe = appAtomRegistry.subscribe(connectedEnvironmentIdsAtom, () => {
+      if (connected()) finish(true);
+    });
+  });
+}
+
+/**
+ * Connects this app to the VM: with its saved credential when the holder sent no
+ * pairing code, else by pairing. Throws what failed.
+ */
 async function attach(
   session: Pick<BoatCloudSession, "environmentId" | "httpBaseUrl" | "pairingCode">,
 ) {
   if (appAtomRegistry.get(connectedEnvironmentIdsAtom).includes(session.environmentId)) return;
+  if (session.pairingCode === null) {
+    // A stopped VM left its connection backing off; retry now that the server is up.
+    void environmentCatalog.retryNow.run(appAtomRegistry, session.environmentId);
+    if (!(await waitForConnected(session.environmentId, RECONNECT_TIMEOUT_MS))) {
+      throw reconnectFailed;
+    }
+    return;
+  }
   const paired = await runAtomCommand(
     appAtomRegistry,
     connectPairingCode,
@@ -174,38 +224,48 @@ const HOLDER_STEPS = new Set<BoatCloudStartStep>(["machine", "server", "reposito
 const pendingBoatCloudSteps = (): ReadonlyArray<BoatCloudStepProgress> =>
   BOAT_CLOUD_START_STEPS.map((step) => ({ step, state: "pending", detail: null }));
 
-/** Starts the VM through a connected machine, following its steps in that machine's status. */
-async function startOnMachine(
-  environmentId: EnvironmentId,
-  repositoryUrl: string,
-  baseBranch: string | null,
-  onHolderSteps: (steps: ReadonlyArray<BoatCloudStepProgress>) => void,
-): Promise<BoatCloudSession> {
+/**
+ * Starts the VM through a connected machine. Its steps arrive in that machine's
+ * status, the checkout's after the acquire returns, so the caller stops watching.
+ */
+function startOnMachine(input: {
+  readonly environmentId: EnvironmentId;
+  readonly repositoryUrl: string;
+  readonly baseBranch: string | null;
+  readonly paired: BoatCloudAcquireInput["paired"];
+  readonly onHolderSteps: (steps: ReadonlyArray<BoatCloudStepProgress>) => void;
+}) {
   const requestId = uuidv4();
-  const statusAtom = serverEnvironment.boatCloudStatus({ environmentId, input: {} });
-  const unsubscribe = appAtomRegistry.subscribe(statusAtom, (result) => {
+  const statusAtom = serverEnvironment.boatCloudStatus({
+    environmentId: input.environmentId,
+    input: {},
+  });
+  const stopWatching = appAtomRegistry.subscribe(statusAtom, (result) => {
     const start = AsyncResult.getOrElse(result, () => null)?.starts.find(
       (candidate) => candidate.requestId === requestId,
     );
-    if (start) onHolderSteps(start.steps.filter((step) => HOLDER_STEPS.has(step.step)));
+    if (start) input.onHolderSteps(start.steps.filter((step) => HOLDER_STEPS.has(step.step)));
   });
-  try {
-    const acquired = await runAtomCommand(
-      appAtomRegistry,
-      serverEnvironment.acquireBoatCloud,
-      {
-        environmentId,
-        input: { repositoryUrl, ...(baseBranch ? { baseBranch } : {}), requestId },
+  const session = runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.acquireBoatCloud,
+    {
+      environmentId: input.environmentId,
+      input: {
+        repositoryUrl: input.repositoryUrl,
+        ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
+        requestId,
+        paired: input.paired,
       },
-      { label: serverEnvironment.acquireBoatCloud.label, reportFailure: false, reportDefect: true },
-    );
+    },
+    { label: serverEnvironment.acquireBoatCloud.label, reportFailure: false, reportDefect: true },
+  ).then((acquired): BoatCloudSession => {
     if (acquired._tag === "Failure") {
       throw isAtomCommandInterrupted(acquired) ? cancelled : squashAtomCommandFailure(acquired);
     }
     return acquired.value;
-  } finally {
-    unsubscribe();
-  }
+  });
+  return { session, stopWatching };
 }
 
 /**
@@ -224,47 +284,85 @@ export async function prepareBoatCloudProject(input: {
     steps = steps.map((entry) => (entry.step === step ? { ...entry, ...patch } : entry));
     input.onProgress(steps);
   };
+  // The checkout keeps running after the acquire returns, and only its step says how it ended.
+  let checkoutFailed: (error: Error) => void = () => undefined;
+  const checkoutFailure = new Promise<never>((_, reject) => {
+    checkoutFailed = reject;
+  });
+  const setHolderStep = (step: BoatCloudStartStep, patch: Partial<BoatCloudStepProgress>) => {
+    set(step, patch);
+    if (step === "repository" && patch.state === "failed") {
+      checkoutFailed(new Error(patch.detail ?? "Could not get the repository on the VM."));
+    }
+  };
   const setHolderSteps = (holderSteps: ReadonlyArray<BoatCloudStepProgress>) => {
-    for (const entry of holderSteps) set(entry.step, entry);
+    for (const entry of holderSteps) setHolderStep(entry.step, entry);
+  };
+  const stops: Array<() => void> = [];
+  const start = (paired: BoatCloudAcquireInput["paired"]) => {
+    if (input.starter.kind === "phone") {
+      return startOnPhone({
+        repositoryUrl: input.repositoryUrl,
+        baseBranch: input.baseBranch,
+        paired,
+        report: (step, state, detail) => Effect.sync(() => setHolderStep(step, { state, detail })),
+      });
+    }
+    const started = startOnMachine({
+      environmentId: input.starter.environmentId,
+      repositoryUrl: input.repositoryUrl,
+      baseBranch: input.baseBranch,
+      paired,
+      onHolderSteps: setHolderSteps,
+    });
+    stops.push(started.stopWatching);
+    return started.session;
   };
   let current: BoatCloudStartStep = "machine";
   try {
-    const session =
-      input.starter.kind === "machine"
-        ? await startOnMachine(
-            input.starter.environmentId,
-            input.repositoryUrl,
-            input.baseBranch,
-            setHolderSteps,
-          )
-        : await startOnPhone({
-            repositoryUrl: input.repositoryUrl,
-            baseBranch: input.baseBranch,
-            report: (step, state, detail) => Effect.sync(() => set(step, { state, detail })),
-          });
-    for (const step of HOLDER_STEPS) set(step, { state: "done" });
+    let session = await start(pairedBoatCloudEnvironments());
+    // The VM and its server are up; the checkout may still run while this app connects.
+    set("machine", { state: "done" });
+    set("server", { state: "done" });
+    if (steps.find((entry) => entry.step === "repository")?.state === "pending") {
+      set("repository", { state: "active" });
+    }
     current = "connect";
     set("connect", { state: "active" });
-    await attach(session);
+    try {
+      await attach(session);
+    } catch (error) {
+      if (error !== reconnectFailed) throw error;
+      // The saved credential no longer works, so pair as a new app.
+      session = await start([]);
+      await attach(session);
+    }
     set("connect", { state: "done" });
     current = "project";
-    set("project", { state: "active" });
-    const project = await waitForProject((projects) =>
-      projects.find(
-        (candidate) =>
-          candidate.environmentId === session.environmentId &&
-          candidate.workspaceRoot === session.workspaceRoot,
+    const project = await Promise.race([
+      waitForProject((projects) =>
+        projects.find(
+          (candidate) =>
+            candidate.environmentId === session.environmentId &&
+            candidate.workspaceRoot === session.workspaceRoot,
+        ),
       ),
-    );
+      checkoutFailure,
+    ]);
     if (!project) throw new Error("The Boat cloud machine did not open the project.");
+    // The project is added after the checkout, so it appearing means the checkout is done.
+    set("repository", { state: "done" });
     set("project", { state: "done" });
     set("thread", { state: "active" });
     return project;
   } catch (error) {
-    const failed = steps.find((entry) => entry.state === "active")?.step ?? current;
-    set(failed, { state: "failed" });
+    if (!steps.some((entry) => entry.state === "failed")) {
+      set(current, { state: "failed" });
+    }
     if (error !== cancelled) Dialog.alert("Could not start on Boat cloud", errorMessage(error));
     return null;
+  } finally {
+    for (const stop of stops) stop();
   }
 }
 

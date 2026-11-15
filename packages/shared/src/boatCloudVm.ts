@@ -19,8 +19,14 @@ export const IDLE_TTL_SECONDS = 10 * 60;
 
 const q = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
+// Releases up to 0.1.9 leave Node's compile cache off in the single executable, which doubles
+// every `t3` start, so the scripts and the server turn it on themselves.
+const COMPILE_CACHE = `${VM_HOME}/.cache/t3code/compile-cache`;
+const COMPILE_CACHE_DROP_IN = `[Service]
+Environment=NODE_COMPILE_CACHE=${COMPILE_CACHE}`;
+
 // `t3 update` can install a newer runtime, so prefer the newest one, then an npm install.
-const T3 = `T3="$(ls -1d ${VM_HOME}/.t3/runtime/versions/*/t3 2>/dev/null | sort -V | tail -n1)"; [ -x "$T3" ] || T3="$(command -v t3 || true)"; [ -n "$T3" ] || { echo "T3 Code is not installed on this VM." >&2; exit 1; }`;
+const T3 = `export NODE_COMPILE_CACHE=${COMPILE_CACHE}; T3="$(ls -1d ${VM_HOME}/.t3/runtime/versions/*/t3 2>/dev/null | sort -V | tail -n1)"; [ -x "$T3" ] || T3="$(command -v t3 || true)"; [ -n "$T3" ] || { echo "T3 Code is not installed on this VM." >&2; exit 1; }`;
 
 /** Installs T3 Code from npm, for a holder that has no runner script to upload (the phone). */
 export const npmInstallServerScript = (version: string) => `set -e
@@ -81,6 +87,8 @@ put ${KEEPALIVE_PATH} ${q(KEEPALIVE_SCRIPT)}
 chmod +x ${KEEPALIVE_PATH}
 put ${UNIT_DIRECTORY}/t3-boat-keepalive.service ${q(KEEPALIVE_SERVICE)}
 put ${UNIT_DIRECTORY}/t3-boat-keepalive.timer ${q(KEEPALIVE_TIMER)}
+mkdir -p ${UNIT_DIRECTORY}/t3code.service.d
+put ${UNIT_DIRECTORY}/t3code.service.d/boat-compile-cache.conf ${q(COMPILE_CACHE_DROP_IN)}
 if [ -n "$changed" ]; then
   systemctl --user daemon-reload
   systemctl --user enable t3-boat-keepalive.timer >/dev/null 2>&1 || true
@@ -100,6 +108,9 @@ ${prepareVmScript}
 systemctl --user stop t3code.service
 find ${VM_HOME}/.t3/userdata -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf {} +
 rm -rf ${VM_HOME}/.t3/userdata/logs/* ${VM_HOME}/.t3/usage-host-id
+# Fills the compile cache, so the first server start on a new VM already uses it.
+${T3}
+"$T3" --version >/dev/null
 sync`;
 
 /** What Boat's Agents & Proxying page and GitHub connection give a VM. */
@@ -161,22 +172,54 @@ if [ "$stamp" != "$(cat ${CREDENTIALS_STAMP} 2>/dev/null)" ] && [ "$( { ${ACTIVE
   systemctl --user try-restart t3code.service >/dev/null 2>&1 || true
 fi`;
 
-/** Prints the environment id once the server answers. */
-export const ensureServerScript = `${syncCredentialsScript}
-systemctl --user start t3code.service >/dev/null 2>&1 || true
-for i in $(seq 1 120); do
-  out="$(curl -sf --max-time 2 http://127.0.0.1:${VM_T3_PORT}/.well-known/t3/environment)" && { printf '%s' "$out"; exit 0; }
-  sleep 0.5
+/** Leaves the server's descriptor in `$out` once it answers, polling often since every start waits on it. */
+const WAIT_SERVER_SCRIPT = `up=""
+for i in $(seq 1 600); do
+  out="$(curl -sf --max-time 2 http://127.0.0.1:${VM_T3_PORT}/.well-known/t3/environment)" && { up=1; break; }
+  sleep 0.1
 done
-echo "T3 Code did not start on this VM." >&2
-exit 1`;
+[ -n "$up" ] || { echo "T3 Code did not start on this VM." >&2; exit 1; }`;
+
+/** Prepares the VM, starts the server and prints its descriptor once it answers. */
+const ensureServerScript = `( set -e
+${prepareVmScript}
+) >&2 || { echo "Could not prepare this VM." >&2; exit 1; }
+${syncCredentialsScript}
+systemctl --user start t3code.service >/dev/null 2>&1 || true
+${WAIT_SERVER_SCRIPT}
+# A hand-out counts as activity, so every holder's idle sweep, not only this one's, leaves the VM on.
+date +%s > ${LAST_ACTIVE_PATH}
+printf '%s\\n' "$out"`;
+
+/** Separates the descriptor from the pairing code in `startServerScript` output. */
+export const PAIRING_MARKER = "--- t3 pairing ---";
+
+const pairCommand = (label: string) =>
+  `"$T3" auth pairing create --json --ttl 10m --label ${q(label)}`;
+
+/** Mints a pairing code on a running server. */
+export const pairScript = (label: string) => `${T3}
+${pairCommand(label)}`;
 
 /**
- * First line `load1 cpus memTotalKb memAvailableKb`, then one line per checkout
- * under ~/projects, at `host/namespace/repo`. It does not look inside a checkout.
+ * `ensureServerScript`, then a pairing code after `PAIRING_MARKER` when a label
+ * is given, so a start needs one command on the VM and one T3 CLI run.
  */
-export const measureScript = `printf '%s %s %s %s\\n' "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
-find ${VM_HOME}/projects -mindepth 3 -maxdepth 8 -type d -exec test -d '{}/.git' ';' -print -prune 2>/dev/null; exit 0`;
+export const startServerScript = (pairingLabel: string | null) =>
+  pairingLabel === null
+    ? ensureServerScript
+    : `${ensureServerScript}
+${T3}
+echo ${q(PAIRING_MARKER)}
+${pairCommand(pairingLabel)}`;
+
+/**
+ * First line `load1 cpus memTotalKb memAvailableKb`, then the workspace root when
+ * the VM has it checked out. Searching ~/projects instead took seconds on old layouts.
+ */
+export const measureScript = (workspaceRoot: string) =>
+  `printf '%s %s %s %s\\n' "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
+[ ! -d ${q(`${workspaceRoot}/.git`)} ] || printf '%s\\n' ${q(workspaceRoot)}`;
 
 export const BASE_BRANCH_MISSING_EXIT = 3;
 
@@ -185,32 +228,41 @@ export const BASE_BRANCH_MISSING_EXIT = 3;
  * The clone has none of the client's local branches, so a thread can only
  * start from one that was pushed.
  */
-export const baseBranchCheckScript = (baseBranch: string, repositoryName: string) => {
+const hasBaseBranch = (baseBranch: string) => {
   const has = (ref: string) =>
     `git -C "$dir" rev-parse --verify --quiet ${q(`${ref}^{commit}`)} >/dev/null`;
-  return `if ! ${has(`refs/remotes/origin/${baseBranch}`)} && ! ${has(`refs/remotes/${baseBranch}`)}; then
+  return `{ ${has(`refs/remotes/origin/${baseBranch}`)} || ${has(`refs/remotes/${baseBranch}`)}; }`;
+};
+
+export const baseBranchCheckScript = (baseBranch: string, repositoryName: string) =>
+  `if ! ${hasBaseBranch(baseBranch)}; then
   echo ${q(`${baseBranch} is not on ${repositoryName}. Push it, or start from a pushed branch.`)} >&2
   exit ${BASE_BRANCH_MISSING_EXIT}
 fi`;
-};
 
-/** Clones the repository once and refreshes it after. Runs while the server starts. */
-export const checkoutScript = (repository: ParsedRepository, baseBranch: string | null) => `set -e
-${prepareVmScript}
+/**
+ * Clones the repository once. An existing checkout is fetched only when it does
+ * not know the base branch: a worktree thread fetches its base itself.
+ */
+export const syncCheckoutScript = (
+  repository: ParsedRepository,
+  baseBranch: string | null,
+) => `set -e
 dir=${q(repository.workspaceRoot)}
 if [ -d "$dir/.git" ]; then
-  git -C "$dir" fetch --prune --quiet origin
+  ${baseBranch === null ? ":" : `${hasBaseBranch(baseBranch)} || git -C "$dir" fetch --prune --quiet origin`}
 else
   mkdir -p "$(dirname "$dir")"
   git clone --quiet ${q(repository.cloneUrl)} "$dir"
 fi
 ${baseBranch === null ? "" : baseBranchCheckScript(baseBranch, repository.name)}`;
 
-/** Adds the project to the running server, then mints a pairing code, in one round trip. */
-export const addProjectAndPairScript = (workspaceRoot: string | null, label: string) => `set -e
+/** Gets the checkout, then adds it as a project once the server answers. Runs while the server starts. */
+export const checkoutScript = (repository: ParsedRepository, baseBranch: string | null) =>
+  `${syncCheckoutScript(repository, baseBranch)}
+${WAIT_SERVER_SCRIPT}
 ${T3}
-${workspaceRoot === null ? "" : `"$T3" project add ${q(workspaceRoot)} >/dev/null 2>&1 || true`}
-"$T3" auth pairing create --json --ttl 10m --label ${q(label)}`;
+"$T3" project add ${q(repository.workspaceRoot)} >/dev/null 2>&1 || true`;
 
 const BACKUP_PATHS = [
   ".t3/userdata",

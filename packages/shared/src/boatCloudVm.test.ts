@@ -14,6 +14,7 @@ import {
   parseRepository,
   pickMachine,
   subdomainOfHttpBaseUrl,
+  syncCheckoutScript,
 } from "./boatCloudVm.ts";
 
 describe("parseRepository", () => {
@@ -190,5 +191,44 @@ describe("baseBranchCheckScript", () => {
     const missing = check("feat/local-only");
     assert.strictEqual(missing.status, 3);
     assert.include(missing.stderr.toString(), "feat/local-only is not on me/repo.");
+  });
+});
+
+describe("syncCheckoutScript", () => {
+  it("clones once, then fetches only for a base branch the checkout does not know", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "boat-checkout-"));
+    using _cleanup = {
+      [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    };
+    const git = (...args: string[]) =>
+      NodeChildProcess.spawnSync(
+        "git",
+        ["-c", "init.defaultBranch=main", "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+        { cwd: root },
+      );
+    git("init", "--quiet", "source");
+    git("-C", "source", "commit", "--quiet", "--allow-empty", "-m", "base");
+    const sync = (baseBranch: string | null) =>
+      NodeChildProcess.spawnSync("bash", [
+        "-c",
+        syncCheckoutScript(
+          {
+            key: "local/me/repo",
+            name: "me/repo",
+            cloneUrl: NodePath.join(root, "source"),
+            workspaceRoot: NodePath.join(root, "projects", "repo"),
+          },
+          baseBranch,
+        ),
+      ]);
+
+    assert.strictEqual(sync("main").status, 0);
+    git("-C", "source", "branch", "feat/later");
+    assert.strictEqual(sync("feat/later").status, 0);
+    // A fetch would fail now, so a known base must not reach the remote.
+    git("-C", "projects/repo", "remote", "set-url", "origin", NodePath.join(root, "gone"));
+    assert.strictEqual(sync("feat/later").status, 0);
+    assert.strictEqual(sync(null).status, 0);
+    assert.notStrictEqual(sync("feat/never").status, 0);
   });
 });

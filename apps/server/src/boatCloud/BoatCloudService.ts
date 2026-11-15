@@ -26,7 +26,6 @@ import {
   buildSnapshot,
   exec,
   findSandboxByHttpBaseUrl,
-  issuePairing,
   startMachine,
   vmFailure,
   waitRunning,
@@ -66,6 +65,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as NpmRelease from "../cloud/npmRelease.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -74,6 +74,7 @@ const API_KEY_SECRET = "boat-cloud-api-key";
 const SKILL_DIRECTORIES = [".claude/skills", ".agents/skills", ".codex/skills"];
 const VM_RUNNER_PATH = "/home/user/.t3-boat-runner.sh";
 const IDLE_SWEEP_INTERVAL = Duration.minutes(1);
+const FAILED_START_LINGER = Duration.minutes(2);
 /**
  * This machine backs a VM up and stops it a minute before the VM's own deadline
  * would stop it without a backup. Idle time counts from the last turn on any of
@@ -155,6 +156,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const homeDirectory = yield* HostProcess.HomeDirectory;
+  const npmRelease = yield* NpmRelease.NpmRelease;
 
   const directory = path.join(config.stateDir, "boat-cloud");
   const statePath = path.join(directory, "state.json");
@@ -295,16 +297,30 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     );
-    if (Option.isNone(listed)) return;
-    environments = cloudEnvironments(listed.value, Option.getOrNull(profiles));
-    environmentsError = null;
-    const fallback = listed.value.find((environment) => environment.isDefault)?.name ?? null;
-    if (fallback !== null) {
-      yield* commit((current) =>
-        current.environment === null ? { ...current, environment: fallback } : current,
-      );
+    if (Option.isSome(listed)) {
+      environments = cloudEnvironments(listed.value, Option.getOrNull(profiles));
+      environmentsError = null;
+      const fallback = listed.value.find((environment) => environment.isDefault)?.name ?? null;
+      if (fallback !== null) {
+        yield* commit((current) =>
+          current.environment === null ? { ...current, environment: fallback } : current,
+        );
+      }
     }
+    // The list, and a key that was just saved, live outside the registry, so a commit
+    // that changed nothing has not published them.
+    yield* publish;
   });
+
+  // A fork or local build has a version that was never published; its VMs run the latest release.
+  const vmServerVersion = npmRelease.get({ spec: packageJson.version }).pipe(
+    Effect.filterOrElse(
+      (own) => own !== null,
+      () => npmRelease.get({ spec: "latest" }),
+    ),
+    Effect.map((release) => release?.version ?? packageJson.version),
+    Effect.orElseSucceed(() => packageJson.version),
+  );
 
   const transferFailure = (cause: unknown) =>
     isBoatApiError(cause)
@@ -393,6 +409,7 @@ const make = Effect.gen(function* () {
       }
       return { ...current, machines };
     });
+    return sandboxes;
   });
 
   /** Rebuilds a VM Boat deleted from the snapshot plus this machine's last backup of it. */
@@ -535,13 +552,17 @@ const make = Effect.gen(function* () {
       yield* buildSnapshot({
         api,
         install: (sandboxId) =>
-          api
-            .writeFile(
-              sandboxId,
-              VM_RUNNER_PATH,
-              buildRemoteT3RunnerScript({ archiveVersion: packageJson.version }),
-            )
-            .pipe(Effect.andThen(exec(api, sandboxId, installServerScript, 600)), Effect.asVoid),
+          vmServerVersion.pipe(
+            Effect.flatMap((archiveVersion) =>
+              api.writeFile(
+                sandboxId,
+                VM_RUNNER_PATH,
+                buildRemoteT3RunnerScript({ archiveVersion }),
+              ),
+            ),
+            Effect.andThen(exec(api, sandboxId, installServerScript, 600)),
+            Effect.asVoid,
+          ),
         copySkills: (sandboxId) => copySkills(api, sandboxId),
         setStep: (step) =>
           Effect.suspend(() => {
@@ -585,20 +606,27 @@ const make = Effect.gen(function* () {
         message: "Boat cloud needs a project with a git remote it can clone.",
       });
     }
-    yield* refreshSnapshot(api);
+    // Opening the page and connecting refresh it, so a ready snapshot needs no check per start.
+    if (!snapshotReady) yield* refreshSnapshot(api);
     if (!snapshotReady) {
       return yield* new BoatCloudError({ message: "Finish Boat cloud setup in Settings, Cloud." });
     }
     starts.set(input.requestId, pendingSteps());
+    const finish = Effect.suspend(() => {
+      starts.delete(input.requestId);
+      return publish;
+    });
     // Starts run side by side; only the idle sweep needs the registry to hold still.
-    return yield* Effect.gen(function* () {
-      yield* reconcile(api).pipe(sweepLock.withPermits(1));
-      const started = yield* startMachine({
+    const started = yield* Effect.gen(function* () {
+      const sandboxes = yield* reconcile(api).pipe(sweepLock.withPermits(1));
+      return yield* startMachine({
         api,
         repository,
         baseBranch: input.baseBranch ?? null,
         environment: state.environment,
+        sandboxes,
         knownWorkspaceRoots,
+        paired: input.paired ?? [],
         report: (step, stepState, detail) =>
           Effect.suspend(() => {
             const steps = starts.get(input.requestId);
@@ -616,30 +644,8 @@ const make = Effect.gen(function* () {
         onReused: (sandboxId) =>
           Effect.flatMap(now, (acquiredAt) => updateMachine(sandboxId, { acquiredAt })),
       });
-      const repositories = findMachine(started.sandboxId)?.repositories ?? [];
-      yield* updateMachine(started.sandboxId, {
-        environmentId: started.environmentId,
-        httpBaseUrl: started.httpBaseUrl,
-        state: "running",
-        acquiredAt: yield* now,
-        repositories: repositories.includes(repository.key)
-          ? repositories
-          : [...repositories, repository.key],
-      });
-      return {
-        sandboxId: started.sandboxId,
-        environmentId: started.environmentId,
-        httpBaseUrl: started.httpBaseUrl,
-        pairingCode: started.pairingCode,
-        workspaceRoot: started.workspaceRoot,
-      } satisfies BoatCloudSession;
     }).pipe(
-      Effect.ensuring(
-        Effect.suspend(() => {
-          starts.delete(input.requestId);
-          return publish;
-        }),
-      ),
+      Effect.onError(() => finish),
       // Clients title this failure "Could not start on Boat cloud", so the message is just the cause.
       Effect.mapError(
         (cause) =>
@@ -649,6 +655,38 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    yield* updateMachine(started.sandboxId, {
+      environmentId: started.environmentId,
+      httpBaseUrl: started.httpBaseUrl,
+      state: "running",
+      acquiredAt: yield* now,
+    });
+    // The client connects while the checkout runs; its repository step tells it how that ended.
+    yield* started.checkout.pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const repositories = findMachine(started.sandboxId)?.repositories ?? [];
+          return repositories.includes(repository.key)
+            ? Effect.void
+            : updateMachine(started.sandboxId, {
+                repositories: [...repositories, repository.key],
+              });
+        }),
+      ),
+      Effect.matchEffect({
+        onSuccess: () => finish,
+        // The failed step stays listed long enough for the client to read it.
+        onFailure: () => finish.pipe(Effect.delay(FAILED_START_LINGER)),
+      }),
+      Effect.forkDetach,
+    );
+    return {
+      sandboxId: started.sandboxId,
+      environmentId: started.environmentId,
+      httpBaseUrl: started.httpBaseUrl,
+      pairingCode: started.pairingCode,
+      workspaceRoot: started.workspaceRoot,
+    } satisfies BoatCloudSession;
   });
 
   const wake = Effect.fn("BoatCloud.wake")(function* (input: BoatCloudWakeInput) {
@@ -674,8 +712,7 @@ const make = Effect.gen(function* () {
         yield* addMachine(sandbox.id);
         sandboxId = sandbox.id;
       }
-      const woken = yield* wakeMachine(api, sandboxId);
-      const pairingCode = yield* issuePairing(api, sandboxId);
+      const woken = yield* wakeMachine(api, sandboxId, { pair: true });
       yield* updateMachine(sandboxId, {
         environmentId: woken.environmentId,
         httpBaseUrl: woken.httpBaseUrl,
@@ -686,7 +723,7 @@ const make = Effect.gen(function* () {
         sandboxId,
         environmentId: woken.environmentId,
         httpBaseUrl: woken.httpBaseUrl,
-        pairingCode,
+        pairingCode: woken.pairingCode,
         workspaceRoot: null,
       } satisfies BoatCloudSession;
     }).pipe(
@@ -776,4 +813,6 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(BoatCloudService, make).pipe(Layer.provide(ProcessRunner.layer));
+export const layer = Layer.effect(BoatCloudService, make).pipe(
+  Layer.provide([ProcessRunner.layer, NpmRelease.layer]),
+);

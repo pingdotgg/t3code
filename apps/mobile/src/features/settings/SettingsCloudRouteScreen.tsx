@@ -20,15 +20,17 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { cn } from "../../lib/cn";
 import { serverEnvironment } from "../../state/server";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
-import { boatCloudHoldersAtom } from "../boatCloud/boatCloud";
+import { boatCloudHoldersAtom, boatCloudOutdatedMachinesAtom } from "../boatCloud/boatCloud";
 import { StepGlyph, type StepState } from "../boatCloud/BoatCloudSteps";
 import {
   configurePhoneBoatCloudEnvironment,
   connectPhoneBoatCloud,
   disconnectPhoneBoatCloud,
   phoneBoatCloudAtom,
+  readPhoneBoatCloudKey,
   refreshPhoneBoatCloud,
   runPhoneBoatCloudSetup,
 } from "../boatCloud/phoneBoatCloud";
@@ -76,6 +78,8 @@ function Separated(props: { readonly index: number; readonly children: React.Rea
 export function SettingsCloudRouteScreen() {
   const insets = useSafeAreaInsets();
   const holders = useAtomValue(boatCloudHoldersAtom);
+  const outdated = useAtomValue(boatCloudOutdatedMachinesAtom);
+  const missingKey = holders.filter((holder) => !holder.status.connected);
   const phone = useAtomValue(phoneBoatCloudAtom);
   const { environments } = useEnvironments();
   const [apiKey, setApiKey] = useState("");
@@ -128,15 +132,41 @@ export function SettingsCloudRouteScreen() {
     // The phone keeps the key so it can start VMs alone; every machine gets it too.
     const phoneError = await connectPhoneBoatCloud(key);
     if (phoneError === null) {
-      await Promise.all(
-        holders.map((holder) =>
-          connect({ environmentId: holder.environmentId, input: { apiKey: key } }),
-        ),
+      const results = await Promise.all(
+        holders.map(async (holder) => ({
+          environmentId: holder.environmentId,
+          result: await connect({ environmentId: holder.environmentId, input: { apiKey: key } }),
+        })),
       );
       setApiKey("");
+      // One builder only, the same one the Set up button picks, so nothing races to save it.
+      const builder = results.find(({ result }) => result._tag === "Success");
+      if (builder === undefined) {
+        if (appAtomRegistry.get(phoneBoatCloudAtom).setup.status === "idle") {
+          void runPhoneBoatCloudSetup();
+        }
+      } else if (
+        builder.result._tag === "Success" &&
+        builder.result.value.setup.status === "idle"
+      ) {
+        void runSetup({ environmentId: builder.environmentId, input: {} });
+      }
     } else {
       setKeyError(phoneError);
     }
+    setBusy(false);
+  };
+
+  // The phone keeps the key, so it hands it to machines that connected later or missed it.
+  const enableOthers = async () => {
+    const key = await readPhoneBoatCloudKey();
+    if (key === null) return;
+    setBusy(true);
+    await Promise.all(
+      missingKey.map((holder) =>
+        connect({ environmentId: holder.environmentId, input: { apiKey: key } }),
+      ),
+    );
     setBusy(false);
   };
 
@@ -321,6 +351,23 @@ export function SettingsCloudRouteScreen() {
                 />
               </Separated>
             ))}
+            {outdated.map((environmentId) => (
+              <Separated key={environmentId} index={1}>
+                <ListRowLayout label={labelOf(environmentId)} detail="Needs update" />
+              </Separated>
+            ))}
+            {phone.connected && missingKey.length > 0 ? (
+              <Separated index={1}>
+                <View className="p-4">
+                  <Button
+                    label="Enable on the others"
+                    size="compact"
+                    disabled={busy}
+                    onPress={() => void enableOthers()}
+                  />
+                </View>
+              </Separated>
+            ) : null}
           </SettingsSection>
         ) : null}
 

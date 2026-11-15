@@ -11,7 +11,7 @@ import {
 import { CheckIcon, CircleDotIcon, CircleIcon, XIcon } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
-import { useBoatCloudStatus, usePrimaryBoatCloudStatus } from "../../boatCloud";
+import { useBoatCloudKeyHolderStates, usePrimaryBoatCloudStatus } from "../../boatCloud";
 import { type EnvironmentPresentation, useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -87,13 +87,20 @@ function useKeyHolders(vmEnvironmentIds: ReadonlySet<EnvironmentId>) {
   );
 }
 
-function KeyHolderRow({ environment }: { readonly environment: EnvironmentPresentation }) {
-  const status = useBoatCloudStatus(environment.environmentId);
+function KeyHolderRow({
+  environment,
+  state,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly state: BoatCloudStatus | "unsupported" | null | undefined;
+}) {
   return (
     <SettingsRow
       title={environment.label}
       control={
-        status?.connected ? (
+        state === "unsupported" ? (
+          <Badge variant="warning">Needs update</Badge>
+        ) : state?.connected ? (
           <Badge variant="success">Enabled</Badge>
         ) : (
           <Badge variant="unavailable">Not enabled</Badge>
@@ -103,10 +110,17 @@ function KeyHolderRow({ environment }: { readonly environment: EnvironmentPresen
   );
 }
 
-function ApiKeyForm({ holders }: { readonly holders: ReadonlyArray<EnvironmentPresentation> }) {
+function ApiKeyForm({
+  holders,
+  setupEnvironmentId,
+}: {
+  readonly holders: ReadonlyArray<EnvironmentPresentation>;
+  readonly setupEnvironmentId: EnvironmentId | null;
+}) {
   const [apiKey, setApiKey] = useState("");
   const [busy, setBusy] = useState(false);
   const connect = useAtomCommand(serverEnvironment.connectBoatCloud, "Connect Boat");
+  const runSetup = useAtomCommand(serverEnvironment.runBoatCloudSetup, "Set up Boat cloud");
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
     const key = apiKey.trim();
@@ -114,12 +128,18 @@ function ApiKeyForm({ holders }: { readonly holders: ReadonlyArray<EnvironmentPr
     setBusy(true);
     // Every machine gets the key, so a thread started on any of them can use Boat cloud.
     const results = await Promise.all(
-      holders.map((holder) =>
-        connect({ environmentId: holder.environmentId, input: { apiKey: key } }),
-      ),
+      holders.map(async (holder) => ({
+        environmentId: holder.environmentId,
+        result: await connect({ environmentId: holder.environmentId, input: { apiKey: key } }),
+      })),
     );
     setBusy(false);
-    if (results.some((result) => result._tag === "Success")) setApiKey("");
+    if (results.some(({ result }) => result._tag === "Success")) setApiKey("");
+    // Only this machine builds the snapshot, so connected machines never race to save it.
+    const own = results.find(({ environmentId }) => environmentId === setupEnvironmentId);
+    if (own?.result._tag === "Success" && own.result.value.setup.status === "idle") {
+      void runSetup({ environmentId: own.environmentId, input: {} });
+    }
   };
   return (
     <form className="flex w-full min-w-0 gap-2 sm:w-80" onSubmit={onSubmit}>
@@ -241,7 +261,17 @@ export function BoatCloudSettingsPanel() {
       machine.environmentId === null ? [] : [machine.environmentId],
     ),
   );
-  const holders = useKeyHolders(vmEnvironmentIds);
+  const holderStates = useBoatCloudKeyHolderStates();
+  const machines = useKeyHolders(vmEnvironmentIds);
+  // A machine whose T3 Code predates Boat cloud cannot take the key until it updates.
+  const holders = machines.filter((machine) => {
+    const state = holderStates.get(machine.environmentId);
+    return state !== undefined && state !== "unsupported";
+  });
+  const missingKey = holders.filter((holder) => {
+    const state = holderStates.get(holder.environmentId);
+    return state !== "unsupported" && state?.connected === false;
+  });
   const runSetup = useAtomCommand(serverEnvironment.runBoatCloudSetup, "Set up Boat cloud");
   const disconnect = useAtomCommand(serverEnvironment.disconnectBoatCloud, "Disconnect Boat");
   const connected = status?.connected === true;
@@ -281,7 +311,7 @@ export function BoatCloudSettingsPanel() {
                 Disconnect
               </Button>
             ) : status ? (
-              <ApiKeyForm holders={holders} />
+              <ApiKeyForm holders={holders} setupEnvironmentId={holderEnvironmentId} />
             ) : null
           }
         />
@@ -342,9 +372,19 @@ export function BoatCloudSettingsPanel() {
 
       {connected ? (
         <SettingsSection id="boat-cloud-key-holders" title="Enabled on">
-          {holders.map((holder) => (
-            <KeyHolderRow key={holder.environmentId} environment={holder} />
+          {machines.map((machine) => (
+            <KeyHolderRow
+              key={machine.environmentId}
+              environment={machine}
+              state={holderStates.get(machine.environmentId)}
+            />
           ))}
+          {missingKey.length > 0 ? (
+            <SettingsRow
+              title="Enable on the others"
+              control={<ApiKeyForm holders={missingKey} setupEnvironmentId={null} />}
+            />
+          ) : null}
         </SettingsSection>
       ) : null}
 
