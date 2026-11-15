@@ -249,8 +249,9 @@ jobs:
               - --filter=@t3tools/scripts...
       - name: Install native analysis tools
         run: brew bundle install --file apps/mobile/Brewfile
+      # vp run loads every package config, and the server config needs packages this job skips.
       - name: Lint mobile native sources
-        run: vp run lint:mobile
+        run: node scripts/mobile-native-static-check.ts
 
   check:
     name: Fork Check
