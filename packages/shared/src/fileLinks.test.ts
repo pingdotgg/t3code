@@ -89,8 +89,10 @@ describe("parseFileUrlHref", () => {
     ],
     ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
-  ])("parses %s", (href, path, hash) => {
-    expect(parseFileUrlHref(href)).toEqual({ path, hash });
+    // GNU `ls --hyperlink` names the machine's own hostname.
+    ["file://box-node/var/tmp/report.txt", "/var/tmp/report.txt", "", "Box-Node"],
+  ])("parses %s", (href, path, hash, localHostname?: string) => {
+    expect(parseFileUrlHref(href, localHostname)).toEqual({ path, hash });
   });
 
   it("keeps percent-encoding so the caller decodes once", () => {
