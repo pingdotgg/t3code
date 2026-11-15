@@ -470,13 +470,19 @@ describe("PreviewView", () => {
     setup();
     mocks.loadFailed = true;
     mocks.recordingTabIds = new Set([TEST_RUNTIME_TAB_ID]);
-    await using _screen = await render(view());
+    await using screen = await render(view());
 
     const stop = page.getByRole("button", { name: "Stop recording" });
     await expect.element(stop).toBeEnabled();
     await userEvent.click(stop);
 
     expect(mocks.stopBrowserRecording).toHaveBeenCalledWith(TEST_RUNTIME_TAB_ID);
+
+    mocks.recordingTabIds = new Set();
+    await screen.rerender(view());
+    const capture = page.getByRole("button", { name: "Capture screenshot" });
+    await expect.element(capture).toHaveAttribute("aria-disabled", "true");
+    expect(document.activeElement).toBe(capture.element());
   });
 
   it("focuses the address bar each time the focus-url shortcut fires", async () => {

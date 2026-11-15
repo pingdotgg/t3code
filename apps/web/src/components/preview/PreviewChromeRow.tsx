@@ -250,11 +250,15 @@ export function PreviewChromeRow({
                 <Button
                   variant={recording ? "secondary" : "ghost"}
                   size="icon-xs"
-                  onClick={(event) => onCapture(event.shiftKey)}
+                  onClick={(event) => {
+                    if (!captureDisabled) onCapture(event.shiftKey);
+                  }}
                   aria-label={recording ? "Stop recording" : "Capture screenshot"}
                   type="button"
                   className="relative"
-                  disabled={captureDisabled}
+                  // Stopping a recording on a failed page disables this button; a native disabled
+                  // drops focus and workspace recovery moves it to the address bar.
+                  aria-disabled={captureDisabled || undefined}
                 />
               }
             >
