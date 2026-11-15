@@ -60,7 +60,7 @@ Runs only in the maestro thread. There are no loops and no sleeps: each tick run
 2. Call `orchestrator_capabilities` once.
 3. Find your own thread id: `t3_thread_list` with `titleContains: "maestro <owner/repo>"`.
 4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue with no running child is an orphan; treat it under Requeue.
-5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 900000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
+5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 300000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
 
 ### Each tick
 
