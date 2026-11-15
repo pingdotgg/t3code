@@ -731,8 +731,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
+    // A local executable's version comes only from probing it, so readiness checks reuse the last report.
+    const reportedLocalVersion = yield* Ref.make<string | null>(null);
     const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+      Effect.flatMap((provider) =>
+        Ref.get(reportedLocalVersion).pipe(
+          Effect.map((version) =>
+            provider.installed && provider.version === null && version !== null
+              ? { ...provider, version }
+              : provider,
+          ),
+        ),
+      ),
       Effect.flatMap(withLiveRuntimeState),
     );
     const enrichProvider = checkAcpRegistryProviderStatus(
@@ -776,6 +787,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         };
       }
       const enriched = yield* enrichProvider;
+      if (effectiveConfig.source === "local" && enriched.status === "ready") {
+        yield* Ref.set(reportedLocalVersion, enriched.version);
+      }
       if (enriched.status === "ready") {
         const completedAt = yield* Clock.currentTimeMillis;
         yield* Ref.update(enrichmentCache, (current) =>

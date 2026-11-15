@@ -817,7 +817,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const { id, method } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
-    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+    send({
+      id,
+      result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
+    });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
     send({
@@ -921,6 +924,56 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.invalidateCaches ?? Effect.void;
       yield* instance.snapshot.refresh;
       expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+    }),
+  );
+
+  it.effect("keeps a local agent's reported version through the next readiness check", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a"]));
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ source: "local", commandPath: "agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "agent",
+            version: null,
+            distribution: "local",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "local" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            }),
+        }),
+      );
+      const probed = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.version === "1.5.9"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(probed);
+
+      const nextPublished = yield* instance.snapshot.streamChanges.pipe(
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.invalidateCaches ?? Effect.void;
+      yield* instance.snapshot.refresh;
+      const next = yield* Fiber.join(nextPublished);
+      expect(Option.map(next, (snapshot) => snapshot.version)).toEqual(Option.some("1.5.9"));
     }),
   );
 
