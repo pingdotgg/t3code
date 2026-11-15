@@ -21,8 +21,10 @@ import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import {
   antigravityAppendsSystemPrompt,
+  antigravityPermissionDisposition,
   antigravityPermissionMode,
   antigravityRuntimeModeForSessionMode,
+  antigravitySessionOffersAutoMode,
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
@@ -137,6 +139,8 @@ export function makeAntigravityAcpAdapterFlavor(
   const { profileDirectory } = options;
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  // Gemini Enterprise and the 1.4 harness offer no `auto`; those sessions run Auto as Supervised.
+  const sessionsWithoutAuto = new Set<string>();
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -188,13 +192,17 @@ export function makeAntigravityAcpAdapterFlavor(
           );
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
-            ),
+          runtime.start().pipe(
+            Effect.tap((started) => {
+              if (antigravitySessionOffersAutoMode(started.sessionSetupResult)) return Effect.void;
+              sessionsWithoutAuto.add(started.sessionId);
+              return Scope.addFinalizer(
+                scope,
+                Effect.sync(() => sessionsWithoutAuto.delete(started.sessionId)),
+              );
+            }),
+            Effect.tap((started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
@@ -250,7 +258,11 @@ export function makeAntigravityAcpAdapterFlavor(
         mapError: (cause) => cause,
       });
     }),
-    sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    sessionModeForPolicy: antigravityPermissionMode,
+    permissionDisposition: (policy, request) =>
+      antigravityPermissionDisposition(policy, request, {
+        offersAuto: !sessionsWithoutAuto.has(request.sessionId),
+      }),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>

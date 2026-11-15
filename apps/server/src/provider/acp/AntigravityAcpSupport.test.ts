@@ -4,6 +4,7 @@ import {
   ANTIGRAVITY_DEFAULT_MODEL,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ChatAttachment,
+  type RuntimeMode,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -17,7 +18,12 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
+  antigravityPermissionDisposition,
+  antigravityPermissionMode,
+  antigravityReleaseOffersAutoMode,
+  antigravityRuntimeModeForSessionMode,
   antigravitySessionMeta,
+  antigravitySessionMode,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
 } from "./AntigravityAcpSupport.ts";
@@ -98,6 +104,84 @@ describe("Antigravity release gates", () => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
+});
+
+describe("Antigravity permission modes", () => {
+  const policy = (
+    runtimeMode: RuntimeMode,
+    overrides: { readonly approvalPolicy?: unknown; readonly sandboxPolicy?: unknown } = {},
+  ) => ({ runtimeMode, cwd: "/workspace", ...overrides });
+  const request = (kind: EffectAcpSchema.ToolKind) =>
+    ({
+      sessionId: "session-1",
+      toolCall: { toolCallId: "tool-1", kind },
+      options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+    }) satisfies EffectAcpSchema.RequestPermissionRequest;
+
+  it("expects automatic review from agy 1.5.4, never from the 1.4 harness", () => {
+    expect(
+      ["1.5.4", "1.5.6", "1.6.0", "1.5.3", "1.4.5", "agy_acp_server_20260818_01_RC01", null].map(
+        antigravityReleaseOffersAutoMode,
+      ),
+    ).toEqual([true, true, true, false, false, false, false]);
+  });
+
+  it("runs Auto in the agent's automatic review only where the session offers it", () => {
+    expect(antigravityPermissionMode(policy("auto"))).toBe("auto");
+    expect(antigravityRuntimeModeForSessionMode("auto")).toBe("auto");
+    const cli = { cli: true, availableModeIds: ["default", "accept-edits", "auto", "plan"] };
+    expect(antigravitySessionMode("auto", cli)).toBe("auto");
+    // Gemini Enterprise and the 1.4 harness offer no `auto`; the agent keeps asking.
+    for (const session of [
+      { cli: true, availableModeIds: ["default", "accept-edits", "plan"] },
+      { cli: false, availableModeIds: ["default", "auto_edit", "yolo"] },
+      { cli: false, availableModeIds: [] },
+    ]) {
+      expect(antigravitySessionMode("auto", session)).toBe("default");
+    }
+    // The other modes keep their routes: the CLI asks T3, the harness enforces its own.
+    expect(
+      ["yolo", "auto_edit", "default"].map((mode) => antigravitySessionMode(mode, cli)),
+    ).toEqual(["default", "default", "default"]);
+    expect(
+      ["yolo", "auto_edit", "default"].map((mode) =>
+        antigravitySessionMode(mode, { cli: false, availableModeIds: [] }),
+      ),
+    ).toEqual(["yolo", "auto_edit", "default"]);
+  });
+
+  it("leaves Auto prompts to the user instead of approving them", () => {
+    const auto = { offersAuto: true };
+    const noAuto = { offersAuto: false };
+    const disposition = antigravityPermissionDisposition;
+    // In `auto` a prompt is a review refusal, so even a read reaches the user.
+    for (const kind of ["read", "edit", "execute"] as const) {
+      expect(disposition(policy("auto"), request(kind), auto)).toBe("ask");
+    }
+    // A session without `auto` stays in `default` and is answered as Supervised.
+    expect(
+      (["read", "edit", "execute"] as const).map((kind) =>
+        disposition(policy("auto"), request(kind), noAuto),
+      ),
+    ).toEqual(
+      (["read", "edit", "execute"] as const).map((kind) =>
+        disposition(policy("approval-required"), request(kind), noAuto),
+      ),
+    );
+    expect(disposition(policy("auto"), request("read"), noAuto)).toBe("allow");
+    // An explicit policy keeps the agent asking and answers for itself.
+    const readOnly = policy("auto", {
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "readOnly" },
+    });
+    expect(antigravityPermissionMode(readOnly)).toBe("default");
+    expect(disposition(readOnly, request("execute"), auto)).toBe("deny");
+    // The other modes still answer from the shared ACP policy.
+    expect(disposition(policy("full-access"), request("execute"), auto)).toBe("allow");
+    expect(disposition(policy("auto-accept-edits"), request("edit"), auto)).toBe("allow");
+    expect(disposition(policy("auto-accept-edits"), request("execute"), auto)).toBe("ask");
+    expect(disposition(policy("approval-required"), request("edit"), auto)).toBe("ask");
+  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

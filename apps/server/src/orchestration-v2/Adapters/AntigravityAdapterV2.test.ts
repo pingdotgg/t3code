@@ -96,6 +96,61 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.equal(launch?.prompt, "Read README.md");
   });
 
+  it.effect("answers Auto as Supervised only in a session that offers no automatic review", () =>
+    Effect.gen(function* () {
+      const modes = (ids: ReadonlyArray<string>) => ({
+        currentModeId: "default",
+        availableModes: ids.map((id) => ({ id, name: id })),
+      });
+      const sessionModes: Record<string, ReturnType<typeof modes>> = {
+        personal: modes(["default", "accept-edits", "auto", "plan"]),
+        enterprise: modes(["default", "accept-edits", "plan"]),
+      };
+      const sessions = makeAntigravityAcpAdapterFlavor({
+        instanceId: ProviderInstanceId.make("antigravity-auto-test"),
+        random: undefined as never,
+        fileSystem: undefined as never,
+        path: undefined as never,
+        host: { paths: { attachmentsDir: "/attachments" } } as never,
+        selfInvocation: undefined as never,
+        // The stub names each session after its workspace.
+        makeRuntime: (input) =>
+          Effect.succeed({
+            start: () =>
+              Effect.succeed({
+                sessionId: input.cwd,
+                sessionSetupResult: { modes: sessionModes[input.cwd] },
+              }),
+          } as never),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      const dispositions = (sessionId: string) =>
+        (["read", "execute"] as const).map((kind) =>
+          sessions.permissionDisposition?.(policy, {
+            sessionId,
+            options: [],
+            toolCall: { toolCallId: "tool-1", kind },
+          }),
+        );
+      yield* Effect.gen(function* () {
+        for (const cwd of ["personal", "enterprise"]) {
+          const runtime = yield* sessions.makeRuntime({ cwd } as never);
+          yield* runtime.start();
+        }
+        // In `auto` every prompt is a review refusal; without it the agent asks before each action.
+        assert.deepEqual(dispositions("personal"), ["ask", "ask"]);
+        assert.deepEqual(dispositions("enterprise"), ["allow", "ask"]);
+      }).pipe(Effect.scoped);
+      assert.deepEqual(dispositions("enterprise"), ["ask", "ask"]);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it("routes interaction_* permission requests to the question card", () => {
     const question = flavor.extractPermissionQuestion?.(
       permissionRequest("interaction_1", [

@@ -344,16 +344,57 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("does not offer Auto, so Auto threads fall back to Supervised", () =>
+  it.effect("offers Auto only where the agent has automatic review", () =>
     Effect.gen(function* () {
+      const modes = (harness: {
+        readonly provider: {
+          readonly snapshot: { readonly getSnapshot: Effect.Effect<ServerProvider> };
+        };
+      }) =>
+        harness.provider.snapshot.getSnapshot.pipe(
+          Effect.map((snapshot) => snapshot.supportedRuntimeModes),
+        );
+      const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
+      const withAuto = ["approval-required", "auto-accept-edits", "auto", "full-access"];
+      const startedWithModes = (ids: ReadonlyArray<string>) => ({
+        ...started,
+        sessionSetupResult: {
+          ...sessionSetupResult,
+          configOptions: [modelConfig],
+          modes: { currentModeId: "default", availableModes: ids.map((id) => ({ id, name: id })) },
+        },
+      });
+
+      // The 1.4 harness has no automatic review; the shared ACP policy would approve every request.
       const harness = yield* makeHarness();
       yield* harness.initialize;
-      // Antigravity has no automatic review; the shared ACP policy would approve every request.
-      expect((yield* harness.provider.snapshot.getSnapshot).supportedRuntimeModes).toEqual([
-        "approval-required",
-        "auto-accept-edits",
-        "full-access",
-      ]);
+      expect(yield* modes(harness)).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(started);
+      expect(yield* modes(harness)).toEqual(withoutAuto);
+
+      // The agy CLI offers it from 1.5.4, before any session has reported the account's modes.
+      const cli = yield* makeHarness();
+      yield* Deferred.succeed(cli.initialProbe, {
+        ...initializeResult,
+        agentInfo: { ...initializeResult.agentInfo, version: "1.5.6" },
+      });
+      yield* cli.initialUpdate;
+      expect(yield* modes(cli)).toEqual(withAuto);
+      // Gemini Enterprise omits `auto`, and the next health check must not offer it again.
+      yield* cli.provider.onSessionStarted(startedWithModes(["default", "accept-edits", "plan"]));
+      expect(yield* modes(cli)).toEqual(withoutAuto);
+      yield* cli.provider.snapshot.refresh;
+      expect(yield* modes(cli)).toEqual(withoutAuto);
+      // Another account may sign in, so the release decides again until its session reports.
+      yield* cli.provider.onSignedOut;
+      expect(yield* modes(cli)).toEqual(withAuto);
+
+      const customLauncher = yield* makeHarness();
+      yield* customLauncher.initialize;
+      yield* customLauncher.provider.onSessionStarted(
+        startedWithModes(["default", "accept-edits", "auto", "plan"]),
+      );
+      expect(yield* modes(customLauncher)).toEqual(withAuto);
     }),
   );
 

@@ -4,6 +4,7 @@ import {
   ProviderDriverKind,
   type AntigravitySettings,
   type ProviderSetupError,
+  RuntimeMode,
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
@@ -37,7 +38,11 @@ import {
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
-import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
+import {
+  antigravityReleaseOffersAutoMode,
+  antigravitySessionOffersAutoMode,
+  antigravityThinkingConfig,
+} from "./acp/AntigravityAcpSupport.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -187,8 +192,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       presentation: {
         displayName: "Antigravity",
         showInteractionModeToggle: false,
-        // No automatic review, so Auto falls back to Supervised instead of approving everything.
-        supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
+        supportedRuntimeModes: RuntimeMode.literals.filter((mode) => mode !== "auto"),
       },
       enabled: settings.enabled,
       checkedAt,
@@ -224,6 +228,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     if (model?.type === "select" && model.currentValue) {
       thinkingLevels.set(model.currentValue, antigravityThinkingConfig(configOptions) ?? null);
     }
+  };
+  // Whether the account's last session offered `auto`; Gemini Enterprise and the 1.4 harness do
+  // not. Until a session reports, the release decides. Unoffered, Auto falls back to Supervised.
+  let sessionOffersAuto: boolean | undefined;
+  const runtimeModes = (version: string | null) => {
+    const offersAuto = sessionOffersAuto ?? antigravityReleaseOffersAutoMode(version);
+    return RuntimeMode.literals.filter((mode) => mode !== "auto" || offersAuto);
   };
   const getSnapshot = SubscriptionRef.get(metadata).pipe(
     Effect.flatMap((state) => options.stampIdentity(state.draft)),
@@ -301,6 +312,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
       const authenticated = draft.auth.status === "authenticated";
+      const resolvedVersion = version === "unknown" ? draft.version : version || draft.version;
       const message =
         errorMessage ??
         (authenticated
@@ -314,7 +326,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...draft,
           installed: !missingInstallation,
           // Lightweight custom-launcher probes lack versions; preserve the real handshake's version.
-          version: version === "unknown" ? draft.version : version || draft.version,
+          version: resolvedVersion,
+          supportedRuntimeModes: runtimeModes(resolvedVersion),
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
           usageLimits: missingInstallation ? undefined : draft.usageLimits,
@@ -379,16 +392,19 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       ) {
         return state;
       }
+      sessionOffersAuto = antigravitySessionOffersAutoMode(started.sessionSetupResult);
       const { message: _previousMessage, ...draft } = state.draft;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
+      const version = started.initializeResult.agentInfo?.version || draft.version;
       return {
         authRevision: state.authRevision + 1,
         draft: {
           ...draft,
           installed: true,
           status: "ready",
-          version: started.initializeResult.agentInfo?.version || draft.version,
+          version,
+          supportedRuntimeModes: runtimeModes(version),
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",
@@ -466,6 +482,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     yield* resetUsage;
     if (!settings.enabled) return;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    sessionOffersAuto = undefined;
     yield* SubscriptionRef.update(
       metadata,
       (state) =>
@@ -473,6 +490,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           authRevision: state.authRevision + 1,
           draft: {
             ...state.draft,
+            supportedRuntimeModes: runtimeModes(state.draft.version),
             auth: {
               status: "unauthenticated",
               ...(usesCredentials ? options.auth : {}),

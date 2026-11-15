@@ -27,9 +27,9 @@ the parent conversation with the subagent's name, so you can respond without swi
 ## Provider differences
 
 Providers enforce permissions differently. Some read-only actions can proceed in **Supervised**.
-**Auto** uses automatic review on Codex, Claude, Cursor, Grok, and fx; providers without an equivalent,
-including OpenCode and Antigravity, fall back to asking. On Grok, commands its review blocks come
-to you for approval. On fx, prompts it still sends also come to you.
+**Auto** uses automatic review on Codex, Claude, Cursor, Grok, fx, and Antigravity; providers
+without an equivalent, including OpenCode, fall back to asking. On Grok, commands its review blocks
+come to you for approval. On fx and Antigravity, prompts they still send also come to you.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
@@ -51,6 +51,8 @@ continues without the removal and tells you what it skipped.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 
+Antigravity offers **Auto** from version 1.5.4, for accounts that have its automatic review; Gemini
+Enterprise accounts do not. Without it, an Antigravity thread set to **Auto** runs in **Supervised**.
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
 

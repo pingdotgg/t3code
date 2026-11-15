@@ -361,11 +361,18 @@ const antigravityModels = [
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
 const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
-  ? [
-      { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
-    ]
+  ? process.env.T3_ACP_ANTIGRAVITY_CLI_MODES === "1"
+    ? [
+        { id: "default", name: "Default" },
+        { id: "accept-edits", name: "Accept edits" },
+        { id: "auto", name: "Auto" },
+        { id: "plan", name: "Plan" },
+      ]
+    : [
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
+      ]
   : copilotModesProfile
     ? [
         { id: copilotModeId("agent"), name: "Agent" },

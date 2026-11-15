@@ -82,6 +82,8 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      /** Advertise the agy CLI's modes, which include `auto`, instead of the 1.4 harness's. */
+      readonly cliModes?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -105,6 +107,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.cliModes ? ["export T3_ACP_ANTIGRAVITY_CLI_MODES=1"] : []),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -407,9 +410,21 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
           harnessPath: null,
         };
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        const cliWithAuto = {
+          ...(yield* h.makeExecutable("runtime cli auto", { cliModes: true })),
+          harnessPath: null,
+        };
+        // Auto runs the agent's own review where the session offers it; elsewhere the agent asks.
+        for (const [runtimeMode, executable, sessionModes] of [
+          ["full-access", h.controls.selected, ["default"]],
+          ["auto-accept-edits", h.controls.selected, ["default"]],
+          ["auto", h.controls.selected, ["default"]],
+          ["auto", h.second, []],
+          ["auto", cliWithAuto, ["auto"]],
+        ] as const) {
+          h.controls.selected = executable;
           const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
+          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${requestsBefore}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
             runtimeMode,
             interactionMode: "default",
@@ -417,7 +432,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           });
           const cliSession = yield* h.instance.orchestrationAdapter.openSession({
             threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
+            providerSessionId: ProviderSessionId.make(`provider-session-cli-${requestsBefore}`),
             modelSelection,
             runtimePolicy: cliPolicy,
           });
@@ -426,13 +441,15 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             modelSelection,
             runtimePolicy: cliPolicy,
           });
-          expect(h.launches.at(-1)?.args).toEqual([
-            "acp",
-            "--gemini-dir",
-            h.profileDirectory,
-            "--app-data-dir",
-            "antigravity-acp",
-          ]);
+          if (executable.harnessPath === null) {
+            expect(h.launches.at(-1)?.args).toEqual([
+              "acp",
+              "--gemini-dir",
+              h.profileDirectory,
+              "--app-data-dir",
+              "antigravity-acp",
+            ]);
+          }
           expect(
             (yield* h.readRequests)
               .slice(requestsBefore)
@@ -442,7 +459,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
                   request.params?.configId === "mode",
               )
               .map((request) => request.params?.value),
-          ).toEqual(["default"]);
+          ).toEqual(sessionModes);
         }
       }),
   );

@@ -24,6 +24,12 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  acpPermissionDisposition,
+  type AcpPermissionDisposition,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -171,25 +177,72 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(Effect.provide(context));
 });
 
-export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
-  switch (runtimeMode) {
+// `agy acp` 1.5.4 added `auto`, its automatic safety review; the 1.4 harness has none.
+const AUTO_MODE_RELEASE = [1, 5, 4] as const;
+
+/** Whether a release is expected to offer `auto`, until a session reports its account's modes. */
+export function antigravityReleaseOffersAutoMode(version: string | null | undefined): boolean {
+  const parsed = parseAntigravityVersion(version);
+  return parsed !== undefined && compareVersions(parsed, AUTO_MODE_RELEASE) >= 0;
+}
+
+/**
+ * An explicit approval or sandbox policy must not launch automatic review, which would approve
+ * actions the policy meant to confine.
+ */
+export function antigravityPermissionMode(
+  policy: Pick<AcpRuntimePolicy, "runtimeMode" | "approvalPolicy" | "sandboxPolicy">,
+): string {
+  switch (policy.runtimeMode) {
     case "full-access":
       return "yolo";
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return policy.approvalPolicy === undefined && policy.sandboxPolicy === undefined
+        ? "auto"
+        : "default";
     case "approval-required":
       return "default";
   }
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * In `auto` the agent asks only about what its own review refused, so every prompt reaches the
+ * user. A session that offers no `auto` stays in `default` and is answered as Supervised.
  */
-export function antigravityCliSessionMode(modeId: string): string {
-  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+export function antigravityPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+  session: { readonly offersAuto: boolean },
+): AcpPermissionDisposition {
+  if (antigravityPermissionMode(policy) !== "auto")
+    return acpPermissionDisposition(policy, request);
+  return session.offersAuto
+    ? "ask"
+    : acpPermissionDisposition({ ...policy, runtimeMode: "approval-required" }, request);
+}
+
+export function antigravitySessionOffersAutoMode(
+  sessionSetupResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"],
+): boolean {
+  return (
+    parseSessionModeState(sessionSetupResult)?.availableModes.some((mode) => mode.id === "auto") ===
+    true
+  );
+}
+
+/**
+ * The mode to send a session for a requested one. The agy CLI rejects the managed runtime's
+ * `yolo` and `auto_edit`, and some runtimes and accounts offer no `auto`. Those stay in
+ * `default`, where the agent asks before acting and T3 answers from the live runtime policy.
+ */
+export function antigravitySessionMode(
+  modeId: string,
+  session: { readonly cli: boolean; readonly availableModeIds: ReadonlyArray<string> },
+): string {
+  if (session.cli && (modeId === "yolo" || modeId === "auto_edit")) return "default";
+  return modeId === "auto" && !session.availableModeIds.includes("auto") ? "default" : modeId;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -197,6 +250,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
   switch (modeId) {
     case "yolo":
       return "full-access";
+    case "auto":
+      return "auto";
     case "auto_edit":
       return "auto-accept-edits";
     case "default":
