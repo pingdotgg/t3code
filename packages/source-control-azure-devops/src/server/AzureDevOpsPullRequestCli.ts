@@ -818,8 +818,27 @@ export const make = Effect.gen(function* () {
     ),
 
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      return azure
-        .execute({
+      return Effect.gen(function* () {
+        // One argv entry preserves leading dashes and multi-string descriptions.
+        const text = yield* Effect.all([
+          ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
+          ...(input.body === undefined
+            ? []
+            : [AzureDevOpsCli.textOption("--description", input.body)]),
+        ]).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.mapError(
+            (cause) =>
+              new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: 0,
+                cause,
+              }),
+          ),
+        );
+        yield* azure.execute({
           cwd: input.cwd,
           args: [
             "repos",
@@ -828,15 +847,13 @@ export const make = Effect.gen(function* () {
             ...detectArgs,
             "--id",
             String(input.number),
-            // One argv entry preserves leading dashes and multi-string descriptions.
-            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
-            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
+            ...text,
             "--only-show-errors",
             "--output",
             "json",
           ],
-        })
-        .pipe(Effect.asVoid);
+        });
+      }).pipe(Effect.scoped);
     }),
   });
 });

@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -507,9 +508,25 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
       } satisfies AzureCliInvocation);
 });
 
+/**
+ * `--option=value` for free text. az replaces a value starting with `@` by that file's
+ * contents, so such a value is handed to az through a file holding the text itself.
+ */
+export const textOption = Effect.fn("AzureDevOpsCli.textOption")(function* (
+  option: string,
+  value: string,
+) {
+  if (!value.startsWith("@")) return `${option}=${value}`;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* fileSystem.makeTempFileScoped({ prefix: "t3-azure-text-" });
+  yield* fileSystem.writeFileString(path, value);
+  return `${option}=@${path}`;
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const fileSystem = yield* FileSystem.FileSystem;
   const invocation = yield* azureCliInvocation();
 
   const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
@@ -717,26 +734,40 @@ export const make = Effect.gen(function* () {
       );
     }),
     createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
-      return execute({
-        cwd: input.cwd,
-        ...remoteOf(input),
-        args: [
-          "repos",
-          "pr",
-          "create",
-          "--only-show-errors",
-          "--detect",
-          "true",
-          "--target-branch",
-          input.target?.refName ?? input.baseBranch,
-          "--source-branch",
-          SourceControlProvider.sourceBranch(input),
-          "--title",
-          input.title,
-          "--description",
-          `@${input.bodyFile}`,
-        ],
-      }).pipe(Effect.asVoid);
+      return Effect.gen(function* () {
+        const text = yield* Effect.all([
+          textOption("--target-branch", input.target?.refName ?? input.baseBranch),
+          textOption("--source-branch", SourceControlProvider.sourceBranch(input)),
+          textOption("--title", input.title),
+        ]).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.mapError(
+            (cause) =>
+              new AzureDevOpsCommandFailedError({
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: 0,
+                cause,
+              }),
+          ),
+        );
+        yield* execute({
+          cwd: input.cwd,
+          ...remoteOf(input),
+          args: [
+            "repos",
+            "pr",
+            "create",
+            "--only-show-errors",
+            "--detect",
+            "true",
+            ...text,
+            "--description",
+            `@${input.bodyFile}`,
+          ],
+        });
+      }).pipe(Effect.scoped);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
       const repository = parseRepositorySpecifier(input.repository);
