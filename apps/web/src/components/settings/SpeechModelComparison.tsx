@@ -1,7 +1,5 @@
-import type { EnvironmentSpeechModel } from "@t3tools/contracts";
-import { CheckIcon } from "lucide-react";
+import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 
-import { cn } from "../../lib/utils";
 import { languageLabel } from "./SpeechLanguageSelect";
 
 const commonLanguages = [
@@ -45,42 +43,20 @@ export function orderSpeechLanguages(languages: readonly string[], preferred: re
   );
 }
 
-export function LanguageRow({
-  label,
-  selected,
-  onClick,
-}: {
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn(
-        "flex shrink-0 cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-        selected && "bg-muted font-medium",
-      )}
-    >
-      {label}
-      {selected && <CheckIcon className="size-3.5 shrink-0" />}
-    </button>
-  );
-}
-
 export function ModelBenchmarks({
   model,
   languages,
+  tier,
   facts,
 }: {
   model: EnvironmentSpeechModel;
   languages: readonly string[];
+  tier: SpeechBenchmarkTier;
   /** Plain facts, such as language count and size, shown after the scores. */
   facts: readonly string[];
 }) {
   const data = model.benchmark;
+  const seconds = data?.secondsPer30s[tier];
   const visible = !data
     ? []
     : languages.length
@@ -106,18 +82,18 @@ export function ModelBenchmarks({
           </span>
         );
       })}
-      {data ? (
-        <span>
-          Speed:{" "}
-          {data.secondsPer30s === null ? (
-            "not benchmarked"
-          ) : (
-            <>
-              <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
-            </>
-          )}
-        </span>
-      ) : null}
+      <span>
+        Speed:{" "}
+        {tier === "cpu" && data && data.secondsPer30s.cpu === undefined ? (
+          "update server"
+        ) : seconds == null ? (
+          "not benchmarked"
+        ) : (
+          <>
+            <strong className="font-medium text-foreground">{seconds} s</strong> / 30 s
+          </>
+        )}
+      </span>
       {facts.map((fact) => (
         <span key={fact}>{fact}</span>
       ))}
