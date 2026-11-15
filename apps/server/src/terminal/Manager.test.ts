@@ -961,12 +961,19 @@ it.layer(
   );
 
   it.effect.each([
-    { label: "idle prompt", foregroundProcessGroup: 9000, killed: true },
-    { label: "foreground job", foregroundProcessGroup: 100, killed: false },
-    { label: "unknown foreground group", foregroundProcessGroup: null, killed: false },
-  ])(
-    "settles a shell with a childless shell-named child by its foreground group: $label",
-    ({ foregroundProcessGroup, killed }) =>
+    { label: "idle prompt", platform: "linux", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "linux", foregroundProcessGroup: 100, killed: false },
+    {
+      label: "unknown foreground group",
+      platform: "linux",
+      foregroundProcessGroup: null,
+      killed: false,
+    },
+    { label: "idle prompt", platform: "darwin", foregroundProcessGroup: 9000, killed: true },
+    { label: "foreground job", platform: "darwin", foregroundProcessGroup: 100, killed: false },
+  ] as const)(
+    "settles a shell with a childless shell-named child by its foreground group: $label ($platform)",
+    ({ platform, foregroundProcessGroup, killed }) =>
       Effect.gen(function* () {
         const { manager, ptyAdapter } = yield* createManager(5, {
           shellResolver: () => "/bin/bash",
@@ -975,7 +982,7 @@ it.layer(
             { pid: 100, ppid: 9000, name: "bash" },
           ]),
           foregroundProcessGroup: () => Effect.succeed(foregroundProcessGroup),
-        }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
         yield* manager.open(openInput());
 
         yield* manager.closeOnSettle({ threadId: "thread-1" });

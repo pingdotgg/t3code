@@ -1838,10 +1838,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const foregroundProcessGroup =
     options.foregroundProcessGroup ??
     ((terminalPid: number) =>
-      fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
-        Effect.map(parseProcStatForegroundProcessGroup),
-        Effect.orElseSucceed(() => null),
-      ));
+      platform === "linux"
+        ? fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
+            Effect.map(parseProcStatForegroundProcessGroup),
+            Effect.orElseSucceed(() => null),
+          )
+        : processRunner
+            .run({
+              command: posixPsCommand ?? "ps",
+              args: ["-o", "tpgid=", "-p", String(terminalPid)],
+              timeout: CLOSE_IDLE_QUERY_TIMEOUT.posix,
+              timeoutBehavior: "timedOutResult",
+            })
+            .pipe(
+              Effect.map((result) => {
+                const tpgid = Number(result.stdout.trim());
+                return result.code === 0 && !result.timedOut && Number.isInteger(tpgid) && tpgid > 0
+                  ? tpgid
+                  : null;
+              }),
+              Effect.orElseSucceed(() => null),
+            ));
   const customSubprocessInspector = options.subprocessInspector;
   const acquireSubprocessInspector = (
     fallbackTimeout: Duration.Input,
@@ -1867,7 +1884,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                   // Only shell-named childless children are ambiguous; read the foreground group for those alone.
                   if (
                     result.hasRunningSubprocess ||
-                    platform !== "linux" ||
+                    platform === "win32" ||
                     (table.childrenByParent.get(terminalPid)?.length ?? 0) === 0
                   ) {
                     return Effect.succeed(result);
