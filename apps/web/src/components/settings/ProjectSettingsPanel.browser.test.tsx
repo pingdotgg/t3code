@@ -671,12 +671,14 @@ describe("project settings scope", () => {
     ];
     await using screen = await mountSettings({ machine: primaryId });
 
-    await expect.element(page.getByRole("button", { name: /^Shared repo/ })).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: /^Remote only/ }))
+      .element(page.getByRole("button", { name: "Open Shared repo settings" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Open Remote only settings" }))
       .not.toBeInTheDocument();
 
-    await userEvent.click(page.getByRole("button", { name: /^Shared repo/ }));
+    await userEvent.click(page.getByRole("button", { name: "Open Shared repo settings" }));
     await vi.waitFor(() =>
       expect(screen.router.state.location.search).toEqual({
         project: projectKey(),
