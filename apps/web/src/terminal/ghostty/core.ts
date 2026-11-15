@@ -183,7 +183,7 @@ function encoderAxis(
   const end = Math.round(paddingEnd);
   return {
     position: Math.max(0, start + (position - paddingStart) * scale),
-    screen: start + end + (screen - paddingStart - paddingEnd) * scale,
+    screen: start + end + Math.floor((screen - paddingStart - paddingEnd) / cell) * wholeCell,
     cell: wholeCell,
     paddingStart: start,
     paddingEnd: end,

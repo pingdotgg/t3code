@@ -503,14 +503,20 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       },
       () => {},
     );
-    const press = (x: number, y: number, paddingTop: number) =>
+    const mouse = (
+      x: number,
+      y: number,
+      paddingTop: number,
+      screenWidth = 437,
+      action: "press" | "release" = "press",
+    ) =>
       core.encodeMouse({
-        action: "press",
+        action,
         button: 1,
         mods: 0,
         x,
         y,
-        screenWidth: 437,
+        screenWidth,
         screenHeight: 279,
         cellWidth,
         cellHeight,
@@ -522,11 +528,13 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       });
     try {
       core.write("\x1b[?1002h\x1b[?1006h");
-      expect(press(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
-      expect(press(4 + 53.5 * cellWidth, 140, 4)).toBe("\x1b[<0;54;8M");
-      expect(press(10, 4.5 + cellHeight + 0.2, 4.5)).toBe("\x1b[<0;1;2M");
+      expect(mouse(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
+      expect(mouse(4 + 53.5 * cellWidth, 140, 4)).toBe("\x1b[<0;54;8M");
+      expect(mouse(10, 4.5 + cellHeight + 0.2, 4.5)).toBe("\x1b[<0;1;2M");
+      expect(mouse(304, 140, 4, 305)).toBe("\x1b[<0;37;8M");
+      expect(mouse(500, 140, 4, 305, "release")).toBe("\x1b[<0;37;8m");
       core.write("\x1b[?1016h");
-      expect(press(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
+      expect(mouse(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
     } finally {
       core.dispose();
     }
