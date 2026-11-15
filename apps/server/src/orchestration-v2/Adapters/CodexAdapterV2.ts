@@ -766,7 +766,16 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
       };
     case "full-access":
       return {
-        approvalPolicy: "never",
+        // `never` also rejects browser and app access prompts before the client sees them.
+        approvalPolicy: {
+          granular: {
+            mcp_elicitations: true,
+            request_permissions: false,
+            rules: false,
+            sandbox_approval: false,
+            skill_approval: false,
+          },
+        },
         approvalsReviewer: "user",
         sandboxPolicy: {
           type: "dangerFullAccess",
@@ -6044,7 +6053,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
         yield* client.handleServerRequest("mcpServer/elicitation/request", (payload) =>
           Effect.gen(function* () {
-            if (toMcpElicitationResponse(payload, "accept").action !== "accept") {
+            const acceptance = toMcpElicitationResponse(payload, "accept");
+            if (acceptance.action !== "accept") {
               yield* Effect.logWarning("Declined an unsupported MCP elicitation.", {
                 serverName: payload.serverName,
                 mode: payload.mode,
@@ -6055,7 +6065,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const context =
               payload.turnId === undefined || payload.turnId === null
-                ? undefined
+                ? yield* findActiveTurnByNativeThreadId(payload.threadId)
                 : yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               yield* Effect.logWarning(
@@ -6065,6 +6075,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return {
                 action: "decline",
               } satisfies CodexSchema.McpServerElicitationRequestResponse;
+            }
+
+            if (context.input.runtimePolicy.runtimeMode === "full-access") {
+              return acceptance;
             }
 
             const nativeRequestId =
