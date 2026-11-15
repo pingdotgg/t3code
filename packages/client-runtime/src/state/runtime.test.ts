@@ -7,6 +7,7 @@ import {
   EnvironmentId,
   type FilesystemBrowseEntry,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ArchivedShellSnapshot,
   ThreadId,
   ProjectId,
   type ReviewDiffPreviewInput,
@@ -18,6 +19,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -29,6 +31,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import type { HttpClient } from "effect/http";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -43,6 +46,7 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
@@ -50,10 +54,12 @@ import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
+import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
   selectEnvironmentQueryData,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
@@ -69,6 +75,8 @@ const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
   httpBaseUrl: "https://query.example.test",
   wsBaseUrl: "wss://query.example.test",
 });
+
+const decodeNumber = Schema.decodeUnknownEffect(Schema.Number);
 
 const QUERY_RPC_SESSION = {} as RpcSession.RpcSession;
 
@@ -393,6 +401,104 @@ describe("finite environment subscription lifecycle", () => {
         expect(observed.some((result) => AsyncResult.isFailure(result))).toBe(false);
       }),
   );
+  it.effect(
+    "surfaces a decode defect from a finite RPC subscription instead of resubscribing",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const firstSubscribed = yield* Deferred.make<void>();
+          const resubscribed = yield* Deferred.make<void>();
+          const surfaced = yield* Deferred.make<Cause.Cause<unknown>>();
+          let subscriptions = 0;
+          // Mirrors RpcClient, which decodes each chunk with `Effect.orDie`.
+          const decodeDefect = decodeNumber("not a number").pipe(Effect.orDie);
+          const client = {
+            [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: () => {
+              subscriptions += 1;
+              Deferred.doneUnsafe(subscriptions === 1 ? firstSubscribed : resubscribed, Exit.void);
+              return Stream.fromEffect(decodeDefect).pipe(Stream.drain);
+            },
+          } as unknown as WsRpcProtocolClient;
+          const rpcSession = {
+            client,
+            initialConfig: Effect.never,
+            subscribeServerConfig: () => Stream.never,
+            ready: Effect.void,
+            probe: Effect.void,
+            closed: Effect.never,
+          } as unknown as RpcSession.RpcSession;
+          const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+            target: QUERY_ENVIRONMENT,
+            state: yield* SubscriptionRef.make(queryConnectionState()),
+            session: yield* SubscriptionRef.make(Option.some(rpcSession)),
+            prepared: yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none()),
+            connect: Effect.void,
+            disconnect: Effect.void,
+            retryNow: Effect.void,
+          } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+          const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+            followStream: (_environmentId: EnvironmentId, stream: Stream.Stream<unknown>) =>
+              Stream.provideService(
+                stream,
+                EnvironmentSupervisor.EnvironmentSupervisor,
+                supervisor,
+              ),
+          } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+          // Atoms run their own fibers; share the test clock so a pending retry is driven by it.
+          const runtime = Atom.runtime(
+            Layer.mergeAll(
+              Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+              Layer.succeed(Clock.Clock, yield* Clock.Clock),
+            ),
+          );
+          // Same options as the progressive thread find in orchestration.ts.
+          const family = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+            label: "test.finite-rpc-subscription",
+            tag: ORCHESTRATION_V2_WS_METHODS.searchThreadStream,
+            completeWhen: (result) => result.complete !== false,
+            idleTtlMs: 0,
+          });
+          const atom = family({
+            environmentId: QUERY_ENVIRONMENT.environmentId,
+            input: {} as never,
+          });
+          const registry = AtomRegistry.make();
+          const unsubscribe = registry.subscribe(
+            atom,
+            (result) => {
+              if (AsyncResult.isFailure(result))
+                Deferred.doneUnsafe(surfaced, Exit.succeed(result.cause));
+            },
+            { immediate: true },
+          );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              unsubscribe();
+              registry.dispose();
+            }),
+          );
+          yield* Deferred.await(firstSubscribed);
+          // Lets any same-session retry run, so its resubscription can win the race below.
+          yield* TestClock.adjust("1 minute");
+          const outcome = yield* Effect.raceFirst(
+            Deferred.await(surfaced).pipe(
+              Effect.map((cause) => ({ _tag: "surfaced", cause }) as const),
+            ),
+            Deferred.await(resubscribed).pipe(Effect.as({ _tag: "resubscribed" } as const)),
+          );
+
+          expect(
+            outcome._tag,
+            "finite subscription resubscribed after a decode defect instead of failing its consumer",
+          ).toBe("surfaced");
+          if (outcome._tag === "surfaced") {
+            expect(Cause.hasDies(outcome.cause)).toBe(true);
+            expect(Schema.isSchemaError(Cause.squash(outcome.cause))).toBe(true);
+          }
+          expect(subscriptions).toBe(1);
+        }),
+      ),
+  );
   it.effect.each([
     { completedTtlMs: undefined, subscriptions: 2 },
     { completedTtlMs: 60_000, subscriptions: 1 },
@@ -598,6 +704,42 @@ describe("environment query lifecycle", () => {
         }),
       );
       expect(yield* Queue.take(inputs)).toEqual(sent);
+    }),
+  );
+
+  // The server sizes a shared PTY to every attached viewer, so a lingering attach pins its grid.
+  it.effect("terminal attach detaches as soon as its last viewer leaves", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+      const attached = yield* Deferred.make<void>();
+      const detached = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.terminalAttach]: () =>
+          Stream.fromEffect(Deferred.succeed(attached, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.never),
+            Stream.ensuring(Deferred.succeed(detached, undefined)),
+          ),
+      } as unknown as RpcSession.RpcSession["client"];
+      yield* SubscriptionRef.set(
+        harness.supervisorSession,
+        Option.some({ ...QUERY_RPC_SESSION, client }),
+      );
+      const atoms = createTerminalEnvironmentAtoms(harness.runtime);
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const unsubscribe = registry.subscribe(
+        atoms.attach({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadId: "thread-1", terminalId: "terminal-1", cwd: "/tmp/project" },
+        }),
+        () => {},
+        { immediate: true },
+      );
+      yield* Deferred.await(attached);
+
+      unsubscribe();
+      yield* Deferred.await(detached);
     }),
   );
 
@@ -1257,6 +1399,58 @@ describe("environment query lifecycle", () => {
       yield* Deferred.succeed(afterDelete, {});
       expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
       expect(settled).toEqual([{ fork: "Fork" }, {}]);
+    }),
+  );
+
+  it.effect("re-reads an open archive when a thread leaves the shell", () =>
+    Effect.gen(function* () {
+      const requests =
+        yield* Queue.unbounded<Deferred.Deferred<OrchestrationV2ArchivedShellSnapshot>>();
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+        rpcSession: {
+          client: {
+            [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+              Effect.gen(function* () {
+                const answer = yield* Deferred.make<OrchestrationV2ArchivedShellSnapshot>();
+                yield* Queue.offer(requests, answer);
+                return yield* Deferred.await(answer);
+              }),
+          },
+        } as unknown as RpcSession.RpcSession,
+      });
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+        removedAt: new Map(),
+      }).pipe(Atom.keepAlive);
+      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+      >;
+      const atom = createOrchestrationEnvironmentAtoms(runtime, {
+        shellState: () => shellState,
+      }).archivedShellSnapshot({ environmentId: QUERY_ENVIRONMENT.environmentId, input: {} });
+      const page = (threads: OrchestrationV2ArchivedShellSnapshot["threads"]) => ({
+        schemaVersion: 1,
+        snapshotSequence: 1,
+        projects: [v2Project],
+        threads,
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+      const archivedIds = Effect.map(readEnvironmentQuery(registry, atom), (snapshot) =>
+        snapshot.threads.map((thread) => thread.id),
+      );
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
+
+      // Another client archives the thread, then deletes it from the archive.
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      expect(registry.get(atom).waiting).toBe(true);
+      yield* Deferred.succeed(
+        yield* Queue.take(requests),
+        page([{ ...v2ThreadShell, archivedAt: v2Now }]),
+      );
+      expect(yield* archivedIds).toEqual([v2ThreadId]);
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
     }),
   );
 });

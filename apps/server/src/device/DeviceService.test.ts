@@ -49,6 +49,25 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
 const encodeBootError = Schema.encodeSync(Schema.fromJsonString(DeviceBootError));
 
+const pngChunk = (type: string, length: number) => {
+  const chunk = new Uint8Array(12 + length);
+  new DataView(chunk.buffer).setUint32(0, length);
+  chunk.set(new TextEncoder().encode(type), 4);
+  return chunk;
+};
+const minimalPng = Uint8Array.from([
+  137,
+  80,
+  78,
+  71,
+  13,
+  10,
+  26,
+  10,
+  ...pngChunk("IHDR", 13),
+  ...pngChunk("IEND", 0),
+]);
+
 it.effect.each([400, 500])(
   "retries a hub-rejected (%s) screenshot with simctl only on iOS 26 and older",
   (status) =>
@@ -112,6 +131,7 @@ const fixture = Effect.fn("fixture")(function* (
   const androidAvailable = yield* Ref.make(true);
   const iosAvailable = yield* Ref.make(true);
   const encoderResult = yield* Ref.make({ code: 0, stdout: " V....D libx264", stderr: "" });
+  const screenshotBody = yield* Ref.make(minimalPng);
   const listing = { hangs: false, requested: yield* Deferred.make<void>() };
   let booted = false;
   let shutDown = false;
@@ -150,7 +170,7 @@ const fixture = Effect.fn("fixture")(function* (
         );
       }
       if (request.url.includes("/api/screenshot")) {
-        return HttpClientResponse.fromWeb(request, new Response(new Uint8Array([137, 80, 78, 71])));
+        return HttpClientResponse.fromWeb(request, new Response(yield* Ref.get(screenshotBody)));
       }
       if (request.url.endsWith("/shutdown")) {
         if (connection.failShutdown)
@@ -327,7 +347,7 @@ const fixture = Effect.fn("fixture")(function* (
       }),
     ),
   );
-  // The host ending a device on its own, as EAS does at a session's limits.
+  // The host ending a device on its own, as Expo does at a session's limits.
   const endDevice = () => {
     booted = false;
   };
@@ -343,6 +363,7 @@ const fixture = Effect.fn("fixture")(function* (
     connection,
     devices,
     encoderResult,
+    screenshotBody,
     discoveryErrors,
     androidAvailable,
     iosAvailable,
@@ -656,77 +677,106 @@ const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
   invalidate: () => Effect.void,
 });
 
-it.effect.each([1, 9009])(
-  "Test connection preserves Windows exit %s guidance across the wire",
-  (exitCode) =>
-    Effect.gen(function* () {
-      const { host } = yield* fixture();
-      const service = yield* DeviceService.make.pipe(
-        Effect.provideService(DeviceHost.DeviceHost, host),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: () => Effect.die("Testing SSH does not install local tools"),
-        }),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
-        ),
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make((command) => {
-            if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
-            const config = command.args.includes("-G");
-            const windows = command.args.includes("echo %OS% $env:OS");
-            return Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(123),
-                stdout: Stream.make(
-                  new TextEncoder().encode(
-                    config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
-                  ),
-                ),
-                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
-                all: Stream.empty,
-                exitCode: Effect.succeed(
-                  ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
-                ),
-                isRunning: Effect.succeed(false),
-                kill: () => Effect.void,
-                stdin: Sink.drain,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-                unref: Effect.succeed(Effect.void),
-              }),
-            );
-          }),
-        ),
-      );
-      const error = yield* service
-        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
-        .pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeviceHostUnavailableError",
-        hostId: "windows",
-        hostLabel: "Windows test",
-        reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      });
-      const codec = Schema.fromJsonString(DeviceError);
-      const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
-      expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      );
-      expect(decoded.message).not.toContain("private SSH diagnostics");
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          ServerSettings.layerTest(),
-          layerSecretResolver,
-          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
-          NodeCrypto.layer,
-          NetService.layer,
-        ).pipe(Layer.provideMerge(NodeServices.layer)),
+const WINDOWS_HOST_GUIDANCE = new SshDeviceHost.SshWindowsHostError({ cause: null }).message;
+
+it.effect.each([
+  {
+    name: "Windows exit 1",
+    exitCode: 1,
+    stderr: "private SSH diagnostics",
+    reason: WINDOWS_HOST_GUIDANCE,
+  },
+  {
+    name: "Windows exit 9009",
+    exitCode: 9009,
+    stderr: "private SSH diagnostics",
+    reason: WINDOWS_HOST_GUIDANCE,
+  },
+  {
+    name: "untrusted host key",
+    exitCode: 255,
+    stderr: "Host key verification failed.\r\n",
+    reason:
+      "SSH encountered an untrusted host key while connecting to probe.test from the machine running this T3 Code server. Connect once with ssh from there to identify the host and verify its key before accepting it.",
+  },
+  {
+    name: "unrecognized SSH failure",
+    exitCode: 255,
+    stderr: "private SSH diagnostics",
+    reason: "Could not connect to this host over SSH.",
+  },
+])("Test connection preserves $name guidance across the wire", ({ exitCode, stderr, reason }) =>
+  Effect.gen(function* () {
+    const { host } = yield* fixture();
+    const service = yield* DeviceService.make.pipe(
+      Effect.provideService(DeviceHost.DeviceHost, host),
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () => Effect.die("Testing SSH does not install local tools"),
+      }),
+      Effect.provideService(
+        HttpClient.HttpClient,
+        HttpClient.make(() => Effect.die("Testing SSH makes no hub requests")),
       ),
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
+          const config = command.args.includes("-G");
+          const windows = command.args.includes("echo %OS% $env:OS");
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(123),
+              stdout: Stream.make(
+                new TextEncoder().encode(
+                  config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
+                ),
+              ),
+              stderr: Stream.make(new TextEncoder().encode(stderr)),
+              all: Stream.empty,
+              exitCode: Effect.succeed(
+                ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
+              ),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              stdin: Sink.drain,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+              unref: Effect.succeed(Effect.void),
+            }),
+          );
+        }),
+      ),
+    );
+    const error = yield* service
+      .testHost({
+        kind: "ssh",
+        id: "probe",
+        label: "Probe test",
+        target: "probe.test",
+        port: 2222,
+      })
+      .pipe(Effect.flip);
+    expect(error).toMatchObject({
+      _tag: "DeviceHostUnavailableError",
+      hostId: "probe",
+      hostLabel: "Probe test",
+      reason,
+    });
+    const codec = Schema.fromJsonString(DeviceError);
+    const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
+    expect(decoded.message).toBe(`Probe test is unavailable: ${reason}`);
+    expect(decoded.message).not.toContain("private SSH diagnostics");
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        ServerSettings.layerTest(),
+        layerSecretResolver,
+        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-probe-" }),
+        NodeCrypto.layer,
+        NetService.layer,
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
+  ),
 );
 
 it.effect("publishes boot progress and does not restore sessions after support is disabled", () =>
@@ -793,8 +843,33 @@ describe("device discovery after server restart", () => {
       expect((yield* service.state).devices).toEqual([]);
       const capture = yield* service.screenshot({ deviceId: DeviceId.make("Pixel_API_35") });
       expect(capture.device.id).toBe("Pixel_API_35");
-      expect(Array.from(capture.png)).toEqual([137, 80, 78, 71]);
+      expect(capture.png).toEqual(minimalPng);
       expect(requests.some((url) => url.endsWith("/api/devices"))).toBe(true);
+    }),
+  );
+});
+
+describe("device screenshots", () => {
+  it.effect("drops text that adb prints around the PNG", () =>
+    Effect.gen(function* () {
+      const { service, settings, screenshotBody } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      const warning = new TextEncoder().encode("[Warning] Multiple displays were found\n");
+      yield* Ref.set(screenshotBody, Uint8Array.from([...warning, ...minimalPng, 10]));
+      const capture = yield* service.screenshot({ deviceId: DeviceId.make("Pixel_API_35") });
+      expect(capture.png).toEqual(minimalPng);
+    }),
+  );
+
+  it.effect("fails instead of returning bytes that hold no complete PNG", () =>
+    Effect.gen(function* () {
+      const { service, settings, screenshotBody } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      yield* Ref.set(screenshotBody, minimalPng.subarray(0, 30));
+      const error = yield* Effect.flip(
+        service.screenshot({ deviceId: DeviceId.make("Pixel_API_35") }),
+      );
+      expect(error).toMatchObject({ _tag: "DeviceOperationError", reason: "hub_rejected" });
     }),
   );
 });
@@ -1736,67 +1811,84 @@ it.effect("reconciles SSH host settings without publishing no-op changes", () =>
   ),
 );
 
-it.effect("a failed tool update reports npm's exit code but not its output", () =>
-  Effect.gen(function* () {
-    const host: DeviceHost.DeviceHost["Service"] = {
-      id: LOCAL_DEVICE_HOST_ID,
-      label: "This machine",
-      summary: Effect.succeed({
+it.effect.each(["exit", "missing"] as const)(
+  "a failed tool update reports a safe %s failure",
+  (failure) =>
+    Effect.gen(function* () {
+      const host: DeviceHost.DeviceHost["Service"] = {
         id: LOCAL_DEVICE_HOST_ID,
-        kind: "local",
-        label: "Test server",
-        platforms: [],
-        hubInstalled: false,
-        agentDeviceInstalled: false,
-      }),
-      platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
-      ensureReady: () => Effect.die("Updating a tool does not start the hub"),
-      ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
-      current: Effect.succeed(null),
-      stopAgent: Effect.void,
-      stop: Effect.void,
-    };
-    const npmFailure = {
-      code: ChildProcessSpawner.ExitCode(243),
-      stdout: "",
-      stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
-      timedOut: false,
-      stdoutTruncated: false,
-      stderrTruncated: false,
-      stdoutInvalidUtf8: false,
-      stderrInvalidUtf8: false,
-    };
-    const service = yield* DeviceService.make.pipe(
-      Effect.provideService(DeviceHost.DeviceHost, host),
-      Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.succeed(npmFailure),
-      }),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
-      ),
-    );
+        label: "This machine",
+        summary: Effect.succeed({
+          id: LOCAL_DEVICE_HOST_ID,
+          kind: "local",
+          label: "Test server",
+          platforms: [],
+          hubInstalled: false,
+          agentDeviceInstalled: false,
+        }),
+        platformAvailability: (platform) => Effect.succeed({ platform, available: false }),
+        ensureReady: () => Effect.die("Updating a tool does not start the hub"),
+        ensureAgentReady: () => Effect.die("Updating a tool does not start the agent"),
+        current: Effect.succeed(null),
+        stopAgent: Effect.void,
+        stop: Effect.void,
+      };
+      const npmFailure = {
+        code: ChildProcessSpawner.ExitCode(243),
+        stdout: "",
+        stderr: "npm error EACCES https://private:credential@registry.example.test/expo-device-hub",
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      };
+      const service = yield* DeviceService.make.pipe(
+        Effect.provideService(DeviceHost.DeviceHost, host),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: ({ command, args }) =>
+            failure === "exit"
+              ? Effect.succeed(npmFailure)
+              : Effect.fail(
+                  new ProcessRunner.ProcessSpawnError({
+                    command,
+                    argumentCount: args.length,
+                    cause: PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      description: "private diagnostic text",
+                    }),
+                  }),
+                ),
+        }),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("Updating a tool makes no hub requests")),
+        ),
+      );
 
-    const error = yield* service.updateTool("hub").pipe(Effect.flip);
-    expect(error).toMatchObject({
-      _tag: "DeviceOperationError",
-      reason: "command_failed",
-      exitCode: 243,
-    });
-    expect(error.message).toBe(
-      "Device update device tool failed: The device command failed (exit code 243).",
-    );
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        ServerSettings.layerTest({ enableDeviceSupport: true }),
-        layerSecretResolver,
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
-        NodeCrypto.layer,
-        NetService.layer,
-      ).pipe(Layer.provideMerge(NodeServices.layer)),
+      const error = yield* service.updateTool("hub").pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceOperationError",
+        reason: failure === "exit" ? "command_failed" : "package_manager_missing",
+      });
+      expect(error.message).toBe(
+        failure === "exit"
+          ? "Device update device tool failed: The device command failed (exit code 243)."
+          : "Device update device tool failed: Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ enableDeviceSupport: true }),
+          layerSecretResolver,
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-device-update-" }),
+          NodeCrypto.layer,
+          NetService.layer,
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
     ),
-  ),
 );
 
 describe("agent session release on close", () => {
