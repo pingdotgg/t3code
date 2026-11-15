@@ -35,7 +35,7 @@ import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
 import { useLayoutStore } from "~/layout/layoutStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -815,11 +815,13 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   using _environment = installFakeEnvironment([thread], {
     keybindings: mergeWithDefaultKeybindings(
       compileResolvedKeybindingsConfig([
-        { key: "ctrl+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+        { key: "ctrl+t", command: "threadPanel.toggle", when: "rightPanelOpen && !terminalFocus" },
         { key: "ctrl+t", command: "rightPanel.toggle", when: "!rightPanelOpen" },
       ]),
     ),
   });
+  // Reconnect so this test's keybindings replace a previous app's live config.
+  appAtomRegistry.reset();
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -832,15 +834,23 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
     // AppRoot brings its own router.
     router: false,
   });
+  // Panes retired rightPanel.new; the side pane is the thread's right panel.
+  const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const sidePaneOpen = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen;
   const composer = page.getByTestId("composer-editor");
-  const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
-  await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
-  await toggle.click();
-  await page.getByRole("button", { name: /^Files/ }).click();
+  const details = page.getByRole("button", { name: "Toggle thread details panel", exact: true });
+  await expect.element(details).toBeVisible();
+  // As clicking the panel toggle and its Files tab did.
+  await act(() => useRightPanelStore.getState().open(threadRef, "files"));
+  await vi.waitFor(() => expect(sidePaneOpen()).toBe(true));
+  const detailsOpen = details.element().getAttribute("aria-expanded");
   await composer.click();
   await userEvent.keyboard("{Control>}t{/Control}");
-  await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();
-  await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(details)
+    .toHaveAttribute("aria-expanded", detailsOpen === "true" ? "false" : "true");
+  expect(sidePaneOpen()).toBe(true);
 });
 
 it("selecting a side-chat tab focuses that side chat's composer", async () => {
@@ -860,8 +870,6 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-  useRightPanelStore.getState().openSideChat(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -871,6 +879,10 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     router: false,
   });
   using _focus = { [Symbol.dispose]: startWorkspaceFocus(router) };
+  await act(() => {
+    useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
+    useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  });
   const mainEditor = screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true });
   const sideEditor = screen.getByRole("textbox", { name: `Message ${side.title}`, exact: true });
   await expect.element(sideEditor).toBeVisible();

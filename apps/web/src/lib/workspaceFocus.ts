@@ -402,9 +402,12 @@ export function createWorkspaceFocusController(doc: Document) {
         ) ?? areas.find((area) => area.dataset.workspaceArea === fromArea))
       : (activeArea ?? lastArea);
     const currentKey = activeArea ? workspaceAreaKey(activeArea) : lastAreaKey;
-    const current = areas.findIndex(
-      (area) => area === currentArea || (!fromArea && workspaceAreaKey(area) === currentKey),
-    );
+    // A side chat nests areas with the main chat's names, so the focused area itself wins.
+    const exact = currentArea ? areas.indexOf(currentArea) : -1;
+    const current =
+      exact === -1
+        ? areas.findIndex((area) => !fromArea && workspaceAreaKey(area) === currentKey)
+        : exact;
     const index =
       current === -1
         ? direction === 1
