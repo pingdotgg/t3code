@@ -1,9 +1,9 @@
 // Git's own lines stay out: they are classified into a reason and can name private refs or paths.
 const GIT_OWN_LINE = /^(?:fatal|error|warning|hint):|^Preparing worktree |^Updating files:/;
 // Userinfo runs through the authority's last `@`; query strings can carry tokens or signatures.
-// Quotes and brackets end a URL, so adjacent ones redact separately. A bounded scheme keeps it linear.
+// Quotes and brackets end a URL, so adjacent ones redact separately. Only start a scheme at its boundary so scanning stays linear.
 const URL_PATTERN =
-  /\b([a-z][a-z0-9+.-]{0,31}:\/\/)([^\s/?#"'<>]*@)?([^\s?#"'<>]*)(\?[^\s#"'<>]*)?/gi;
+  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/)([^\s/?#"'<>]*@)?([^\s?#"'<>]*)(\?[^\s#"'<>]*)?/gi;
 const MAX_LINES = 20;
 const MAX_CHARS = 1_000;
 
