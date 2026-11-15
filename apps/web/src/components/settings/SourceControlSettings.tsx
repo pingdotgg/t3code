@@ -461,8 +461,6 @@ export function SourceControlSettingsPanel() {
                 credentials={credentials}
                 auth={item.auth}
                 onSaved={handleScan}
-                onRescan={handleScan}
-                rescanning={discovery.isPending}
               />
             ) : null}
           </div>
@@ -486,7 +484,7 @@ export function SourceControlSettingsPanel() {
         render={
           <Button
             size="xs"
-            variant="outline"
+            variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
             aria-label="Rescan server environment"
