@@ -181,20 +181,20 @@ export const make = ElectronUpdater.of({
     if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
     return yield* Effect.try({
       try: () => {
+        if (appImagePath === undefined)
+          return autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
+        // electron-updater 6.8.9 emits this synchronously after moving the file, before relaunch.
         const preserveAppImagePath = (destination: string) => {
           const filename = NodePath.basename(destination);
-          // Only bridge to a name the updater will keep, avoiding growing alias chains.
-          if (appImagePath === undefined || /\d+\.\d+\.\d+/.test(filename)) return;
+          // A versioned name is replaced by the next update, so aliasing it would build chains.
+          if (/\d+\.\d+\.\d+/.test(filename)) return;
           try {
-            // 6.8.9 emits synchronously after moving the file, before relaunch/exit.
             NodeFS.symlinkSync(filename, appImagePath);
           } catch {
             autoUpdater.logger?.warn("Could not preserve the previous AppImage launch path.");
           }
         };
-        if (appImagePath !== undefined) {
-          autoUpdater.on("appimage-filename-updated", preserveAppImagePath);
-        }
+        autoUpdater.on("appimage-filename-updated", preserveAppImagePath);
         try {
           autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
         } finally {
