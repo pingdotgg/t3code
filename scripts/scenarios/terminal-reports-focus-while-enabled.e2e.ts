@@ -25,7 +25,7 @@ test(
   async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo", { "focus-probe.sh": PROBE });
     const thread = await t3.thread({ project, title: "Focus", messages: ["hello"] });
-    // Each probe file appears only once its reply or report arrived.
+    // Each probe file fills only once its reply or report arrives.
     const read = (file: string) =>
       runPromise(
         Effect.gen(function* () {
@@ -34,14 +34,15 @@ test(
         }).pipe(Effect.orElseSucceed(() => "")),
       );
     await t3.open(thread);
+    await browser.evaluate(() => {
+      localStorage.setItem("t3code:theme", "dark");
+      return null;
+    });
+    await t3.open(thread);
 
     await screen.getByRole("button", "Toggle terminal drawer").tap();
     const terminal = screen.getByLabel("Terminal input");
-    const blur = () =>
-      browser.evaluate(() => {
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-        return null;
-      });
+    const blur = () => screen.getByRole("textbox", "Message Focus").tap();
 
     // Input sent before the shell runs is dropped, so retype until it lands.
     await expect
@@ -56,6 +57,7 @@ test(
       )
       .toBe("ready\n");
 
+    await terminal.focus();
     await browser.keyboard.type(`sh '${project}/focus-probe.sh'`);
     await browser.keyboard.press("Enter");
     await expect.poll(() => read("enabled-reply"), { timeout: 15_000 }).toBe("\x1b[?1004;1$y");

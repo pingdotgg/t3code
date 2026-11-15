@@ -1248,7 +1248,7 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   };
 
-  // Programs count CSI I / CSI O pairs, so only real transitions report.
+  // DOM focus events can repeat without a change; report only real transitions.
   private setFocused(focused: boolean): void {
     if (this.focused === focused) return;
     this.focused = focused;
