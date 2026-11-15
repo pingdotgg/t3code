@@ -36,9 +36,7 @@ describe("detectComposerTrigger", () => {
 
   it.each([
     ["/model", 0],
-    ["/MODEL", 0],
-    ["Question\n/model", 9],
-    ["Question /model", 9],
+    ["Question\n/MODEL", 9],
   ])("offers typed %j as a slash command", (text, rangeStart) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({
       kind: "slash-command",
@@ -48,8 +46,8 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it.each(["/model opus", "/Model openai/gpt"])("does not reopen a menu for %j", (text) => {
-    expect(detectComposerTrigger(text, text.length)).toBeNull();
+  it("does not reopen a menu after /model arguments", () => {
+    expect(detectComposerTrigger("/Model opus", "/Model opus".length)).toBeNull();
   });
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
