@@ -1041,6 +1041,18 @@ it.layer(
           groupingIdentity: "e703c118-3547-41b1-88c5-9774cf40ae86",
         });
         assert.equal(changed.groupingIdentity, "e703c118-3547-41b1-88c5-9774cf40ae86");
+        const replayed = yield* service.register({
+          commandId: CommandId.make("group-repeat"),
+          projectId: ProjectId.make("unused-repeat"),
+          title: "Ignored for existing",
+          workspaceRoot: "/groups/sdk",
+          groupingIdentity: identity,
+        });
+        assert.deepEqual(replayed, changed);
+        assert.equal(
+          Option.getOrThrow(yield* service.getById(projectId)).groupingIdentity,
+          changed.groupingIdentity,
+        );
         const cleared = yield* service.grouping({
           commandId: CommandId.make("group-clear"),
           identifier: created.id,
