@@ -2632,7 +2632,7 @@ it.layer(
       }),
     );
 
-    it.effect("ignores a queued rescan from a replaced instance", () =>
+    it.effect("ignores rescan reports from a replaced instance", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;
         yield* h.seed("/workspace");
@@ -2647,10 +2647,7 @@ it.layer(
         yield* Fiber.join(rebuilt);
         yield* h.seed("/workspace");
         yield* h.seed("/barrier");
-        // The forwarder pulls the second report only after queueing the first.
         yield* Queue.offerAll(h.first.rescans, ["/workspace", "/workspace"]);
-        yield* Queue.take(h.first.reports);
-        yield* Queue.take(h.first.reports);
         yield* Queue.offer(replacement.rescans, "/barrier");
         // A scan started for the stale report would come before the barrier's.
         const completeBarrier = yield* h.nextScan("/barrier");
@@ -3383,6 +3380,7 @@ it.layer(
         } satisfies ServerProvider;
         const changes = yield* PubSub.unbounded<ServerProvider>();
         let activeSubscriptions = 0;
+        let activeRescanSubscriptions = 0;
         const instanceChanges = yield* PubSub.unbounded<void>();
         const instance = {
           instanceId: cursorInstanceId,
@@ -3393,6 +3391,18 @@ it.layer(
           },
           displayName: undefined,
           enabled: true,
+          workspaceRescans: Stream.unwrap(
+            Effect.sync(() => {
+              activeRescanSubscriptions++;
+              return Stream.never;
+            }),
+          ).pipe(
+            Stream.ensuring(
+              Effect.sync(() => {
+                activeRescanSubscriptions--;
+              }),
+            ),
+          ),
           snapshot: {
             resolveMaintenance: () =>
               Effect.succeed(
@@ -3487,6 +3497,7 @@ it.layer(
             yield* PubSub.publish(instanceChanges, undefined);
             yield* Fiber.join(updated);
             assert.strictEqual(activeSubscriptions, 1);
+            assert.strictEqual(activeRescanSubscriptions, 1);
           }
           instances = [];
           const removed = yield* registry.streamChanges.pipe(
@@ -3497,6 +3508,7 @@ it.layer(
           yield* PubSub.publish(instanceChanges, undefined);
           yield* Fiber.join(removed);
           assert.strictEqual(activeSubscriptions, 0);
+          assert.strictEqual(activeRescanSubscriptions, 0);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

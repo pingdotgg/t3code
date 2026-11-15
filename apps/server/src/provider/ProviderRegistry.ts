@@ -969,14 +969,21 @@ export const layer = Layer.effect(
         const nextSubs = new Map(carriedOver);
         for (const [instanceId, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
-          const fiber = yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+          const fiber = yield* Effect.all(
+            [
+              Stream.runForEach(source.streamChanges, (provider) =>
+                correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+              ),
+              ...(instance.workspaceRescans
+                ? [
+                    Stream.runForEach(instance.workspaceRescans, (cwd) =>
+                      Queue.offer(workspaceRescans, { instance, cwd }),
+                    ),
+                  ]
+                : []),
+            ],
+            { concurrency: "unbounded", discard: true },
           ).pipe(Effect.forkScoped);
-          if (instance.workspaceRescans) {
-            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
-              Queue.offer(workspaceRescans, { instance, cwd }),
-            ).pipe(Effect.forkScoped);
-          }
           nextSubs.set(instanceId, { instance, fiber });
         }
         yield* Effect.yieldNow;
