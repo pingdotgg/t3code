@@ -6,6 +6,7 @@ import {
 } from "@t3tools/shared/keybindings";
 
 import { resolveShortcutCommand } from "../../keybindings";
+import { translateDynamic } from "../../i18nCore";
 
 import {
   buildKeybindingRows,
@@ -211,10 +212,11 @@ describe("KeybindingsSettings.logic", () => {
     assert(previewOpenDraft.ok);
     expect(unknownWhenVariables(previewOpenDraft.value)).toEqual([]);
     expect(buildWhenVariableOptions()).toContain("previewOpen");
-    expect(parseWhenExpressionDraft("editorFocus &&")).toEqual({
-      ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
-    });
+    const invalidDraft = parseWhenExpressionDraft("editorFocus &&");
+    expect(invalidDraft.ok).toBe(false);
+    if (!invalidDraft.ok) {
+      expect(invalidDraft.message).toBe(translateDynamic("keybindingPanel.whenSyntaxError"));
+    }
 
     expect(parseWhenExpressionDraft("!(terminalFocus || modelPickerOpen)")).toEqual({
       ok: true,

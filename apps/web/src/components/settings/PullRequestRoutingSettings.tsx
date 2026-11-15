@@ -6,6 +6,7 @@ import {
   type PullRequestRoutingPermission,
 } from "@t3tools/client-runtime/connection";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { environmentCatalog } from "~/connection/catalog";
 import type { EnvironmentPresentation } from "~/state/environments";
@@ -15,14 +16,18 @@ import { toastManager } from "../ui/toast";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { searchableSetting } from "./settingsSearch";
+import { translateDynamic } from "../../i18nCore";
 
 const options: ReadonlyArray<{ value: PullRequestRoutingPermission; label: string }> = [
-  { value: "off", label: "Off" },
-  { value: "read", label: "Read PRs" },
-  { value: "read-write", label: "Read and act" },
+  { value: "off", label: "prRouting.off" },
+  { value: "read", label: "prRouting.read" },
+  { value: "read-write", label: "prRouting.readWrite" },
 ];
 
-const summaryLabels = { "read-write": "read and act", read: "read PRs" } as const;
+const summaryLabels = {
+  "read-write": "prRouting.summaryReadWrite",
+  read: "prRouting.summaryRead",
+} as const;
 
 function summarizePullRequestRouting(
   entries: ReadonlyArray<{
@@ -34,7 +39,9 @@ function summarizePullRequestRouting(
     const labels = entries.filter((entry) => entry.permission === permission);
     return labels.length === 0
       ? []
-      : [`${labels.map((entry) => entry.label).join(", ")} ${summaryLabels[permission]}`];
+      : [
+          `${labels.map((entry) => entry.label).join(", ")} ${translateDynamic(summaryLabels[permission])}`,
+        ];
   });
   return groups.length === 0 ? null : groups.join(" · ");
 }
@@ -48,6 +55,7 @@ export function PullRequestRoutingSettings({
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setPullRequestRoutingPermission);
   const [saving, setSaving] = useState(false);
+  const { t } = useTranslation("settings");
 
   if (environments.length < 2) return null;
 
@@ -62,13 +70,11 @@ export function PullRequestRoutingSettings({
             label: environment.label,
             permission: pullRequestRoutingPermissionFor(environment.entry, permissions),
           })),
-        ) ?? "Off"
+        ) ?? t("prRouting.off")
       }
     >
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-        Machines you trust here can read PR data through each other's source control access. Enable
-        both machines. Read and act may use broader permissions than the machine that owns them.
-        This applies only to this device.
+        {t("prRouting.description")}
       </p>
       {environments.map((environment) => (
         <EnvironmentRow
@@ -94,7 +100,7 @@ export function PullRequestRoutingSettings({
                   if (result._tag === "Failure")
                     toastManager.add({
                       type: "error",
-                      title: "Could not save pull request routing permission",
+                      title: t("prRouting.saveFailed"),
                     });
                 },
               );
@@ -103,14 +109,22 @@ export function PullRequestRoutingSettings({
             <SelectTrigger
               size="xs"
               className="w-32"
-              aria-label={`${environment.label} pull request routing`}
+              aria-label={t("prRouting.selectAria", { label: environment.label })}
             >
-              <SelectValue />
+              <SelectValue>
+                {translateDynamic(
+                  options.find(
+                    (option) =>
+                      option.value ===
+                      pullRequestRoutingPermissionFor(environment.entry, permissions),
+                  )?.label ?? "prRouting.off",
+                )}
+              </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {options.map(({ value, label }) => (
                 <SelectItem key={value} value={value}>
-                  {label}
+                  {translateDynamic(label)}
                 </SelectItem>
               ))}
             </SelectPopup>
