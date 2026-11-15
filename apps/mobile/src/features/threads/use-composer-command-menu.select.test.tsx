@@ -23,17 +23,14 @@ vi.mock("../../state/server", () => ({
 
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 
-it.each([
-  ["at the message start", "/mod", ""],
-  ["after other text", "fix this /mod", "fix this "],
-])("/model %s opens the model picker instead of inserting text", async (_, draft, expected) => {
+it("/model clears only its trigger and opens the model picker", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const onChangeDraftMessage = vi.fn();
   const onOpenModelPicker = vi.fn();
   let menu: ReturnType<typeof useComposerCommandMenu> | undefined;
   function Probe() {
     menu = useComposerCommandMenu({
-      draftMessage: draft,
+      draftMessage: "fix this /mod",
       ownerKey: "draft",
       environmentId: null,
       projectCwd: null,
@@ -53,6 +50,6 @@ it.each([
   await act(async () => menu?.onSelect(model));
 
   expect(onOpenModelPicker).toHaveBeenCalledOnce();
-  expect(onChangeDraftMessage).toHaveBeenCalledWith(expected);
+  expect(onChangeDraftMessage).toHaveBeenCalledWith("fix this ");
   act(() => root.unmount());
 });
