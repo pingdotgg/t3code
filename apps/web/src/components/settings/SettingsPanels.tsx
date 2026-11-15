@@ -294,11 +294,11 @@ function AboutVersionSection() {
       : isDesktopUpdateButtonDisabled(updateState);
   const buttonDisabledReason = isUpdateActionPending
     ? "An update installation is pending."
-    : buttonDisabled
+    : buttonDisabled && updateState
       ? (getDesktopUpdateDisabledReason(updateState, updatesDenial) ??
-        (updateState?.status === "checking"
+        (updateState.status === "checking"
           ? "Checking for updates."
-          : (buttonTooltip ?? "Loading update status.")))
+          : (buttonTooltip ?? undefined)))
       : undefined;
 
   const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
