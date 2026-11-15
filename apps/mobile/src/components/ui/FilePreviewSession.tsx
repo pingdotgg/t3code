@@ -230,16 +230,15 @@ export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSes
   // A viewer still resolving its file has not presented yet, so a re-render then never reopens.
   const [opening, setOpening] = useState({ source: props.source, count: 0, presented: false });
   if (opening.source !== props.source) {
-    const reopened =
-      opening.presented &&
+    const sameItem =
       opening.source !== null &&
       props.source !== null &&
-      filePreviewKey(opening.source) === filePreviewKey(props.source) &&
-      props.isViewerActive?.() === false;
+      filePreviewKey(opening.source) === filePreviewKey(props.source);
+    const reopened = opening.presented && sameItem && props.isViewerActive?.() === false;
     setOpening({
       source: props.source,
       count: opening.count + (reopened ? 1 : 0),
-      presented: opening.presented && !reopened && props.source !== null,
+      presented: opening.presented && sameItem && !reopened,
     });
   }
   const { count } = opening;

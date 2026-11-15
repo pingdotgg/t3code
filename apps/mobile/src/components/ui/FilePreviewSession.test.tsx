@@ -208,3 +208,35 @@ it.each([
     expect(harness.refreshAssetUrl).toHaveBeenCalledTimes(starts);
   },
 );
+
+it("does not carry a presented viewer over to a different item that is still resolving", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  harness.refreshAssetUrl.mockReset();
+  harness.refreshAssetUrl.mockImplementation((_environmentId, resource) =>
+    resource.url.endsWith("a.png")
+      ? Promise.resolve("https://signed.test/a.png")
+      : new Promise(() => {}),
+  );
+  const shown = image("https://github.com/a.png");
+  const resolving: FilePreviewItem = { ...image("https://github.com/b.pdf"), kind: "pdf" };
+  const root = createRoot(document.createElement("div"));
+  await using _root = { [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
+  const render = (item: FilePreviewItem) =>
+    act(async () =>
+      root.render(
+        <FilePreviewSession
+          source={{ ...item, gallery: [item] }}
+          onRequestClose={() => {}}
+          progressiveGallery
+          Viewer={Viewer}
+          isViewerActive={() => false}
+        />,
+      ),
+    );
+  await render(shown);
+  await render(resolving);
+  await render(resolving);
+  expect(
+    harness.refreshAssetUrl.mock.calls.filter(([, r]) => r.url.endsWith("b.pdf")),
+  ).toHaveLength(1);
+});
