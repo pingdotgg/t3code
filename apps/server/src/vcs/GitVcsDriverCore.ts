@@ -3278,9 +3278,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const setPushRemote: GitVcsDriver.GitVcsDriver["Service"]["setPushRemote"] = Effect.fn(
     "setPushRemote",
   )(function* ({ cwd, refName, remoteName }) {
-    const remoteNames = yield* requireRemote(cwd, remoteName, "GitVcsDriver.setPushRemote", [
-      "config",
-    ]);
+    yield* requireRemote(cwd, remoteName, "GitVcsDriver.setPushRemote", ["config"]);
     const branchExists = yield* executeGit(
       "GitVcsDriver.setPushRemote.branchExists",
       cwd,
@@ -3293,48 +3291,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         detail: `Branch '${refName}' does not exist.`,
       });
     }
+    // Tracking stays put: pushes follow `pushRemote`, and a fork branch keeps pulling from its upstream.
     yield* writeConfigValue({ cwd, key: `branch.${refName}.pushRemote`, value: remoteName });
-
-    const upstreamRef = yield* runGitStdout(
-      "GitVcsDriver.setPushRemote.upstream",
-      cwd,
-      ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${refName}`],
-      true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
-    const upstream = upstreamRef
-      ? (parseUpstreamRefWithRemoteNames(upstreamRef, remoteNames) ??
-        parseUpstreamRefByFirstSeparator(upstreamRef))
-      : null;
-    if (
-      !upstream ||
-      upstream.remoteName === remoteName ||
-      !isAliasOfUpstreamHead(refName, upstream.branchName, upstream.upstreamRef)
-    ) {
-      return;
-    }
-
-    // Pushes follow a publishing upstream, so it moves too, which keeps ahead/behind honest.
-    const remoteBranchExists = yield* executeGit(
-      "GitVcsDriver.setPushRemote.remoteBranchExists",
-      cwd,
-      ["show-ref", "--verify", "--quiet", `refs/remotes/${remoteName}/${upstream.branchName}`],
-      { allowNonZeroExit: true },
-    ).pipe(Effect.map((result) => result.exitCode === 0));
-    if (remoteBranchExists) {
-      yield* setBranchUpstream({
-        cwd,
-        branch: refName,
-        remoteName,
-        remoteBranch: upstream.branchName,
-      });
-      return;
-    }
-    yield* executeGitWithStableDiagnostics(
-      "GitVcsDriver.setPushRemote.unsetUpstream",
-      cwd,
-      ["branch", "--unset-upstream", refName],
-      { writesSharedConfig: true },
-    ).pipe(retryWhileConfigLocked);
   });
 
   const pushCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pushCurrentBranch"] = Effect.fn(

@@ -9093,7 +9093,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("selecting a push remote moves the branch's tracking to it", () =>
+    it.effect("selecting a push remote keeps the branch's tracking", () =>
       Effect.gen(function* () {
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const { cwd } = yield* makeForkWorkflowRepo;
@@ -9111,24 +9111,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           `fork/${refName}`,
         );
 
-        // The new remote has no such branch yet: tracking clears, so the branch can publish there.
-        yield* driver.setPushRemote({ cwd, refName, remoteName: "upstream" });
-        const moved = yield* driver.statusDetailsLocal(cwd);
-        assert.equal(moved.pushRemote, "upstream");
-        assert.isFalse(moved.hasUpstream);
-        yield* driver.pushCurrentBranch(cwd, null);
+        // A fork workflow pulls from `upstream` and pushes to `fork`; picking a remote keeps that.
+        yield* git(cwd, ["push", "upstream", refName]);
+        yield* git(cwd, ["branch", `--set-upstream-to=upstream/${refName}`]);
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
         assert.equal(
           yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
           `upstream/${refName}`,
         );
-
-        // Going back finds the branch already on that remote and tracks it again.
-        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
+        yield* writeTextFile(cwd, "fork.txt", "fork\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* driver.commit(cwd, "Add fork update", "");
+        assert.deepInclude(yield* driver.pushCurrentBranch(cwd, null), {
+          status: "pushed",
+          upstreamBranch: `fork/${refName}`,
+          pushRemote: "fork",
+          setUpstream: false,
+        });
         assert.equal(
           yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
-          `fork/${refName}`,
+          `upstream/${refName}`,
         );
-        assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
 
         const unknown = yield* driver
           .setPushRemote({ cwd, refName, remoteName: "missing" })
