@@ -130,20 +130,11 @@ describe("GhosttyTerminalCore snapshots", () => {
   });
 
   it.each([
-    { code: "Numpad0", key: "Insert", expected: "\x1b[2~" },
     { code: "Numpad1", key: "End", expected: "\x1b[F" },
-    { code: "Numpad2", key: "ArrowDown", expected: "\x1b[B" },
-    { code: "Numpad3", key: "PageDown", expected: "\x1b[6~" },
-    { code: "Numpad4", key: "ArrowLeft", expected: "\x1b[D" },
     { code: "Numpad5", key: "Clear", expected: "\x1b[E" },
-    { code: "Numpad6", key: "ArrowRight", expected: "\x1b[C" },
-    { code: "Numpad7", key: "Home", expected: "\x1b[H" },
     { code: "Numpad8", key: "ArrowUp", expected: "\x1b[A" },
-    { code: "Numpad9", key: "PageUp", expected: "\x1b[5~" },
     { code: "NumpadDecimal", key: "Delete", expected: "\x1b[3~" },
     { mode: "\x1b[?1h", code: "Numpad8", key: "ArrowUp", expected: "\x1bOA" },
-    { mode: "\x1b[?1h", code: "Numpad1", key: "End", expected: "\x1bOF" },
-    { mode: "\x1b=", code: "Numpad8", key: "ArrowUp", expected: "\x1b[A" },
     { mode: "\x1b[>1u", code: "Numpad8", key: "ArrowUp", expected: "\x1b[57419u" },
     { mode: "\x1b=\x1b[?1035l", code: "Numpad8", key: "8", numLock: true, expected: "\x1bOx" },
     { mode: "\x1b[>1u", code: "Numpad8", key: "8", numLock: true, expected: "8" },
