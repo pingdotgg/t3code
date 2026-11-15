@@ -16,6 +16,8 @@ describe("ignored command prefixes", () => {
     ["/usr/local/bin/rtk git status", "git", "git status"],
     ['"/Applications/My Tools/rtk" git status', "git", "git status"],
     [".\\rtk git status", "git", "git status"],
+    ["$env:TOOLS\\rtk git status", "git", "git status"],
+    ["%TOOLS%\\rtk git status", "git", "git status"],
     ["CI=1 env -u DEBUG sudo -u root rtk git status", "git", "git status"],
     ["/bin/zsh -lc 'rtk git status'", "git", "git status"],
     ["rtk git status && git diff", "git", "git status && git diff"],

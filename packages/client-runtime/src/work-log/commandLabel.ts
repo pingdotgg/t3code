@@ -1210,6 +1210,7 @@ function parseCommandProgramName(
     }
     if (
       NON_PROGRAM_PREFIX_CHARACTERS.includes(token[0] ?? "") &&
+      !(index === 0 && windowsPath) &&
       !(token.startsWith("$") && token.includes("/"))
     ) {
       return executionContext === "shell" && token.startsWith("[") && commandSplit.remainingCommand
