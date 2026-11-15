@@ -89,7 +89,7 @@ function TooltipScrollDismissArea({
   dismissFocused = false,
   ...props
 }: ComponentProps<"div"> & {
-  /** PR scrolling also dismisses tooltips reopened by media preview focus restoration. */
+  /** Also dismiss keyboard-focused tooltips when the user scrolls. */
   dismissFocused?: boolean;
 }) {
   const [tracker] = useState(createTooltipHoverTracker);

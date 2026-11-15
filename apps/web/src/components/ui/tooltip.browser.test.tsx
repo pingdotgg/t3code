@@ -6,12 +6,12 @@ import { render } from "../../../test/render";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "./tooltip";
 
 it.each([
-  { focus: "mouse", dismissFocused: false, keptOpen: false },
-  { focus: "keyboard", dismissFocused: false, keptOpen: true },
-  // PR panes: focus restored after an image preview reopens the tooltip without a hover.
-  { focus: "keyboard", dismissFocused: true, keptOpen: false },
+  { focus: "mouse", hover: true, dismissFocused: false, keptOpen: false },
+  { focus: "keyboard", hover: true, dismissFocused: false, keptOpen: true },
+  { focus: "keyboard", hover: false, dismissFocused: true, keptOpen: false },
+  { focus: "keyboard", hover: true, dismissFocused: true, keptOpen: false },
 ])(
-  "scrolling a $focus-focused trigger (dismissFocused: $dismissFocused) keeps it open: $keptOpen",
+  "scrolling a $focus-focused trigger (hover: $hover, dismissFocused: $dismissFocused) keeps it open: $keptOpen",
   async (c) => {
     const onScroll = vi.fn();
     await using screen = await render(
@@ -36,7 +36,7 @@ it.each([
     } else {
       await userEvent.keyboard("{Tab}");
     }
-    if (!c.dismissFocused) await userEvent.hover(trigger);
+    if (c.hover) await userEvent.hover(trigger);
     await expect.element(trigger).toHaveFocus();
     await expect.element(page.getByText("Description")).toBeVisible();
 
