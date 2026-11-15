@@ -268,6 +268,8 @@ export const AcpRegistryProbeModel = Schema.Struct({
   id: AcpRegistryProbeText,
   name: AcpRegistryProbeText,
   description: AcpRegistryProbeDescription,
+  // The reasoning control the agent advertises for this model; null when it has none.
+  reasoningEffort: Schema.optionalKey(Schema.NullOr(ProviderOptionDescriptor)),
 });
 export type AcpRegistryProbeModel = typeof AcpRegistryProbeModel.Type;
 
