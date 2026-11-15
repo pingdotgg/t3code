@@ -123,11 +123,18 @@ interface PinnedRuntimeInstallInput {
 // GitHub release downloads intermittently answer 5xx during incidents; a retry usually lands.
 const DOWNLOAD_RETRY = { times: 3, schedule: Schedule.exponential("2 seconds") } as const;
 
+/** The release host answered, then sent no body bytes for the stall timeout. */
+class ReleaseDownloadStalledError extends Schema.TaggedError<ReleaseDownloadStalledError>()(
+  "ReleaseDownloadStalledError",
+  {},
+) {}
+
 const isTransientDownloadFailure = (
-  error: HttpClientError.HttpClientError | Cause.TimeoutError,
+  error: HttpClientError.HttpClientError | Cause.TimeoutError | ReleaseDownloadStalledError,
 ): boolean => {
-  // No answer or a stall means the host cannot reach the release source; retrying only delays that.
+  // No answer means the host cannot reach the release source; retrying only delays that.
   if (error._tag === "TimeoutError") return false;
+  if (error._tag === "ReleaseDownloadStalledError") return true;
   // Body bytes are read raw, so a DecodeError is a body that failed after the host answered.
   if (error.reason._tag === "DecodeError") return true;
   const status = error.response?.status;
@@ -154,7 +161,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         const chunks = yield* response.stream.pipe(
           Stream.timeoutOrElse({
             duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
-            orElse: () => Stream.fail(new Cause.TimeoutError()),
+            orElse: () => Stream.fail(new ReleaseDownloadStalledError()),
           }),
           Stream.tap((chunk) =>
             Effect.sync(() => {
@@ -180,7 +187,10 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
     Effect.mapError(
       (cause) =>
         new PinnedRuntimeInstallError({
-          step: cause._tag === "TimeoutError" ? `${step} (timed out)` : step,
+          step:
+            cause._tag === "TimeoutError" || cause._tag === "ReleaseDownloadStalledError"
+              ? `${step} (timed out)`
+              : step,
           httpStatus:
             HttpClientError.isHttpClientError(cause) && cause.reason._tag === "StatusCodeError"
               ? cause.reason.response.status
