@@ -99,7 +99,7 @@ function ResponseCard({
         data-response-card
         aria-label={label}
         // The message's markdown styles colour and underline links; a card is neither.
-        className="block min-w-0 cursor-pointer rounded-lg surface-well px-2.5 py-1.5 text-start text-body text-foreground! no-underline! wrap-break-word hover:surface-raised-hover focus-visible:outline-2 focus-visible:outline-ring"
+        className="block min-w-0 cursor-pointer rounded-lg surface-bubble-quote px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word focus-visible:outline-2 focus-visible:outline-ring"
       >
         {title ? (
           <span className="block truncate text-meta text-foreground/80" dir="auto">
