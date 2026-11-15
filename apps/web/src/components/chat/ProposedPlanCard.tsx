@@ -38,7 +38,7 @@ import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 
-import { translateDynamic } from "../..i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`chat:${key}`, options);

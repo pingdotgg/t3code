@@ -103,7 +103,7 @@ function runApproval<A>(
       Effect.catch((error) =>
         Effect.succeed<McpApprovalAnswer<A>>({
           kind: "error",
-          message: isApprovalError(error) ? error.message : UNREACHABLE,
+          message: isApprovalError(error) ? error.message : UNREACHABLE(),
         }),
       ),
     ),

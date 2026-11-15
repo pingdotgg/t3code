@@ -37,7 +37,7 @@ import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
 
-import { translateDynamic } from "../..i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`chat:${key}`, options);

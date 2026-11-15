@@ -78,7 +78,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { openSideChatTab } from "../../lib/sideChatPane";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 
-import { translateDynamic } from "../..i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`chat:${key}`, options);

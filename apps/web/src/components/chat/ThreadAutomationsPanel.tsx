@@ -30,7 +30,7 @@ import {
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
 } from "./threadDetailsPanelStyles";
 
-import { translateDynamic } from "../..i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`chat:${key}`, options);

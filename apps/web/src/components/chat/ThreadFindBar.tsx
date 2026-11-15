@@ -6,7 +6,7 @@ import { cn } from "~/lib/utils";
 import { formatThreadFindCount } from "./threadFind";
 import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
-import { translateDynamic } from "../..i18nCore";
+import { translateDynamic } from "../../i18nCore";
 
 const td = (key: string, options?: Record<string, unknown>) =>
   translateDynamic(`chat:${key}`, options);
