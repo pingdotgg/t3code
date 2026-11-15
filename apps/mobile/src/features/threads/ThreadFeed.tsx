@@ -1,5 +1,4 @@
 import { Button } from "../../components/ui/Button";
-import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
@@ -289,6 +288,7 @@ import {
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.

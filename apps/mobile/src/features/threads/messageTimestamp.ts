@@ -21,3 +21,14 @@ export function formatMessageTimestamp(
   const sameYear = date.getFullYear() === now.getFullYear();
   return `${(sameYear ? DATE_FORMATTER : DATE_WITH_YEAR_FORMATTER).format(date)} ${time}`;
 }
+
+/** `is24Hour` overrides the locale's hour cycle with the system clock preference when known. */
+export function createMessageTimeFormatter(is24Hour: boolean | undefined, locale?: string) {
+  const timeFormatter = new Intl.DateTimeFormat(locale, {
+    hour: "numeric",
+    minute: "2-digit",
+    ...(is24Hour === undefined ? {} : { hourCycle: is24Hour ? "h23" : "h12" }),
+  });
+  return (input: string, nowMs?: number): string =>
+    formatMessageTimestamp(input, nowMs, timeFormatter);
+}
