@@ -1,4 +1,6 @@
+import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
+import type { EnvironmentId } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -425,21 +427,6 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
-  if (props.status.kind === "syncing") {
-    return (
-      <StatusLabelRow
-        key="syncing"
-        accessibilityLabel={props.status.label}
-        className="gap-2"
-        onLayout={props.onLayout}
-      >
-        <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
-        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
-  }
   if (props.status.kind === "compacting") {
     return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
   }
@@ -597,7 +584,12 @@ function FloatingStatusLabel(props: {
     );
   }
   return (
-    <WorkingDuration key="working" startedAt={props.status.startedAt} onLayout={props.onLayout} />
+    <WorkingDuration
+      key="working"
+      environmentId={props.status.environmentId}
+      startedAt={props.status.startedAt}
+      onLayout={props.onLayout}
+    />
   );
 }
 
@@ -638,17 +630,21 @@ function StatusLabelRow(props: {
 }
 
 function WorkingDuration(props: {
+  readonly environmentId: EnvironmentId;
   readonly startedAt: string;
   readonly onLayout: (event: LayoutChangeEvent) => void;
 }) {
   return (
     <StatusLabelRow onLayout={props.onLayout}>
-      <WorkingTimer startedAt={props.startedAt} />
+      <WorkingTimer environmentId={props.environmentId} startedAt={props.startedAt} />
     </StatusLabelRow>
   );
 }
 
-function WorkingTimer(props: { readonly startedAt: string }) {
+function WorkingTimer(props: {
+  readonly environmentId: EnvironmentId;
+  readonly startedAt: string;
+}) {
   const nowMs = useVisibleSecondClock(true);
   return (
     <SystemText
@@ -656,7 +652,7 @@ function WorkingTimer(props: { readonly startedAt: string }) {
       numberOfLines={1}
       style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}
     >
-      Working {formatWorkingDuration(props.startedAt, nowMs)}
+      Working {formatWorkingDuration(props.startedAt, toServerClock(props.environmentId, nowMs))}
     </SystemText>
   );
 }
