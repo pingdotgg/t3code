@@ -229,7 +229,11 @@ for three picked at the quartiles, all anon, no swap.
 - Orbit's idle verdict (its `fromShell` rule, window 1 h): a fresh server may sleep; after a
   turn it stays awake for 1 hour from the turn; a held turn keeps it awake; a turn that waits
   for an answer reads `running` and keeps it awake, as T3 does (`idle-diff`).
-- 2 hours: see the end of this section.
+- 2 hours (the fixed server): the monotonic clock moved 7,201 s with the wall clock; the
+  server answered 1.1 s after the resume and did not restart; the held turn was `running` and
+  completed when released; the 1-minute session was refused, the Gateway session worked. The
+  host client's socket was dropped during the pause, about an hour in (close code 1006); the
+  cause was not traced. The client reconnects either way.
 
 **Restart and crash during a turn** (both servers):
 
