@@ -90,20 +90,25 @@ const DesktopWindowBoundsDocument = Schema.Struct({
   height: Schema.Number,
 });
 
+// A value this build cannot read drops only its own key, so the rest of the file
+// still loads and is written back instead of every setting resetting to defaults.
+const optionalReadableKey = <S extends Schema.Top>(schema: S) =>
+  Schema.optionalKey(schema.pipe(Schema.catchDecoding(() => Effect.succeedNone)));
+
 const DesktopSettingsDocument = Schema.Struct({
-  localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
-  linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
-  mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
-  mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
-  serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
-  tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
-  tailscaleServePort: Schema.optionalKey(Schema.Number),
-  updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
-  updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
-  wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
-  wslMode: Schema.optionalKey(Schema.Literals(["local", "wsl"])),
-  wslDistro: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  wslOnly: Schema.optionalKey(Schema.Boolean),
+  localEnvironmentEnabled: optionalReadableKey(Schema.Boolean),
+  linuxPasswordStore: optionalReadableKey(Schema.Unknown),
+  mainWindowBounds: optionalReadableKey(Schema.NullOr(DesktopWindowBoundsDocument)),
+  mainWindowMaximized: optionalReadableKey(Schema.Boolean),
+  serverExposureMode: optionalReadableKey(DesktopServerExposureModeSchema),
+  tailscaleServeEnabled: optionalReadableKey(Schema.Boolean),
+  tailscaleServePort: optionalReadableKey(Schema.Number),
+  updateChannel: optionalReadableKey(DesktopUpdateChannelSchema),
+  updateChannelConfiguredByUser: optionalReadableKey(Schema.Boolean),
+  wslBackendEnabled: optionalReadableKey(Schema.Boolean),
+  wslMode: optionalReadableKey(Schema.Literals(["local", "wsl"])),
+  wslDistro: optionalReadableKey(Schema.NullOr(Schema.String)),
+  wslOnly: optionalReadableKey(Schema.Boolean),
 });
 
 type DesktopSettingsDocument = typeof DesktopSettingsDocument.Type;
