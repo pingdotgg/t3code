@@ -19,6 +19,9 @@ import {
 /** Matches the server's read cap: a larger file would arrive truncated. */
 export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
+/** The server lists at most this many ignored files, so one pick never exceeded it. */
+export const COPIED_FILES_MAX_COUNT = 200;
+
 const DEFAULT_COPIED_FILE_NAME = /^(?:\.env(?:\..+)?|\.envrc|\.dev\.vars)$/;
 
 /** Env files are the ignored files people almost always want on a new machine. */
@@ -27,14 +30,16 @@ function isDefaultCopiedFile(path: string): boolean {
   return DEFAULT_COPIED_FILE_NAME.test(name);
 }
 
-/** The ignored files selected before the user changes anything. */
-export function defaultCopiedFilePaths(files: readonly ProjectIgnoredFile[]): ReadonlySet<string> {
-  return new Set(
+/** The ignored files selected before the user changes anything, keyed by path. */
+export function defaultCopiedFiles(
+  files: readonly ProjectIgnoredFile[],
+): ReadonlyMap<string, ProjectIgnoredFile> {
+  return new Map(
     files
       .filter(
         (file) => file.byteLength <= COPYABLE_FILE_MAX_BYTES && isDefaultCopiedFile(file.path),
       )
-      .map((file) => file.path),
+      .map((file) => [file.path, file]),
   );
 }
 

@@ -11,7 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   COPYABLE_FILE_MAX_BYTES,
-  defaultCopiedFilePaths,
+  defaultCopiedFiles,
   projectSubdirectory,
   readProjectFilesToCopy,
   writeProjectFilesAfterClone,
@@ -20,11 +20,11 @@ import {
 const environmentId = EnvironmentId.make("server");
 const projectId = ProjectId.make("clone");
 
-describe("defaultCopiedFilePaths", () => {
+describe("defaultCopiedFiles", () => {
   it("preselects env files that fit the read cap", () => {
     const file = (path: string, byteLength = 10) => ({ path, byteLength });
     expect([
-      ...defaultCopiedFilePaths([
+      ...defaultCopiedFiles([
         file(".env"),
         file("apps/web/.env.local"),
         file(".envrc"),
@@ -32,7 +32,7 @@ describe("defaultCopiedFilePaths", () => {
         file("notes.txt"),
         file("env.example"),
         file("big/.env", COPYABLE_FILE_MAX_BYTES + 1),
-      ]),
+      ]).keys(),
     ]).toEqual([".env", "apps/web/.env.local", ".envrc", ".dev.vars"]);
   });
 });
