@@ -45,6 +45,7 @@ import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import { scratchFolderRoot } from "./project/ManagedProjectFolders.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -331,7 +332,9 @@ const make = Effect.gen(function* () {
   const terminals = yield* TerminalManager.TerminalManager;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
+  const settleScripts = new Map<string, "running" | "done">();
   const orphanSizes = new Map<string, number | null>();
   const noteTerminal = (terminal: TerminalSummary) => {
     const threadTerminals =
@@ -1209,6 +1212,38 @@ const make = Effect.gen(function* () {
         if (deleted && settings.worktreeOnDelete) waiting = true;
         return reason;
       };
+      // Settlement runs the settle script; every other removal runs it here first.
+      // Its terminal protects the worktree while it runs, and completion requests a new sweep.
+      const settleScriptReason = Effect.fnUntraced(function* (projectRoot: string) {
+        if (settledThread?.settledOverride === "settled") return null;
+        const key = `${thread.id}\0${worktreeKey}`;
+        const state = settleScripts.get(key);
+        if (state === "done") return null;
+        if (state === "running") return waitForStop("settle script is running");
+        const run = yield* projectScripts
+          .runForThread({
+            threadId: thread.id,
+            projectId: thread.projectId,
+            projectCwd: projectRoot,
+            worktreePath,
+            trigger: "settle",
+            observeCompletion: {},
+          })
+          .pipe(
+            Effect.catchTags({
+              ProjectSetupScriptProjectNotFoundError: () =>
+                Effect.succeed({ status: "no-script" } as const),
+            }),
+          );
+        if (run.status !== "started" || run.completion === undefined) return null;
+        settleScripts.set(key, "running");
+        yield* run.completion.pipe(
+          Effect.ensuring(Effect.sync(() => settleScripts.set(key, "done"))),
+          Effect.andThen(requestSweep),
+          Effect.forkDetach,
+        );
+        return waitForStop("settle script is running");
+      });
       yield* Effect.gen(function* () {
         const exists = yield* fs.exists(worktreePath).pipe(
           // A stored path under a regular file cannot exist, but access() fails with ENOTDIR.
@@ -1393,7 +1428,8 @@ const make = Effect.gen(function* () {
           const threadIds = group.map((member) => member.id);
           const blocked =
             (yield* scratchKeepReason(worktreePath, threadIds, settings)) ??
-            (yield* blockedSinceCheck());
+            (yield* blockedSinceCheck()) ??
+            (yield* settleScriptReason(project.workspaceRoot));
           if (blocked !== null) return keep(blocked);
           const inspection = yield* measureWorktree(worktreePath, "plain-folder");
           if (inspection.reason !== null) return keep(inspection.reason);
@@ -1536,7 +1572,8 @@ const make = Effect.gen(function* () {
             return keep(integrated ? notDueReason : "has commits beyond the project branch");
         }
         if (!eligible) return keep(notDueReason);
-        const blocked = yield* blockedSinceCheck();
+        const blocked =
+          (yield* blockedSinceCheck()) ?? (yield* settleScriptReason(project.workspaceRoot));
         if (blocked !== null) return keep(blocked);
         // Inspect before the lease; provider startup must not wait for directory traversal.
         const inspection = yield* measureWorktree(worktreePath, true);
@@ -1889,7 +1926,8 @@ const make = Effect.gen(function* () {
         ),
       ),
   );
-  const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
+  // Annotated: settle script completion inside the sweep requests a sweep, which would make inference circular.
+  const requestSweep: Effect.Effect<void> = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
   const runNow = Effect.gen(function* () {

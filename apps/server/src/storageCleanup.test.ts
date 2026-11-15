@@ -37,6 +37,7 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
@@ -367,6 +368,9 @@ const cleanupFixture = (
     let onLiveCheck: Effect.Effect<void> = Effect.void;
     let outboxStatus: string | null = null;
     let scheduledThreadIds: string[] = [];
+    let settleScript: Effect.Effect<ProjectSetupScriptRunner.ProjectSetupScriptCompletion> | null =
+      null;
+    const settleRuns: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
     let fullStatusCalls = 0;
     let gitInspections = 0;
     let snapshotReads = 0;
@@ -526,6 +530,24 @@ const cleanupFixture = (
             return () => {};
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
+      Effect.provideService(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
+        runForThread: (input) =>
+          Effect.sync(() => {
+            settleRuns.push(input);
+            return settleScript === null
+              ? ({ status: "no-script" } as const)
+              : ({
+                  status: "started",
+                  scriptId: "teardown",
+                  scriptName: "Teardown",
+                  scriptCommand: "teardown",
+                  terminalId: "settle-teardown",
+                  cwd: input.worktreePath,
+                  async: false,
+                  completion: settleScript,
+                } as const);
+          }),
+      }),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
     );
     return {
@@ -579,6 +601,12 @@ const cleanupFixture = (
       setOutboxStatus: (status: string | null) => {
         outboxStatus = status;
       },
+      setSettleScript: (
+        completion: Effect.Effect<ProjectSetupScriptRunner.ProjectSetupScriptCompletion>,
+      ) => {
+        settleScript = completion;
+      },
+      settleRuns: () => settleRuns,
       setScheduledThreadIds: (next: string[]) => {
         scheduledThreadIds = next;
       },
@@ -2010,6 +2038,36 @@ describe("deleted thread worktrees", () => {
         reason: "Settled moments ago",
       });
       expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+    }).pipe(Effect.provide(cleanupTestLayer)),
+  );
+
+  it.effect("runs the settle script before removing an unsettled thread's worktree", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(NOW_MS);
+      const fixture = yield* cleanupFixture();
+      const owner = parent(fixture.worktree);
+      fixture.setDeletedThreads([owner]);
+      fixture.setThreads([]);
+      const finished = yield* Deferred.make<void>();
+      fixture.setSettleScript(
+        Deferred.await(finished).pipe(Effect.as({ exitCode: 0, durationMs: 1 })),
+      );
+      for (let sweep = 0; sweep < 2; sweep++) {
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          threadId: owner.id,
+          outcome: "kept",
+          reason: "Settle script is running",
+        });
+        expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+      }
+      expect(fixture.settleRuns()).toMatchObject([
+        { threadId: owner.id, trigger: "settle", worktreePath: fixture.worktree },
+      ]);
+      yield* Deferred.succeed(finished, undefined);
+      yield* fixture.service.runNow;
+      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
+      expect(fixture.settleRuns()).toHaveLength(1);
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 });
