@@ -3017,7 +3017,13 @@ it.effect("carries a slice on without sending the rows it already sent", () =>
       cursors: { "github.com acme/web": "2026-07-02T00:00:00Z|1|3" },
     });
 
-    assert.deepStrictEqual(cursors, [{ updatedBefore: "2026-07-02T00:00:00Z", delivered: 1 }]);
+    assert.deepStrictEqual(cursors, [
+      {
+        updatedBefore: "2026-07-02T00:00:00Z",
+        delivered: 1,
+        seenAt: [{ repository: "acme/web", number: 3 }],
+      },
+    ]);
     assert.deepStrictEqual(
       result.entries.map((entry) => entry.number),
       [4],
@@ -3452,6 +3458,7 @@ it.effect(
               Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 isDraft: true,
+                rebaseRequired: false,
                 reviewDecision: "approved",
                 checksState: "passing",
               }),
@@ -3461,6 +3468,7 @@ it.effect(
                 deletions: 3,
                 changedFiles: 5,
                 mergeability: "conflicting",
+                rebaseRequired: true,
               }),
           }),
         ],
@@ -3468,6 +3476,8 @@ it.effect(
       yield* service.summary(reference);
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference);
+      assert.strictEqual(detail.rebaseRequired, true);
+      assert.strictEqual(summary.rebaseRequired, true);
       assert.strictEqual(summary.isDraft, false);
       assert.deepStrictEqual(summary.author, detail.author);
       assert.strictEqual(summary.additions, 14);
