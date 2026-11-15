@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -94,7 +95,15 @@ const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
  */
 export const antigravityAppendsSystemPrompt = (
   initializeResult: EffectAcpSchema.InitializeResponse,
-) => isQualifiedAntigravityRelease(initializeResult.agentInfo?.version);
+) => {
+  if (isQualifiedAntigravityRelease(initializeResult.agentInfo?.version)) return true;
+  const extension = initializeResult.agentCapabilities?._meta?.antigravity;
+  return (
+    Predicate.isObject(extension) &&
+    Predicate.isObject(extension.systemPrompt) &&
+    extension.systemPrompt.append === true
+  );
+};
 
 export function antigravitySessionMeta(
   initializeResult: EffectAcpSchema.InitializeResponse,
@@ -172,6 +181,15 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "approval-required":
       return "default";
   }
+}
+
+/**
+ * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
+ * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
+ * on the next turn without a restart.
+ */
+export function antigravityCliSessionMode(modeId: string): string {
+  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
