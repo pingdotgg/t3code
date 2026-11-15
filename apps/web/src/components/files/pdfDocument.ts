@@ -64,19 +64,20 @@ async function readRange(src: string, begin: number, end: number, signal: AbortS
 /**
  * Reads only the byte ranges PDF.js asks for. Resolves null when the source cannot
  * serve validated ranges; `onFailure` reports a later bad range or revision change.
+ * `src` is read per request so later ranges use a renewed asset grant.
  */
 export async function openPdfRanges(
-  src: string,
+  src: () => string,
   signal: AbortSignal,
   limit: number,
   onFailure: () => void,
 ) {
-  const first = await readRange(src, 0, RANGE_CHUNK_BYTES, signal).catch(() => null);
+  const first = await readRange(src(), 0, RANGE_CHUNK_BYTES, signal).catch(() => null);
   if (!first?.revision) return null;
   if (first.size > limit) throw new Error("This file is too large to preview.");
   const transport = new PDFDataRangeTransport(first.size, first.bytes);
   transport.requestDataRange = (begin: number, end: number) => {
-    void readRange(src, begin, end, signal)
+    void readRange(src(), begin, end, signal)
       .then((range) => {
         if (range.size !== first.size || range.revision !== first.revision)
           throw new Error("The PDF changed while loading.");

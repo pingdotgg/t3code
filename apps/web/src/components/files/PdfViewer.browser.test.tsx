@@ -156,12 +156,16 @@ it.each([
   { server: "ignored", full: true },
   { server: "malformed", full: true },
   { server: "revised", full: true },
+  { server: "renewed", full: false },
 ])("opens a PDF from a server with $server ranges", async ({ server, full }) => {
   const bytes = new Uint8Array(await testPdf(undefined, 200_000).arrayBuffer());
   const url = "https://assets.example/report.pdf";
+  // The pinned grant has expired; reads must use the renewed one.
+  const expired = `${url}?grant=expired`;
   const requests: (string | null)[] = [];
   const realFetch = globalThis.fetch;
   using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    if (String(input) === expired) return Promise.resolve(new Response(null, { status: 404 }));
     if (String(input) !== url) return realFetch(input, init);
     const range = new Headers(init?.headers).get("range");
     requests.push(range);
@@ -180,7 +184,13 @@ it.each([
       }),
     );
   });
-  await using screen = await render(<PdfViewer src={url} title="Ranged PDF" />);
+  await using screen = await render(
+    server === "renewed" ? (
+      <PdfViewer src={expired} latestSrc={url} title="Ranged PDF" />
+    ) : (
+      <PdfViewer src={url} title="Ranged PDF" />
+    ),
+  );
   await expect.element(screen.getByText("1 / 2 pages"), { timeout: 10_000 }).toBeVisible();
   expect(requests[0]).toBe("bytes=0-65535");
   expect(requests.includes(null)).toBe(full);

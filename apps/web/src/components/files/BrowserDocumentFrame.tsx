@@ -116,6 +116,7 @@ function PdfDocumentRevision(props: {
     <Suspense fallback={<FileSurfaceLoading />}>
       <PdfViewer
         src={src}
+        latestSrc={props.src}
         title={props.title}
         positionKey={props.positionKey}
         initialView={props.initialView}

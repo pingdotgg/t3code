@@ -131,6 +131,8 @@ function PdfPage(props: {
 
 export default function PdfViewer(props: {
   src: string;
+  /** The renewed grant for `src`; reads use it without reopening the document. */
+  latestSrc?: string;
   title: string;
   positionKey?: string;
   initialView?: PdfViewState;
@@ -175,8 +177,9 @@ export default function PdfViewer(props: {
     const node = scroll.current;
     if (pdf && node) setInitialView({ ...readView(node), width });
   });
+  const currentSrc = useEffectEvent(() => props.latestSrc ?? props.src);
   const initialPage = initialView.page;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across retries, range fallbacks, and unmounts; the caller remounts for a new source.
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
@@ -190,7 +193,7 @@ export default function PdfViewer(props: {
     void (async () => {
       const ranges = fullRead
         ? null
-        : await openPdfRanges(props.src, controller.signal, limit, () => {
+        : await openPdfRanges(currentSrc, controller.signal, limit, () => {
             keepView();
             setPdf(null);
             setFullRead(true);
@@ -198,7 +201,7 @@ export default function PdfViewer(props: {
       return (
         ranges ??
         (await readBoundedDocument(
-          props.src,
+          currentSrc(),
           controller.signal,
           limit,
           revision > 0 || fullRead ? "reload" : "default",
@@ -241,7 +244,7 @@ export default function PdfViewer(props: {
       clearTimeout(timeout);
       void task?.destroy();
     };
-  }, [props.src, revision, fullRead, initialPage, savedPosition]);
+  }, [revision, fullRead, initialPage, savedPosition]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the PDF viewport before paint and observe resizes for fit-width sizing and visible-page selection.
   useLayoutEffect(() => {
     const node = scroll.current;
