@@ -18,8 +18,10 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
+// Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
+// which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return label.replace(/[\\[\]*_]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
@@ -45,7 +47,7 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/** A second slash makes the whole word a path, even when the caret precedes that slash. */
+/** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
 export function isPathWord(
   text: string,
   wordStart: number,
@@ -56,7 +58,7 @@ export function isPathWord(
   while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
     wordEnd += 1;
   }
-  return text.slice(wordStart + 1, wordEnd).includes("/");
+  return /[/\\]/.test(text.slice(wordStart + 1, wordEnd));
 }
 
 /**
