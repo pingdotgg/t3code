@@ -549,6 +549,7 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentSessionEvent?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => AcpSubagentSessionEvent | undefined;
+  /** Native subagents run inside the agent process, so they end when its runtime does. */
   readonly subagentsOwnedByRuntime?: boolean;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
