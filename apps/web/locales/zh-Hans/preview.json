@@ -106,5 +106,22 @@
   "revealInFinder": "在 Finder 中显示",
   "screenshot": {
     "saved": "截屏已保存"
-  }
+  },
+  "fileNotShown": "此文件无法在这里显示",
+  "fileDownloadedInstead": "（来自{{host}}）已改为直接下载。",
+  "openInBrowser": "在浏览器中打开",
+  "download": "下载",
+  "siteUnreachable": "无法访问此网站",
+  "tryThese": "请尝试：",
+  "tryEnvBrowser": "在环境的浏览器中打开它，它能访问环境的网络",
+  "reload": "重新加载",
+  "reconnectingPreview": "正在重新连接预览…",
+  "openPreviewInRightPanel": "在右侧面板中打开预览",
+  "openInRightPanel": "在右侧面板中打开",
+  "closeFloatingPreview": "关闭悬浮预览",
+  "desktopTabNotice": "此标签页已在 T3 Code 桌面应用中打开。",
+  "profileLabel": "配置：{{name}}",
+  "recentlyUsed": "最近使用",
+  "localServers": "本地服务器",
+  "selectLocalServer": "选择一个正在运行的本地服务器，即可在此浏览器标签页中打开。"
 }

@@ -180,7 +180,7 @@ export function PreviewMoreMenu({
         <MenuGroup>
           {profileName ? (
             <MenuGroupLabel className="max-w-64">
-              <span className="block truncate">Profile: {profileName}</span>
+              <span className="block truncate">{td("profileLabel", { name: profileName })}</span>
             </MenuGroupLabel>
           ) : null}
           <MenuItem onClick={actions.clearCookies}>{td("menu.clearCookies")}</MenuItem>
