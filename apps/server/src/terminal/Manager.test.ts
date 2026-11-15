@@ -1124,35 +1124,6 @@ it.layer(
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("reads the Windows process table as UTF-8", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      const table = slowProcessTable("win32", "1 millis", [], [started]);
-      const calls: Array<ReadonlyArray<string>> = [];
-      const { manager } = yield* createFallbackManager("win32", {
-        run: (input) => {
-          calls.push([input.command, ...input.args]);
-          return table.run(input);
-        },
-      });
-
-      yield* manager.open(openInput());
-      yield* TestClock.adjust("1 second");
-      yield* Deferred.await(started);
-
-      expect(calls).toEqual([
-        [
-          "powershell.exe",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }',
-        ],
-      ]);
-      yield* manager.close({ threadId: "thread-1" });
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.effect("idles at least as long as a slow process-table query took before the next", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

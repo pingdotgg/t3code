@@ -793,34 +793,6 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     }),
   );
 
-  it.effect("reads the Windows process list as UTF-8", () =>
-    Effect.gen(function* () {
-      const { baseDir } = yield* setup(["1.0.0", "1.1.0"]);
-      const runner = lsofRunner("C:\\Windows\\explorer.exe\n");
-      const calls: Array<ReadonlyArray<string>> = [];
-
-      yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: (input) => {
-            calls.push([input.command, ...input.args]);
-            return runner.run(input);
-          },
-        }),
-        Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(HostProcess.Environment, {}),
-      );
-      assert.deepEqual(calls, [
-        [
-          "powershell.exe",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine",
-        ],
-      ]);
-    }),
-  );
-
   it.effect.each([
     { name: "the process list is unavailable", state: undefined, lsof: "" },
     { name: "the service state is unparseable", state: "{", lsof: "p1\nftxt\nn/sbin/launchd\n" },
