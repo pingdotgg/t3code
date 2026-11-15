@@ -3517,7 +3517,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               )}
             >
               {isStashMenuOpen && !composerMenuOpen && (
-                <ComposerCommandMenuLayer anchor={composerMenuAnchor}>
+                <ComposerCommandMenuLayer anchor={composerMenuAnchor} canOverflowTop>
                   <ComposerStashMenu
                     composerFormRef={composerFormRef}
                     entries={stashQueue}
