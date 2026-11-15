@@ -11806,7 +11806,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         candidate.input === WORKSPACE_PREPARATION_INPUT,
     );
     if (
-      run?.status !== (command.type === "prepared-run.retry" ? "failed" : "preparing") ||
+      run === undefined ||
+      (command.type === "prepared-run.retry"
+        ? run.status !== "failed" && run.status !== "interrupted"
+        : run.status !== "preparing") ||
       attempt === undefined ||
       rootNode === undefined ||
       providerThread === undefined ||
@@ -12058,17 +12061,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         candidate.status === "failed" &&
         candidate.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
     );
+    // A stop during setup leaves its preparation interrupted, with no failure to clear.
+    const stoppedDuringSetup =
+      state?.run.status === "interrupted" && state.preparationItem.status === "interrupted";
     if (
       state === null ||
       state.run.workspacePreparation === undefined ||
-      failureItem === undefined ||
+      (failureItem === undefined && !stoppedDuringSetup) ||
       projection.thread.archivedAt !== null ||
       projection.thread.deletedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Run ${command.runId} has no failed workspace preparation to retry.`,
+        cause: `Run ${command.runId} has no failed or stopped workspace preparation to retry.`,
       });
     }
     if (projection.runs.some((run) => run.id !== state.run.id && isActiveRun(run))) {
@@ -12087,11 +12093,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: state.run.providerInstanceId,
       occurredAt: now,
     };
-    yield* emitEvent({
-      ...scope,
-      type: "turn-item.updated",
-      payload: { ...failureItem, status: "cancelled", updatedAt: now },
-    });
+    if (failureItem !== undefined) {
+      yield* emitEvent({
+        ...scope,
+        type: "turn-item.updated",
+        payload: { ...failureItem, status: "cancelled", updatedAt: now },
+      });
+    }
     yield* emitEvent({
       ...scope,
       type: "turn-item.updated",

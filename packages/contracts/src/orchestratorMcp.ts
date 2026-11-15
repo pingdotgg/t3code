@@ -570,6 +570,11 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   taskId: Schema.optional(NodeId),
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
+  queueHeld: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "The message is held and will not start on its own; see t3_queue resume.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 

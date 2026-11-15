@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -20,6 +21,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -322,6 +324,24 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesThread((input) =>
       Effect.gen(function* () {
         if (input.action === "resume") {
+          const { projection } = yield* readThread(input.threadId, ["runs"]);
+          const latest = latestExecutedRun(projection.runs);
+          // The queue waits on a stopped or failed worktree setup; retrying it releases the queue.
+          if (
+            projection.thread.worktreePath === null &&
+            (latest?.status === "failed" || latest?.status === "interrupted") &&
+            latest.workspacePreparation?.type === "worktree"
+          ) {
+            const launches = yield* ThreadLaunch.ThreadLaunchService;
+            const result = yield* launches
+              .retryPreparation({
+                commandId: yield* newCommandId(),
+                threadId: projection.thread.id,
+                runId: latest.id,
+              })
+              .pipe(Effect.mapError(dispatchFailure));
+            return { sequence: result.sequence };
+          }
           return yield* dispatch(input.threadId, (common) => ({
             ...common,
             type: "queue.resume",

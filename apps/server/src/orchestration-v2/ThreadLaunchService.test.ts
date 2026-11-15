@@ -1799,15 +1799,13 @@ it.effect.each(["fails", "is interrupted"] as const)(
         assert.equal(projection.runs.at(-1)?.status, "queued");
         assert.equal(projection.thread.worktreePath, null);
 
-        if (ending === "fails") {
-          yield* launches.retryPreparation({
-            commandId: CommandId.make("command:launch:queued-setup-retry"),
-            threadId: launched.threadId,
-            runId: launched.projection.runs[0]!.id,
-          });
-          const retried = yield* threads.getThreadProjection(launched.threadId);
-          assert.equal(retried.runs.at(-1)?.queueHeld, false);
-        }
+        yield* launches.retryPreparation({
+          commandId: CommandId.make("command:launch:queued-setup-retry"),
+          threadId: launched.threadId,
+          runId: launched.projection.runs[0]!.id,
+        });
+        const retried = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(retried.runs.at(-1)?.queueHeld, false);
       }).pipe(Effect.provide(harness.layer));
     }),
 );
