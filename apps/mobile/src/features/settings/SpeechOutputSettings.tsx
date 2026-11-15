@@ -25,7 +25,7 @@ export function SpeechOutputSettings({ environment }: { environment: Environment
   const save = (patch: Partial<typeof config>) =>
     void update({
       environmentId: environment.environmentId,
-      input: { patch: { speechOutput: { ...config, ...patch } } },
+      input: { patch: { speechOutput: patch } },
     });
   return (
     <>

@@ -36,15 +36,16 @@ export function ResponseSpeechButton(props: {
     const state = voiceOutput.getSnapshot();
     return state.owner === props.owner ? state.phase : "idle";
   });
+  const active = phase !== "idle" && phase !== "error";
   if (
-    !environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
-    !prepared ||
-    !canOperate ||
-    !settings?.speechOutput ||
-    !props.text.trim()
+    !active &&
+    (!environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
+      !prepared ||
+      !canOperate ||
+      !settings?.speechOutput ||
+      !props.text.trim())
   )
     return null;
-  const active = phase !== "idle" && phase !== "error";
   const label =
     phase === "loading"
       ? "Cancel response audio"
@@ -52,7 +53,7 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : settings.speechOutput.engine === "openai"
+          : settings?.speechOutput.engine === "openai"
             ? "Read aloud using OpenAI"
             : "Read aloud locally";
   const Icon =
@@ -72,6 +73,7 @@ export function ResponseSpeechButton(props: {
       await voiceOutput.togglePause();
       return;
     }
+    if (!prepared || !canOperate || !settings?.speechOutput) return;
     if (isVoiceRecordingActive()) {
       toastManager.add({ type: "warning", title: "Finish dictation before playing a response" });
       return;

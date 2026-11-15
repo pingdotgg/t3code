@@ -29,12 +29,16 @@ export function createBrowserPcmCapture(
   let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let signal: AbortSignal | undefined;
   let feed: ((pcm: Float32Array) => void) | undefined;
+  let ownsRecordingFlag = false;
   let stopped:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
     | undefined;
 
   const cleanupCapture = () => {
-    setVoiceRecordingActive(false);
+    if (ownsRecordingFlag) {
+      ownsRecordingFlag = false;
+      setVoiceRecordingActive(false);
+    }
     if (durationTimer) clearTimeout(durationTimer);
     durationTimer = undefined;
     worklet?.disconnect();
@@ -130,6 +134,7 @@ export function createBrowserPcmCapture(
       }
     },
     record: ({ forDuration }) => {
+      ownsRecordingFlag = true;
       setVoiceRecordingActive(true);
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet?.port.postMessage("start");

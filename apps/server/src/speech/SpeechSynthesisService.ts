@@ -147,9 +147,11 @@ const make = Effect.gen(function* () {
         fiber: Deferred.makeUnsafe<Fiber.Fiber<void, SpeechSynthesisOperationError>>(),
       };
       downloading = transfer;
+      const acquired = new Set<string>();
       const fiber = yield* Effect.gen(function* () {
         let completed = 0;
         for (const file of voice.files) {
+          if (!(yield* store.isReady(file))) acquired.add(file.filename);
           yield* store
             .download(file, {
               onProgress: (downloaded) => {
@@ -168,7 +170,10 @@ const make = Effect.gen(function* () {
         Effect.onExit((exit) =>
           Exit.isSuccess(exit)
             ? Effect.void
-            : Effect.forEach(voice.files, (file) => store.remove(file).pipe(Effect.ignore)),
+            : Effect.forEach(
+                voice.files.filter((file) => acquired.has(file.filename)),
+                (file) => store.remove(file).pipe(Effect.ignore),
+              ),
         ),
         Effect.forkIn(scope),
       );

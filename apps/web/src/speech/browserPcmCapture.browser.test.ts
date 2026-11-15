@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { requestMicrophone } from "./requestMicrophone";
+import { isVoiceRecordingActive } from "./voiceOutput";
 
 it("records from the chosen microphone, cancels an unanswered prompt, and stops a late stream", async () => {
   let grantPermission!: (media: MediaStream) => void;
@@ -35,6 +36,21 @@ it("records from the chosen microphone, cancels an unanswered prompt, and stops 
     await preparing;
   }
   await vi.waitFor(() => expect(stop).toHaveBeenCalledOnce());
+  const other = createBrowserPcmCapture(
+    { getMicrophoneId: () => "", onLevel: vi.fn(), onDurationLimit: vi.fn(), onError: vi.fn() },
+    async () => ({ locale: "en", transcribe: async () => "" }),
+  );
+  try {
+    capture.recorder.record({ forDuration: 60 });
+    capture.cancelRecording();
+    other.recorder.record({ forDuration: 60 });
+    capture.cancelRecording();
+    expect(isVoiceRecordingActive()).toBe(true);
+  } finally {
+    other.cancelRecording();
+    capture.cancelRecording();
+  }
+  expect(isVoiceRecordingActive()).toBe(false);
 });
 
 it("falls back to the system default when the saved microphone is gone, and reports other failures", async () => {

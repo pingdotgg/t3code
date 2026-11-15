@@ -269,6 +269,11 @@ it.effect(
         _tag: "SpeechSynthesisOperationError",
       });
       expect(installed.size).toBe(0);
+      installed.add(voice.files[0]!.filename);
+      expect(yield* Effect.flip(service.downloadVoice(voice.id))).toMatchObject({
+        _tag: "SpeechSynthesisOperationError",
+      });
+      expect([...installed]).toEqual([voice.files[0]!.filename]);
       failDownload = false;
       expect(
         (yield* service.downloadVoice(voice.id)).voices.find((entry) => entry.id === voice.id)

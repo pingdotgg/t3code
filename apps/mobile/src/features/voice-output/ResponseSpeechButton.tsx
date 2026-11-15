@@ -47,12 +47,14 @@ export function ResponseSpeechButton(props: {
     const state = voiceOutput.getSnapshot();
     return state.owner === props.owner ? state.phase : "idle";
   });
+  const active = phase !== "idle" && phase !== "error";
   if (
-    !environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
-    !prepared ||
-    !canOperate ||
-    !settings ||
-    !props.text.trim()
+    !active &&
+    (!environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
+      !prepared ||
+      !canOperate ||
+      !settings ||
+      !props.text.trim())
   )
     return null;
   const label =
@@ -62,7 +64,7 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : settings.engine === "openai"
+          : settings?.engine === "openai"
             ? "Read aloud using OpenAI"
             : "Read aloud locally";
   const click = async () => {
@@ -74,6 +76,7 @@ export function ResponseSpeechButton(props: {
       await voiceOutput.togglePause();
       return;
     }
+    if (!prepared || !canOperate || !settings) return;
     await voiceOutput.start(props.owner, props.text, (text, signal) =>
       runSpeech(synthesizeEnvironmentSpeech(prepared, { text, engine: settings.engine }), signal),
     );
