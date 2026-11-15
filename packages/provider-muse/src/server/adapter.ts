@@ -2451,6 +2451,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             if (
               !turn &&
               args.requestRuntimeRestart === true &&
+              settlingTurns.size === 0 &&
               observedChildren.size === 0 &&
               wake === undefined
             )

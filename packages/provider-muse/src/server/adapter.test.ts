@@ -1869,13 +1869,21 @@ describe("MuseAdapterV2", () => {
       const runtime = yield* Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
         const harness = yield* makeHarness(fake);
-        const { nativeId } = yield* startConversation(harness, fake);
+        const { nativeId, providerTurn } = yield* startConversation(harness, fake);
         yield* fake.emit("turn/foregroundCompleted", {
           turnId: nativeId,
           blockingAgents: ["goal-reminder"],
         });
         yield* harness.takeEvent("turn.terminal");
         assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+        const stopped = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: providerTurn.id,
+            requestRuntimeRestart: true,
+          })
+          .pipe(Effect.exit);
+        assert.strictEqual(stopped._tag, "Failure");
         return harness.runtime;
       }).pipe(Effect.scoped);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
