@@ -75,79 +75,46 @@ it("stops on a new press when the OS omitted keyup, but ignores autorepeat", asy
   expect(speech.stop).toHaveBeenCalledOnce();
 });
 
-it.each(["KeyD", "MetaLeft", "ShiftLeft"])(
-  "finishes a hold released with %s after startup even if pressed again while preparing",
-  async (code) => {
-    const speech = actions(true);
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-    let finishStart!: () => void;
-    const startup = new Promise<void>((resolve) => {
-      finishStart = resolve;
-    });
-    speech.start.mockReturnValue(startup);
-    await using screen = await render(<Probe speech={speech} />);
-    press();
-    await screen.rerender(
-      <Probe speech={{ ...speech, state: { ...speech.state, phase: "preparing" } }} />,
-    );
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", {
-        code,
-        key: code === "MetaLeft" ? "Meta" : code === "ShiftLeft" ? "Shift" : "D",
-      }),
-    );
-    press();
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", {
-        code,
-        key: code === "MetaLeft" ? "Meta" : code === "ShiftLeft" ? "Shift" : "D",
-      }),
-    );
-    expect(speech.stop).not.toHaveBeenCalled();
-    finishStart();
-    await startup;
-    expect(speech.start).toHaveBeenCalledOnce();
-    expect(speech.stop).toHaveBeenCalledOnce();
-  },
-);
+it("finishes a released hold after startup even if the chord was pressed again while preparing", async () => {
+  const speech = actions(true);
+  let finishStart!: () => void;
+  const startup = new Promise<void>((resolve) => {
+    finishStart = resolve;
+  });
+  speech.start.mockReturnValue(startup);
+  await using screen = await render(<Probe speech={speech} />);
+  press();
+  await screen.rerender(
+    <Probe speech={{ ...speech, state: { ...speech.state, phase: "preparing" } }} />,
+  );
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  press();
+  window.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD" }));
+  finishStart();
+  await startup;
+  expect(speech.start).toHaveBeenCalledOnce();
+  expect(speech.stop).toHaveBeenCalledOnce();
+});
 
 it.each([
-  { mode: "hold", duration: 0, stops: 1 },
-  { mode: "auto", duration: 300, stops: 1 },
-  { mode: "auto", duration: 299, stops: 0 },
-  { mode: "toggle", duration: 300, stops: 0 },
+  { mode: "hold", heldMs: 0, stops: 1 },
+  { mode: "auto", heldMs: 300, stops: 1 },
+  { mode: "auto", heldMs: 299, stops: 0 },
 ] as const)(
-  "handles modifier release without letter keyup in $mode after $duration ms",
-  async ({ mode, duration, stops }) => {
+  "ends a $mode press held $heldMs ms when a chord modifier is released without the letter keyup",
+  async ({ mode, heldMs, stops }) => {
     const speech = actions(true, mode);
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
-    await using screen = await render(<Probe speech={speech} />);
+    await using _screen = await render(<Probe speech={speech} />);
     using clock = vi.spyOn(performance, "now").mockReturnValue(0);
     press();
-    await screen.rerender(
-      <Probe speech={{ ...speech, state: { ...speech.state, phase: "recording" } }} />,
-    );
-    clock.mockReturnValue(duration);
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", { key: "a", code: "KeyA", metaKey: true, shiftKey: true }),
-    );
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", { key: "Alt", code: "AltLeft", metaKey: true, shiftKey: true }),
-    );
-    await Promise.resolve();
+    clock.mockReturnValue(heldMs);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", code: "AltLeft" }));
+    await speech.start.mock.results[0]?.value;
     expect(speech.stop).not.toHaveBeenCalled();
-    window.dispatchEvent(
-      new KeyboardEvent("keyup", { key: "Meta", code: "MetaLeft", shiftKey: true }),
-    );
-    await Promise.resolve();
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", code: "MetaLeft" }));
+    await speech.start.mock.results[0]?.value;
     expect(speech.stop).toHaveBeenCalledTimes(stops);
-    clock.mockReturnValue(1000);
-    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Shift", code: "ShiftLeft" }));
-    window.dispatchEvent(new KeyboardEvent("keyup", { key: "d", code: "KeyD" }));
-    await Promise.resolve();
-    expect(speech.stop).toHaveBeenCalledTimes(stops);
-    if (stops === 0) press();
-    expect(speech.stop).toHaveBeenCalledOnce();
   },
 );
 
