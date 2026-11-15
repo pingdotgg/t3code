@@ -299,6 +299,7 @@ overrides:
   expo-modules-core: 58.0.30
   '@exodus/bytes>@noble/hashes': 1.8.0
   '@react-navigation/core': 7.24.0
+  unenv: 2.0.0-rc.24
   dbus-next>usocket: '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
