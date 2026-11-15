@@ -589,9 +589,9 @@ function PullRequestCodeTab({
   const [withheldLoads, setWithheldLoads] = useState<{
     readonly scope: string;
     readonly paths: ReadonlyArray<string>;
-    /** Loads whose file has not been unfolded yet. */
-    readonly unopened: ReadonlyArray<string>;
-  }>({ scope: "", paths: NO_PATHS, unopened: NO_PATHS });
+    /** The render key each loaded file was last shown under; a changed patch gets a new one. */
+    readonly shownKeys: ReadonlyMap<string, string>;
+  }>({ scope: "", paths: NO_PATHS, shownKeys: new Map() });
   const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
   const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
   const atomRegistry = useContext(RegistryContext);
@@ -665,7 +665,8 @@ function PullRequestCodeTab({
   withheldPaths.forEach((path, index) => {
     const result = withheldResults[index];
     if (result === undefined) return;
-    const data = AsyncResult.getOrElse(result, () => null);
+    // A failed refetch still carries the last patch; show the failure, not that patch.
+    const data = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
     if (data === null) {
       withheldStatuses.set(path, result._tag === "Failure" ? "error" : "loading");
       return;
@@ -687,19 +688,22 @@ function PullRequestCodeTab({
     if (file !== undefined && file.hunks.length > 0) withheldFiles.set(path, file);
     else withheldStatuses.set(path, "empty");
   });
-  // A loaded file renders under a new key, so it would fold again if marked Viewed.
-  const arrived = withheldLoads.unopened.filter((path) => withheldFiles.has(path));
-  if (withheldLoads.scope === scopeKey && arrived.length > 0) {
+  // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again
+  // when marked Viewed: it opens on first load and keeps its earlier key's choice after.
+  const rekeyed = [...withheldFiles].flatMap(([path, file]) => {
+    const key = buildFileDiffRenderKey(file);
+    return withheldLoads.shownKeys.get(path) === key ? [] : [[path, key] as const];
+  });
+  if (withheldLoads.scope === scopeKey && rekeyed.length > 0) {
     setWithheldLoads({
       ...withheldLoads,
-      unopened: withheldLoads.unopened.filter((path) => !arrived.includes(path)),
+      shownKeys: new Map([...withheldLoads.shownKeys, ...rekeyed]),
     });
     setFoldChoices((current) =>
-      arrived.reduce((next, path) => {
-        const file = withheldFiles.get(path);
-        return file === undefined
-          ? next
-          : withFileDiffFold(next, buildFileDiffRenderKey(file), false);
+      rekeyed.reduce((next, [path, key]) => {
+        const shown = withheldLoads.shownKeys.get(path);
+        const collapsed = shown === undefined ? false : current.get(shown);
+        return collapsed === undefined ? next : withFileDiffFold(next, key, collapsed);
       }, current),
     );
   }
@@ -718,7 +722,7 @@ function PullRequestCodeTab({
     setWithheldLoads({
       scope: scopeKey,
       paths: [...withheldPaths, path],
-      unopened: [...(withheldLoads.scope === scopeKey ? withheldLoads.unopened : []), path],
+      shownKeys: withheldLoads.scope === scopeKey ? withheldLoads.shownKeys : new Map(),
     });
   };
   const linkAnchor = parsePullRequestAnchor(revealUrl);
@@ -1274,7 +1278,7 @@ function PullRequestCodeTab({
       {annotation.metadata.withheld ? (
         <WithheldFileNotice
           {...annotation.metadata.withheld}
-          onLoad={detail.provider === "github" ? loadWithheldFile : undefined}
+          onLoad={detail.capabilities.withheldFileDiff === true ? loadWithheldFile : undefined}
         />
       ) : null}
       <InlineReviewThreads threads={annotation.metadata.threads} renderThread={renderThreadCard} />
@@ -1916,7 +1920,6 @@ function PullRequestCodeTab({
   );
 }
 
-// GitHub alone can serve one withheld file; other hosts get the notice without the action.
 function WithheldFileNotice({
   path,
   status,

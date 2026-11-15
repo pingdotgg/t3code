@@ -2036,24 +2036,31 @@ export const make = Effect.gen(function* () {
   const diffUncached: PullRequestService["Service"]["diff"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
-        project.api.capabilities.diff
-          ? project.api
-              .getDiff({
-                cwd: project.project.workspaceRoot,
-                repository: project.repository,
-                host: project.host,
-                number: input.number,
-                ...(input.path === undefined ? {} : { path: input.path }),
-                ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
-                ...(input.commit === undefined ? {} : { commit: input.commit }),
-              })
-              .pipe(Effect.mapError(toPullRequestError("diff")))
-          : Effect.fail(
+        input.path !== undefined && project.api.capabilities.withheldFileDiff !== true
+          ? Effect.fail(
               new PullRequestOperationError({
                 operation: "diff",
-                detail: "This host cannot provide a diff for a change request.",
+                detail: "This host cannot read one file of a change request's diff.",
               }),
-            ),
+            )
+          : project.api.capabilities.diff
+            ? project.api
+                .getDiff({
+                  cwd: project.project.workspaceRoot,
+                  repository: project.repository,
+                  host: project.host,
+                  number: input.number,
+                  ...(input.path === undefined ? {} : { path: input.path }),
+                  ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
+                  ...(input.commit === undefined ? {} : { commit: input.commit }),
+                })
+                .pipe(Effect.mapError(toPullRequestError("diff")))
+            : Effect.fail(
+                new PullRequestOperationError({
+                  operation: "diff",
+                  detail: "This host cannot provide a diff for a change request.",
+                }),
+              ),
       ),
     );
 

@@ -3251,18 +3251,17 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
 
 it.effect("keeps a withheld file's read out of the page's cached diff", () =>
   Effect.gen(function* () {
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+      getDiff: (input) =>
+        Effect.succeed({
+          patch: input.path === undefined ? "page" : `file ${input.path}`,
+          truncated: input.path === undefined,
+          nextCursor: null,
+        }),
+    });
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          getDiff: (input) =>
-            Effect.succeed({
-              patch: input.path === undefined ? "page" : `file ${input.path}`,
-              truncated: input.path === undefined,
-              nextCursor: null,
-            }),
-        }),
-      ],
+      providers: [provider],
     });
     const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
     assert.strictEqual((yield* service.diff(ref)).patch, "page");
@@ -3271,6 +3270,16 @@ it.effect("keeps a withheld file's read out of the page's cached diff", () =>
       "file sdk.patch",
     );
     assert.strictEqual((yield* service.diff(ref)).patch, "page");
+
+    // A host that would answer with its whole diff must not be cached as one file's.
+    const wholeDiffOnly = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        { ...provider, capabilities: { ...provider.capabilities, withheldFileDiff: false } },
+      ],
+    });
+    const error = yield* Effect.flip(wholeDiffOnly.diff({ ...ref, path: "sdk.patch" }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
   }),
 );
 

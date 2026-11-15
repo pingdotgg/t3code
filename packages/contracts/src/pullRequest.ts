@@ -319,6 +319,8 @@ export const PullRequestCapabilities = Schema.Struct({
    * reported rather than that the repository runs none. Absent means an empty list says nothing.
    */
   checksAlwaysReport: Schema.optional(Schema.Boolean),
+  /** The diff can read one file the paged diff withheld as too large (`PullRequestDiffInput.path`). */
+  withheldFileDiff: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
 
