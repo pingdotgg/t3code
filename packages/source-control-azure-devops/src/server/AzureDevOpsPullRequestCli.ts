@@ -818,42 +818,41 @@ export const make = Effect.gen(function* () {
     ),
 
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      return Effect.gen(function* () {
-        // One argv entry preserves leading dashes and multi-string descriptions.
-        const text = yield* Effect.all([
-          ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
-          ...(input.body === undefined
-            ? []
-            : [AzureDevOpsCli.textOption("--description", input.body)]),
-        ]).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new AzureDevOpsCli.AzureDevOpsCommandFailedError({
-                operation: "execute",
-                command: "az",
-                cwd: input.cwd,
-                argumentCount: 0,
-                cause,
-              }),
-          ),
-        );
-        yield* azure.execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            ...text,
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        });
-      }).pipe(Effect.scoped);
+      // One argv entry preserves leading dashes and multi-string descriptions.
+      const fields = [
+        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
+        ...(input.body === undefined
+          ? []
+          : [AzureDevOpsCli.textOption("--description", input.body)]),
+      ];
+      // az has one stdin, so each value read from it needs its own call.
+      const batches =
+        fields.filter((field) => field.stdin !== undefined).length > 1
+          ? fields.map((field) => [field])
+          : [fields];
+      return Effect.forEach(
+        batches,
+        (batch) => {
+          const stdin = batch.find((field) => field.stdin !== undefined)?.stdin;
+          return azure.execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "update",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              ...batch.map((field) => field.arg),
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+            ...(stdin === undefined ? {} : { stdin }),
+          });
+        },
+        { discard: true },
+      );
     }),
   });
 });

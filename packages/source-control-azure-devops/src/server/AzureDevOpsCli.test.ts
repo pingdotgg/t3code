@@ -308,6 +308,9 @@ describe("AzureDevOpsCli.layer", () => {
             : [];
         });
         expect(fileReads).not.toContain("notes.txt");
+        expect(mockRun.mock.calls.at(-1)?.[0].stdin).toBe(
+          title.startsWith("@") ? title : undefined,
+        );
       }
     }).pipe(Effect.provide(layer)),
   );

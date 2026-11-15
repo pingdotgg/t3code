@@ -469,6 +469,11 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             : [];
         });
         expect(fileReads).not.toContain("notes.txt");
+        // Each `@` value goes over stdin, which reaches az wherever it runs; one per call.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual([
+          "@notes.txt",
+          "@notes.txt",
+        ]);
       }),
   );
 

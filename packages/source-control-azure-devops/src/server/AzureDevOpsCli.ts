@@ -1,6 +1,5 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -224,6 +223,7 @@ export class AzureDevOpsCli extends Context.Service<
       readonly maxOutputBytes?: number;
       /** The remote T3 selected; without one, the checkout's primary remote scopes the command. */
       readonly remoteUrl?: string;
+      readonly stdin?: string;
     }) => Effect.Effect<SourceControlHost.SourceControlProcessOutput, AzureDevOpsCliError>;
 
     readonly listPullRequests: (input: {
@@ -510,23 +510,16 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
 
 /**
  * `--option=value` for free text. az replaces a value starting with `@` by that file's
- * contents, so such a value is handed to az through a file holding the text itself.
+ * contents; `@-` reads it from stdin instead, which reaches az wherever it runs (WSL included).
  */
-export const textOption = Effect.fn("AzureDevOpsCli.textOption")(function* (
-  option: string,
-  value: string,
-) {
-  if (!value.startsWith("@")) return `${option}=${value}`;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* fileSystem.makeTempFileScoped({ prefix: "t3-azure-text-" });
-  yield* fileSystem.writeFileString(path, value);
-  return `${option}=@${path}`;
-});
+export const textOption = (option: string, value: string) =>
+  value.startsWith("@")
+    ? { arg: `${option}=@-`, stdin: value }
+    : { arg: `${option}=${value}`, stdin: undefined };
 
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
-  const fileSystem = yield* FileSystem.FileSystem;
   const invocation = yield* azureCliInvocation();
 
   const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
@@ -571,6 +564,7 @@ export const make = Effect.gen(function* () {
           args: [...invocation.args, ...args],
           cwd: input.cwd,
           ...(invocation.env === undefined ? {} : { env: invocation.env }),
+          ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
           classifyFailure: classifyAzFailure,
           notFoundDetail: "Pull request not found.",
           timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -734,40 +728,27 @@ export const make = Effect.gen(function* () {
       );
     }),
     createPullRequest: Effect.fn("AzureDevOpsCli.createPullRequest")(function (input) {
-      return Effect.gen(function* () {
-        const text = yield* Effect.all([
-          textOption("--target-branch", input.target?.refName ?? input.baseBranch),
-          textOption("--source-branch", SourceControlProvider.sourceBranch(input)),
-          textOption("--title", input.title),
-        ]).pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.mapError(
-            (cause) =>
-              new AzureDevOpsCommandFailedError({
-                operation: "execute",
-                command: "az",
-                cwd: input.cwd,
-                argumentCount: 0,
-                cause,
-              }),
-          ),
-        );
-        yield* execute({
-          cwd: input.cwd,
-          ...remoteOf(input),
-          args: [
-            "repos",
-            "pr",
-            "create",
-            "--only-show-errors",
-            "--detect",
-            "true",
-            ...text,
-            "--description",
-            `@${input.bodyFile}`,
-          ],
-        });
-      }).pipe(Effect.scoped);
+      // A full ref keeps a branch named `@...` from reading as a file; az accepts either form.
+      const branch = (name: string) => (name.startsWith("@") ? `refs/heads/${name}` : name);
+      const title = textOption("--title", input.title);
+      return execute({
+        cwd: input.cwd,
+        ...remoteOf(input),
+        args: [
+          "repos",
+          "pr",
+          "create",
+          "--only-show-errors",
+          "--detect",
+          "true",
+          `--target-branch=${branch(input.target?.refName ?? input.baseBranch)}`,
+          `--source-branch=${branch(SourceControlProvider.sourceBranch(input))}`,
+          title.arg,
+          "--description",
+          `@${input.bodyFile}`,
+        ],
+        ...(title.stdin === undefined ? {} : { stdin: title.stdin }),
+      }).pipe(Effect.asVoid);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function (input) {
       const repository = parseRepositorySpecifier(input.repository);
