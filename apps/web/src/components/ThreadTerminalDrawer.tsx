@@ -14,6 +14,7 @@ import {
   type TerminalSessionState,
 } from "@t3tools/client-runtime/state/terminal";
 import { Plus, SquareTerminal } from "lucide-react";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
   AuthFilesystemReadScope,
@@ -46,6 +47,7 @@ import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
 import { PaneNotch } from "~/components/PaneNotch";
 import { beginLayoutTabDrag } from "~/layout/layoutDrag";
+import { useLayoutStore } from "~/layout/layoutStore";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
 import { LayoutPaneTab, LayoutPaneTabStrip, useLayoutPaneSiblingTabs } from "~/layout/PaneTabs";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -61,6 +63,7 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
 import {
   isDiffToggleShortcut,
@@ -74,10 +77,14 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
-import { DEFAULT_THREAD_TERMINAL_HEIGHT, type ThreadTerminalGroup } from "../types";
+import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
+  MAX_TERMINALS_PER_GROUP,
+  type ThreadTerminalGroup,
+} from "../types";
 import { readLocalApi } from "~/localApi";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "~/lib/terminalCloseConfirm";
-import { getTerminalFocusOwner } from "~/lib/terminalFocus";
+import { getTerminalFocusOwner, registerTerminalSplitTarget } from "~/lib/terminalFocus";
 import { useClientSettings } from "../hooks/useSettings";
 import { getFileMetadataQueryAtom } from "../hooks/useFileMetadata";
 import { FileMetadataThreadContext } from "../hooks/FileMetadataThreadProvider";
@@ -1670,6 +1677,52 @@ export default function ThreadTerminalDrawer({
       confirmCloseTerminal(resolvedActiveTerminalId);
     }
   };
+
+  const hasTerminal = useStableCallback(() => visibleTerminalIds.length > 0);
+  const canSplitTerminal = useStableCallback(
+    () => canOperateTerminal && visibleTerminalIds.length < MAX_TERMINALS_PER_GROUP,
+  );
+  const paneFocusedRef = useLayoutPaneFocusedRef();
+  const threadKey = scopedThreadKey(threadRef);
+  const splitTerminalFromPalette = useStableCallback((direction: "horizontal" | "vertical") => {
+    if (direction === "vertical") onSplitTerminalVertical();
+    else onSplitTerminal();
+  });
+  // A terminal takes focus only in the focused pane, so a terminal pane claims it first.
+  const focusActiveTerminalNow = useStableCallback(() => {
+    if (resolvedActiveTerminalId) focusTerminal(threadRef, resolvedActiveTerminalId);
+  });
+  const focusActiveTerminal = useStableCallback(() => {
+    if (layoutTabId === null || paneFocusedRef.current) {
+      focusActiveTerminalNow();
+      return;
+    }
+    useLayoutStore.getState().focusTab(layoutTabId);
+    window.requestAnimationFrame(focusActiveTerminalNow);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- The command palette reaches this pane's split, the one its keys run, while the pane is mounted.
+  useEffect(
+    () =>
+      registerTerminalSplitTarget({
+        threadKey,
+        contains: (element) => drawerRef.current?.contains(element) ?? false,
+        inFocusedPane: () => visible && paneFocusedRef.current,
+        visible: () => visible,
+        hasTerminal,
+        canSplit: canSplitTerminal,
+        split: splitTerminalFromPalette,
+        focusActive: focusActiveTerminal,
+      }),
+    [
+      canSplitTerminal,
+      focusActiveTerminal,
+      hasTerminal,
+      paneFocusedRef,
+      splitTerminalFromPalette,
+      threadKey,
+      visible,
+    ],
+  );
 
   const handleResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
