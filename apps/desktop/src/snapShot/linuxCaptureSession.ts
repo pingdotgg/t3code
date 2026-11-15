@@ -120,11 +120,17 @@ export function portalShortcutTrigger(shortcut: SnapShotKeyChord): string {
 const PNG_HEADER = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 const MAX_PNG_BYTES = 32 * 1024 * 1024;
 
-export async function resizeLinuxCapture(png: Buffer): Promise<Buffer> {
+function assertCapturePng(png: Buffer): void {
   if (png.length > MAX_PNG_BYTES || !png.subarray(0, 8).equals(PNG_HEADER)) {
     throw new Error("Invalid or oversized window screenshot.");
   }
-  return resizeLinuxCaptureInRenderer(png);
+}
+
+export async function resizeLinuxCapture(png: Buffer): Promise<Buffer> {
+  assertCapturePng(png);
+  const resized = await resizeLinuxCaptureInRenderer(png);
+  assertCapturePng(resized);
+  return resized;
 }
 
 export async function readPortalPng(uri: string): Promise<Buffer> {

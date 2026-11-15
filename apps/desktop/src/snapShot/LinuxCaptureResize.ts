@@ -20,10 +20,11 @@ export async function resizeLinuxCaptureInRenderer(png: Buffer): Promise<Buffer>
     15_000,
   );
   timer.unref();
-  contents.on("ipc-message", (_event, channel, response: Uint8Array | string) => {
+  contents.on("ipc-message", (_event, channel, response: unknown) => {
     if (channel !== "t3:linux-capture") return;
     if (typeof response === "string") result.reject(new Error(response));
-    else result.resolve(Buffer.from(response));
+    else if (response instanceof Uint8Array) result.resolve(Buffer.from(response));
+    else result.reject(new Error("Invalid window screenshot processing result."));
   });
   contents.once("render-process-gone", () =>
     result.reject(new Error("Window screenshot processing exited.")),

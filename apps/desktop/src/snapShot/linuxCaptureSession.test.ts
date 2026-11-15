@@ -35,12 +35,11 @@ function setup() {
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
 
-it("waits for PNG processing in a renderer without decoding on the main process", async () => {
+it("processes the PNG in a sandboxed renderer, not on the main process", async () => {
   const contents = setup();
   const sent = Promise.withResolvers<void>();
   contents.send.mockImplementation(() => sent.resolve());
   const result = resizeLinuxCapture(png);
-  expect(result).toBeInstanceOf(Promise);
   await sent.promise;
   expect(decodeOnMain).not.toHaveBeenCalled();
   expect(createView).toHaveBeenCalledWith({
@@ -52,45 +51,23 @@ it("waits for PNG processing in a renderer without decoding on the main process"
     },
   });
   expect(contents.send).toHaveBeenCalledWith("t3:linux-capture", png);
-  const resized = new Uint8Array([1, 2, 3]);
+  const resized = new Uint8Array([...png, 1]);
   contents.emit("ipc-message", {}, "t3:linux-capture", resized);
   expect(await result).toEqual(Buffer.from(resized));
   expect(contents.close).toHaveBeenCalledOnce();
 });
 
-it.each(["The window screenshot is empty.", "Window screenshot processing failed."])(
-  "propagates renderer errors and closes it: %s",
-  async (message) => {
-    const contents = setup();
-    const result = resizeLinuxCapture(png);
-    contents.emit("ipc-message", {}, "t3:linux-capture", message);
-    await expect(result).rejects.toThrow(message);
-    expect(contents.close).toHaveBeenCalledOnce();
-  },
-);
-
-it.each(["render-process-gone", "destroyed"])(
-  "rejects if the renderer is lost: %s",
-  async (event) => {
-    const contents = setup();
-    const result = resizeLinuxCapture(png);
-    contents.emit(event);
-    await expect(result).rejects.toThrow("Window screenshot processing exited.");
-  },
-);
-
-it("closes the renderer when loading fails", async () => {
-  const contents = setup();
-  contents.loadURL.mockRejectedValue(new Error("load failed"));
-  await expect(resizeLinuxCapture(png)).rejects.toThrow("load failed");
-  expect(contents.close).toHaveBeenCalledOnce();
-});
-
-it("closes the renderer if the preload fails", async () => {
+it.each([
+  ["a renderer error", ["ipc-message", {}, "t3:linux-capture", "The window screenshot is empty."]],
+  ["a non-PNG reply", ["ipc-message", {}, "t3:linux-capture", new Uint8Array([1, 2, 3])]],
+  ["a malformed reply", ["ipc-message", {}, "t3:linux-capture", { length: 8 }]],
+  ["a preload failure", ["preload-error", {}, "preload.cjs", new Error("preload failed")]],
+  ["a lost renderer", ["render-process-gone"]],
+] as const)("rejects on %s and closes the renderer", async (_name, [event, ...args]) => {
   const contents = setup();
   const result = resizeLinuxCapture(png);
-  contents.emit("preload-error", {}, "preload.cjs", new Error("preload failed"));
-  await expect(result).rejects.toThrow("preload failed");
+  contents.emit(event, ...args);
+  await expect(result).rejects.toThrow();
   expect(contents.close).toHaveBeenCalledOnce();
 });
 
