@@ -8,7 +8,9 @@ import {
   type ProjectSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { parseWslUncPath } from "@t3tools/shared/wslUncPath";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -98,6 +100,14 @@ export class ProjectInvalidError extends Schema.TaggedError<ProjectInvalidError>
     return this.detail;
   }
 }
+
+/** Git over a \\wsl.localhost share runs 10-200x slower than inside WSL, past the git timeout. */
+const wslShareWorkspaceRootDetail = (workspaceRoot: string): string | null => {
+  const wslPath = parseWslUncPath(workspaceRoot);
+  return wslPath === null
+    ? null
+    : `Could not add WSL project: '${workspaceRoot.trim()}' is in WSL distro '${wslPath.distro}'. Add '${wslPath.linuxPath}' from that distro's T3 Code backend instead; git over the WSL share is too slow.`;
+};
 
 export class ProjectOperationError extends Schema.TaggedError<ProjectOperationError>()(
   "ProjectOperationError",
@@ -261,6 +271,16 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  const rejectWslShareRoot = Effect.fn("ProjectService.rejectWslShareRoot")(function* (
+    projectId: ProjectId,
+    workspaceRoot: string,
+  ) {
+    if (!(yield* HostProcess.isWindows)) return;
+    const detail = wslShareWorkspaceRootDetail(workspaceRoot);
+    if (detail === null) return;
+    return yield* new ProjectInvalidError({ projectId, detail });
+  });
+
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -395,6 +415,7 @@ export const make = Effect.gen(function* () {
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      yield* rejectWslShareRoot(input.projectId, input.workspaceRoot);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
@@ -421,6 +442,9 @@ export const make = Effect.gen(function* () {
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
       const previousRoot = existing.value.workspaceRoot;
+      if (input.workspaceRoot !== undefined) {
+        yield* rejectWslShareRoot(input.projectId, input.workspaceRoot);
+      }
       const workspaceRoot =
         input.workspaceRoot === undefined
           ? previousRoot

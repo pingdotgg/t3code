@@ -228,24 +228,6 @@ it.effect("does not send a token to whatever took over a dead server's port", ()
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect.each(["\\\\wsl.localhost\\Ubuntu\\root\\repo", "//wsl$/Ubuntu/root/repo"])(
-  "refuses the WSL share path %s instead of adding it to this backend",
-  (sharePath) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-project-cli-" });
-      const baseDir = NodePath.join(root, "state");
-
-      const error = yield* runCli(["project", "add", sharePath, "--base-dir", baseDir]).pipe(
-        Effect.flip,
-      );
-
-      assert.include(error.message, "Could not add WSL project");
-      assert.include(error.message, "'/root/repo'");
-      assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v2-project-lookup-" });

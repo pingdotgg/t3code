@@ -15,6 +15,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -510,6 +511,43 @@ it.layer(layerTest)("ProjectService", (it) => {
         "/work/conflict-mover",
       );
     }),
+  );
+
+  it.effect("refuses a WSL share as a workspace root on Windows", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const share = "\\\\wsl.localhost\\Ubuntu\\home\\ubuntu\\t3code";
+      const created = yield* service
+        .create({
+          commandId: CommandId.make("command:wsl-share:create"),
+          projectId: ProjectId.make("project:wsl-share:create"),
+          title: "Share",
+          workspaceRoot: share,
+        })
+        .pipe(Effect.flip);
+      assert.equal(created._tag, "ProjectInvalidError");
+      assert.include(created.message, "Add '/home/ubuntu/t3code'");
+
+      const projectId = ProjectId.make("project:wsl-share:move");
+      yield* service.create({
+        commandId: CommandId.make("command:wsl-share:native"),
+        projectId,
+        title: "Native",
+        workspaceRoot: "/work/wsl-share-native",
+      });
+      const moved = yield* service
+        .update({
+          commandId: CommandId.make("command:wsl-share:move"),
+          projectId,
+          workspaceRoot: "//wsl$/Ubuntu/home/ubuntu/t3code",
+        })
+        .pipe(Effect.flip);
+      assert.equal(moved._tag, "ProjectInvalidError");
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).workspaceRoot,
+        "/work/wsl-share-native",
+      );
+    }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
 
   it.effect("replays a workspace conflict after the workspace frees up", () =>
