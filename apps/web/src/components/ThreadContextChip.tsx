@@ -1,10 +1,9 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ThreadContextRecord, ProjectId } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { MessagesSquareIcon } from "lucide-react";
+import type { MouseEventHandler } from "react";
 
-import { followLayoutCompanions } from "~/layout/openRules";
-import { useLayoutStore } from "~/layout/layoutStore";
 import { useProject, useThreadShell } from "~/state/entities";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { useEnvironmentQuery } from "~/state/query";
@@ -17,6 +16,7 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  onClick?: MouseEventHandler<HTMLAnchorElement>;
 }) {
   const { environmentId, threadId } = props.record;
   const shell = useThreadShell({ environmentId, threadId });
@@ -49,15 +49,7 @@ export function ThreadContextChip(props: {
                 to="/$environmentId/$threadId"
                 params={{ environmentId, threadId }}
                 draggable={false}
-                onClick={(event) => {
-                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                  followLayoutCompanions(() =>
-                    useLayoutStore.getState().focusChat({
-                      kind: "server",
-                      threadRef: scopeThreadRef(environmentId, threadId),
-                    }),
-                  );
-                }}
+                onClick={props.onClick}
               />
             }
             aria-label={`Thread, ${title}`}

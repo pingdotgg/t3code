@@ -47,7 +47,7 @@ import {
   isThreadlessSurfacesRef,
   threadlessSurfacesProjectRef,
 } from "../threadlessSurfaces";
-import { toggleThreadTerminalPane } from "./openRules";
+import { followLayoutCompanions, toggleThreadTerminalPane } from "./openRules";
 import { requestLayoutSurfacePlacement } from "./surfaceSync";
 import { LayoutLearningTips } from "./LayoutOnboarding";
 import { beginLayoutTabDrag } from "./layoutDrag";
@@ -374,6 +374,12 @@ function LauncherThreadLabel({
         <ThreadContextChip
           record={{ ...threadRef, title: thread?.title ?? "New thread" }}
           projectId={projectId}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            followLayoutCompanions(() =>
+              useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+            );
+          }}
         />
       </span>
     </div>
