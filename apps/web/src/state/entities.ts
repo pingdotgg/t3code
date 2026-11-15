@@ -5,6 +5,7 @@ import type {
   EnvironmentThread,
   EnvironmentThreadShell,
   EnvironmentThreadStructure,
+  ThreadStructure,
   ThreadStructureVisibleTurnItem,
 } from "@t3tools/client-runtime/state/shell";
 import {
@@ -26,7 +27,6 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2RemoteTaskChild,
-  OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
   NodeId,
   ThreadId,
@@ -400,6 +400,10 @@ export function readThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
 }
 
+export function readDelegatedUnderParent(): ReadonlySet<string> {
+  return appAtomRegistry.get(environmentThreadShells.delegatedUnderParentAtom);
+}
+
 function shellParentThreadId(
   thread: Pick<OrchestrationV2ThreadShell, "forkedFrom" | "lineage">,
 ): ThreadId | null {
@@ -411,10 +415,7 @@ function shellParentThreadId(
 /** Retains unchanged reachable shells so unrelated streams do not re-render the panel. */
 export function selectThreadRelationshipShells(
   threadId: ThreadId,
-  projection: Pick<
-    OrchestrationV2ThreadProjection,
-    "thread" | "subagents" | "contextTransfers"
-  > | null,
+  projection: Pick<ThreadStructure, "thread" | "subagents" | "contextTransfers"> | null,
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
 ): ReadonlyArray<OrchestrationV2ThreadShell> {
   const named = new Set<string>([threadId]);
@@ -446,8 +447,16 @@ const relationshipShellsAtomFamily = Atom.family((key: string) => {
   return Atom.make((get) => {
     const next = selectThreadRelationshipShells(
       ref.threadId,
-      get(environmentThreadDetails.threadAtom(ref))?.projection ?? null,
+      get(environmentThreadDetails.quietThreadAtom(ref))?.projection ?? null,
       get(environmentThreadShells.environmentThreadsAtom(ref.environmentId)),
+    ).map(
+      (thread) =>
+        get(
+          environmentThreadShells.quietThreadShellAtom({
+            environmentId: ref.environmentId,
+            threadId: thread.id,
+          }),
+        )?.source ?? thread,
     );
     if (arrayElementsEqual(previous, next)) return previous;
     previous = next;
