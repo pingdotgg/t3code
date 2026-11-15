@@ -83,7 +83,6 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
         }).pipe(Effect.tap(() => Deferred.succeed(refreshed, undefined))),
     }),
     Layer.mock(CodexInstallation.CodexInstallation)({
-      refresh: () => Effect.void,
       managedDirectory: "/unused-managed-codex",
       start: (options) =>
         Effect.sync(() => {
@@ -97,6 +96,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
         }),
       state: Effect.succeed({ ...state, driver: ProviderDriverKind.make("codex") }),
       changes: Stream.succeed({ ...state, driver: ProviderDriverKind.make("codex") }),
+      checkForUpdate: Effect.void,
       remove: (paths) =>
         Effect.sync(() => {
           protectedPaths = paths ?? [];
@@ -105,6 +105,7 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
     }),
     Layer.mock(AntigravityInstallation.AntigravityInstallation)({
       managedDirectory: "/unused-managed-runtime",
+      checkForUpdate: Effect.void,
       start: Effect.sync(() => {
         calls.push("start");
         return { ...state, operationId: "install-1", phase: "downloading" as const };

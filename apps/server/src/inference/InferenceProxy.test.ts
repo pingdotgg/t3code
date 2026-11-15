@@ -308,6 +308,7 @@ it.effect(
                   activeCodexConfig = instances[ProviderInstanceId.make("codex")]?.config;
                 }),
               reloadSecrets: () => Effect.void,
+              applySecret: () => Effect.succeed([]),
             }),
           ),
           Layer.provide(Layer.mock(ProcessRunner.ProcessRunner)({})),

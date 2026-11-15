@@ -226,7 +226,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     checkProvider: check,
     enrichSnapshot: ({ settings }) =>
       settings.enableProviderUpdateChecks
-        ? runtime.installation.refresh().pipe(Effect.ignore)
+        ? Effect.forkDetach(runtime.installation.checkForUpdate).pipe(Effect.asVoid)
         : Effect.void,
   }).pipe(
     Effect.mapError(
@@ -248,8 +248,10 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const resolveRuntime = runtime.auth.controller.withAccess!(runtime.resolve);
   // Launch settings bind the refresh command to the signed-in profile. The registry
   // already wraps openSession in withAccess, so resolve without re-entering it.
+  const models = snapshot.getSnapshot.pipe(Effect.map((value) => value.models));
   const orchestrationAdapter = yield* createCodexAdapterV2(input, {
     onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+    models,
     resolveRuntime: runtime.resolve,
   }).pipe(
     Effect.mapError(
@@ -265,7 +267,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const nativeGeneration = yield* makeCodexTextGeneration(
     config,
     undefined,
-    snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+    models,
     resolveRuntime,
   );
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>
@@ -356,14 +358,7 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
     displayName,
     accentColor,
     enabled,
-    snapshot: {
-      ...snapshot,
-      refresh: enabled
-        ? runtime.installation
-            .refresh({ fresh: true })
-            .pipe(Effect.ignore, Effect.andThen(snapshot.refresh))
-        : snapshot.refresh,
-    },
+    snapshot,
     orchestrationAdapter,
     textGeneration,
     nativeHistory,

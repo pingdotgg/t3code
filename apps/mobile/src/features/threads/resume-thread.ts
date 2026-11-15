@@ -46,6 +46,7 @@ export async function continueThread<E>(
 ): Promise<AtomCommandResult<unknown, E>> {
   const { thread, runtimeMode, interactionMode, createdAt } = input;
   const environmentId = thread.environmentId;
+  // A turn on an existing thread runs with the thread's saved modes, not the turn's.
   if (runtimeMode !== thread.runtimeMode) {
     const saved = await input.setRuntimeMode({
       environmentId,
@@ -72,7 +73,7 @@ export async function continueThread<E>(
       message: {
         messageId: input.messageId,
         role: "user",
-        text: input.continuation.kind === "goal" ? "/goal resume" : "Continue where you left off.",
+        text: input.continuation.kind === "goal" ? "/goal resume" : "",
         attachments: [],
       },
       runtimeMode,
@@ -90,6 +91,7 @@ export async function resumeThread<E>(
     readonly resumeQueue: Command<ResumeThreadQueueInput, E>;
   },
 ): Promise<AtomCommandResult<unknown, E>> {
+  // The server holds the queue behind a stopped or usage-limited run until that run is continued.
   if (input.resumableRunId !== null) {
     const continued = await continueThread({
       ...input,

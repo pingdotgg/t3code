@@ -60,6 +60,24 @@ describe("ProviderSettingsForm helpers", () => {
     expect(fields({ shadowHomePath: "/saved/profile" })).toContain("shadowHomePath");
   });
 
+  it("does not store a text value its field's schema rejects", () => {
+    const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
+    expect(claude).toBeDefined();
+    const autoCompactWindow = deriveProviderSettingsFields(claude!).find(
+      (field) => field.key === "autoCompactWindow",
+    );
+    expect(autoCompactWindow).toBeDefined();
+
+    for (const invalid of ["300k", "50000"]) {
+      expect(
+        nextProviderConfigWithFieldValue({ launchArgs: "--x" }, autoCompactWindow!, invalid),
+      ).toEqual({ launchArgs: "--x" });
+    }
+    expect(
+      nextProviderConfigWithFieldValue({ launchArgs: "--x" }, autoCompactWindow!, "300000"),
+    ).toEqual({ launchArgs: "--x", autoCompactWindow: "300000" });
+  });
+
   it("shows the profile switch only to signed-in Claude accounts and stores it off", () => {
     const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"))!;
     const cliFields = deriveProviderSettingsFields(claude, { setupMode: "cli" });

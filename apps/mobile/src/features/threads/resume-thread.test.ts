@@ -80,7 +80,7 @@ describe("resumeThread", () => {
     ]);
     expect(calls[2]?.input).toMatchObject({
       dispatchMode: kind === "goal" ? "queue" : "start",
-      message: { text: kind === "goal" ? "/goal resume" : "Continue where you left off." },
+      message: { text: kind === "goal" ? "/goal resume" : "" },
     });
   });
 

@@ -104,7 +104,7 @@ const make = Effect.gen(function* () {
     if (head.exitCode !== 0) return { _tag: "Detached" } as const;
     const ref = head.stdout.trim();
     const branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length).trim() : null;
-    return branch === null || branch.startsWith("(")
+    return branch === null
       ? ({ _tag: "Unavailable" } as const)
       : ({ _tag: "Named", branch } as const);
   });

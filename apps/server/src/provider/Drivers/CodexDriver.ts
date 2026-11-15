@@ -1,4 +1,5 @@
 import { inferenceModelSlugs } from "../../inference/routes.ts";
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
 import * as Digest from "effect/crypto/Digest";
@@ -32,7 +33,7 @@ import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
-  probeCodexSkillsForCwd,
+  makeCodexSkillsProbe,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
@@ -334,6 +335,9 @@ export const CodexDriver: ProviderDriver<
       {
         enableComputerUse: true,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        models: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((value) => value.models),
+        ),
         compatibility: installation.compatibility,
         resolveRuntime,
       },
@@ -404,7 +408,7 @@ export const CodexDriver: ProviderDriver<
         resolveMaintenance().pipe(
           Effect.tap(() =>
             settings.enableProviderUpdateChecks
-              ? installation.refresh().pipe(Effect.ignore)
+              ? Effect.forkDetach(installation.checkForUpdate)
               : Effect.void,
           ),
           Effect.flatMap((maintenanceCapabilities) =>
@@ -487,6 +491,9 @@ export const CodexDriver: ProviderDriver<
             ),
         }
       : nativeGeneration;
+    const probeSkills = yield* makeCodexSkillsProbe().pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
     const snapshotForCwd = (cwd: string) =>
       !effectiveConfig.enabled
         ? snapshot.getSnapshot
@@ -495,7 +502,7 @@ export const CodexDriver: ProviderDriver<
             withAccess(
               resolveRuntime.pipe(
                 Effect.flatMap((runtime) =>
-                  probeCodexSkillsForCwd({
+                  probeSkills({
                     binaryPath: runtime.config.binaryPath,
                     homePath: runtime.config.homePath,
                     launchArgs: resolveCodexLaunchArgs(
@@ -510,8 +517,7 @@ export const CodexDriver: ProviderDriver<
               ),
             ).pipe(
               Effect.scoped,
-              Effect.timeout("20 seconds"),
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.timeout(resolveProviderProbeTimeoutMs("codex", 20_000, processEnv)),
             ),
           ]).pipe(
             Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })),
@@ -647,14 +653,7 @@ export const CodexDriver: ProviderDriver<
       displayName,
       accentColor,
       enabled,
-      snapshot: {
-        ...snapshot,
-        refresh: enabled
-          ? installation
-              .refresh({ fresh: true })
-              .pipe(Effect.ignore, Effect.andThen(snapshot.refresh))
-          : snapshot.refresh,
-      },
+      snapshot,
       snapshotForCwd,
       consumeResetCredit,
       orchestrationAdapter,

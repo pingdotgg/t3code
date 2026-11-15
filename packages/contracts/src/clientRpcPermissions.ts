@@ -30,6 +30,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // Restarts the server, as an update does.
   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
+  [WS_METHODS.serverCheckSecretSource]: AuthSettingsWriteScope,
   // Refreshing moves skill folders in the host's harness homes, as the switch does.
   [WS_METHODS.serverRefreshSkillsLibrary]: AuthSettingsWriteScope,
   // Listing models spends the stored API key, so only those who can choose a model may.

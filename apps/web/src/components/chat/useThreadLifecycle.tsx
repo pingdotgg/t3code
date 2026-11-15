@@ -48,6 +48,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { type ChatMessage } from "../../types";
 import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { titleRegenerationToast } from "../threadTitleRegenerationToast";
 import { newMessageId } from "~/lib/utils";
 import { composerDraftHasUserContent, useComposerDraftStore } from "../../composerDraftStore";
 import { useEnvironmentScope } from "~/state/session";
@@ -177,6 +178,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const regenerateThreadTitle = useOrchestrationCommand(threadEnvironment.regenerateTitle, {
     reportFailure: false,
   });
   const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
@@ -456,7 +460,6 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
-    activeThreadRef,
   });
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   // A seat's own row already says it is waiting, and it is not a side chat to the user.
@@ -657,10 +660,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !serverConfigLoaded) return;
       if (activeThreadShell.titleRegeneration != null) return;
-      void updateThreadMetadata({
+      void regenerateThreadTitle({
         environmentId: activeThreadRef.environmentId,
-        input: { threadId: activeThreadRef.threadId, regenerateTitle: true },
-      }).then(toastThreadActionFailure("Failed to regenerate thread title"));
+        input: { threadId: activeThreadRef.threadId },
+      }).then((result) => {
+        const toast = titleRegenerationToast([result]);
+        if (toast) toastManager.add(toast);
+      });
     },
   } satisfies ChatShortcutCommands;
   return {

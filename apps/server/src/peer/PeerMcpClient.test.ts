@@ -1,20 +1,23 @@
 import { NodeHttpServer } from "@effect/platform-node";
-import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
-import { OrchestrationV2LinkedSender, OrchestratorMcpFailure, ThreadId } from "@t3tools/contracts";
-import * as DateTime from "effect/DateTime";
+import {
+  EnvironmentId,
+  OrchestrationV2LinkedSender,
+  OrchestratorMcpFailure,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
-import { Tool, Toolkit } from "effect/ai";
-import * as McpHttpServer from "../mcp/McpHttpServer.ts";
-import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import * as McpToolAccess from "../mcp/McpToolAccess.ts";
-import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import { Tool, Toolkit } from "effect/ai";
+import * as TestClock from "effect/testing/TestClock";
 import {
   FetchHttpClient,
   HttpClient,
@@ -24,8 +27,12 @@ import {
   HttpServerResponse,
 } from "effect/http";
 
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
+import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 
 const environmentId = EnvironmentId.make("environment:peer");
 const peerLayer = (url: string) =>
@@ -249,6 +256,56 @@ const toolkit = Toolkit.make(
     failureMode: "return",
   }),
 );
+
+/** One `probe` call to a linked peer at a remote address, answered by `http`. */
+const probeThrough = Effect.fn(function* (http: HttpClient.HttpClient) {
+  const box = descriptorOf("environment-box", "Box");
+  const context = yield* Layer.build(
+    PeerMcpClient.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(HttpClient.HttpClient, http),
+          Layer.mock(PeerLinks.PeerLinks)({
+            resolve: () =>
+              Effect.succeed({
+                link: {
+                  environmentId: box.environmentId,
+                  label: box.label,
+                  urls: ["https://peer.example"],
+                  access: "auto",
+                  linkedAt: DateTime.makeUnsafe(0),
+                  expiresAt: DateTime.makeUnsafe(1),
+                  lastReachedAt: null,
+                  lastError: null,
+                },
+                url: "https://peer.example",
+                token: "fixture",
+              }),
+            recordOutcome: () => Effect.void,
+          }),
+        ),
+      ),
+    ),
+  );
+  return Context.get(context, PeerMcpClient.PeerMcpClient).call({
+    environmentId: box.environmentId,
+    tool: "probe",
+    arguments: {},
+    limits: { runtimeMode: "approval-required", interactionMode: "plan" },
+    success: Result,
+  });
+});
+
+const decodeRequestId = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ id: Schema.Number })),
+);
+
+const probeResult = (id: number) =>
+  JSON.stringify({
+    jsonrpc: "2.0",
+    id,
+    result: { content: [{ type: "text", text: '{"modes":"approval-required/plan"}' }] },
+  });
 
 const refusal = new OrchestratorMcpFailure({
   code: "thread_not_found",
@@ -501,5 +558,55 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
       "renewed",
       "renewed",
     ]);
-  }).pipe(Effect.scoped),
+  }),
+);
+
+it.effect("bounds the session handshake, not a tool call that waits longer", () =>
+  Effect.gen(function* () {
+    const arrived = yield* Queue.unbounded<number>();
+    const answer = yield* Deferred.make<void>();
+    let requests = 0;
+    const http = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        const index = requests++;
+        yield* Queue.offer(arrived, index);
+        // The first initialize, then the next initialized notification, never answer;
+        // the third session's tool call answers late.
+        if (index === 0 || index === 2) return yield* Effect.never;
+        if (index === 5) yield* Deferred.await(answer);
+        const body =
+          index === 5 && request.body._tag === "Uint8Array"
+            ? probeResult(
+                (yield* decodeRequestId(new TextDecoder().decode(request.body.body)).pipe(
+                  Effect.orDie,
+                )).id,
+              )
+            : "";
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(body, {
+            status: index === 4 ? 202 : 200,
+            headers: { "mcp-session-id": "session" },
+          }),
+        );
+      }),
+    );
+    const probe = yield* probeThrough(http);
+
+    for (const requestsBeforeStall of [1, 2]) {
+      const stalled = yield* probe.pipe(Effect.flip, Effect.forkScoped);
+      yield* Queue.takeN(arrived, requestsBeforeStall);
+      yield* TestClock.adjust(Duration.seconds(10));
+      expect(yield* Fiber.join(stalled)).toMatchObject({
+        code: "orchestration_error",
+        message: "The linked environment stopped answering.",
+      });
+    }
+
+    const waiting = yield* Effect.forkScoped(probe);
+    yield* Queue.takeN(arrived, 3);
+    yield* TestClock.adjust(Duration.minutes(1));
+    yield* Deferred.succeed(answer, undefined);
+    expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
+  }),
 );

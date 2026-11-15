@@ -12,16 +12,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Exit from "effect/Exit";
-import * as Redacted from "effect/Redacted";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import * as ServerSettings from "../serverSettings.ts";
 
 const archive = Buffer.from(
   "H4sIAAAAAAAC/+3W0W6DIBQGYB/FcD0sKNSkD7J7aom6tmAQtzXL3n3QZM3qdWVt+n8XoCckJp78wLY3q8bu9Ge2HBbUUp7nYD4H8s9zrNdSsCxnWQLT6JULn8ye09K9h/u2/c0/jSM9xqGzo0+bf3Gdf15WQiD/Kdy61/CA+z8dlO9Wrv2387+c5Z9VZY38p7BY0+Gh8t/sVauLt9Ga9Pnnop7ln1e4/6fxRQ7qZCf/qt3YW0M2OX/JyfvljbCCy3XBSaiGH9VqH4tKuaZbC6qG4aDpTrmP3sQV2nh3Gmxvzqsud0vyjaABAAAAAAAAAAAAAAAk8gOq19rvACgAAA==",
@@ -44,10 +41,8 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     platform?: NodeJS.Platform;
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
     runtimeRenameFailures?: number;
-    githubToken?: string;
-    githubCredential?: () => string | undefined;
-    releaseResponse?: () => unknown;
-    enableProviderUpdateChecks?: boolean;
+    /** Served by URL instead of the pinned package. */
+    responses?: Readonly<Record<string, () => Response>>;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -65,9 +60,6 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     );
   }
   let downloads = 0;
-  let releaseChecks = 0;
-  let credentialInvalidations = 0;
-  const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
   const digest = yield* Digest.Digest;
   const sha256 = Hex.encode(yield* digest.digest(Digest.sha256, archive).pipe(Effect.orDie));
   let runtimeRenameFailures = input.runtimeRenameFailures ?? 0;
@@ -115,36 +107,13 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     }),
     Effect.provideService(FileSystem.FileSystem, lockingFs),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    Effect.provideService(GitHubCredentials.GitHubCredentials, {
-      saved: () => Effect.succeedNone,
-      fingerprint: (_host, token) => Effect.succeed(token),
-      get: (host) => {
-        const token = input.githubCredential?.() ?? input.githubToken;
-        return token === undefined
-          ? Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }))
-          : Effect.succeed({
-              host,
-              token: Redacted.make(token),
-              source: "settings",
-              fingerprint: token,
-            });
-      },
-      invalidate: () => Effect.sync(() => credentialInvalidations++).pipe(Effect.asVoid),
-    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
         Effect.sync(() => {
-          requests.push({ url: request.url, authorization: request.headers.authorization });
-          if (request.url === "https://api.github.com/repos/openai/codex/releases/latest") {
-            releaseChecks++;
-            const body = input.releaseResponse?.() ?? releaseMetadata(asset.version, sha256);
-            return HttpClientResponse.fromWeb(
-              request,
-              body instanceof Response ? body : Response.json(body),
-            );
-          }
           downloads++;
+          const respond = input.responses?.[request.url];
+          if (respond) return HttpClientResponse.fromWeb(request, respond());
           return Object.defineProperty(
             HttpClientResponse.fromWeb(
               request,
@@ -158,11 +127,6 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
         }),
       ),
     ),
-    Effect.provide(
-      ServerSettings.ServerSettingsService.layerTest({
-        enableProviderUpdateChecks: input.enableProviderUpdateChecks ?? true,
-      }),
-    ),
   );
   return {
     installation,
@@ -172,9 +136,6 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     probeLog,
     failedRenames,
     downloads: () => downloads,
-    releaseChecks: () => releaseChecks,
-    credentialInvalidations: () => credentialInvalidations,
-    requests: () => requests,
   };
 });
 const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
@@ -188,10 +149,7 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
   "reuses installed Codex %s without downloading or taking ownership of it",
   (version) =>
     Effect.gen(function* () {
-      const h = yield* makeHarness({
-        local: { version },
-        options: { releaseAsset: undefined },
-      });
+      const h = yield* makeHarness({ local: { version } });
       expect(yield* h.installation.start()).toMatchObject({
         source: "local",
         phase: "succeeded",
@@ -207,7 +165,6 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       });
       yield* h.installation.acquire().pipe(Effect.scoped);
       expect(h.downloads()).toBe(0);
-      expect(h.releaseChecks()).toBe(0);
       expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
       expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
         "--version",
@@ -457,63 +414,31 @@ it.effect("requires an update before running an older activated managed installa
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each(["enabled", "disabled", "discovery fails"] as const)(
-  "updates an older supported managed installation after startup discovery: %s",
-  (policy) =>
-    Effect.gen(function* () {
-      const first = yield* makeHarness();
-      yield* first.installation.start();
-      yield* terminalState(first.installation);
-      const executable = yield* first.installation.resolve();
-      const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;
-      yield* first.fs.rename(executable.managedVersionDirectory!, oldDirectory);
-      for (const name of ["codex-package.json", ".install-complete.json"]) {
-        const file = `${oldDirectory}/${name}`;
-        yield* first.fs.writeFileString(
-          file,
-          (yield* first.fs.readFileString(file)).replaceAll("0.156.1", "0.156.0"),
-        );
-      }
+it.effect("updates an older supported managed installation to the pinned release on startup", () =>
+  Effect.gen(function* () {
+    const first = yield* makeHarness();
+    yield* first.installation.start();
+    yield* terminalState(first.installation);
+    const executable = yield* first.installation.resolve();
+    const oldDirectory = `${first.installation.managedDirectory}/0.156.0`;
+    yield* first.fs.rename(executable.managedVersionDirectory!, oldDirectory);
+    for (const name of ["codex-package.json", ".install-complete.json"]) {
+      const file = `${oldDirectory}/${name}`;
       yield* first.fs.writeFileString(
-        `${first.installation.managedDirectory}/active.json`,
-        '{"version":"0.156.0"}',
+        file,
+        (yield* first.fs.readFileString(file)).replaceAll("0.156.1", "0.156.0"),
       );
-      const restarted = yield* makeHarness({
-        baseDir: first.baseDir,
-        options: { releaseAsset: undefined },
-        enableProviderUpdateChecks: policy !== "disabled",
-        releaseResponse: () =>
-          policy === "discovery fails" ? Response.json({}, { status: 503 }) : undefined,
-      });
-      expect(restarted.releaseChecks()).toBe(policy === "disabled" ? 0 : 1);
-      if (policy !== "enabled") {
-        expect((yield* restarted.installation.state).phase).toBe("idle");
-        expect((yield* restarted.installation.state).operationId).toBeNull();
-        expect((yield* restarted.installation.resolve()).version).toBe("0.156.0");
-        expect(restarted.downloads()).toBe(0);
-        expect(
-          yield* first.fs.readFileString(`${first.installation.managedDirectory}/active.json`),
-        ).toBe('{"version":"0.156.0"}');
-        if (policy === "disabled") {
-          yield* restarted.installation.start();
-          expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
-          expect((yield* restarted.installation.resolve()).version).toBe(asset.version);
-          expect(restarted.releaseChecks()).toBe(1);
-          expect(restarted.downloads()).toBe(1);
-        }
-        return;
-      }
-      expect((yield* restarted.installation.state).operationId).not.toBeNull();
-      expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
-      expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
-      expect(restarted.downloads()).toBe(1);
-      yield* restarted.installation.refresh({ fresh: true });
-      expect(restarted.downloads()).toBe(1);
-      yield* restarted.installation.remove();
-      yield* restarted.installation.refresh({ fresh: true });
-      expect((yield* restarted.installation.state).installedVersion).toBeNull();
-      expect(restarted.downloads()).toBe(1);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    }
+    yield* first.fs.writeFileString(
+      `${first.installation.managedDirectory}/active.json`,
+      '{"version":"0.156.0"}',
+    );
+    const restarted = yield* makeHarness({ baseDir: first.baseDir });
+    expect((yield* restarted.installation.state).operationId).not.toBeNull();
+    expect((yield* terminalState(restarted.installation)).phase).toBe("succeeded");
+    expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
+    expect(restarted.downloads()).toBe(1);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rejects corrupted downloads without publishing a runtime", () =>
@@ -658,392 +583,214 @@ it.effect("keeps an activated runtime when a later update fails verification", (
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-const releaseMetadata = (version: string, sha256 = "a".repeat(64)) => ({
-  tag_name: `rust-v${version}`,
-  draft: false,
-  prerelease: false,
-  assets: [
-    "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
-    "aarch64-unknown-linux-musl",
-    "x86_64-unknown-linux-musl",
-    "aarch64-pc-windows-msvc",
-    "x86_64-pc-windows-msvc",
-  ].map((target) => ({
-    name: `codex-package-${target}.tar.gz`,
-    size: archive.length,
-    digest: `sha256:${sha256}`,
-    browser_download_url: `https://github.com/openai/codex/releases/download/rust-v${version}/codex-package-${target}.tar.gz`,
-  })),
+const upstreamVersion = "0.163.0";
+const upstreamArchive = Buffer.from(
+  "H4sIAAAAAAACA+3WzY7CIBQF4D5Kw1oqtNQmPoh7rKStP9BQdMaYefcBE43T9RQ1nm8B7Q1Jk94cYN3peW026juZDvOqsrzO3nj2yofnUK9KwZKUJREcByet/2TymabuPby29S3/NIz0EIbWDC5u/sXf/PO8EAL5j+G/ew1vuP/TXrp2bpunnf/5KP+syCvkP4bJmg5vlf96JxuVbQej4+efi2qUf17g/h/Hhezl2RzdStmhM5osUz5Lyen+RljGF0XGiK/6H9UoF4pS2rpdCCr7fq/oRtqvTocVSjt77k2nr6vud0vyg6ABAAAAAAAAAAAAAABE8gvVbjvaACgAAA==",
+  "base64",
+);
+const upstreamReleaseUrl = `https://github.com/openai/codex/releases/download/rust-v${upstreamVersion}`;
+const upstreamResponses = (checksum: string) => ({
+  "https://registry.npmjs.org/@openai/codex/latest": () =>
+    Response.json({ version: upstreamVersion }),
+  [`${upstreamReleaseUrl}/codex-package_SHA256SUMS`]: () =>
+    new Response(
+      `${"0".repeat(64)}  codex-package-x86_64-apple-darwin.tar.gz\n${checksum}  codex-package-aarch64-apple-darwin.tar.gz\n`,
+    ),
+  [`${upstreamReleaseUrl}/codex-package-aarch64-apple-darwin.tar.gz`]: () =>
+    new Response(upstreamArchive),
 });
 
-it("selects complete verified packages for all supported platforms", () => {
-  for (const platform of ["darwin", "linux", "win32"] as const)
-    for (const arch of ["x64", "arm64"])
-      expect(
-        CodexInstallation.resolveCodexReleaseAsset(platform, arch, releaseMetadata("0.200.0")),
-      ).toMatchObject({ version: "0.200.0", sha256: "a".repeat(64) });
-  expect(
-    CodexInstallation.resolveCodexReleaseAsset("linux", "riscv64", releaseMetadata("0.200.0")),
-  ).toBeNull();
-});
-
-it("rejects prereleases and packages with missing or invalid integrity metadata", () => {
-  const release = releaseMetadata("0.200.0");
-  for (const invalid of [
-    { ...release, prerelease: true },
-    { ...release, draft: true },
-    { ...release, tag_name: "rust-v0.201.0-alpha.1" },
-    { ...release, assets: [] },
-    ...[null, "sha256:bad"].map((digest) => ({
-      ...release,
-      assets: release.assets.map((asset) => ({ ...asset, digest })),
-    })),
-    {
-      ...release,
-      assets: release.assets.map((asset) => ({
-        ...asset,
-        browser_download_url: "https://example.com/package.tar.gz",
-      })),
-    },
-  ])
-    expect(CodexInstallation.resolveCodexReleaseAsset("darwin", "arm64", invalid)).toBeNull();
-});
-
-it.effect("discovers and installs the latest package without a pinned version", () =>
+it.effect("updates a managed install to OpenAI's newest release and never downgrades it", () =>
   Effect.gen(function* () {
-    const h = yield* makeHarness({ options: { releaseAsset: undefined } });
-    expect((yield* h.installation.state).version).toBeNull();
-    yield* h.installation.refresh();
-    expect((yield* h.installation.state).version).toBe(asset.version);
-    expect(h.downloads()).toBe(0);
-    yield* h.installation.start();
-    expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
-    expect(h.releaseChecks()).toBe(1);
-    expect(h.downloads()).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("starts from a cached verified release when GitHub later rate-limits metadata", () =>
-  Effect.gen(function* () {
-    let rateLimited = false;
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () =>
-        rateLimited
-          ? Response.json(
-              { message: "API rate limit exceeded" },
-              {
-                status: 403,
-                headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "60" },
-              },
-            )
-          : undefined,
-    });
-    yield* h.installation.refresh();
-    rateLimited = true;
-
-    yield* h.installation.start();
-    const terminal = yield* terminalState(h.installation);
-    expect(terminal).toMatchObject({
-      phase: "succeeded",
-      version: asset.version,
-      installedVersion: asset.version,
-      source: "managed",
-      canRemove: true,
-      message: null,
-    });
-    expect(h.releaseChecks()).toBe(1);
-    expect(h.downloads()).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("reports a rate limit when no verified release is cached", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () =>
-        Response.json(
-          { message: "API rate limit exceeded" },
-          {
-            status: 403,
-            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "60" },
-          },
-        ),
-    });
-
-    const failure = yield* Effect.flip(h.installation.start());
-    expect(failure.detail.toLowerCase()).toContain("rate limit");
-    expect(failure.detail).toContain("GitHub");
-    expect(h.releaseChecks()).toBe(1);
-    expect(h.downloads()).toBe(0);
-    expect((yield* h.installation.state).phase).toBe("idle");
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("coalesces concurrent failed release checks during the failure cooldown", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () =>
-        Response.json(
-          { message: "API rate limit exceeded" },
-          {
-            status: 403,
-            headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "60" },
-          },
-        ),
-    });
-
-    const results = yield* Effect.all(
-      [
-        h.installation.refresh({ fresh: true }).pipe(Effect.exit),
-        h.installation.refresh({ fresh: true }).pipe(Effect.exit),
-      ],
-      { concurrency: 2 },
+    const digest = yield* Digest.Digest;
+    const checksum = Hex.encode(
+      yield* digest.digest(Digest.sha256, upstreamArchive).pipe(Effect.orDie),
     );
-    expect(results.every(Exit.isFailure)).toBe(true);
-    expect(h.releaseChecks()).toBe(1);
+    const h = yield* makeHarness({ responses: upstreamResponses(checksum) });
+    yield* h.installation.checkForUpdate;
+    // A fresh install still gets the pinned release.
+    expect((yield* h.installation.state).version).toBe("0.156.1");
+    yield* h.installation.start();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: "0.156.1",
+      version: upstreamVersion,
+    });
+
+    yield* h.installation.start();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: upstreamVersion,
+      version: upstreamVersion,
+    });
+    expect((yield* h.installation.resolve()).version).toBe(upstreamVersion);
+
+    // Without upstream information the older pin is not offered as a reinstall.
+    const restarted = yield* makeHarness({ baseDir: h.baseDir });
+    expect(yield* restarted.installation.state).toMatchObject({
+      installedVersion: upstreamVersion,
+      version: upstreamVersion,
+    });
+    yield* restarted.installation.start();
+    expect(yield* terminalState(restarted.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: upstreamVersion,
+    });
+    expect(restarted.downloads()).toBe(0);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each([
-  { githubToken: "test-github-token", authorization: "Bearer test-github-token" },
-  { githubToken: undefined, authorization: undefined },
-])("uses GitHub credentials only for release metadata (%s)", ({ githubToken, authorization }) =>
+it.effect("keeps the managed install when an update fails its published checksum", () =>
   Effect.gen(function* () {
+    const h = yield* makeHarness({ responses: upstreamResponses("f".repeat(64)) });
+    yield* h.installation.start();
+    yield* terminalState(h.installation);
+    yield* h.installation.checkForUpdate;
+    yield* h.installation.start();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "failed",
+      installedVersion: "0.156.1",
+      message: expect.stringContaining("SHA-256"),
+    });
+    expect((yield* h.installation.resolve()).version).toBe("0.156.1");
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("does not install a cached update the manifest has since withdrawn", () =>
+  Effect.gen(function* () {
+    const digest = yield* Digest.Digest;
+    const checksum = Hex.encode(
+      yield* digest.digest(Digest.sha256, upstreamArchive).pipe(Effect.orDie),
+    );
+    let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
     const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      ...(githubToken === undefined ? {} : { githubToken }),
+      responses: upstreamResponses(checksum),
+      manifestCurrent: Effect.sync(() => manifest),
     });
     yield* h.installation.start();
     yield* terminalState(h.installation);
-
-    expect(h.requests()).toContainEqual({
-      url: "https://api.github.com/repos/openai/codex/releases/latest",
-      authorization,
-    });
-    const assetRequests = h
-      .requests()
-      .filter((request) => request.url.includes("/releases/download/"));
-    expect(assetRequests).toHaveLength(1);
-    expect(assetRequests[0]?.authorization).toBeUndefined();
-    expect(h.releaseChecks()).toBe(1);
-    expect(h.downloads()).toBe(1);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("honors GitHub retry headers during fresh refreshes", () =>
-  Effect.gen(function* () {
-    let rateLimited = true;
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () =>
-        rateLimited
-          ? Response.json(
-              { message: "API rate limit exceeded" },
-              {
-                status: 403,
-                headers: {
-                  "x-ratelimit-remaining": "0",
-                  "x-ratelimit-reset": "60",
-                  "retry-after": "30",
-                },
-              },
-            )
-          : releaseMetadata(asset.version),
-    });
-
-    const initialFailure = yield* Effect.flip(h.installation.refresh());
-    expect(initialFailure.detail.toLowerCase()).toContain("rate limit");
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toBe(
-      initialFailure.detail,
-    );
-    yield* TestClock.adjust("30 seconds");
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toBe(
-      initialFailure.detail,
-    );
-    expect(h.releaseChecks()).toBe(1);
-
-    yield* TestClock.adjust("30 seconds");
-    rateLimited = false;
-    yield* h.installation.refresh({ fresh: true });
-    expect((yield* h.installation.state).version).toBe(asset.version);
-    expect(h.releaseChecks()).toBe(2);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("retries a rate-limited discovery immediately when GitHub credentials change", () =>
-  Effect.gen(function* () {
-    let githubToken: string | undefined;
-    let rateLimited = true;
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      githubCredential: () => githubToken,
-      releaseResponse: () =>
-        rateLimited
-          ? Response.json(
-              { message: "API rate limit exceeded" },
-              {
-                status: 403,
-                headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "3600" },
-              },
-            )
-          : releaseMetadata(asset.version),
-    });
-
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toContain(
-      "rate-limited",
-    );
-    githubToken = "new-github-token";
-    rateLimited = false;
-    yield* h.installation.refresh({ fresh: true });
-
-    expect(h.releaseChecks()).toBe(2);
-    expect(
-      h
-        .requests()
-        .filter(
-          (request) => request.url === "https://api.github.com/repos/openai/codex/releases/latest",
-        )
-        .map((request) => request.authorization),
-    ).toEqual([undefined, "Bearer new-github-token"]);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("retries rejected GitHub credentials anonymously and remembers the rejection", () =>
-  Effect.gen(function* () {
-    let metadataResponses = 0;
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      githubToken: "rejected-github-token",
-      releaseResponse: () => {
-        metadataResponses++;
-        if (metadataResponses === 1)
-          return Response.json({ message: "Bad credentials" }, { status: 401 });
-        if (metadataResponses === 2)
-          return Response.json(
-            { message: "API rate limit exceeded" },
-            {
-              status: 403,
-              headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "60" },
-            },
-          );
-        return undefined;
-      },
-    });
-
-    const failure = yield* Effect.flip(h.installation.refresh({ fresh: true }));
-    expect(failure.detail).toContain("rate-limited");
-    expect(h.releaseChecks()).toBe(2);
-    expect(h.credentialInvalidations()).toBe(1);
-    expect(h.requests().map((request) => request.authorization)).toEqual([
-      "Bearer rejected-github-token",
-      undefined,
-    ]);
-
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toBe(
-      failure.detail,
-    );
-    expect(h.releaseChecks()).toBe(2);
-    yield* TestClock.adjust("60 seconds");
-    yield* h.installation.refresh({ fresh: true });
-    expect(h.releaseChecks()).toBe(3);
-    expect(h.credentialInvalidations()).toBe(1);
-    expect(h.requests().map((request) => request.authorization)).toEqual([
-      "Bearer rejected-github-token",
-      undefined,
-      undefined,
-    ]);
-
+    yield* h.installation.checkForUpdate;
+    expect((yield* h.installation.state).version).toBe(upstreamVersion);
+    manifest = {
+      ...manifest,
+      compatibility: [
+        {
+          driver: "codex",
+          t3CodeRange: ">=0.0.42",
+          ranges: [
+            { range: ">=0.160.0", status: "unsupported" },
+            { range: ">=0.156.0 <0.160.0", status: "supported" },
+          ],
+        },
+      ],
+    };
+    const downloads = h.downloads();
     yield* h.installation.start();
-    expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
-    const assetRequests = h
-      .requests()
-      .filter((request) => request.url.includes("/releases/download/"));
-    expect(assetRequests).toHaveLength(1);
-    expect(assetRequests[0]?.authorization).toBeUndefined();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: "0.156.1",
+      version: "0.156.1",
+    });
+    expect(h.downloads()).toBe(downloads);
+    expect((yield* h.installation.resolve()).version).toBe("0.156.1");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect("briefly caches non-rate-limit discovery failures", () =>
+it.effect("returns a managed install the manifest withdraws to the pinned release", () =>
   Effect.gen(function* () {
-    let unavailable = true;
-    const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () =>
-        unavailable
-          ? Response.json({ message: "temporarily unavailable" }, { status: 503 })
-          : releaseMetadata(asset.version),
-    });
-
-    const initialFailure = yield* Effect.flip(h.installation.refresh());
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toBe(
-      initialFailure.detail,
+    const digest = yield* Digest.Digest;
+    const checksum = Hex.encode(
+      yield* digest.digest(Digest.sha256, upstreamArchive).pipe(Effect.orDie),
     );
-    yield* TestClock.adjust("29 seconds");
-    expect((yield* Effect.flip(h.installation.refresh({ fresh: true }))).detail).toBe(
-      initialFailure.detail,
-    );
-    expect(h.releaseChecks()).toBe(1);
-
-    yield* TestClock.adjust("1 second");
-    unavailable = false;
-    yield* h.installation.refresh({ fresh: true });
-    expect((yield* h.installation.state).version).toBe(asset.version);
-    expect(h.releaseChecks()).toBe(2);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-
-it.effect("manual refresh discovers newer releases while background checks reuse the cache", () =>
-  Effect.gen(function* () {
-    let version = "0.163.0";
+    let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
     const h = yield* makeHarness({
-      options: { releaseAsset: undefined },
-      releaseResponse: () => releaseMetadata(version),
+      responses: upstreamResponses(checksum),
+      manifestCurrent: Effect.sync(() => manifest),
     });
-    yield* h.installation.refresh();
-    version = "0.164.0";
-    yield* h.installation.refresh();
-    expect((yield* h.installation.state).version).toBe("0.163.0");
-    yield* h.installation.refresh({ fresh: true });
-    expect((yield* h.installation.state).version).toBe("0.164.0");
-    expect(h.releaseChecks()).toBe(2);
-    expect(h.downloads()).toBe(0);
+    yield* h.installation.checkForUpdate;
+    yield* h.installation.start();
+    yield* terminalState(h.installation);
+    yield* h.installation.start();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      installedVersion: upstreamVersion,
+    });
+
+    manifest = {
+      ...manifest,
+      compatibility: [
+        {
+          driver: "codex",
+          t3CodeRange: ">=0.0.42",
+          ranges: [
+            { range: ">=0.160.0", status: "unsupported" },
+            { range: ">=0.156.0 <0.160.0", status: "supported" },
+          ],
+        },
+      ],
+    };
+    yield* h.installation.checkForUpdate;
+    expect(yield* h.installation.state).toMatchObject({
+      installedVersion: upstreamVersion,
+      version: "0.156.1",
+    });
+    yield* h.installation.start();
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: "0.156.1",
+      version: "0.156.1",
+    });
+    expect((yield* h.installation.resolve()).version).toBe("0.156.1");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect("failed discovery preserves the installed runtime and never downloads a fallback", () =>
-  Effect.gen(function* () {
-    const first = yield* makeHarness();
-    yield* first.installation.start();
-    yield* terminalState(first.installation);
-    const h = yield* makeHarness({
-      baseDir: first.baseDir,
-      options: { releaseAsset: undefined },
-      releaseResponse: () => ({ error: "unavailable" }),
-    });
-    expect(Exit.isFailure(yield* Effect.exit(h.installation.start()))).toBe(true);
-    expect((yield* h.installation.resolve()).version).toBe(asset.version);
-    expect(h.downloads()).toBe(0);
-  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
-);
-it.effect(
-  "does not downgrade an installed runtime when the release endpoint reports an older version",
-  () =>
+it.effect.each(["update", "reinstall"] as const)(
+  "rejects withdrawal during $0 validation",
+  (operation) =>
     Effect.gen(function* () {
-      const first = yield* makeHarness();
-      yield* first.installation.start();
-      yield* terminalState(first.installation);
+      const digest = yield* Digest.Digest;
+      const checksum = Hex.encode(
+        yield* digest.digest(Digest.sha256, upstreamArchive).pipe(Effect.orDie),
+      );
+      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+      let withdraw = operation === "update";
       const h = yield* makeHarness({
-        baseDir: first.baseDir,
-        options: { releaseAsset: undefined },
-        releaseResponse: () => releaseMetadata("0.155.0"),
+        responses: upstreamResponses(checksum),
+        manifestCurrent: Effect.sync(() => manifest),
+        options: {
+          validate: (_executable, version) =>
+            Effect.sync(() => {
+              if (withdraw && version === upstreamVersion)
+                manifest = {
+                  ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+                  compatibility: [
+                    {
+                      driver: "codex",
+                      t3CodeRange: ">=0.0.42",
+                      ranges: [
+                        { range: ">=0.160.0", status: "unsupported" },
+                        { range: ">=0.156.0 <0.160.0", status: "supported" },
+                      ],
+                    },
+                  ],
+                };
+            }),
+        },
       });
       yield* h.installation.start();
-      expect((yield* h.installation.resolve()).version).toBe(asset.version);
-      expect(h.downloads()).toBe(0);
+      yield* terminalState(h.installation);
+      yield* h.installation.checkForUpdate;
+      if (operation === "reinstall") {
+        yield* h.installation.start();
+        expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+        withdraw = true;
+      }
+      yield* h.installation.start();
+      expect((yield* terminalState(h.installation)).phase).toBe("failed");
+      if (operation === "update") {
+        expect((yield* h.installation.resolve()).version).toBe("0.156.1");
+      } else {
+        expect((yield* h.installation.state).version).toBe("0.156.1");
+        yield* Effect.flip(h.installation.resolve());
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
-
-// Stands in for Windows' bsdtar: CRLF listings, and extraction writes the Windows layout.

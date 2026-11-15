@@ -12,6 +12,7 @@ import { ServerSecretStore } from "../auth/ServerSecretStore.ts";
 import { ServerConfig } from "../config.ts";
 import { DeviceService } from "../device/DeviceService.ts";
 import { ServerEnvironment } from "../environment/ServerEnvironment.ts";
+import { EnvironmentThemeService } from "../environmentTheme.ts";
 import { GitWorkflowService } from "../git/GitWorkflowService.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as ModelEvaluations from "../modelEvaluations/ModelEvaluations.ts";
@@ -43,6 +44,7 @@ import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestOracle } from "../pullRequest/PullRequestOracle.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
+import { PullRequestService } from "../pullRequest/PullRequestService.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import { SecretRequests } from "../secrets/SecretRequests.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -70,6 +72,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
+  Layer.mock(EnvironmentThemeService)({}),
   Layer.mock(GitVcsDriver)({}),
   Layer.mock(GitWorkflowService)({}),
   Layer.mock(ManagedProjectFolders)({ namedProjectsRoot: "" }),
@@ -85,6 +88,7 @@ const toolHandlerServices = Layer.mergeAll(
   Layer.mock(ProviderRegistry)({}),
   Layer.mock(PullRequestOracle)({}),
   Layer.mock(PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService)({}),
   Layer.mock(ScheduledTaskService)({}),
   Layer.mock(SecretRequests)({}),
   ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-context-budget-" }),
@@ -131,13 +135,16 @@ const layerAdvertisedTools = McpHttpServer.layerTools.pipe(
 );
 
 // Claude Code loads these tools up front instead of behind ToolSearch, outside this budget.
-it.effect("only request_secret asks Claude Code to load it up front", () =>
+it.effect("only request_secret and send_to_user ask Claude Code to load them up front", () =>
   Effect.gen(function* () {
     const mcp = yield* McpServer.McpServer;
     const alwaysLoad = mcp.tools
       .filter(({ tool }) => tool._meta?.["anthropic/alwaysLoad"] !== undefined)
       .map(({ tool }) => [tool.name, tool._meta]);
-    expect(alwaysLoad).toEqual([["request_secret", { "anthropic/alwaysLoad": true }]]);
+    expect(alwaysLoad).toEqual([
+      ["request_secret", { "anthropic/alwaysLoad": true }],
+      ["send_to_user", { "anthropic/alwaysLoad": true }],
+    ]);
   }).pipe(Effect.provide(layerAdvertisedTools)),
 );
 

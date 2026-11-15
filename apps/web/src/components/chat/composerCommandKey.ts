@@ -6,6 +6,7 @@ import {
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
 import {
+  type ComposerPromptHistoryMentions,
   type ComposerPromptHistoryPosition,
   buildComposerPromptHistoryEntries,
   stepComposerPromptHistory,
@@ -17,7 +18,11 @@ import {
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
-import { type PreviewAnnotationPayload } from "@t3tools/contracts";
+import {
+  type EnvironmentContextRecord,
+  type PreviewAnnotationPayload,
+  type ThreadContextRecord,
+} from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
 import {
@@ -35,6 +40,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
  */
 export function composerCommandKeyHandler(input: {
   readonly keybindings: ChatComposerProps["keybindings"];
+  readonly getShortcutContext: ChatComposerProps["getShortcutContext"];
   readonly sendShortcut: ChatComposerProps["settings"]["sendShortcut"];
   readonly routeKind: ChatComposerProps["routeKind"];
   readonly phase: ChatComposerProps["phase"];
@@ -64,6 +70,14 @@ export function composerCommandKeyHandler(input: {
     target: ChatComposerProps["composerDraftTarget"],
     prompt: string,
   ) => void;
+  readonly setComposerDraftThreadContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<ThreadContextRecord>,
+  ) => void;
+  readonly setComposerDraftEnvironmentContexts: (
+    target: ChatComposerProps["composerDraftTarget"],
+    records: ReadonlyArray<EnvironmentContextRecord>,
+  ) => void;
   readonly setComposerCursor: Dispatch<SetStateAction<number>>;
   readonly setComposerTrigger: (trigger: ComposerTrigger | null) => void;
   readonly setComposerHighlightedItemId: Dispatch<SetStateAction<string | null>>;
@@ -90,6 +104,7 @@ export function composerCommandKeyHandler(input: {
 }) {
   const {
     keybindings,
+    getShortcutContext,
     sendShortcut,
     routeKind,
     phase,
@@ -113,6 +128,8 @@ export function composerCommandKeyHandler(input: {
     composerMenuItemsRef,
     activeComposerMenuItemRef,
     setComposerDraftPrompt,
+    setComposerDraftThreadContexts,
+    setComposerDraftEnvironmentContexts,
     setComposerCursor,
     setComposerTrigger,
     setComposerHighlightedItemId,
@@ -133,9 +150,14 @@ export function composerCommandKeyHandler(input: {
   // otherwise turn B's own draft into a browsing position.
   const promptHistoryTargetKey = composerTargetKey(composerDraftTarget);
 
-  const replacePromptFromHistory = (nextPrompt: string) => {
+  const replacePromptFromHistory = (
+    nextPrompt: string,
+    mentions: ComposerPromptHistoryMentions,
+  ) => {
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+    setComposerDraftThreadContexts(composerDraftTarget, mentions.threadContexts);
+    setComposerDraftEnvironmentContexts(composerDraftTarget, mentions.environmentContexts);
     setComposerCursor(collapseExpandedComposerCursor(nextPrompt, nextPrompt.length));
     setComposerTrigger(null);
     setComposerHighlightedItemId(null);
@@ -180,7 +202,7 @@ export function composerCommandKeyHandler(input: {
     promptHistoryPositionRef.current = step.position
       ? { targetKey: promptHistoryTargetKey, position: step.position }
       : null;
-    replacePromptFromHistory(step.prompt);
+    replacePromptFromHistory(step.prompt, step.mentions);
     return true;
   };
 
@@ -207,6 +229,7 @@ export function composerCommandKeyHandler(input: {
     const submissionIntent = composerSubmissionIntentForKey({
       event,
       keybindings,
+      context: getShortcutContext(event.target),
       isSoftwareKeyboardOpen,
       isDraftThread: routeKind === "draft",
       isRunning: phase === "running" || phase === "connecting",

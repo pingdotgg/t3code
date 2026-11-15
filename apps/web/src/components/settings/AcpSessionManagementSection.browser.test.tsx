@@ -283,14 +283,9 @@ it.each([true, false])(
     await using screen = await renderSection({ canList, projects: [project, second] });
     await screen.getByRole("combobox").click();
     if (canList) {
-      await expect
-        .element(screen.getByRole("option", { name: project.title, exact: true }))
-        .toHaveFocus();
-      await userEvent.keyboard("{ArrowDown}");
-      await expect
-        .element(screen.getByRole("option", { name: "Second", exact: true }))
-        .toHaveFocus();
-      await userEvent.keyboard("{Enter}");
+      // Keys sent before the popup takes focus only move focus onto the selected option.
+      await expect.element(screen.getByRole("option", { name: "Antigravity" })).toHaveFocus();
+      await userEvent.keyboard("{ArrowDown}{Enter}");
     } else await screen.getByRole("option", { name: "Second", exact: true }).click();
     await expect
       .element(

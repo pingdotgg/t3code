@@ -2,6 +2,7 @@ import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@t3tools/contract
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberMap from "effect/FiberMap";
+import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -62,6 +63,7 @@ const make = Effect.gen(function* () {
   const observer = yield* RunFinalizationObserver;
   const modelEvaluations = yield* ModelEvaluations.ModelEvaluations;
   const worktreeBranches = yield* WorktreeBranches.WorktreeBranches;
+  const refreshes = yield* FiberSet.make<void>();
 
   const finalize: RunFinalizationService["Service"]["finalize"] = Effect.fn(
     "RunFinalizationService.finalize",
@@ -113,7 +115,8 @@ const make = Effect.gen(function* () {
           }),
         ),
       );
-      // Retrying a display refresh after the checkpoint is durable blocks the next turn.
+      // The refresh only updates the display, so the thread's next turn must not wait for it.
+      // Never replaced by a newer one: back-to-back turns would interrupt each before it publishes.
       yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
         Effect.catchTags({
           RunFinalizationRefreshError: (cause) =>
@@ -122,6 +125,7 @@ const make = Effect.gen(function* () {
               cause,
             }),
         }),
+        FiberSet.run(refreshes),
       );
     }
   });

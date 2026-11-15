@@ -6,7 +6,7 @@ No. A harness is what turns an LLM into an agent: it gives the model tools, a wa
 
 Chef = LLM. Kitchen = harness. T3 Code = the restaurant that lets you bring whatever kitchen you want. Our MCP is a cookbook we hand the kitchen, but the chef won't open it unless you tell them to :) I wrote the long version here: [What is a harness?](https://t3.gg/blog/post/what-is-a-harness)
 
-Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Pi, or Muse Code. [Provider setup](./install.md#providers)
+Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Kiro, Pi, Muse Code, or fx. [Provider setup](./install.md#providers)
 
 ## Why use T3 Code instead of Claude Code or the Codex app?
 
@@ -33,7 +33,7 @@ Yes. Link your T3 Chat account and T3 Connect raises your limit: up to 10 machin
 
 ## Why is my Claude 5-hour limit draining so fast?
 
-T3 Code drives Claude through Anthropic's Agent SDK. I confirmed it's a real bug on Anthropic's side: all Agent SDK usage will drain your 5h limits faster than using Claude Code directly. To be clear: this does not affect weekly limits. We have reported it to Anthropic and are hoping for a fix soon. [My post on it](https://x.com/theo/status/2114166439813017873)
+It shouldn't anymore. T3 Code drives Claude through Anthropic's Agent SDK, and Anthropic's 5h meter used to charge Agent SDK usage about 1.7x more than using Claude Code directly. Weekly limits were never affected. Since v0.1.7, Claude in T3 Code drains your 5h limit at the same rate as Claude Code. Still seeing it? [Update T3 Code](./updating.md) on the machine that runs your agents. [My post on it](https://x.com/theo/status/2114166439813017873) · [Tracking issue](https://github.com/pingdotgg/t3code/issues/24649)
 
 ## How do I use T3 Code remotely?
 

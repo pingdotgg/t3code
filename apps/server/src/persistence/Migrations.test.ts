@@ -34,6 +34,7 @@ const knowledgeViewsMigration = [96, "ProjectKnowledgeViews"] as const;
 const serializedModelOptionsMigration = [97, "RepairSerializedModelSelectionOptions"] as const;
 const messageSearchTextMigration = [98, "ProjectionMessageSearchText"] as const;
 const turnItemConversationMigration = [99, "TurnItemConversationIndex"] as const;
+const laterMigrations = migrationManifest.filter(([id]) => id > 99);
 
 it.effect("upgrades attempt receipts atomically and preserves distinct steering messages", () =>
   Effect.gen(function* () {
@@ -68,6 +69,7 @@ it.effect("upgrades attempt receipts atomically and preserves distinct steering 
       serializedModelOptionsMigration,
       messageSearchTextMigration,
       turnItemConversationMigration,
+      ...laterMigrations,
     ]);
     assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_deliveries`, before);
     yield* sql`INSERT INTO project_knowledge_deliveries (
@@ -121,6 +123,7 @@ it.effect.each(["original", "unexpected"] as const)(
         serializedModelOptionsMigration,
         messageSearchTextMigration,
         turnItemConversationMigration,
+        ...laterMigrations,
       ]);
       assert.deepStrictEqual(yield* sql`SELECT * FROM project_knowledge_views`, before);
       assert.deepStrictEqual(
@@ -257,7 +260,7 @@ it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in pla
     yield* sql`DROP VIEW project_knowledge_facts_saved`;
     assert.deepStrictEqual(yield* schema, schemaBefore);
 
-    assert.deepStrictEqual(yield* runMigrations(), [
+    assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 99 }), [
       savedLifecycleMigration,
       learningQueueMigration,
       summaryPositionMigration,
@@ -349,7 +352,7 @@ it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in pla
         ),
       ),
     );
-    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 99 }), []);
 
     // The published preview recorded this same saved schema at 91, before Loom cleanup.
     const savedFacts = yield* facts;
@@ -413,7 +416,7 @@ it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in pla
     assert.deepStrictEqual(yield* schema, rollbackSchema);
     yield* sql`DROP TRIGGER reject_saved_preview_receipt`;
 
-    assert.deepStrictEqual(yield* runMigrations(), [
+    assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 99 }), [
       dropProjectLoomIndexesMigration,
       learningQueueMigration,
       summaryPositionMigration,
@@ -431,14 +434,14 @@ it.effect("rebuilds knowledge facts as saved or forgotten, atomically and in pla
     const reconciledHistory = yield* migrations;
     assert.deepStrictEqual(
       reconciledHistory.map(({ migration_id, name }) => [migration_id, name] as const),
-      migrationManifest,
+      migrationManifest.filter(([id]) => id <= 99),
     );
     assert.deepStrictEqual(
       reconciledHistory.find(({ migration_id }) => migration_id === 92),
       { ...previewHistory.find(({ migration_id }) => migration_id === 91), migration_id: 92 },
     );
     assert.deepStrictEqual(yield* matches("wordfresh"), ["fresh"]);
-    assert.deepStrictEqual(yield* runMigrations(), []);
+    assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 99 }), []);
     assert.deepStrictEqual(yield* migrations, reconciledHistory);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
@@ -780,6 +783,7 @@ describe("runMigrations", () => {
             serializedModelOptionsMigration,
             messageSearchTextMigration,
             turnItemConversationMigration,
+            ...laterMigrations,
           ],
         );
         yield* assertConsolidatedSchema;
@@ -830,6 +834,7 @@ describe("runMigrations", () => {
           serializedModelOptionsMigration,
           messageSearchTextMigration,
           turnItemConversationMigration,
+          ...laterMigrations,
         ],
       );
       assert.deepStrictEqual(yield* runMigrations(), [
@@ -853,6 +858,7 @@ describe("runMigrations", () => {
         serializedModelOptionsMigration,
         messageSearchTextMigration,
         turnItemConversationMigration,
+        ...laterMigrations,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(
@@ -898,6 +904,7 @@ describe("runMigrations", () => {
           serializedModelOptionsMigration,
           messageSearchTextMigration,
           turnItemConversationMigration,
+          ...laterMigrations,
         ]);
 
         yield* assertConsolidatedSchema;
@@ -1013,6 +1020,7 @@ describe("runMigrations", () => {
         serializedModelOptionsMigration,
         messageSearchTextMigration,
         turnItemConversationMigration,
+        ...laterMigrations,
       ]);
       yield* assertConsolidatedSchema;
       assert.deepStrictEqual(yield* sql`SELECT secret_name, fenced FROM peer_environment_links`, [
@@ -1077,6 +1085,7 @@ describe("runMigrations", () => {
           serializedModelOptionsMigration,
           messageSearchTextMigration,
           turnItemConversationMigration,
+          ...laterMigrations,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(
@@ -1146,6 +1155,7 @@ describe("runMigrations", () => {
           serializedModelOptionsMigration,
           messageSearchTextMigration,
           turnItemConversationMigration,
+          ...laterMigrations,
         ]);
         assert.deepStrictEqual(yield* history, migrationManifest);
         assert.deepStrictEqual(yield* sql`SELECT * FROM cross_environment_launches`, routes);
@@ -1305,6 +1315,22 @@ describe("runMigrations", () => {
       );
       assert.notInclude(String(exit), "57_ScheduledTaskWebhooks");
       assert.deepStrictEqual(yield* history, before);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("keeps the migrations that finished before a later one failed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 99 });
+      yield* sql`CREATE TABLE orchestration_v2_projection_turn_item_counts (thread_id TEXT)`;
+
+      const exit = yield* Effect.exit(runMigrations());
+
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepStrictEqual(
+        yield* history,
+        migrationManifest.filter(([id]) => id <= 101),
+      );
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

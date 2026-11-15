@@ -15,6 +15,9 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   usageLimitSources: true,
   usageLimitsCommand: true,
   providerCatalogsOnDemand: true,
+  providerCatalogDigests: true,
+  providerStatusDeltas: true,
+  omitRefreshedProviders: true,
 });
 export const providerAccountSync = createProviderAccountSyncCommand(connectionAtomRuntime);
 export const describeOutdatedServer = createOutdatedServerDescriptionCommand(connectionAtomRuntime);

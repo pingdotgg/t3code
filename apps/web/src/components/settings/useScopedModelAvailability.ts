@@ -8,7 +8,10 @@ import {
 import { isModelEvaluationJudge } from "@t3tools/client-runtime/modelEvaluations";
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
-import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  getCustomModelOptionsByInstance,
+  getTextGenerationModelOptionsByInstance,
+} from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -66,7 +69,11 @@ export function useScopedModelDisabledReason(
         candidate.settings,
         candidate.projectId,
       ).find((option) => option.instanceId === instanceId);
-      const options = getCustomModelOptionsByInstance(
+      const optionsForInstance =
+        requiredOperations.length > 0
+          ? getTextGenerationModelOptionsByInstance
+          : getCustomModelOptionsByInstance;
+      const options = optionsForInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
       ).get(instanceId);
