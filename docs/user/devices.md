@@ -47,7 +47,13 @@ Connect to a [Simlock](https://incubator.callstack.com/simlock/) device pool (re
 
 1. Enable **Settings → Labs → Simlock device hosts (alpha)** and **Settings → Devices → Use devices**.
 2. Choose **Add source → Simlock pool** with an agent token (`simlock --gateway token create --role agent`) over HTTPS or Tailscale (give each T3 server its own token; treat it like worker shell access).
-3. Closing a device with **Return device to the pool** wipes and releases the lease. Toolbar tools/rotation/screenshots are unavailable in the UI (agents can still invoke them via `device_open`).
+3. Closing a device with **Return device to the pool** releases the lease. Simulators and emulators are wiped; phones and tablets are not. Toolbar tools/rotation/screenshots are unavailable in the UI (agents can still invoke them via `device_open`).
+
+The picker includes enrolled phones and tablets on connected, undrained workers, grouped by model and OS version and marked **Physical**.
+
+Simlock removes apps added since enrollment from physical devices, except App Store and TestFlight apps on iPhones. An enrolled app that is deleted and reinstalled stays. Other app data, settings, files, accounts, and keychain items, including credentials left by removed apps, remain for the next lease.
+
+A physical iPhone needs worker signing configured (see [Use a real phone](https://incubator.callstack.com/simlock/docs/using-devices/agent-device#use-a-real-phone)). Its panel screen requires iOS 27+, Xcode 27+, and `simlock-device-capture` on the worker. The panel cannot send it input; agents can still drive it through `device_open`.
 
 ## Device tool updates
 
