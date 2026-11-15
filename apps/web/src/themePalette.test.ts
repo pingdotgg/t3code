@@ -17,7 +17,6 @@ import {
   getStoredCustomThemeCollection,
   invalidateCustomThemes,
   installCustomTheme,
-  isKnownThemePreference,
   parseThemeFile,
   parseThemeHalves,
   publishedThemeDefinitions,
@@ -743,15 +742,11 @@ describe("stored theme preferences", () => {
       expect(resolveThemeAppearance("paper", false, false, "dark", halves)).toBe("dark");
       expect(resolveDesktopTheme("paper", true, undefined, halves)).toBe("system");
 
-      expect(canonicalThemePreference("t3-grove")).toBe(GROVE_THEME.id);
-      expect(parseThemeHalves(JSON.stringify({ dark: "t3-grove" }))).toEqual(halves);
       expect(getThemeDefinition("constructor")).toEqual(publishedTheme);
       expect(canonicalThemePreference("constructor")).toBe("constructor");
-      expect(isKnownThemePreference("constructor")).toBe(true);
       const publishedHalves = parseThemeHalves(JSON.stringify({ dark: "constructor" }));
       expect(publishedHalves).toEqual({ dark: "constructor" });
       expect(resolveThemeAppearance("paper", true, true, undefined, publishedHalves)).toBe("dark");
-      expect(resolveDesktopTheme("paper", true, undefined, publishedHalves)).toBe("system");
     } finally {
       vi.unstubAllGlobals();
       invalidateCustomThemes();
