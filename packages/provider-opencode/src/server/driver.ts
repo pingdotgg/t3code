@@ -483,7 +483,10 @@ export const OpenCodeDriver: ProviderDriver<
         connection.usageLimits(host.paths.cwd),
       );
       if (limits === undefined) unsupportedUsageVersion = runtime.version;
-      return limits ?? (yield* legacyUsageLimits);
+      if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
+      // Without a Console workspace the server reports nothing, but a local Go key still has usage.
+      const legacy = yield* legacyUsageLimits;
+      return limits !== undefined && legacy.unavailable?.reason === "unsupported" ? limits : legacy;
     }).pipe(
       Effect.timeout("10 seconds"),
       Effect.catch(() =>
