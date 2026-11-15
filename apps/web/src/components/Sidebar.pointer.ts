@@ -59,9 +59,11 @@ export class SidebarPointerSensor {
   private move = (event: PointerEvent) => {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
     const coordinates = { x: event.clientX, y: event.clientY };
-    // Desktop may report buttons=0 before pointerup; drop active context drags before cancelling sort.
+    // Desktop may report buttons=0 before pointerup: a pending press is released like pointerup so its
+    // click lands; an active drag drops context before cancelling sort.
     if ((event.buttons & 1) === 0) {
-      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      if (this.phase === "pending") return this.finish(false);
+      this.props.options.onDrop?.(coordinates);
       return this.cancel();
     }
     if (this.phase === "pending") {

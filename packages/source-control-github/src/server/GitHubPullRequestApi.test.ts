@@ -2009,6 +2009,113 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("skips the rows already delivered at a tied boundary before applying the limit", () =>
+    Effect.gen(function* () {
+      // Twenty pull requests share the boundary instant, then five are older. GitHub's search
+      // has no qualifier for a row number, so the boundary always comes back from its start.
+      const repository = { nameWithOwner: "acme/web" };
+      const tied = rows(20, 1, () => ({ repository }));
+      const older = rows(5, 21, () => ({ updatedAt: "2026-07-01T00:00:00Z", repository }));
+      mockedExecute.mockImplementation((call) => {
+        const variables = call.kind === "graphql" ? (call.variables ?? {}) : {};
+        const q = String(variables["q"] ?? "");
+        const bound = /updated:<=(\S+)/.exec(q)?.[1];
+        const matching = [...tied, ...older].filter(
+          (row) => bound === undefined || String(row["updatedAt"]) <= bound,
+        );
+        const start = variables["after"] == null ? 0 : Number(variables["after"]);
+        const end = start + Number(variables["first"]);
+        const hasNextPage = end < matching.length;
+        return Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                search: {
+                  pageInfo: { hasNextPage, endCursor: hasNextPage ? String(end) : null },
+                  nodes: matching.slice(start, end),
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          seenAt: Array.from({ length: 10 }, (_, index) => index + 1),
+        },
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      ]);
+
+      const across = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          seenAt: Array.from({ length: 10 }, (_, index) => ({
+            repository: "acme/web",
+            number: index + 1,
+          })),
+        },
+      });
+      expect(across.items.map((item) => item.number)).toEqual([
+        11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      ]);
+
+      // Rows seen earlier that no longer match must not count as skipped, or the rest is lost.
+      const moved = { updatedBefore: "2026-07-01T00:00:00Z", delivered: 10 };
+      const listedPastMoved = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 3,
+        cursor: { ...moved, seenAt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] },
+      });
+      const searchedPastMoved = yield* cli.searchPullRequests({
+        cwd: "/w",
+        host: "github.com",
+        repositories: ["acme/web"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 3,
+        cursor: {
+          ...moved,
+          seenAt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((number) => ({
+            repository: "acme/web",
+            number,
+          })),
+        },
+      });
+      for (const page of [listedPastMoved, searchedPastMoved]) {
+        expect(page.items.map((item) => item.number)).toEqual([21, 22, 23]);
+        expect(page.truncated).toBe(true);
+      }
+    }),
+  );
+
   it.effect("answers a search that found nothing with nothing, not with the whole repository", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
@@ -2753,6 +2860,38 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(runs).toEqual([{ id: 10, name: "build", url: "https://example.com/10" }]);
+    }),
+  );
+
+  it.effect("lists only the head's workflow runs that have not finished", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation(() =>
+        Effect.succeed(
+          output(
+            encodeJson({
+              workflow_runs: ["queued", "in_progress", "completed", "action_required", null].map(
+                (status, index) => ({ id: index, name: `${status}`, html_url: null, status }),
+              ),
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const runs = yield* cli.listUnfinishedWorkflowRuns({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        headSha: "abc123",
+      });
+
+      expect(restCallsTo("actions/runs?")[0]?.path).toBe(
+        "repos/acme/web/actions/runs?head_sha=abc123&per_page=100",
+      );
+      expect(runs).toEqual([
+        { id: 0, name: "queued", url: null },
+        { id: 1, name: "in_progress", url: null },
+      ]);
     }),
   );
 
