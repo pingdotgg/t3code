@@ -26,6 +26,7 @@ import * as Transport from "./RunWebhookTransport.ts";
 
 export class RunWebhookError extends Schema.TaggedError<RunWebhookError>()("RunWebhookError", {
   reason: Schema.Literals(["forbidden", "not_found", "limit", "storage", "thread"]),
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message() {
     switch (this.reason) {
@@ -100,7 +101,7 @@ const make = Effect.gen(function* () {
   const authorized = Effect.fn("RunWebhookService.authorized")(function* (sessionId: string) {
     const found = yield* sessions
       .getById({ sessionId: AuthSessionId.make(sessionId) })
-      .pipe(Effect.mapError(() => new RunWebhookError({ reason: "storage" })));
+      .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })));
     const now = yield* Clock.currentTimeMillis;
     return (
       Option.isSome(found) &&
@@ -114,7 +115,7 @@ const make = Effect.gen(function* () {
     const rows =
       yield* sql`SELECT * FROM run_webhook_subscriptions WHERE id = ${id} AND session_id = ${sessionId}`.pipe(
         Effect.flatMap(decodeRows),
-        Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+        Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
       );
     if (!rows[0]) return yield* new RunWebhookError({ reason: "not_found" });
     return rows[0];
@@ -130,6 +131,12 @@ const make = Effect.gen(function* () {
           yield* sql`UPDATE run_webhook_subscriptions SET state = 'cancelled', payload = NULL
           WHERE id = ${row.id} AND state IN ('active', 'failed')`;
         } else if (input.action === "retry" && row.state === "failed" && row.expires_at > now) {
+          const [counts] = yield* sql<{ owned: number; active: number }>`SELECT
+            COUNT(CASE WHEN session_id = ${sessionId} AND state = 'active' THEN 1 END) AS owned,
+            COUNT(CASE WHEN state = 'active' THEN 1 END) AS active
+            FROM run_webhook_subscriptions`;
+          if (!counts || counts.owned >= 100 || counts.active >= 1000)
+            return yield* new RunWebhookError({ reason: "limit" });
           yield* sql`UPDATE run_webhook_subscriptions SET state = 'active', attempts = 0, next_attempt_at = ${now}
           WHERE id = ${row.id}`;
         }
@@ -142,7 +149,7 @@ const make = Effect.gen(function* () {
         return yield* new RunWebhookError({ reason: "forbidden" });
       const shell = yield* threads
         .getThreadShell(input.threadId)
-        .pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+        .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
       if (!shell || shell.deletedAt !== null)
         return yield* new RunWebhookError({ reason: "not_found" });
       const records = yield* threads
@@ -151,7 +158,7 @@ const make = Effect.gen(function* () {
           ["runs"],
           { runIds: [input.runId] },
         )
-        .pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+        .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
       if (!records.runs.some((run) => run.id === input.runId))
         return yield* new RunWebhookError({ reason: "not_found" });
       const id = NodeCrypto.createHash("sha256")
@@ -163,7 +170,7 @@ const make = Effect.gen(function* () {
         .digest("hex");
       const existing = yield* sql`SELECT * FROM run_webhook_subscriptions WHERE id = ${id}`.pipe(
         Effect.flatMap(decodeRows),
-        Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+        Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
       );
       const previous = existing[0];
       if (
@@ -198,13 +205,16 @@ const make = Effect.gen(function* () {
     },
     lock.withPermits(1),
     Effect.catchTags({
-      SqlError: () => Effect.fail(new RunWebhookError({ reason: "storage" })),
+      SqlError: (cause) => Effect.fail(new RunWebhookError({ reason: "storage", cause })),
     }),
   );
 
   const prepare = Effect.fn("RunWebhookService.prepare")(function* (selected: Row) {
     const row = yield* load(selected.id, selected.session_id);
     if (row.state !== "active") return;
+    yield* sql`UPDATE run_webhook_subscriptions SET observation_order =
+      (SELECT COALESCE(MAX(observation_order), 0) + 1 FROM run_webhook_subscriptions)
+      WHERE id = ${row.id}`;
     const now = yield* Clock.currentTimeMillis;
     const endpoint = endpoints.find(
       (entry) =>
@@ -218,7 +228,7 @@ const make = Effect.gen(function* () {
     }
     const shell = yield* threads
       .getThreadShell(row.thread_id)
-      .pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+      .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
     if (!shell || shell.deletedAt !== null) {
       yield* sql`UPDATE run_webhook_subscriptions SET state = 'cancelled', payload = NULL WHERE id = ${row.id} AND state = 'active'`;
       return;
@@ -229,7 +239,7 @@ const make = Effect.gen(function* () {
       body === null
         ? null
         : yield* decodePayload(body).pipe(
-            Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+            Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
           );
     if (pending === null || pending.status === "waiting") {
       const records = yield* threads
@@ -238,7 +248,7 @@ const make = Effect.gen(function* () {
           ["runs"],
           { runIds: [row.run_id] },
         )
-        .pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+        .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
       const run = records.runs.find((entry) => entry.id === row.run_id);
       if (!run) {
         yield* sql`UPDATE run_webhook_subscriptions SET state = 'cancelled' WHERE id = ${row.id} AND state = 'active'`;
@@ -261,7 +271,7 @@ const make = Effect.gen(function* () {
             view: "messages",
             limit: 1,
           })
-          .pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+          .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
         const item = timeline.items[0]?.item;
         const message =
           item?.type === "assistant_message" || item?.type === "user_message" ? item : undefined;
@@ -283,9 +293,9 @@ const make = Effect.gen(function* () {
                   role: message.type === "assistant_message" ? "assistant" : "user",
                   updatedAt: DateTime.formatIso(message.updatedAt),
                 },
-        }).pipe(Effect.mapError(() => new RunWebhookError({ reason: "thread" })));
+        }).pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
         body = yield* encodePayload(payload).pipe(
-          Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+          Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
         );
         attempts = 0;
         yield* sql`UPDATE run_webhook_subscriptions SET payload = ${body}, attempts = 0, last_observation = ${observation}
@@ -294,7 +304,7 @@ const make = Effect.gen(function* () {
     }
     if (body === null || (body === row.payload && row.next_attempt_at > now)) return;
     const payload = yield* decodePayload(body).pipe(
-      Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+      Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
     );
     if (attempts >= MAX_ATTEMPTS) {
       yield* sql`UPDATE run_webhook_subscriptions SET state = ${terminal(payload.status) ? "failed" : "active"},
@@ -334,7 +344,7 @@ const make = Effect.gen(function* () {
       WHERE state IN ('active', 'failed') AND expires_at <= ${now}`;
     const rows = yield* sql`SELECT * FROM run_webhook_subscriptions
       WHERE state = 'active' AND (next_attempt_at <= ${now} OR json_extract(payload, '$.status') = 'waiting')
-      ORDER BY ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY next_attempt_at, id), next_attempt_at, id LIMIT 4`.pipe(
+      ORDER BY ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY observation_order, next_attempt_at, id), observation_order, next_attempt_at, id LIMIT 4`.pipe(
       Effect.flatMap(decodeRows),
     );
     yield* Effect.forEach(
@@ -350,7 +360,7 @@ const make = Effect.gen(function* () {
     );
   }).pipe(
     workerLock.withPermits(1),
-    Effect.mapError(() => new RunWebhookError({ reason: "storage" })),
+    Effect.mapError((cause) => new RunWebhookError({ reason: "storage", cause })),
   );
   return RunWebhookService.of({ manage, runDueWork });
 });

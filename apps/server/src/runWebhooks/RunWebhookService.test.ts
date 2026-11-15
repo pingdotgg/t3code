@@ -587,6 +587,32 @@ it.effect("caps retries, exposes failure, and retries the same delivery only on 
           subscriptionId: registered.subscriptionId,
         })).state,
       ).toBe("failed");
+      const sql = yield* SqlClient.SqlClient;
+      for (const [owner, count] of [
+        [sessionId, 100],
+        ["client:other", 1000],
+      ] as const) {
+        yield* sql`WITH RECURSIVE slots(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM slots WHERE n < ${count})
+          INSERT INTO run_webhook_subscriptions
+          (id, session_id, endpoint_id, endpoint_fingerprint, thread_id, run_id, link, state, next_attempt_at, expires_at)
+          SELECT 'limit:' || n, ${owner}, endpoint_id, endpoint_fingerprint, thread_id, run_id, link, 'active', next_attempt_at, expires_at
+          FROM run_webhook_subscriptions, slots WHERE id = ${registered.subscriptionId}`;
+        expect(
+          yield* f.api
+            .manage(sessionId, {
+              action: "retry",
+              subscriptionId: registered.subscriptionId,
+            })
+            .pipe(Effect.flip),
+        ).toMatchObject({ reason: "limit" });
+        expect(
+          (yield* f.api.manage(sessionId, {
+            action: "read",
+            subscriptionId: registered.subscriptionId,
+          })).state,
+        ).toBe("failed");
+        yield* sql`DELETE FROM run_webhook_subscriptions WHERE id LIKE 'limit:%'`;
+      }
       f.fail(false);
       yield* f.api.manage(sessionId, {
         action: "retry",
@@ -655,6 +681,33 @@ it.effect(
         expect(f.sent.map((entry) => decodeBody(entry.body).runId)).toContain(runId);
         yield* f.api.runDueWork;
         expect(f.sent).toHaveLength(6);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE run_webhook_subscriptions SET state = 'cancelled'`;
+        f.sent.length = 0;
+        const waitingRuns = Array.from({ length: 5 }, (_, index) =>
+          RunId.make(`run:waiting-${index}`),
+        );
+        for (const [index, id] of waitingRuns.entries()) {
+          yield* f.setStatus("waiting", id, index + 10);
+          yield* f.api.manage(sessionId, { ...subscribe, runId: id }, "link");
+        }
+        yield* f.api.runDueWork;
+        expect(f.sent).toHaveLength(4);
+        yield* f.api.runDueWork;
+        expect(f.sent).toHaveLength(5);
+        const [last] = yield* sql<{ run_id: RunId }>`SELECT run_id FROM run_webhook_subscriptions
+          WHERE state = 'active' ORDER BY next_attempt_at, id LIMIT 1 OFFSET 4`;
+        const unselected = last!.run_id;
+        yield* f.setStatus("completed", unselected, waitingRuns.indexOf(unselected) + 10);
+        f.fail(false);
+        yield* f.api.runDueWork;
+        yield* f.api.runDueWork;
+        expect(f.sent.map((entry) => decodeBody(entry.body))).toContainEqual(
+          expect.objectContaining({
+            runId: unselected,
+            status: "completed",
+          }),
+        );
       }),
     ),
 );

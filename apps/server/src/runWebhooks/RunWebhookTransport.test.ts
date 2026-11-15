@@ -119,8 +119,10 @@ it.effect(
           reason: "destination",
         });
       }
-      dnsLookup.mockRejectedValue(new Error("private URL and secret"));
+      const cause = new Error("private URL and secret");
+      dnsLookup.mockRejectedValue(cause);
       const error = yield* transport.send(endpoint, "{}", 1).pipe(Effect.flip);
+      expect(error.cause).toBe(cause);
       expect(String(error)).not.toContain("private URL");
       expect(NodeHttps.request).not.toHaveBeenCalled();
     }).pipe(Effect.provide(Transport.layer));

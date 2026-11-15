@@ -15,6 +15,7 @@ export class RunWebhookTransportError extends Schema.TaggedError<RunWebhookTrans
   "RunWebhookTransportError",
   {
     reason: Schema.Literals(["configuration", "destination", "dns", "network", "response"]),
+    cause: Schema.optional(Schema.Defect()),
     entryId: Schema.optional(Schema.String),
     check: Schema.optional(Schema.Literals(["format", "duplicate-id", "url", "secret"])),
   },
@@ -111,7 +112,8 @@ export const layerEndpoints = Layer.effect(
       Schema.fromJsonString(Schema.Array(EndpointConfig).check(Schema.isMaxLength(32))),
     )(raw).pipe(
       Effect.mapError(
-        () => new RunWebhookTransportError({ reason: "configuration", check: "format" }),
+        (cause) =>
+          new RunWebhookTransportError({ reason: "configuration", check: "format", cause }),
       ),
     );
     const duplicate = configs.find(
@@ -134,8 +136,9 @@ export const layerEndpoints = Layer.effect(
           });
         const secret = yield* Config.Redacted(config.secretEnv).pipe(
           Effect.mapError(
-            () =>
+            (cause) =>
               new RunWebhookTransportError({
+                cause,
                 reason: "configuration",
                 entryId: config.id,
                 check: "secret",
@@ -179,7 +182,7 @@ export const layer = Layer.succeed(RunWebhookTransport, {
       if (!url) return yield* new RunWebhookTransportError({ reason: "destination" });
       const addresses = yield* Effect.tryPromise({
         try: () => NodeDnsPromises.lookup(url.hostname, { all: true, verbatim: true }),
-        catch: () => new RunWebhookTransportError({ reason: "dns" }),
+        catch: (cause) => new RunWebhookTransportError({ reason: "dns", cause }),
       });
       const own = new NodeNet.BlockList();
       for (const entry of Object.values(NodeOS.networkInterfaces()).flat()) {
@@ -224,8 +227,8 @@ export const layer = Layer.succeed(RunWebhookTransport, {
             );
           },
         );
-        request.on("error", () =>
-          resume(Effect.fail(new RunWebhookTransportError({ reason: "network" }))),
+        request.on("error", (cause) =>
+          resume(Effect.fail(new RunWebhookTransportError({ reason: "network", cause }))),
         );
         request.end(body);
         return Effect.sync(() => request.destroy());

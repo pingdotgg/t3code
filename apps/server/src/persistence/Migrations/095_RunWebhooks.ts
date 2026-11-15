@@ -14,6 +14,7 @@ export default Effect.gen(function* () {
       link TEXT NOT NULL,
       state TEXT NOT NULL,
       last_observation TEXT,
+      observation_order INTEGER NOT NULL DEFAULT 0,
       payload TEXT,
       attempts INTEGER NOT NULL DEFAULT 0,
       next_attempt_at INTEGER NOT NULL,
