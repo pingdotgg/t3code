@@ -939,8 +939,10 @@ const submoduleCleanupFixture = () =>
 it.live("inspects a pnpm store excluded from reclaimed bytes for nested repositories", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, repo, worktree, command, setPolicy } = yield* cleanupFixture();
+      const { service, fs, repo, worktree, command, setPolicy, setSettleScript, settleRuns } =
+        yield* cleanupFixture();
       setPolicy("tracked-changes");
+      setSettleScript(Effect.never);
       const storeDir = yield* fs.makeTempDirectoryScoped({ prefix: "cleanup-store-" });
       const nested = `${worktree}/node_modules/.pnpm/nested`;
       yield* command(repo, ["clone", "--no-hardlinks", repo, nested]);
@@ -955,6 +957,7 @@ it.live("inspects a pnpm store excluded from reclaimed bytes for nested reposito
         reason: "Contains a nested Git repository",
       });
       expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+      expect(settleRuns()).toEqual([]);
     }),
   ),
 );

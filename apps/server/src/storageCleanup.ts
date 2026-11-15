@@ -1438,11 +1438,12 @@ const make = Effect.gen(function* () {
           const threadIds = group.map((member) => member.id);
           const blocked =
             (yield* scratchKeepReason(worktreePath, threadIds, settings)) ??
-            (yield* blockedSinceCheck()) ??
-            (yield* settleScriptReason(project.workspaceRoot));
+            (yield* blockedSinceCheck());
           if (blocked !== null) return keep(blocked);
           const inspection = yield* measureWorktree(worktreePath, "plain-folder");
           if (inspection.reason !== null) return keep(inspection.reason);
+          const settling = yield* settleScriptReason(project.workspaceRoot);
+          if (settling !== null) return keep(settling);
           return yield* withWorkspaceLease(
             worktreePath,
             Effect.gen(function* () {
@@ -1582,12 +1583,14 @@ const make = Effect.gen(function* () {
             return keep(integrated ? notDueReason : "has commits beyond the project branch");
         }
         if (!eligible) return keep(notDueReason);
-        const blocked =
-          (yield* blockedSinceCheck()) ?? (yield* settleScriptReason(project.workspaceRoot));
+        const blocked = yield* blockedSinceCheck();
         if (blocked !== null) return keep(blocked);
         // Inspect before the lease; provider startup must not wait for directory traversal.
         const inspection = yield* measureWorktree(worktreePath, true);
         if (inspection.reason !== null) return keep(inspection.reason);
+        // Tear down only a worktree that measurement would let cleanup remove.
+        const settling = yield* settleScriptReason(project.workspaceRoot);
+        if (settling !== null) return keep(settling);
         const bytes = inspection.bytes;
         yield* withWorkspaceLease(
           worktreePath,
