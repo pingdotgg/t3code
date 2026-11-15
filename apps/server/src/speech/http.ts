@@ -26,7 +26,9 @@ import {
 } from "../auth/http.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechService from "./SpeechService.ts";
+import * as SpeechSynthesisStreams from "./synthesisStreams.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
@@ -71,6 +73,27 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
     const cloud = yield* CloudSpeech.CloudSpeech;
+    const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
+    const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+    const mapInstallError = <A, R>(
+      effect: Effect.Effect<A, LocalSpeechSynthesis.LocalSynthesisInstallError, R>,
+    ) =>
+      effect.pipe(
+        Effect.catchTags({
+          // Untraced: it runs inside each handler's own span.
+          LocalSynthesisInstallError: Effect.fnUntraced(function* (error) {
+            if (error.reason === "failed")
+              return yield* failEnvironmentInternal("internal_error", error);
+            return yield* failEnvironmentInvalidRequest(
+              error.reason === "unknown-model"
+                ? "invalid_command"
+                : error.reason === "busy"
+                  ? "speech_busy"
+                  : "speech_unavailable",
+            );
+          }),
+        }),
+      );
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
@@ -84,6 +107,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "synthesisModels",
         Effect.fn("environment.voice.synthesisModels")(function* (args) {
           yield* guard(args.endpoint.name);
+          if (args.params.provider === "local") return yield* local.catalog;
           return yield* cloud.synthesisModels(args.params.provider).pipe(
             Effect.catchTags({
               SpeechSynthesisError: (error) =>
@@ -96,10 +120,10 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
-        "synthesize",
-        Effect.fn("environment.voice.synthesize")(function* (args) {
+        "startSynthesis",
+        Effect.fn("environment.voice.startSynthesis")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* cloud.synthesize(args.params.provider, args.payload).pipe(
+          const token = yield* synthesisStreams.start(args.params.provider, args.payload).pipe(
             Effect.catchTags({
               SpeechSynthesisError: (error) =>
                 Effect.fail(
@@ -108,6 +132,28 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               ServerSettingsError: (error) => failEnvironmentInternal("internal_error", error),
             }),
           );
+          return { token };
+        }),
+      )
+      .handle(
+        "downloadSynthesisModel",
+        Effect.fn("environment.voice.downloadSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local.download(args.payload.modelId).pipe(mapInstallError);
+        }),
+      )
+      .handle(
+        "cancelSynthesisModel",
+        Effect.fn("environment.voice.cancelSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local.cancel(args.payload.modelId);
+        }),
+      )
+      .handle(
+        "removeSynthesisModel",
+        Effect.fn("environment.voice.removeSynthesisModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* local.remove(args.payload.modelId).pipe(mapInstallError);
         }),
       )
       .handle(

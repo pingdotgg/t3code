@@ -40,4 +40,10 @@ export {
   type VoiceTranscriptionOptions,
 } from "./transcription.ts";
 
-export { getSpeechSynthesisModels, synthesizeSpeech } from "./environment.ts";
+export {
+  cancelSpeechSynthesisModelDownload,
+  downloadSpeechSynthesisModel,
+  getSpeechSynthesisModels,
+  removeSpeechSynthesisModel,
+  startSpeechSynthesis,
+} from "./environment.ts";

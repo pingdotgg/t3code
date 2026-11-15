@@ -3,6 +3,8 @@ import {
   SpeechSynthesisRequest,
   SpeechSynthesisCatalog,
   SpeechSynthesisError,
+  SpeechSynthesisModelRequest,
+  SpeechSynthesisStream,
 } from "./readAloud.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
@@ -856,16 +858,40 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
-    HttpApiEndpoint.post("synthesize", "/api/voice/synthesis/:provider", {
+    HttpApiEndpoint.post("startSynthesis", "/api/voice/synthesis/:provider/stream", {
       headers: OptionalBearerHeaders,
       params: Schema.Struct({ provider: SpeechSynthesisProvider }),
       payload: SpeechSynthesisRequest,
-      success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
+      success: SpeechSynthesisStream,
       error: [
         ...EnvironmentScopedOperationErrors,
         EnvironmentRequestInvalidError,
         SpeechSynthesisError,
       ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("downloadSynthesisModel", "/api/voice/synthesis/local/models/download", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelSynthesisModel", "/api/voice/synthesis/local/models/cancel", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisModel", "/api/voice/synthesis/local/models/remove", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisModelRequest,
+      success: SpeechSynthesisCatalog,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

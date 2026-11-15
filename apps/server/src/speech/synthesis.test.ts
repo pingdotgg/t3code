@@ -6,10 +6,77 @@ import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import { localSynthesisLanguage, localSynthesisRuntimes } from "./LocalSpeechSynthesis.ts";
+import { pcm16Mono } from "./synthesisAudio.ts";
+
+it("encodes model samples as clipped mono 16-bit PCM", () => {
+  const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
+  expect([...pcm]).toEqual([0, 32767, -32768, 32767, -32768, 0, 16383]);
+  expect([...pcm16Mono(Float32Array.of(1, -1, 0.5, 0.5), 2)]).toEqual([0, 16383]);
+});
+
+// An MPEG audio frame header's version bits and sample-rate index give the encoded rate.
+// At 48 kbps, LAME keeps 24 kHz input and resamples 44.1 kHz input to 32 kHz.
+function mp3SampleRate(bytes: Uint8Array) {
+  expect(bytes[0]).toBe(0xff);
+  const rates = { 0: [11025, 12000, 8000], 2: [22050, 24000, 16000], 3: [44100, 48000, 32000] };
+  return rates[((bytes[1]! >> 3) & 3) as 0 | 2 | 3][(bytes[2]! >> 2) & 3];
+}
+
+it.each([
+  ["en-US", "en"],
+  ["PT", "pt"],
+  ["auto", undefined],
+  ["xx", undefined],
+])("maps the %s reading language onto a local model language", (setting, language) => {
+  expect(localSynthesisLanguage(setting, ["en", "pt", "ko"])).toBe(language);
+});
+
+it.each([
+  {
+    platform: "darwin",
+    architecture: "arm64",
+    libc: undefined,
+    glibc: undefined,
+    backends: ["metal"],
+  },
+  {
+    platform: "win32",
+    architecture: "x64",
+    libc: undefined,
+    glibc: undefined,
+    backends: ["vulkan", "cpu"],
+  },
+  { platform: "linux", architecture: "x64", libc: "gnu", glibc: "2.43", backends: ["vulkan"] },
+  {
+    platform: "linux",
+    architecture: "x64",
+    libc: "gnu",
+    glibc: "2.39",
+    error: "glibc 2.43 or newer",
+  },
+  { platform: "linux", architecture: "arm64", libc: "gnu", glibc: "2.43", error: "not available" },
+  {
+    platform: "linux",
+    architecture: "x64",
+    libc: "musl",
+    glibc: undefined,
+    error: "not available",
+  },
+] as const)(
+  "installs the speech builds that load on $platform-$architecture with glibc $glibc",
+  ({ backends = [], error, ...host }) => {
+    const result = localSynthesisRuntimes(host);
+    expect(result.runtimes.map((runtime) => runtime.backend)).toEqual(backends);
+    if (error) expect(result.error).toContain(error);
+    else expect(result.error).toBeUndefined();
+  },
+);
 
 it.effect.each(["openai", "xai", "openrouter"] as const)(
   "synthesizes with %s without leaking keys to another destination",
@@ -35,6 +102,11 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
       const settingsLayer = ServerSettings.ServerSettingsService.layerTest();
       const program = Effect.gen(function* () {
         const service = yield* CloudSpeech.CloudSpeech;
+        const synthesize = (...args: Parameters<typeof service.stream>) =>
+          service.stream(...args).pipe(
+            Stream.runCollect,
+            Effect.map((chunks) => Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))),
+          );
         yield* service.setKey(
           provider === "openai" ? "xai" : "openai",
           Redacted.make("must-not-be-forwarded"),
@@ -46,7 +118,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
           speed: 1.25,
           language: "en",
         };
-        expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+        expect(yield* Effect.flip(synthesize(provider, request))).toMatchObject({
           reason: "missing-key",
         });
         expect(upstream).not.toHaveBeenCalled();
@@ -68,7 +140,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
             return catalog.promise;
           });
           const pending = yield* Effect.forkChild(
-            Effect.flip(service.synthesize(provider, { ...request, voice: "" })),
+            Effect.flip(synthesize(provider, { ...request, voice: "" })),
           );
           yield* Effect.promise(() => requested.promise);
           yield* service.setKey(provider, null);
@@ -85,14 +157,9 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
           yield* service.setKey(provider, Redacted.make("speech-key"));
           upstream.mockClear();
         }
-        const result = yield* service.synthesize(provider, request);
-        if (provider === "openrouter") {
-          expect(new TextDecoder().decode(result.slice(0, 4))).toBe("RIFF");
-          const header = new DataView(result.buffer, result.byteOffset);
-          expect(header.getUint32(24, true)).toBe(44100);
-          expect(header.getUint32(40, true)).toBe(4);
-          expect(result.slice(44)).toEqual(Uint8Array.of(73, 68, 51, 1));
-        } else expect([...result]).toEqual([73, 68, 51, 1]);
+        const result = yield* synthesize(provider, request);
+        if (provider === "openrouter") expect(mp3SampleRate(result)).toBe(32000);
+        else expect([...result]).toEqual([73, 68, 51, 1]);
         const [url, init] = upstream.mock.calls[0]!;
         expect(String(url)).toBe(
           {
@@ -150,28 +217,26 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
           );
         }
         if (provider === "openrouter") {
-          yield* service.synthesize(provider, { ...request, voice: "" });
+          yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
           for (const [model, expectedRate] of [
             ["google/gemini-tts", 24000],
-            ["heygen/heygen-voice-1", 44100],
+            ["heygen/heygen-voice-1", 32000],
           ] as const) {
             upstream.mockResolvedValueOnce(
               new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
             );
-            const plainPcm = yield* service.synthesize(provider, {
+            const plainPcm = yield* synthesize(provider, {
               ...request,
               model,
               voice: "reader",
             });
-            expect(new DataView(plainPcm.buffer, plainPcm.byteOffset).getUint32(24, true)).toBe(
-              expectedRate,
-            );
+            expect(mp3SampleRate(plainPcm)).toBe(expectedRate);
           }
           for (const model of ["minimax/speech-test:free", "mistralai/voxtral-mini-tts-2603"]) {
             upstream.mockResolvedValueOnce(new Response(new Uint8Array([73, 68, 51, 1])));
             expect([
-              ...(yield* service.synthesize(provider, {
+              ...(yield* synthesize(provider, {
                 ...request,
                 model,
               })),
@@ -188,7 +253,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
             upstream.mockResolvedValueOnce(
               new Response(new Uint8Array([0, 1]), { headers: { "content-type": contentType } }),
             );
-            expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+            expect(yield* Effect.flip(synthesize(provider, request))).toMatchObject({
               reason: "unavailable",
             });
           }
@@ -196,7 +261,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         upstream.mockResolvedValueOnce(
           new Response("private upstream diagnostic", { status: 429 }),
         );
-        expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+        expect(yield* Effect.flip(synthesize(provider, request))).toMatchObject({
           reason: "rate-limit",
         });
         upstream.mockResolvedValueOnce(
@@ -208,7 +273,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
             }),
           ),
         );
-        const streamFailure = yield* Effect.flip(service.synthesize(provider, request));
+        const streamFailure = yield* Effect.flip(synthesize(provider, request));
         expect(streamFailure).toHaveProperty("cause");
         expect(streamFailure.message).not.toContain("private stream diagnostic");
         for (const operation of (provider === "openai"
@@ -233,7 +298,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
             expect(failedCatalog.error).toBeDefined();
             expect(failedCatalog.apiKeyProvider).toBe(provider);
           } else
-            expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+            expect(yield* Effect.flip(synthesize(provider, request))).toMatchObject({
               reason: "unavailable",
             });
           expect(pulls).toBeLessThan(40);
@@ -241,7 +306,7 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         }
         yield* service.setKey(provider, null);
         const count = upstream.mock.calls.length;
-        expect(yield* Effect.flip(service.synthesize(provider, request))).toMatchObject({
+        expect(yield* Effect.flip(synthesize(provider, request))).toMatchObject({
           reason: "missing-key",
         });
         expect(upstream.mock.calls.length).toBe(count);

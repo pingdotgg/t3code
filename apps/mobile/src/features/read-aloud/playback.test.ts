@@ -1,4 +1,4 @@
-import { synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
+import { startSpeechSynthesis } from "@t3tools/client-runtime/voice-input";
 import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import * as Speech from "expo-speech";
@@ -20,7 +20,6 @@ vi.mock("react-native", () => ({
     },
   },
 }));
-vi.mock("../../lib/uuid", () => ({ uuidv4: () => "speech-test" }));
 vi.mock("expo-speech", () => ({
   getAvailableVoicesAsync: vi.fn(async () => []),
   speak: vi.fn(),
@@ -34,15 +33,6 @@ vi.mock("expo-audio", () => ({
   setIsAudioActiveAsync: vi.fn(async () => {}),
   createAudioPlayer: vi.fn(),
 }));
-vi.mock("expo-file-system", () => ({
-  Paths: { cache: "cache" },
-  File: class {
-    uri = "test.mp3";
-    exists = true;
-    write() {}
-    delete() {}
-  },
-}));
 vi.mock("../../state/atom-registry", async () => {
   const Option = await import("effect/Option");
   return { appAtomRegistry: { get: () => Option.some({ environmentId: "host" }) } };
@@ -51,7 +41,7 @@ vi.mock("../../state/session", () => ({
   environmentSession: { preparedConnectionValueAtom: () => null },
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
-  synthesizeSpeech: vi.fn(() => ({ kind: "audio" })),
+  startSpeechSynthesis: vi.fn(() => ({ kind: "audio" })),
   getSpeechSynthesisModels: vi.fn((_prepared: unknown, provider: string) => ({
     kind: "catalog",
     provider,
@@ -67,7 +57,7 @@ vi.mock("../voice-input/voiceDestination", async () => {
             defaultModel: "server-model",
             speedAppliedByProvider: operation.provider !== "openrouter",
           }
-        : Uint8Array.of(73, 68, 51, 1),
+        : "https://host.test/api/voice/synthesis/audio?token=stream",
   };
 });
 
@@ -123,7 +113,11 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
   await started.promise;
   await playing.promise;
   expect(player.setPlaybackRate).toHaveBeenCalledWith(1.25);
-  expect(synthesizeSpeech).toHaveBeenLastCalledWith(
+  expect(createAudioPlayer).toHaveBeenLastCalledWith(
+    "https://host.test/api/voice/synthesis/audio?token=stream",
+    expect.anything(),
+  );
+  expect(startSpeechSynthesis).toHaveBeenLastCalledWith(
     expect.anything(),
     "openrouter",
     expect.objectContaining({ model: "server-model", speed: 1.25 }),

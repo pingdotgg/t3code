@@ -27,6 +27,11 @@ export async function runCliCommand() {
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else if (command === "__speech-worker") {
     const mode = process.argv[3];
+    if (mode === "synthesis") {
+      const { runLocalSynthesisWorker } = await import("./speech/localSynthesisWorker.ts");
+      await runLocalSynthesisWorker();
+      return;
+    }
     if (mode !== "discover" && mode !== "model") throw new Error("Unknown speech worker mode.");
     const { runNativeSpeechWorker } = await import("./speech/native.ts");
     await runNativeSpeechWorker(mode, process.argv[4]);

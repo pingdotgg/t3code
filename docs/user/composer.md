@@ -206,6 +206,12 @@ System voices run on your device. OpenAI, Grok TTS, and OpenRouter send the repl
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
 voice, then use the preview to try it.
 
+**Local model** reads replies in English with Supertonic 3 on your selected environment,
+so the text never leaves it. Download it once from the same settings page (330–360 MB).
+It uses the GPU through Metal on macOS and Vulkan on Windows and Linux. Without a GPU it runs on
+the CPU and takes a few seconds longer to start speaking. Local models run on macOS, Windows x64,
+and Linux x64 with glibc 2.43 or newer, such as Ubuntu 26.04.
+
 On mobile, **Background playback** allows speech to continue while the app is in the background.
 
 ## Voice input on web and desktop

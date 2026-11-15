@@ -13,7 +13,13 @@ import {
   type SpeechSynthesisCatalog,
   type SpeechSynthesisProvider,
 } from "@t3tools/contracts";
-import { getSpeechSynthesisModels, setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
+import {
+  cancelSpeechSynthesisModelDownload,
+  downloadSpeechSynthesisModel,
+  getSpeechSynthesisModels,
+  removeSpeechSynthesisModel,
+  setCloudSpeechKey,
+} from "@t3tools/client-runtime/voice-input";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
@@ -110,6 +116,43 @@ export function ReadAloudSection() {
     };
   }, [prepared, settings.provider, catalogKey, catalogVersion]);
   const selectedModel = catalog.models.find((entry) => entry.id === model);
+  const install = settings.provider === "local" ? selectedModel?.install : undefined;
+  const [installing, setInstalling] = useState(false);
+  const downloading =
+    installing || install?.state === "downloading" || install?.state === "verifying";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
+  useEffect(() => {
+    if (!downloading) return;
+    const timer = setInterval(() => setCatalogVersion((value) => value + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [downloading]);
+  const changeInstall = (action: "download" | "cancel" | "remove") => {
+    if (!prepared || !selectedModel) return;
+    setInstalling(action === "download");
+    setError("");
+    void runSpeech(
+      action === "download"
+        ? downloadSpeechSynthesisModel(prepared, selectedModel.id)
+        : action === "cancel"
+          ? cancelSpeechSynthesisModelDownload(prepared, selectedModel.id)
+          : removeSpeechSynthesisModel(prepared, selectedModel.id),
+    )
+      .then(
+        () => {},
+        () =>
+          setError(
+            action === "download"
+              ? "Could not download the model. Check the environment's connection and disk space."
+              : "Could not change the model. Try again.",
+          ),
+      )
+      .finally(() => {
+        if (action === "download") setInstalling(false);
+        setCatalogVersion((value) => value + 1);
+      });
+  };
+  const installProgress =
+    install?.downloaded === undefined ? 0 : Math.round((install.downloaded / install.size) * 100);
   const voiceChoices =
     settings.provider === "system"
       ? voices.map((voice) => ({ id: voice.identifier, name: voice.name }))
@@ -118,7 +161,7 @@ export function ReadAloudSection() {
     <>
       <ListSection
         title="Read aloud"
-        footer="Hosted providers receive response text through your selected environment, use API billing, and share keys with dictation. Playback stops when you leave the thread."
+        footer="Hosted providers receive response text through your selected environment, use API billing, and share keys with dictation. A local model runs on that environment. Playback stops when you leave the thread."
       >
         <ListActionRow
           label="Speech provider"
@@ -181,6 +224,39 @@ export function ReadAloudSection() {
           </>
         )}
       </ListSection>
+      {install && prepared && selectedModel && (
+        <ListSection
+          title="Local model"
+          footer="Runs on the selected environment, so replies are read without leaving it."
+        >
+          {downloading ? (
+            <ListActionRow
+              label={`Cancel ${selectedModel.name} download`}
+              detail={
+                install.state === "verifying" ? "Verifying…" : `${installProgress}% downloaded`
+              }
+              disabled={!canManage}
+              loading
+              onPress={() => changeInstall("cancel")}
+            />
+          ) : install.state === "installed" ? (
+            <ListActionRow
+              label={`Remove ${selectedModel.name}`}
+              detail="Installed"
+              tone="danger"
+              disabled={!canManage}
+              onPress={() => changeInstall("remove")}
+            />
+          ) : (
+            <ListActionRow
+              label={`Download ${selectedModel.name}`}
+              detail={`${Math.round(install.size / 1024 / 1024)} MB`}
+              disabled={!canManage}
+              onPress={() => changeInstall("download")}
+            />
+          )}
+        </ListSection>
+      )}
       {cloud && prepared && canManage && (
         <ListSection
           title="Speech API key"
@@ -274,7 +350,7 @@ export function ReadAloudSection() {
                 </ListSection>
                 {environments.map((environment) => (
                   <ListSection key={environment.environmentId} title={`Via ${environment.label}`}>
-                    {(["openai", "xai", "openrouter"] as const).map((provider) => (
+                    {(["local", "openai", "xai", "openrouter"] as const).map((provider) => (
                       <ListChoiceRow
                         key={provider}
                         label={READ_ALOUD_LABELS[provider]}

@@ -1,8 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import * as Option from "effect/Option";
 import {
+  cancelSpeechSynthesisModelDownload,
+  downloadSpeechSynthesisModel,
   getCloudSpeechKeys,
   getSpeechSynthesisModels,
+  removeSpeechSynthesisModel,
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
@@ -20,6 +23,7 @@ import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import { readAloudController } from "../../speech/readAloud";
+import { DownloadIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
@@ -117,6 +121,120 @@ function ReadAloudKey({
   );
 }
 
+const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+
+function LocalSpeechModel({
+  prepared,
+  model,
+  onChanged,
+}: {
+  prepared: PreparedConnection;
+  model: SpeechSynthesisCatalog["models"][number];
+  onChanged: () => void;
+}) {
+  const canManage = useEnvironmentScope(prepared.environmentId, AuthSettingsWriteScope);
+  const [requesting, setRequesting] = useState(false);
+  const [error, setError] = useState("");
+  const install = model.install;
+  const downloading = install?.state === "downloading" || install?.state === "verifying";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
+  useEffect(() => {
+    if (!downloading && !requesting) return;
+    const timer = window.setInterval(onChanged, 1_000);
+    return () => window.clearInterval(timer);
+  }, [downloading, requesting, onChanged]);
+  if (!install) return null;
+  const run = async (action: "download" | "cancel" | "remove") => {
+    setRequesting(true);
+    setError("");
+    try {
+      await runEnvironmentSpeech(
+        action === "download"
+          ? downloadSpeechSynthesisModel(prepared, model.id)
+          : action === "cancel"
+            ? cancelSpeechSynthesisModelDownload(prepared, model.id)
+            : removeSpeechSynthesisModel(prepared, model.id),
+      );
+    } catch {
+      setError(
+        action === "download"
+          ? "Could not download the model. Check the environment's connection and disk space."
+          : "Could not change the model. Try again.",
+      );
+    }
+    setRequesting(false);
+    onChanged();
+  };
+  const progress = install.downloaded === undefined ? 0 : (install.downloaded / install.size) * 100;
+  return (
+    <SettingsRow
+      title={model.name}
+      description={
+        <>
+          {install.state === "installed"
+            ? "Installed on the selected environment. Replies are read without leaving it."
+            : `Runs on the selected environment after a ${formatSize(install.size)} download.`}
+          {downloading && (
+            <span className="mt-2 block">
+              <span
+                role="progressbar"
+                aria-label={`${model.name} download progress`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(progress)}
+                className="block h-1 overflow-hidden rounded-full bg-muted"
+              >
+                <span
+                  className="block h-full bg-primary transition-[width] duration-200"
+                  style={{ width: `${progress}%` }}
+                />
+              </span>
+              <span className="mt-1 block text-2xs">
+                {install.state === "verifying"
+                  ? "Verifying download…"
+                  : `${Math.round(progress)}% downloaded`}
+              </span>
+            </span>
+          )}
+          {error && <span role="alert"> {error}</span>}
+        </>
+      }
+      control={
+        downloading ? (
+          <Button
+            size="icon-sm"
+            variant="outline"
+            aria-label={`Cancel ${model.name} download`}
+            disabled={!canManage}
+            onClick={() => void run("cancel")}
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        ) : install.state === "installed" ? (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canManage || requesting}
+            onClick={() => void run("remove")}
+          >
+            Remove
+          </Button>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canManage || requesting}
+            onClick={() => void run("download")}
+          >
+            <DownloadIcon />
+            Download
+          </Button>
+        )
+      }
+    />
+  );
+}
+
 export function ReadAloudSettingsSection() {
   const settings = useClientSettings((value) => value.readAloud);
   const { environments } = useEnvironments();
@@ -137,6 +255,8 @@ export function ReadAloudSettingsSection() {
       ? catalogState.error || catalog.error || ""
       : "";
   const model = settings.model || catalog.defaultModel;
+  const localModel = catalog.models.find((entry) => entry.id === model && entry.install);
+  const refreshCatalog = () => setCatalogVersion((value) => value + 1);
   const [systemVoices, setSystemVoices] = useState<SpeechSynthesisVoice[]>([]);
   const state = useSyncExternalStore(
     readAloudController.subscribe,
@@ -196,7 +316,7 @@ export function ReadAloudSettingsSection() {
       <SettingsSearchTarget id="read-aloud">
         <SettingsRow
           title="Speech provider"
-          description="Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment."
+          description="Read completed replies with the play button beside Copy. Hosted providers receive the response text through the selected environment; a local model runs on it."
           control={
             <Select
               value={source}
@@ -257,8 +377,8 @@ export function ReadAloudSettingsSection() {
                 </SelectGroup>
                 {environments.map((environment) => (
                   <SelectGroup key={environment.environmentId}>
-                    <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
-                    {(["openai", "xai", "openrouter"] as const).map((provider) => (
+                    <SelectGroupLabel>Via {environment.label}</SelectGroupLabel>
+                    {(["local", "openai", "xai", "openrouter"] as const).map((provider) => (
                       <SelectItem
                         key={provider}
                         value={`${provider}:${environment.environmentId}`}
@@ -288,6 +408,14 @@ export function ReadAloudSettingsSection() {
               prepared={prepared}
               provider={catalog.apiKeyProvider}
               onSaved={() => setCatalogVersion((value) => value + 1)}
+            />
+          )}
+          {settings.provider === "local" && prepared && localModel && (
+            <LocalSpeechModel
+              key={`${prepared.environmentId}:${localModel.id}`}
+              prepared={prepared}
+              model={localModel}
+              onChanged={refreshCatalog}
             />
           )}
           {remote && error && (
@@ -327,7 +455,11 @@ export function ReadAloudSettingsSection() {
           {(settings.provider === "system" || catalog.supportsVoiceSelection) && (
             <SettingsRow
               title="Voice"
-              description="An empty value uses the first available OpenRouter voice or the provider's default."
+              description={
+                settings.provider === "openrouter"
+                  ? "An empty value uses the first available OpenRouter voice."
+                  : "An empty value uses the provider's default voice."
+              }
               control={
                 voices.length ? (
                   <Select

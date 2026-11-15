@@ -1,14 +1,5 @@
 import { expect, it } from "vite-plus/test";
-import { readAloudText, splitReadAloudText, speechAudioMimeType } from "./readAloud.ts";
-
-it.each([
-  { bytes: [0xff, 0xf9, 0x58, 0x40], mime: "audio/aac" },
-  { bytes: [0xff, 0xf1, 0x58, 0x40], mime: "audio/aac" },
-  { bytes: [0xff, 0xfb, 0x90, 0], mime: "audio/mpeg" },
-  { bytes: [82, 73, 70, 70], mime: "audio/wav" },
-])("recognizes $mime audio without treating MPEG frames as AAC", ({ bytes, mime }) => {
-  expect(speechAudioMimeType(Uint8Array.from(bytes))).toBe(mime);
-});
+import { readAloudText, splitReadAloudText } from "./readAloud.ts";
 
 it("reads visible prose and identifiers without link targets or fenced code", () => {
   const text =

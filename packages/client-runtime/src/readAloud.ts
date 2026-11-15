@@ -1,4 +1,4 @@
-import type { ReadAloudSettings } from "@t3tools/contracts";
+import { SPEECH_SYNTHESIS_MAX_TEXT, type ReadAloudSettings } from "@t3tools/contracts";
 import { readAloudText, splitReadAloudText } from "@t3tools/shared/read-aloud";
 
 export type SpeechPlayback = {
@@ -108,7 +108,11 @@ export function createReadAloudController(
     async start(id: string, markdown: string, settings: ReadAloudSettings) {
       stop();
       if (settings.provider === "off") return;
-      const chunks = splitReadAloudText(readAloudText(markdown, settings.skipCodeBlocks));
+      // Platform speech engines cap utterance length; environments stream a whole reply.
+      const chunks = splitReadAloudText(
+        readAloudText(markdown, settings.skipCodeBlocks),
+        settings.provider === "system" ? undefined : SPEECH_SYNTHESIS_MAX_TEXT,
+      );
       if (!chunks.length) return;
       const owner = new AbortController();
       active = owner;

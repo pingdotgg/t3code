@@ -140,6 +140,22 @@ it.effect("resumes an interrupted transfer, replaces a corrupt same-size file, a
   }).pipe(Effect.provide(dependencies)),
 );
 
+it.effect("fetches a file from its own URL and keeps a repository subfolder out of the store", () =>
+  Effect.gen(function* () {
+    const h = yield* harness;
+    h.bodies.current = () => Stream.succeed(bytes);
+    const archive = {
+      ...h.model,
+      filename: "runtime/library.tar.gz",
+      url: "https://example.test/library.tar.gz",
+    };
+    const installed = yield* h.store.download(archive);
+    expect(h.requests.map((request) => request.url)).toEqual([archive.url]);
+    expect(installed).toBe(`${h.directory}/library.tar.gz`);
+    expect(yield* h.store.installedPath(archive)).toBe(installed);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect("rejects a same-size download whose SHA-256 differs from the catalog", () =>
   Effect.gen(function* () {
     const h = yield* harness;

@@ -19,6 +19,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import { splitReadAloudText } from "@t3tools/shared/read-aloud";
 import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import * as Context from "effect/Context";
 import * as ByteSize from "effect/ByteSize";
@@ -30,7 +31,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
-import { MAX_SYNTHESIS_BYTES, speechWave } from "./synthesisAudio.ts";
+import { encodeMp3, MAX_SYNTHESIS_BYTES } from "./synthesisAudio.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases } from "./customWords.ts";
@@ -157,13 +158,16 @@ type SynthesisBackend = {
     HttpClientRequest.HttpClientRequest,
     SpeechSynthesisError | ServerSettingsError
   >;
-  decode: (
-    bytes: Uint8Array,
+  /** Raw PCM responses are encoded to MP3 here; MP3 responses stream through unchanged. */
+  pcmFormat?: (
     response: HttpClientResponse.HttpClientResponse,
     input: SpeechSynthesisRequest,
-  ) => Uint8Array;
+  ) => { readonly rate: number; readonly channels: number } | undefined;
   errorReason: (status: number) => SpeechSynthesisError["reason"];
 };
+
+// OpenAI accepts at most 4096 characters per request.
+const CLOUD_SYNTHESIS_TEXT_LIMIT = 4000;
 
 function wave(samples: Float32Array) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -229,12 +233,13 @@ export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
     readonly synthesisModels: (
-      provider: SpeechSynthesisProvider,
+      provider: CloudSpeechProvider,
     ) => Effect.Effect<SpeechSynthesisCatalog, SpeechSynthesisError | ServerSettingsError>;
-    readonly synthesize: (
-      provider: SpeechSynthesisProvider,
+    /** MP3 that streams through as the provider produces it. */
+    readonly stream: (
+      provider: CloudSpeechProvider,
       request: SpeechSynthesisRequest,
-    ) => Effect.Effect<Uint8Array, SpeechSynthesisError | ServerSettingsError>;
+    ) => Stream.Stream<Uint8Array, SpeechSynthesisError | ServerSettingsError>;
     readonly configured: Effect.Effect<CloudSpeechKeys, ServerSettingsError>;
     /** OpenRouter's public transcription catalog, cached briefly on this server. */
     readonly models: Effect.Effect<ReadonlyArray<CloudSpeechModel>, CloudSpeechError>;
@@ -312,7 +317,7 @@ export const layer = Layer.effect(
       (exit) => (Exit.isSuccess(exit) ? "10 minutes" : 0),
     );
     const loadSynthesisModels = Effect.fn("CloudSpeech.synthesisModels")(
-      function* (provider: SpeechSynthesisProvider) {
+      function* (provider: CloudSpeechProvider) {
         if (provider === "openai") return { models: openAiSpeechModels };
         if (provider === "xai") {
           const source = (yield* credentials).xai;
@@ -401,7 +406,6 @@ export const layer = Layer.effect(
               }),
             ),
           ),
-        decode: (bytes) => bytes,
         errorReason: synthesisErrorReason,
       },
       xai: {
@@ -425,7 +429,6 @@ export const layer = Layer.effect(
               }),
             ),
           ),
-        decode: (bytes) => bytes,
         errorReason: synthesisErrorReason,
       },
       openrouter: {
@@ -458,19 +461,19 @@ export const layer = Layer.effect(
             }),
           );
         }),
-        decode: (bytes, response, input) => {
-          if (openRouterSpeechFormat(input.model) !== "pcm") return bytes;
+        pcmFormat: (response, input) => {
+          if (openRouterSpeechFormat(input.model) !== "pcm") return undefined;
           const contentType = response.headers["content-type"] ?? "";
           const defaultRate = input.model.startsWith("heygen/") ? 44100 : 24000;
           const rate = Number(/(?:^|;)\s*rate\s*=([^;]*)/i.exec(contentType)?.[1] ?? defaultRate);
           const channels = Number(/(?:^|;)\s*channels\s*=([^;]*)/i.exec(contentType)?.[1] ?? "1");
-          return speechWave(bytes, rate, channels);
+          return { rate, channels };
         },
         errorReason: synthesisErrorReason,
       },
-    } satisfies Record<SpeechSynthesisProvider, SynthesisBackend>;
+    } satisfies Record<CloudSpeechProvider, SynthesisBackend>;
     const synthesisModels = Effect.fn("CloudSpeech.synthesisCatalog")(function* (
-      provider: SpeechSynthesisProvider,
+      provider: CloudSpeechProvider,
     ) {
       const backend = synthesisBackends[provider];
       return yield* backend.models.pipe(
@@ -485,19 +488,19 @@ export const layer = Layer.effect(
         }),
       );
     });
-    const synthesize = Effect.fn("CloudSpeech.synthesize")(
-      function* (provider: SpeechSynthesisProvider, request: SpeechSynthesisRequest) {
+    const synthesizePiece = Effect.fn("CloudSpeech.synthesizePiece")(
+      function* (
+        provider: CloudSpeechProvider,
+        source: SettingsSecretValue | undefined,
+        key: string,
+        input: SpeechSynthesisRequest,
+      ) {
         const unavailable = (cause?: unknown) =>
           isSynthesisError(cause)
             ? cause
             : new SpeechSynthesisError({ provider, reason: "unavailable", cause });
-        const source = (yield* credentials)[provider];
-        const key = yield* resolveKey(
-          source,
-          (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
-        );
         const backend: SynthesisBackend = synthesisBackends[provider];
-        const synthesisRequest = yield* backend.request(request);
+        const synthesisRequest = yield* backend.request(input);
         const current = (yield* credentials)[provider];
         if (!current || !source || !sameCredential(source, current))
           return yield* new SpeechSynthesisError({ provider, reason: "key-changed" });
@@ -509,19 +512,23 @@ export const layer = Layer.effect(
             provider,
             reason: backend.errorReason(response.status),
           });
-        const bytes = yield* readSynthesisBody(response, provider, MAX_SYNTHESIS_BYTES);
-        if (!bytes.length || bytes.length > MAX_SYNTHESIS_BYTES) return yield* unavailable();
-        return yield* Effect.try({
-          try: () => backend.decode(bytes, response, request),
-          catch: unavailable,
-        });
+        const format = backend.pcmFormat?.(response, input);
+        if (format) {
+          const pcm = yield* readSynthesisBody(response, provider, MAX_SYNTHESIS_BYTES);
+          return encodeMp3(pcm, format.rate, format.channels).pipe(Stream.mapError(unavailable));
+        }
+        let size = 0;
+        return response.stream.pipe(
+          Stream.mapError(unavailable),
+          Stream.mapEffect((chunk) =>
+            (size += chunk.byteLength) > MAX_SYNTHESIS_BYTES
+              ? Effect.fail(unavailable())
+              : Effect.succeed(chunk),
+          ),
+        );
       },
       (effect, provider) =>
         effect.pipe(
-          Effect.provideService(
-            HttpIncomingMessage.MaxBodySize,
-            ByteSize.bytes(MAX_SYNTHESIS_BYTES),
-          ),
           Effect.timeoutOrElse({
             duration: "2 minutes",
             orElse: () =>
@@ -529,6 +536,24 @@ export const layer = Layer.effect(
           }),
         ),
     );
+    const stream = (provider: CloudSpeechProvider, request: SpeechSynthesisRequest) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const source = (yield* credentials)[provider];
+          const key = yield* resolveKey(
+            source,
+            (reason, cause) => new SpeechSynthesisError({ provider, reason, cause }),
+          );
+          // Pieces play back to back as one stream; each is requested once the last one ends.
+          return Stream.fromIterable(
+            splitReadAloudText(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
+          ).pipe(
+            Stream.flatMap((text) =>
+              Stream.unwrap(synthesizePiece(provider, source, key, { ...request, text })),
+            ),
+          );
+        }),
+      ).pipe(Stream.withSpan("CloudSpeech.stream"));
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
@@ -611,6 +636,6 @@ export const layer = Layer.effect(
           }),
         ),
     );
-    return CloudSpeech.of({ configured, models, setKey, transcribe, synthesisModels, synthesize });
+    return CloudSpeech.of({ configured, models, setKey, transcribe, synthesisModels, stream });
   }),
 );

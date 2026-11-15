@@ -47,10 +47,3 @@ export function splitReadAloudText(text: string, limit = 3500) {
   if (rest) chunks.push(rest);
   return chunks;
 }
-
-export function speechAudioMimeType(bytes: Uint8Array) {
-  if (bytes[0] === 0xff && ((bytes[1] ?? 0) & 0xf6) === 0xf0) return "audio/aac";
-  return bytes[0] === 82 && bytes[1] === 73 && bytes[2] === 70 && bytes[3] === 70
-    ? "audio/wav"
-    : "audio/mpeg";
-}

@@ -37,6 +37,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.321",
+    "@breezystack/lamejs": "1.2.7",
     "@cursor/sdk": "1.3.1",
     "@effect/platform-node": "catalog:",
     "@effect/platform-node-shared": "catalog:",
@@ -66,6 +67,7 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "ffi-rs": "1.3.2",
+    "koffi": "3.3.6",
     "node-pty": "^1.2.0-beta.15",
     "playwright-core": "1.64.1",
     "proper-lockfile": "4.1.2",
@@ -83,6 +85,7 @@
     "@effect/vitest": "catalog:",
     "@handy-computer/models": "0.2.3",
     "@opencode-ai/sdk": "^1.3.15",
+    "@t3tools/audio-cpp": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/provider-testing": "workspace:*",
     "@t3tools/secret-provider-core": "workspace:*",

@@ -1,9 +1,9 @@
-import { uuidv4 } from "../../lib/uuid";
 import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
-import { getSpeechSynthesisModels, synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
-import { speechAudioMimeType } from "@t3tools/shared/read-aloud";
+import {
+  getSpeechSynthesisModels,
+  startSpeechSynthesis,
+} from "@t3tools/client-runtime/voice-input";
 import { createAudioPlayer } from "expo-audio";
-import { File, Paths } from "expo-file-system";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
 import { AppState, Platform } from "react-native";
@@ -125,8 +125,8 @@ export const readAloudController = createReadAloudController(async (text, settin
   const catalog = await pendingCatalog;
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
-  const bytes = await runSpeech(
-    synthesizeSpeech(prepared, settings.provider, {
+  const url = await runSpeech(
+    startSpeechSynthesis(prepared, settings.provider, {
       text,
       model: settings.model || catalog.defaultModel,
       voice: settings.voice,
@@ -136,20 +136,8 @@ export const readAloudController = createReadAloudController(async (text, settin
     signal,
   );
   signal.throwIfAborted();
-  const mimeType = speechAudioMimeType(bytes);
-  const file = new File(
-    Paths.cache,
-    `t3-speech-${uuidv4()}.${mimeType === "audio/wav" ? "wav" : mimeType === "audio/aac" ? "aac" : "mp3"}`,
-  );
-  let player: ReturnType<typeof createAudioPlayer>;
-  try {
-    file.write(bytes);
-    player = createAudioPlayer(file.uri, { updateInterval: 500 });
-    if (!catalog.speedAppliedByProvider) player.setPlaybackRate(settings.speed);
-  } catch {
-    if (file.exists) file.delete();
-    throw new Error("Could not prepare the generated speech for playback.");
-  }
+  const player = createAudioPlayer(url, { updateInterval: 500 });
+  if (!catalog.speedAppliedByProvider) player.setPlaybackRate(settings.speed);
   const stopWatching = watchForeground(settings);
   const session = createAudioPlaybackSession(
     {
@@ -207,7 +195,6 @@ export const readAloudController = createReadAloudController(async (text, settin
       stopWatching();
       session.stop();
       disposeAudioPlayer(player);
-      if (file.exists) file.delete();
       done();
     },
     finished,

@@ -1,7 +1,9 @@
 import type { SpeechSynthesisCatalog } from "@t3tools/contracts";
 import { createReadAloudController, type SpeechPlayback } from "@t3tools/client-runtime/read-aloud";
-import { getSpeechSynthesisModels, synthesizeSpeech } from "@t3tools/client-runtime/voice-input";
-import { speechAudioMimeType } from "@t3tools/shared/read-aloud";
+import {
+  getSpeechSynthesisModels,
+  startSpeechSynthesis,
+} from "@t3tools/client-runtime/voice-input";
 import { readPreparedConnection } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
@@ -57,8 +59,8 @@ export const readAloudController = createReadAloudController(async (text, settin
   const catalog = await pendingCatalog;
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
-  const bytes = await runEnvironmentSpeech(
-    synthesizeSpeech(prepared, settings.provider, {
+  const url = await runEnvironmentSpeech(
+    startSpeechSynthesis(prepared, settings.provider, {
       text,
       model: settings.model || catalog.defaultModel,
       voice: settings.voice,
@@ -68,9 +70,6 @@ export const readAloudController = createReadAloudController(async (text, settin
     { signal },
   );
   signal.throwIfAborted();
-  const url = URL.createObjectURL(
-    new Blob([new Uint8Array(bytes)], { type: speechAudioMimeType(bytes) }),
-  );
   const audio = new Audio(url);
   if (!catalog.speedAppliedByProvider) audio.playbackRate = settings.speed;
   let done: () => void = () => {};
@@ -86,7 +85,6 @@ export const readAloudController = createReadAloudController(async (text, settin
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
-      URL.revokeObjectURL(url);
       done();
     },
     finished,

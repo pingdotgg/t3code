@@ -6,7 +6,7 @@ import {
   type CloudSpeechProvider,
   type ReadAloudSettings,
 } from "@t3tools/contracts";
-import { Volume2Icon, VolumeXIcon } from "lucide-react";
+import { CpuIcon, Volume2Icon, VolumeXIcon } from "lucide-react";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 
@@ -17,6 +17,7 @@ export function SpeechProviderIcon({
 }) {
   if (provider === "off") return <VolumeXIcon aria-hidden className="size-4 shrink-0" />;
   if (provider === "system") return <Volume2Icon aria-hidden className="size-4 shrink-0" />;
+  if (provider === "local") return <CpuIcon aria-hidden className="size-4 shrink-0" />;
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
   return (
