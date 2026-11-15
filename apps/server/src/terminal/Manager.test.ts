@@ -1103,10 +1103,14 @@ it.layer(
         );
         const prompt = yield* Deferred.make<void>();
         const ready = yield* Deferred.make<void>();
+        const idlePrompt = yield* Deferred.make<void>();
         let output = "";
         const unsubscribe = yield* manager.subscribe((event) =>
           Effect.gen(function* () {
             if (event.type !== "output") return;
+            if (event.terminalId === "idle" && event.data.includes("SETTLEPROMPT> ")) {
+              yield* Deferred.succeed(idlePrompt, undefined);
+            }
             output += event.data;
             if (output.includes("SETTLEPROMPT> ")) yield* Deferred.succeed(prompt, undefined);
             // The command echo contains split strings, never this completed marker.
@@ -1119,8 +1123,12 @@ it.layer(
         yield* Deferred.await(prompt);
         yield* manager.write({ ...input, data: `${command}\r` });
         yield* Deferred.await(ready);
+        const idleInput = openInput({ cwd: home, terminalId: "idle" });
+        const idle = yield* manager.open(idleInput);
+        yield* Deferred.await(idlePrompt);
         yield* manager.closeOnSettle({ threadId: input.threadId });
         expect((yield* manager.open(input)).pid).toBe(before.pid);
+        expect((yield* manager.open(idleInput)).pid).not.toBe(idle.pid);
       }).pipe(Effect.provide(NativePty.layer)),
   );
 

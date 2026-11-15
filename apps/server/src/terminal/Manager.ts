@@ -716,7 +716,7 @@ function isRetryableShellSpawnError(error: PtyAdapter.PtySpawnError): boolean {
 interface TerminalProcessTableSnapshot {
   readonly childrenByParent: ReadonlyMap<number, ReadonlyArray<number>>;
   readonly commandById: ReadonlyMap<number, string>;
-  // The controlling terminal's foreground process group; `ps` reports it, native tables do not.
+  // macOS ps reports the foreground group; Linux reads procfs instead.
   readonly foregroundGroupById?: ReadonlyMap<number, number>;
 }
 
@@ -3829,6 +3829,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 terminalActivityMark(session) !== marks.get(session.terminalId)
                   ? Effect.void
                   : closeSession(input.threadId, session.terminalId, false),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("failed to close idle terminal", {
+                  threadId: input.threadId,
+                  terminalId: session.terminalId,
+                  error: error.message,
+                }),
               ),
             ),
           { discard: true },
