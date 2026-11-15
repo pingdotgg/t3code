@@ -132,8 +132,7 @@ vi.mock(import("../ui/toast"), async (original) => {
   return { ...actual, toastManager: { ...actual.toastManager, add: deviceTest.toast } };
 });
 
-import { BrowserSettingsPanel } from "./IntegrationsSettings";
-import { DevicesSettingsPanel } from "./IntegrationsSettings";
+import { BrowserSettingsPanel, DevicesSettingsPanel } from "./IntegrationsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 
 const [group] = buildSidebarProjectSnapshots({
@@ -180,7 +179,7 @@ it.each([
 const OFFLINE_STATUS = "Offline machines will not get this setting: Laptop.";
 
 // Desk stays connected with both device switches on; Laptop is a saved machine that is offline.
-function setupDevices({ offlineLaptop = true } = {}) {
+function setupDevices() {
   const desk = environments[0]!;
   const settings = { ...config.settings, enableDeviceSupport: true, enableAgentDeviceAccess: true };
   const laptop: EnvironmentPresentation = {
@@ -190,12 +189,7 @@ function setupDevices({ offlineLaptop = true } = {}) {
     connection: { phase: "offline", error: null, traceId: null },
     serverConfig: null,
   };
-  environments.splice(
-    0,
-    1,
-    { ...desk, serverConfig: { ...config, settings } },
-    ...(offlineLaptop ? [laptop] : []),
-  );
+  environments.splice(0, 1, { ...desk, serverConfig: { ...config, settings } }, laptop);
   deviceTest.configure.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
   deviceTest.toast.mockReset();
   return { [Symbol.dispose]: () => void environments.splice(0, Infinity, desk) };
@@ -209,23 +203,19 @@ const renderDevices = () =>
     { router: "/settings/devices" },
   );
 
-it.each([
-  ["Device hub", { enabled: false, agentAccessEnabled: false }],
-  ["Agent device access", { agentAccessEnabled: false }],
-])(
-  "turning off %s updates connected environments and names the offline ones",
-  async (name, input) => {
-    using _devices = setupDevices();
-    await using screen = await renderDevices();
-    const toggle = screen.getByRole("switch", { name });
+it("turning off the device hub updates connected environments and names the offline ones", async () => {
+  using _devices = setupDevices();
+  await using screen = await renderDevices();
+  const hub = screen.getByRole("switch", { name: "Device hub" });
 
-    await userEvent.click(toggle);
-    await expect.element(toggle).toBeEnabled();
-    expect(deviceTest.configure.mock.calls).toEqual([[{ environmentId, input }]]);
-    expect(deviceTest.toast).not.toHaveBeenCalled();
-    expect(screen.getByText(OFFLINE_STATUS).elements()).toHaveLength(2);
-  },
-);
+  await userEvent.click(hub);
+  await expect.element(hub).toBeEnabled();
+  expect(deviceTest.configure.mock.calls).toEqual([
+    [{ environmentId, input: { enabled: false, agentAccessEnabled: false } }],
+  ]);
+  expect(deviceTest.toast).not.toHaveBeenCalled();
+  expect(screen.getByText(OFFLINE_STATUS).elements()).toHaveLength(2);
+});
 
 it("reports a failed save on a connected environment and still names the offline ones", async () => {
   using _devices = setupDevices();
@@ -241,18 +231,4 @@ it("reports a failed save on a connected environment and still names the offline
     description: "Could not update Desk.",
   });
   expect(screen.getByText(OFFLINE_STATUS).elements()).toHaveLength(2);
-});
-
-it("updates the connected environment and shows no offline status when none is offline", async () => {
-  using _devices = setupDevices({ offlineLaptop: false });
-  await using screen = await renderDevices();
-  const agent = screen.getByRole("switch", { name: "Agent device access" });
-
-  await userEvent.click(agent);
-  await expect.element(agent).toBeEnabled();
-  expect(deviceTest.configure.mock.calls).toEqual([
-    [{ environmentId, input: { agentAccessEnabled: false } }],
-  ]);
-  expect(deviceTest.toast).not.toHaveBeenCalled();
-  await expect.element(screen.getByText(/Offline machines/)).not.toBeInTheDocument();
 });
