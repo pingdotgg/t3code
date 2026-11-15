@@ -128,7 +128,7 @@ function MarkdownCodeBlockTitleContent({
 
 export function MarkdownCodeBlock({
   code,
-  copyText = code,
+  copyText = code.endsWith("\n") ? code.slice(0, -1) : code,
   language,
   fenceTitle,
   theme,
