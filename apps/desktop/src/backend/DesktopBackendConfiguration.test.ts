@@ -23,6 +23,7 @@ import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopWslServerTree from "../wsl/DesktopWslServerTree.ts";
+import { pickDistroIpv4 } from "../wsl/wslPathParsing.ts";
 
 const layerShellEnvironment = (prepared = true) =>
   Layer.succeed(DesktopShellEnvironment.DesktopShellEnvironment, {
@@ -775,7 +776,7 @@ describe("DesktopBackendConfiguration", () => {
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-desktop-backend-config-test-",
       });
-      // Loopback stands in for the host address a mirrored distro reports.
+      // `hostname -I` output; loopback stands in for the host address a mirrored distro reports.
       const cases = [
         { exposureBindHost: "127.0.0.1", distroIp: null, url: "127.0.0.1", bind: "127.0.0.1" },
         {
@@ -789,6 +790,13 @@ describe("DesktopBackendConfiguration", () => {
         {
           exposureBindHost: "127.0.0.1",
           distroIp: "172.27.0.99",
+          url: "172.27.0.99",
+          bind: "0.0.0.0",
+          accepted: ["172.27.0.99"],
+        },
+        {
+          exposureBindHost: "127.0.0.1",
+          distroIp: "100.101.102.103 172.27.0.99",
           url: "172.27.0.99",
           bind: "0.0.0.0",
           accepted: ["172.27.0.99"],
@@ -816,7 +824,8 @@ describe("DesktopBackendConfiguration", () => {
                 DesktopWslEnvironment.layerTest({
                   isAvailable: true,
                   windowsToWslPath: () => Option.some("/mnt/c/repo/apps/server/src/index.ts"),
-                  getDistroIp: () => Option.fromNullishOr(distroIp),
+                  getDistroIp: (_distro, options) =>
+                    Option.fromNullishOr(pickDistroIpv4(distroIp ?? "", options)),
                 }),
               ),
               Layer.provideMerge(layerEnvironment(baseDir, { platform: "win32" })),

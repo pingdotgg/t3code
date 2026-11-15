@@ -17,7 +17,7 @@ import { satisfiesSemverRange } from "@t3tools/shared/semver";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
-import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
+import { parseWslDistroList, pickDistroIpv4, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
@@ -103,7 +103,10 @@ export class DesktopWslEnvironment extends Context.Service<
     ) => Effect.Effect<Option.Option<string>>;
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     // Use the distro IP to avoid unreliable wslhost localhost forwarding.
-    readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
+    readonly getDistroIp: (
+      distro: string | null,
+      options?: DistroIpOptions,
+    ) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,
       archive: WslRuntimeArchive,
@@ -1070,10 +1073,14 @@ export const windowsToWslPathImpl = (
   );
 };
 
-const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+interface DistroIpOptions {
+  // Pass over tailnet addresses, so a NAT address listed after one is still found.
+  readonly skipTailnet?: boolean;
+}
 
 const getDistroIpImpl = (
   distro: string | null,
+  options?: DistroIpOptions,
 ): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1094,9 +1101,7 @@ const getDistroIpImpl = (
       const stdoutBytes = yield* Stream.runCollect(handle.stdout);
       const exitCode = yield* handle.exitCode;
       if ((exitCode as unknown as number) !== 0) return Option.none<string>();
-      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      const candidate = raw.split(/\s+/).find((part) => IPV4_PATTERN.test(part));
-      return candidate ? Option.some(candidate) : Option.none<string>();
+      return Option.fromNullishOr(pickDistroIpv4(decodeUtf8(concatChunks(stdoutBytes)), options));
     }),
   ).pipe(
     Effect.timeoutOption(USER_HOME_TIMEOUT),
@@ -1168,7 +1173,10 @@ export interface DesktopWslEnvironmentTestStub {
   readonly distroListError?: DesktopWslDistroListError;
   readonly windowsToWslPath?: (distro: string | null, windowsPath: string) => Option.Option<string>;
   readonly getUserHome?: (distro: string | null) => Option.Option<string>;
-  readonly getDistroIp?: (distro: string | null) => Option.Option<string>;
+  readonly getDistroIp?: (
+    distro: string | null,
+    options?: DistroIpOptions,
+  ) => Option.Option<string>;
   readonly prepareRuntime?: (
     distro: string | null,
     archive: WslRuntimeArchive,
@@ -1203,8 +1211,8 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       getUserHome: Effect.fn("DesktopWslEnvironment.getUserHome")(function (distro) {
         return Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>());
       }),
-      getDistroIp: Effect.fn("DesktopWslEnvironment.getDistroIp")(function (distro) {
-        return Effect.succeed(stub.getDistroIp?.(distro) ?? Option.none<string>());
+      getDistroIp: Effect.fn("DesktopWslEnvironment.getDistroIp")(function (distro, options) {
+        return Effect.succeed(stub.getDistroIp?.(distro, options) ?? Option.none<string>());
       }),
       prepareRuntime: Effect.fn("DesktopWslEnvironment.prepareRuntime")(function (distro, archive) {
         return Effect.succeed(
@@ -1288,8 +1296,10 @@ export const layer = Layer.effect(
       return resolved;
     });
 
-    const getDistroIp = (distro: string | null) =>
-      provideSpawner(getDistroIpImpl(distro)).pipe(Effect.withSpan("desktop.wsl.getDistroIp"));
+    const getDistroIp = (distro: string | null, options?: DistroIpOptions) =>
+      provideSpawner(getDistroIpImpl(distro, options)).pipe(
+        Effect.withSpan("desktop.wsl.getDistroIp"),
+      );
 
     const probeDistros = provideSpawner(probeWslDistros).pipe(
       Effect.withSpan("desktop.wsl.probeDistros"),

@@ -641,7 +641,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
+  const networkAccessible = exposureBindHost === "0.0.0.0";
+  // With network access off, never dial or serve an in-distro tailnet address.
+  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig, {
+    skipTailnet: !networkAccessible,
+  });
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),
@@ -655,8 +660,6 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   // With network access off, a backend Windows reaches over loopback listens only there. NAT keeps
   // the wildcard because loopback must still answer for wslhost forwarding and the localhost
   // sign-in return page, but serves only loopback and the distro IP Windows dials.
-  const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
-  const networkAccessible = exposureBindHost === "0.0.0.0";
   const wslBindHost = !networkAccessible && rendererHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
   const acceptedLocalHosts =
     !networkAccessible && rendererHost !== "127.0.0.1" ? [rendererHost] : undefined;
