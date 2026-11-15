@@ -81,6 +81,10 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import {
+  projectComposerContextForProvider,
+  toComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { attachmentRelativePath } from "../../attachmentStore.ts";
@@ -2175,6 +2179,27 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
+const withTerminalContext = (text: string) =>
+  projectComposerContextForProvider({
+    text: `${text} [Terminal](t3-context://v1/terminal/ctx_terminal)`,
+    records: [
+      {
+        version: 1,
+        kind: "terminal",
+        contextId: toComposerContextId("ctx_terminal"),
+        label: "Terminal",
+        terminalId: "terminal-1",
+        terminalLabel: "Terminal 1",
+        lineStart: 1,
+        lineEnd: 1,
+        text: "$implement",
+      },
+    ],
+  });
+const terminalPrompt = withTerminalContext("Explain this terminal output.");
+const skillWithTerminalPrompt = withTerminalContext("please $implement the fix for");
+const skillWithTerminalText = skillWithTerminalPrompt.replace("$implement", "/implement");
+
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     ...[
@@ -2195,6 +2220,24 @@ describe("ClaudeAdapterV2 attachments", () => {
       resumed: false,
       budget,
     })),
+    {
+      name: "terminal reference",
+      prompt: terminalPrompt,
+      expectedText: terminalPrompt,
+      command: undefined,
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+    },
+    {
+      name: "skill before terminal reference",
+      prompt: skillWithTerminalPrompt,
+      expectedText: skillWithTerminalText,
+      command: skillWithTerminalText.slice("please ".length),
+      ultrathink: false,
+      resumed: false,
+      budget: "none",
+    },
     {
       name: "ordinary text",
       prompt: "What’s in this image?",

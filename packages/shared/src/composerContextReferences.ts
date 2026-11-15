@@ -225,6 +225,7 @@ export function replaceComposerContextReferences(
 
 const CONTEXT_ENVELOPE_TAG = "t3_context";
 const CONTEXT_ENTRY_TAG = "context";
+const ENVELOPE_OPEN = `\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n`;
 
 function kindDisplayName(kind: ComposerContextKind): string {
   const spaced = kind.replace(/-/g, " ");
@@ -424,12 +425,21 @@ export function projectComposerContextForProvider(input: {
     entries.push(entry);
   }
   if (entries.length === 0) return body;
-  return `${body}\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
+  return `${body}${ENVELOPE_OPEN}${entries.join("\n")}\n</${CONTEXT_ENVELOPE_TAG}>`;
+}
+
+/**
+ * Where `projectComposerContextForProvider`'s envelope starts in `text`, or `text.length` without
+ * one. Payloads escape the opening tag, so the last one is the envelope.
+ */
+export function composerContextEnvelopeStart(text: string): number {
+  const start = text.lastIndexOf(ENVELOPE_OPEN);
+  return start === -1 ? text.length : start;
 }
 
 const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
 const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^[\];\n]*); ref=([^[\]\s]+)\]/g;
-const MARKER_ENVELOPE_PREFIX = `\n\n<${CONTEXT_ENVELOPE_TAG} version="1">\n<${CONTEXT_ENTRY_TAG} kind="`;
+const MARKER_ENVELOPE_PREFIX = `${ENVELOPE_OPEN}<${CONTEXT_ENTRY_TAG} kind="`;
 
 /**
  * Readable form of a single-reference `projectComposerContextForProvider` output, as question

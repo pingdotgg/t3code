@@ -1,3 +1,7 @@
+import {
+  projectComposerContextForProvider,
+  toComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import { describe, expect, it } from "vite-plus/test";
 
 import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
@@ -66,6 +70,32 @@ describe("planClaudeSkillDispatch", () => {
         ),
       ).toBeUndefined();
     }
+  });
+
+  it("dispatches the user's skill after handoff history that attached context", () => {
+    const history = projectComposerContextForProvider({
+      text: "earlier [Terminal](t3-context://v1/terminal/ctx_terminal)",
+      records: [
+        {
+          version: 1,
+          kind: "terminal",
+          contextId: toComposerContextId("ctx_terminal"),
+          label: "Terminal",
+          terminalId: "terminal-1",
+          terminalLabel: "Terminal 1",
+          lineStart: 1,
+          lineEnd: 1,
+          text: "$implement",
+        },
+      ],
+    });
+    const prompt = `${history}\n\n$review the diff`;
+    expect(
+      planClaudeSkillDispatch(prompt, SKILLS, prompt.length - "$review the diff".length),
+    ).toEqual({
+      leadingText: `${history}\n\n/review the diff`,
+      commandText: "/review the diff",
+    });
   });
 
   it("bounds notes for repeated user-only skills and leaves the native dispatch unannotated", () => {
