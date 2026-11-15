@@ -481,7 +481,7 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   exit 1
 fi
 T3_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
-if [ -n "$T3_SYSTEM_EXECUTABLE" ] && [ "$("$T3_SYSTEM_EXECUTABLE" --version 2>/dev/null || true)" = "t3 v$T3_ARCHIVE_VERSION" ]; then
+if [ -n "$T3_SYSTEM_EXECUTABLE" ] && T3_SYSTEM_VERSION="$("$T3_SYSTEM_EXECUTABLE" --version 2>/dev/null)" && [ "$T3_SYSTEM_VERSION" = "t3 v$T3_ARCHIVE_VERSION" ]; then
   # A matching host-provided runtime supports platforms such as musl Linux,
   # where the portable release archive cannot run.
   exec "$T3_SYSTEM_EXECUTABLE" "$@"
@@ -1155,6 +1155,16 @@ function buildRemoteLogTailScript(stateKey: string): string {
   });
 }
 
+// Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+// profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+const remoteLoginShellArgs = (args = "") => [
+  "sh",
+  "-c",
+  shellSingleQuote(
+    `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s${args ? ` -- ${args}` : ""}" ;; *) exec sh -l -s${args ? ` -- ${args}` : ""} ;; esac`,
+  ),
+];
+
 export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemoteServer")(
   function* (
     target: DesktopSshEnvironmentTarget,
@@ -1178,15 +1188,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      // Shells known to take `-l -c` with a POSIX-style `exec` read their own login
-      // profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
-      remoteCommandArgs: [
-        "sh",
-        "-c",
-        shellSingleQuote(
-          `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${launchArgs}" ;; *) exec sh -l -s -- ${launchArgs} ;; esac`,
-        ),
-      ],
+      remoteCommandArgs: remoteLoginShellArgs(launchArgs),
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
@@ -1247,7 +1249,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     stateKey,
   });
   const result = yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
+    remoteCommandArgs: remoteLoginShellArgs(),
     stdin: buildRemotePairingScript(stateKey, runner),
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),

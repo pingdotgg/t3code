@@ -479,15 +479,18 @@ describe("ssh tunnel scripts", () => {
           "if shopt -q login_shell; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
         );
         const target = { alias: "login-test", hostname: "login-test", username: null, port: null };
-        let remoteCommand = "";
+        const remoteCommands: string[] = [];
         const capture = ChildProcessSpawner.make((command) =>
           Effect.sync(() => {
             const args = commandArgs(command);
-            remoteCommand = args.slice(args.indexOf(target.alias) + 1).join(" ");
-            return makeSuccessfulProcess('{"remotePort":3774}\n');
+            remoteCommands.push(args.slice(args.indexOf(target.alias) + 1).join(" "));
+            return makeSuccessfulProcess('{"remotePort":3774,"credential":"test"}\n');
           }),
         );
         yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture),
+        );
+        yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture),
         );
         yield* fs.writeFileString(
@@ -517,7 +520,9 @@ describe("ssh tunnel scripts", () => {
             break;
           }
         }
-        for (const { shell, outerShell, expected } of cases) {
+        for (const { shell, outerShell, expected, index, remoteCommand } of cases.flatMap((entry) =>
+          remoteCommands.map((remoteCommand, index) => ({ ...entry, remoteCommand, index })),
+        )) {
           const child = yield* spawner.spawn(
             ChildProcess.make(outerShell, ["-c", remoteCommand], {
               env: {
@@ -560,7 +565,11 @@ describe("ssh tunnel scripts", () => {
           assert.equal(Number(exitCode), 0, stderr);
           // First-run shell messages can precede the bootstrap response.
           const response = stdout.trim().split(/\r?\n/u).at(-1) ?? "";
-          assert.match(response, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
+          assert.match(
+            response,
+            new RegExp(index === 0 ? `^${expected}:[a-f0-9]{16}$` : `^${expected}:$`),
+            shell || "unset SHELL",
+          );
         }
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
   );
