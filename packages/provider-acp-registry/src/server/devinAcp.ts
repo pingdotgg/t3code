@@ -9,7 +9,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-const LEADING_SKILL_MENTION = /^\s*\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/;
+const LEADING_SKILL_MENTION = /^\s*\$(\S+)/;
 
 // The `$` picker inserts `$name`; Devin runs a skill only as its advertised `/name` command.
 export function rewriteDevinSkillMention(

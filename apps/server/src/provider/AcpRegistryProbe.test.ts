@@ -376,8 +376,11 @@ describe("ACP Registry probe", () => {
   });
 
   it("rewrites only a leading advertised $skill mention to Devin's /skill command", () => {
-    const skills = [{ name: "research" }];
+    const skills = [{ name: "research" }, { name: "acme.tools:review" }];
     expect(rewriteDevinSkillMention("  $research t3 code", skills)).toBe("/research t3 code");
+    expect(rewriteDevinSkillMention("$acme.tools:review now", skills)).toBe(
+      "/acme.tools:review now",
+    );
     expect(rewriteDevinSkillMention("$missing", skills)).toBe("$missing");
     expect(rewriteDevinSkillMention("$research.md notes", skills)).toBe("$research.md notes");
     expect(rewriteDevinSkillMention("use $research later", skills)).toBe("use $research later");
