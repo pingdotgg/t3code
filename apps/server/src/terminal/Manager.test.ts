@@ -1981,15 +1981,28 @@ it.layer(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-shell-path-" });
+      const { join } = yield* Path.Path;
+      const fixtureFs = FileSystem.FileSystem.of({
+        ...fs,
+        stat: (filePath) =>
+          fs.stat(
+            filePath.startsWith("/shell-fixture/")
+              ? join(root, filePath.slice("/shell-fixture/".length))
+              : filePath,
+          ),
+      });
       for (const directory of ["Jane Doe", "Jane -Doe", "Jane -Doe=Smith", "Jane -Doe Smith"]) {
-        const bin = `${root}/Users/${directory}/.local/bin`;
+        const bin = join(root, directory, ".local", "bin");
         yield* fs.makeDirectory(bin, { recursive: true });
-        const expected = `${bin}/fish`;
-        yield* fs.writeFileString(expected, "");
+        yield* fs.writeFileString(join(bin, "fish"), "");
+        const expected = `/shell-fixture/${directory}/.local/bin/fish`;
         const shell = `${expected} -l`;
         const { manager, ptyAdapter } = yield* createManager(5, {
           env: { SHELL: shell },
-        }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+        }).pipe(
+          Effect.provide(layerWithHostPlatform("darwin")),
+          Effect.provideService(FileSystem.FileSystem, fixtureFs),
+        );
 
         yield* manager.open(openInput());
 
@@ -2006,6 +2019,7 @@ it.layer(
   it.effect("strips shell flags without splitting quoted paths", () =>
     Effect.gen(function* () {
       for (const [shell, expected] of [
+        ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
         ['"/opt/my -shell/fish" -l', "/opt/my -shell/fish"],
         ["bash -l", "bash"],
         ["bash --rcfile=/x", "bash"],
