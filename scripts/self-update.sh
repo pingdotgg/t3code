@@ -98,6 +98,9 @@ main() {
   fi
   git merge --ff-only origin/main
 
+  # Skills are not part of the server, so a linking problem never blocks the update.
+  node scripts/workflow-link.ts || echo "Linking workflow skills failed; run vp run workflow:link." >&2
+
   step="installing dependencies"
   vp i
 
