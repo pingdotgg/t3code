@@ -161,7 +161,7 @@ function UpdateEverythingDialogContent({
           <div className="grid grid-cols-[minmax(4rem,max-content)_max-content_minmax(min-content,1fr)_max-content] gap-x-4 text-sm">
             <div className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs">
               <span>{i18n.t("sidebar:updateDialog.machine")}</span>
-              <span>T3 Code</span>
+              <span>{i18n.t("sidebar:updateDialog.app")}</span>
               <span>{i18n.t("sidebar:updateDialog.providers")}</span>
               <span />
             </div>
@@ -251,5 +251,9 @@ function UpdateEverythingDialogContent({
 
 function RunningThreads({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const count = useAtomValue(runningThreadCountAtom(environmentId));
-  return count > 0 ? <span className="whitespace-nowrap text-warning">{count} running</span> : null;
+  return count > 0 ? (
+    <span className="whitespace-nowrap text-warning">
+      {i18n.t("sidebar:updateDialog.runningCount", { count })}
+    </span>
+  ) : null;
 }

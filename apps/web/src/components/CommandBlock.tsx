@@ -5,6 +5,8 @@ import { cn } from "~/lib/utils";
 
 import { Button } from "./ui/button";
 
+import { translateDynamic } from "../i18nCore";
+
 export function CommandBlock({
   command,
   className,
@@ -33,7 +35,7 @@ export function CommandBlock({
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Copy command"
+        aria-label={translateDynamic("ui:copyCommand")}
         onClick={() => copyToClipboard(command, undefined)}
       >
         {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}

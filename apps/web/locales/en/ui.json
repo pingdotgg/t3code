@@ -8,5 +8,7 @@
   "saturationPlane": "{{label}} saturation and brightness",
   "setupProgress": "Setup progress",
   "stepAria": "{{step}}, step {{index}}{{summary}}",
-  "tryAgain": "Try again"
+  "tryAgain": "Try again",
+  "copyCommand": "Copy command",
+  "toggleSidebar": "Toggle Sidebar"
 }

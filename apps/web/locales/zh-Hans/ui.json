@@ -8,5 +8,7 @@
   "saturationPlane": "{{label}} 饱和度和亮度",
   "setupProgress": "设置进度",
   "stepAria": "{{step}}，第 {{index}} 步{{summary}}",
-  "tryAgain": "重试"
+  "tryAgain": "重试",
+  "copyCommand": "复制命令",
+  "toggleSidebar": "切换侧边栏"
 }

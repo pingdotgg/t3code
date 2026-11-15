@@ -189,7 +189,7 @@ function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
-        Code
+        {i18n.t("sidebar:chrome.code")}
       </span>
     </span>
   );

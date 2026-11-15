@@ -305,7 +305,7 @@ function SidebarThreadTooltip({
           <div className="flex min-w-0 items-start gap-2 text-warning">
             <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
             <div className="min-w-0 flex-1 wrap-break-word">
-              You're currently checked out on another branch.
+              {i18n.t("sidebar:threads.branchMismatch")}
             </div>
           </div>
         ) : null}
@@ -335,7 +335,9 @@ function SidebarThreadTooltip({
           <div className="flex min-w-0 items-center gap-2">
             <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
             <div className="min-w-0 truncate text-foreground/75">
-              Handed off from {previousProviderNames.join(", ")}
+              {i18n.t("sidebar:threads.handedOffFrom", {
+                names: previousProviderNames.join(", "),
+              })}
             </div>
           </div>
         ) : null}
@@ -1275,7 +1277,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
-                  Regenerating title
+                  {i18n.t("sidebar:threads.regeneratingTitleSr")}
                 </span>
               ) : null}
               {sortable?.isDragging ? (
@@ -1607,7 +1609,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
-                  Regenerating title
+                  {i18n.t("sidebar:threads.regeneratingTitleSr")}
                 </span>
               ) : null}
               {titleLineIcons}
