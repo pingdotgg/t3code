@@ -578,6 +578,13 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       headerItem.titleView = titles
     }
     header.items = [headerItem]
+    if #available(iOS 26.0, *) {
+      // iOS 26 bars draw no background; a screen's header stays legible through its scroll view's edge effect.
+      let edge = UIScrollEdgeElementContainerInteraction()
+      edge.scrollView = pager
+      edge.edge = .top
+      header.addInteraction(edge)
+    }
   }
 
   /// Extends the bar's background up under the status bar, like a screen's own navigation bar.
@@ -857,6 +864,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private func setChromeHidden(_ hidden: Bool) {
     guard chromeHidden != hidden else { return }
     chromeHidden = hidden
+    if #available(iOS 26.0, *) { pager.topEdgeEffect.isHidden = hidden }
     UIView.animate(withDuration: 0.2) {
       self.chrome.alpha = hidden ? 0 : 1
       self.setNeedsStatusBarAppearanceUpdate()
