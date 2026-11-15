@@ -519,9 +519,11 @@ export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderPar
   folderKey: string;
   style: SidebarThreadFolderStyle;
   label: string;
+  snoozed: boolean;
   expanded: boolean;
   onToggle: (folderKey: string) => void;
 }) {
+  const Icon = props.snoozed ? AlarmClockIcon : CheckIcon;
   return (
     <li
       data-thread-selection-safe
@@ -535,9 +537,11 @@ export const SidebarThreadFolderParkedRow = memo(function SidebarThreadFolderPar
         type="button"
         aria-expanded={props.expanded}
         onClick={() => props.onToggle(props.folderKey)}
-        className="flex h-[30px] w-full cursor-pointer items-center gap-1.5 rounded-md ps-9 pe-2.5 text-left text-xs text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className="flex h-[30px] w-full cursor-pointer items-center gap-2.5 rounded-md px-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <AlarmClockIcon aria-hidden className="size-3 shrink-0" />
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <Icon aria-hidden className="size-3" />
+        </span>
         <span className="min-w-0 flex-1 truncate">{props.label}</span>
         <ChevronRightIcon
           aria-hidden

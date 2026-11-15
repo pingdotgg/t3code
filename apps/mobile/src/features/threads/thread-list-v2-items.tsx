@@ -667,6 +667,8 @@ export const ThreadListV2FolderParkedRow = memo(function ThreadListV2FolderParke
 }) {
   const parked = props.item.parked;
   const nowMinuteMs = useNowMinuteMs();
+  const { fontScale } = useWindowDimensions();
+  const titleTypography = useScaledTextRole("body");
   if (parked === null) return null;
   const label = [
     ...(parked.snoozedCount > 0 ? [`${parked.snoozedCount} snoozed`] : []),
@@ -682,12 +684,19 @@ export const ThreadListV2FolderParkedRow = memo(function ThreadListV2FolderParke
       accessibilityLabel={label}
       onPress={() => props.onToggle(threadListV2ParkedKey(props.item.folderKey))}
       className={cn(
-        "flex-row items-center gap-1.5 py-2",
-        props.pane === "sidebar" ? "px-3" : "px-5",
+        THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
+        "flex-row items-center gap-2 py-2",
+        props.pane === "sidebar" && "px-3",
       )}
       style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
     >
-      <SymbolView name="clock" size={11} tintColorClassName="accent-foreground-muted" />
+      <View className="items-center" style={{ width: titleTypography.fontSize * 1.25 * fontScale }}>
+        <SymbolView
+          name={parked.snoozedCount > 0 ? "clock" : "checkmark"}
+          size={11}
+          tintColorClassName="accent-foreground-muted"
+        />
+      </View>
       <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
         {label}
       </Text>

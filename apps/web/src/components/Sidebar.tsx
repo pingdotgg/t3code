@@ -4339,6 +4339,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 folderKey={block.key}
                                 style={threadFolderStyle}
                                 label={threadFolderParkedLabel(block.parked, timestampFormat)}
+                                snoozed={block.parked.snoozedCount > 0}
                                 expanded={block.parked.expanded}
                                 onToggle={handleToggleThreadFolderParked}
                               />,
