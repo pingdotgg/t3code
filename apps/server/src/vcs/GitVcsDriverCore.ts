@@ -2885,7 +2885,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env ? { env } : {},
       );
     }
-    return preserveUnselectedConflicts ? filePaths : undefined;
+    return preserveUnselectedConflicts && filePaths
+      ? filePaths.map((file) => `:(top,literal)${file}`)
+      : undefined;
   });
 
   const prepareCommitContext: GitVcsDriver.GitVcsDriver["Service"]["prepareCommitContext"] =
@@ -3039,8 +3041,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (trimmedBody.length > 0) {
       args.push("-m", trimmedBody);
     }
+    const onlyFromStdin = partialCommitPaths ? yield* supportsPathspecFromFile(cwd) : false;
     if (partialCommitPaths) {
-      args.push("--only", "--pathspec-from-file=-", "--pathspec-file-nul");
+      args.push(
+        "--only",
+        ...(onlyFromStdin
+          ? ["--pathspec-from-file=-", "--pathspec-file-nul"]
+          : ["--", ...partialCommitPaths]),
+      );
     }
     const progress =
       options?.progress?.onOutputLine === undefined
@@ -3054,8 +3062,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
-      ...(partialCommitPaths
-        ? { stdin: partialCommitPaths.map((file) => `:(top,literal)${file}\0`).join("") }
+      ...(partialCommitPaths && onlyFromStdin
+        ? { stdin: partialCommitPaths.map((pathspec) => `${pathspec}\0`).join("") }
         : {}),
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
