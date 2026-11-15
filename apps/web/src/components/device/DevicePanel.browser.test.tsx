@@ -286,7 +286,7 @@ describe("DevicePanel notices", () => {
     await using screen = await render(devicePanel(threadA), { container });
     const devices = platform === "ios" ? "iOS Simulators" : "Android emulators";
     expect(container.textContent).toContain(
-      `Expo starts ${devices} in the cloud with EAS Simulator.`,
+      `Expo starts ${devices} in the cloud with Expo Simulators.`,
     );
     expect(container.textContent).toContain("This platform is temporarily unavailable.");
     expect(container.textContent).not.toContain("Xcode");
@@ -307,7 +307,7 @@ describe("DevicePanel notices", () => {
     };
     await screen.rerender(devicePanel(threadA));
     expect(container.textContent).toContain(
-      "Expo starts iOS Simulators and Android emulators in the cloud with EAS Simulator.",
+      "Expo starts iOS Simulators and Android emulators in the cloud with Expo Simulators.",
     );
     expect(container.textContent).not.toContain("temporarily unavailable");
     expect(container.textContent).not.toContain("Xcode");
