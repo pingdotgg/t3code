@@ -774,11 +774,15 @@ export const layer: Layer.Layer<
         });
         if (!repaired.committed) return;
       }
+      // The turn runs where the thread is now. The thread's scope follows its latest root run, which
+      // may be queued behind this one or predate a worktree switch; this run's checkpoints stay here.
+      const workspaceCwd = resolvedRuntimePolicy.cwd ?? checkpointScope.cwd;
+      const runCheckpointScope = { ...checkpointScope, cwd: workspaceCwd };
       // Opening a session does not prompt the provider, so the workspace is still unchanged.
       const baseline = yield* runExecution.forkBaseline({
         appThread: projection.thread,
         run,
-        checkpointScope,
+        checkpointScope: runCheckpointScope,
       });
       const sessionResult = yield* Effect.result(
         providerSessions.open({
@@ -1557,9 +1561,6 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
-      // The turn runs where the thread is now. The thread's scope follows its latest root run, which
-      // may be queued behind this one or predate a worktree switch; this run's checkpoints stay here.
-      const workspaceCwd = resolvedRuntimePolicy.cwd ?? checkpointScope.cwd;
       const runningRun: OrchestrationV2Run = {
         ...run,
         status: "running",
@@ -1825,8 +1826,7 @@ export const layer: Layer.Layer<
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,
-        // The baseline taken as the turn starts belongs in the same workspace.
-        checkpointScope: { ...checkpointScope, cwd: workspaceCwd },
+        checkpointScope: runCheckpointScope,
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
