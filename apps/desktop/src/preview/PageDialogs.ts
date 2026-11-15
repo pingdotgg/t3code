@@ -16,6 +16,7 @@ export interface PageDialogHold {
 
 // Electron shows page dialogs as a native app-modal box from the `-run-dialog` event and never
 // closes it when CDP answers. Replacing that listener keeps the dialog pending for the tab's UI.
+// Electron does not support `prompt()` and rejects it at once; we keep that.
 export function holdPageDialogs(
   contents: NodeJS.EventEmitter,
   changed: (dialog: DesktopPreviewDialog | null) => void,
@@ -37,6 +38,10 @@ export function holdPageDialogs(
     }
   };
   const run = (info: RunDialogInfo, callback: DialogCallback) => {
+    if (info.dialogType === "prompt") {
+      deliver(callback, false, "");
+      return;
+    }
     const previous = pending;
     if (previous !== null) deliver(previous, false, "");
     pending = callback;

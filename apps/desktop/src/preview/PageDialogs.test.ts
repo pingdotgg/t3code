@@ -32,7 +32,7 @@ describe("holdPageDialogs", () => {
 
   it("answers the page once and clears the dialog", () => {
     const { contents, changed, hold, callback } = setup();
-    contents.emit("-run-dialog", { ...info, dialogType: "prompt" }, callback);
+    contents.emit("-run-dialog", info, callback);
 
     expect(hold.answer(true, "yes")).toBe(true);
     expect(hold.answer(false)).toBe(false);
@@ -45,6 +45,26 @@ describe("holdPageDialogs", () => {
     contents.emit("-run-dialog", info, first);
     contents.emit("-run-dialog", info, callback);
     expect(first).toHaveBeenCalledExactlyOnceWith(false, "");
+  });
+
+  // A frame without the renderer prompt override reaches the hold
+  it("rejects a prompt at once like Electron and leaves a pending dialog alone", () => {
+    const { contents, changed, hold, callback } = setup();
+    contents.emit("-run-dialog", info, callback);
+    changed.mockClear();
+
+    const prompt = vi.fn();
+    contents.emit("-run-dialog", { ...info, dialogType: "prompt" }, prompt);
+
+    expect(prompt).toHaveBeenCalledExactlyOnceWith(false, "");
+    expect(changed).not.toHaveBeenCalled();
+    expect(hold.current()).toEqual({ type: "confirm", message: "Delete it?", defaultValue: "" });
+    expect(callback).not.toHaveBeenCalled();
+    expect(hold.answer(true)).toBe(true);
+    expect(callback).toHaveBeenCalledExactlyOnceWith(true, "");
+
+    contents.emit("-run-dialog", { ...info, dialogType: "prompt" }, prompt);
+    expect(hold.current()).toBeNull();
   });
 
   it("drops a dialog that CDP or a navigation already closed without answering twice", () => {
