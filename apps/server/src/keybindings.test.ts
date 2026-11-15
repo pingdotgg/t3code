@@ -449,7 +449,13 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
   it.effect("unassigns a shortcut without restoring it on startup and can reassign it", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
-      yield* writeKeybindingsConfig(keybindingsConfigPath, []);
+      yield* writeKeybindingsConfig(
+        keybindingsConfigPath,
+        Array.from({ length: MAX_KEYBINDINGS_COUNT }, (_, index) => ({
+          key: "mod+alt+f1",
+          command: `script.filler-${index}.run` as const,
+        })),
+      );
       const keybindings = yield* Keybindings.Keybindings;
       const target = SharedKeybindings.DEFAULT_KEYBINDINGS.find(
         (rule) => rule.command === "composer.sendBackground",

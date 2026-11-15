@@ -691,17 +691,13 @@ const make = Effect.gen(function* () {
             ...retainedConfig.slice(-availableSlots),
             { value: rule, rule },
           ];
-          const cappedConfig =
-            nextConfig.length > MAX_KEYBINDINGS_COUNT
-              ? nextConfig.slice(-MAX_KEYBINDINGS_COUNT)
-              : nextConfig;
-          if (nextConfig.length > MAX_KEYBINDINGS_COUNT) {
+          if (retainedConfig.length > availableSlots) {
             yield* Effect.logWarning("truncating keybindings config to max entries", {
               path: keybindingsConfigPath,
               maxEntries: MAX_KEYBINDINGS_COUNT,
             });
           }
-          yield* writeConfigAtomically(cappedConfig.map(({ value }) => value));
+          yield* writeConfigAtomically(nextConfig.map(({ value }) => value));
           return yield* reloadAndEmit;
         }),
       ),
