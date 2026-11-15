@@ -2550,12 +2550,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(continuationRequested, false);
               yield* cancelPendingRuntimeRequests();
               const context = yield* Ref.get(activeTurn);
-              if (context !== null)
+              if (context !== null) {
+                if (!context.finalized && !context.interrupted) {
+                  yield* terminalizeOpenForegroundTools(context, "failed");
+                }
                 yield* finalizeTurn(
                   context,
                   "failed",
                   makeProviderFailure({ class: "transport_error" }),
                 );
+              }
             }),
           ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
