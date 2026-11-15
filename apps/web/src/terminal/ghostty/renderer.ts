@@ -402,8 +402,8 @@ export function renderGhosttySnapshot(options: {
     } else {
       const cell = cells[snapshot.cursorX];
       context.fillRect(left, top, width, height);
+      context.fillStyle = cssColor(snapshot.background);
       if (cell?.text) {
-        context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
@@ -419,7 +419,6 @@ export function renderGhosttySnapshot(options: {
         }
       }
       if (cell && !cell.invisible) {
-        context.fillStyle = cssColor(snapshot.background);
         fillCellDecorations(context, cell, cell.underline, left, top, width, metrics);
       }
     }
