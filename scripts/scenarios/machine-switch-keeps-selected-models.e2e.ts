@@ -1,7 +1,7 @@
-import * as fs from "node:fs/promises";
-import * as nodePath from "node:path";
-
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { SECOND_HOME, startSecondServer } from "./second-server.ts";
@@ -15,10 +15,20 @@ test(
     const primary = makeState(T3_HOME);
     const second = makeState(SECOND_HOME);
     // Machines share a project through its repository, which needs a remote to be named by.
-    await fs.mkdir(nodePath.join(T3_HOME, "workspaces"), { recursive: true });
-    const workspace = await fs.mkdtemp(nodePath.join(T3_HOME, "workspaces", "demo-"));
+    const workspace = await runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(T3_HOME, "workspaces"), { recursive: true });
+        const directory = yield* fs.makeTempDirectory({
+          directory: path.join(T3_HOME, "workspaces"),
+          prefix: "demo-",
+        });
+        yield* fs.writeFileString(path.join(directory, "README.md"), "");
+        return directory;
+      }),
+    );
     const git = (args: ReadonlyArray<string>) => runPromise(run("git", args, { cwd: workspace }));
-    await fs.writeFile(nodePath.join(workspace, "README.md"), "");
     await git(["init", "--quiet", "--initial-branch=main"]);
     await git(["remote", "add", "origin", "https://github.com/scenario/demo.git"]);
     await git(["add", "--all"]);
