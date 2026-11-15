@@ -8393,13 +8393,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "other.txt", "other\n");
         const head = yield* git(cwd, ["rev-parse", "HEAD"]);
         const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
-        const nested = (yield* Path.Path).join(cwd, "nested");
-        yield* (yield* FileSystem.FileSystem).makeDirectory(nested);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nested = path.join(cwd, "nested");
+        yield* fs.makeDirectory(nested);
+        // A formatting hook stages its edit into the temporary index that --only commits from.
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/pre-commit",
+          "#!/bin/sh\necho formatted >> other.txt\ngit add other.txt\n",
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
 
         yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
 
         assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
         assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+        assert.equal(yield* git(cwd, ["show", "HEAD:other.txt"]), "other\nformatted");
+        assert.equal(yield* git(cwd, ["show", ":other.txt"]), "other\nformatted");
         assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
         const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
         assert.equal(

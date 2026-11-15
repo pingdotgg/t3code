@@ -3042,13 +3042,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       args.push("-m", trimmedBody);
     }
     const onlyFromStdin = partialCommitPaths ? yield* supportsPathspecFromFile(cwd) : false;
+    const onlyPathspecArgs = onlyFromStdin
+      ? ["--pathspec-from-file=-", "--pathspec-file-nul"]
+      : ["--", ...(partialCommitPaths ?? [])];
+    const onlyPathspecStdin =
+      partialCommitPaths && onlyFromStdin
+        ? { stdin: partialCommitPaths.map((pathspec) => `${pathspec}\0`).join("") }
+        : {};
     if (partialCommitPaths) {
-      args.push(
-        "--only",
-        ...(onlyFromStdin
-          ? ["--pathspec-from-file=-", "--pathspec-file-nul"]
-          : ["--", ...partialCommitPaths]),
-      );
+      args.push("--only", ...onlyPathspecArgs);
     }
     const progress =
       options?.progress?.onOutputLine === undefined
@@ -3062,12 +3064,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
       maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
-      ...(partialCommitPaths && onlyFromStdin
-        ? { stdin: partialCommitPaths.map((pathspec) => `${pathspec}\0`).join("") }
-        : {}),
+      ...onlyPathspecStdin,
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
     }).pipe(Effect.asVoid);
+    if (partialCommitPaths) {
+      // --only runs hooks on a temporary index, so a hook's `git add` never reaches the real one.
+      yield* runGit(
+        "GitVcsDriver.commit.syncSelectedIndex",
+        cwd,
+        ["reset", "--quiet", "HEAD", ...onlyPathspecArgs],
+        onlyPathspecStdin,
+      );
+    }
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
       "HEAD",
