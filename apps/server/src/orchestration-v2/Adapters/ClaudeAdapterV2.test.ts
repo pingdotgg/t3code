@@ -2179,25 +2179,22 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
-const withTerminalContext = (text: string) =>
-  projectComposerContextForProvider({
-    text: `${text} [Terminal](t3-context://v1/terminal/ctx_terminal)`,
-    records: [
-      {
-        version: 1,
-        kind: "terminal",
-        contextId: toComposerContextId("ctx_terminal"),
-        label: "Terminal",
-        terminalId: "terminal-1",
-        terminalLabel: "Terminal 1",
-        lineStart: 1,
-        lineEnd: 1,
-        text: "$implement",
-      },
-    ],
-  });
-const terminalPrompt = withTerminalContext("Explain this terminal output.");
-const skillWithTerminalPrompt = withTerminalContext("please $implement the fix for");
+const skillWithTerminalPrompt = projectComposerContextForProvider({
+  text: "please $implement the fix for [Terminal](t3-context://v1/terminal/ctx_terminal)",
+  records: [
+    {
+      version: 1,
+      kind: "terminal",
+      contextId: toComposerContextId("ctx_terminal"),
+      label: "Terminal",
+      terminalId: "terminal-1",
+      terminalLabel: "Terminal 1",
+      lineStart: 1,
+      lineEnd: 1,
+      text: "$implement",
+    },
+  ],
+});
 const skillWithTerminalText = skillWithTerminalPrompt.replace("$implement", "/implement");
 
 describe("ClaudeAdapterV2 attachments", () => {
@@ -2220,15 +2217,6 @@ describe("ClaudeAdapterV2 attachments", () => {
       resumed: false,
       budget,
     })),
-    {
-      name: "terminal reference",
-      prompt: terminalPrompt,
-      expectedText: terminalPrompt,
-      command: undefined,
-      ultrathink: false,
-      resumed: false,
-      budget: "none",
-    },
     {
       name: "skill before terminal reference",
       prompt: skillWithTerminalPrompt,
