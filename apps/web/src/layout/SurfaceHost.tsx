@@ -16,7 +16,7 @@ import { StatusDot } from "../components/ui/status-dot";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
-import { sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
+import { scrollTabStripFromRow, sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
 import { PaneMotionSnapshot, usePaneMotion } from "../motion/paneMotion";
 import {
   ChatPanelAnimationSuppressionProvider,
@@ -864,6 +864,72 @@ export function LayoutSurfaceHost({
     moveStripCamera(scroller, element, target);
   }, [centerRequest, focusedLeft, focusedWidth, stripPx]);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Extend strip wheel input into the window chrome above the workspace.
+  useEffect(() => {
+    const root = rootRef.current;
+    const scroller = scrollerRef.current;
+    const stage = stageRef.current;
+    if (!active || staged || stacked || !root || !scroller || !stage) return;
+    const chrome = document.createElement("div");
+    chrome.dataset.layoutStripChrome = "";
+    chrome.setAttribute("aria-hidden", "true");
+    chrome.className = "drag-region fixed top-0 hidden md:block";
+    const update = () => {
+      const box = scroller.getBoundingClientRect();
+      chrome.style.left = `${box.left}px`;
+      chrome.style.width = `${box.width}px`;
+      chrome.style.height = `${Math.max(0, box.top)}px`;
+      chrome.toggleAttribute(
+        "data-tab-row-overflow",
+        (scrollingWorkspaces && scroller.scrollWidth > scroller.clientWidth) ||
+          root.querySelector("[data-tab-row-overflow]") !== null,
+      );
+    };
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const delta = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
+      if (!delta || (!event.shiftKey && Math.abs(delta) <= Math.abs(event.deltaY))) return;
+      const header = [...scroller.querySelectorAll<HTMLElement>("[data-pane-header]")].find(
+        (row) => {
+          const box = row.getBoundingClientRect();
+          return (
+            box.height > 0 &&
+            box.top <= scroller.getBoundingClientRect().top + 1 &&
+            box.left <= event.clientX &&
+            box.right > event.clientX
+          );
+        },
+      );
+      const tabs = header?.querySelector<HTMLElement>("[data-layout-tab-strip]");
+      if (tabs) scrollTabStripFromRow(event, tabs);
+      if (
+        event.defaultPrevented ||
+        !scrollingWorkspaces ||
+        scroller.scrollWidth <= scroller.clientWidth
+      )
+        return;
+      event.preventDefault();
+      settleStripCamera();
+      noteUserStripScroll();
+      scroller.scrollLeft += wheelDeltaPx(delta, event);
+    };
+    root.parentElement?.append(chrome);
+    const stop = observeResize([root, scroller, stage], update);
+    const observer = new MutationObserver(update);
+    observer.observe(root, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-tab-row-overflow"],
+    });
+    chrome.addEventListener("wheel", wheel, { passive: false });
+    update();
+    return () => {
+      stop();
+      observer.disconnect();
+      chrome.remove();
+    };
+  }, [active, scrollingWorkspaces, staged, stacked]);
+
   // Hold alt+cmd and the strip follows the wheel sideways and a middle-button
   // drag, wherever the pointer is (pen ZlxmK). Up and down switch workspaces
   // (motion/workspaceSwitch.ts). Any sideways scroll of the user's takes the
@@ -875,19 +941,24 @@ export function LayoutSurfaceHost({
     const mac = isMacPlatform(navigator.platform);
     const held = (event: MouseEvent) =>
       mac ? event.metaKey && event.altKey : event.ctrlKey && event.altKey;
-    const moveStrip = (event: WheelEvent) => {
+    const moveStrip = (event: WheelEvent, delta: number) => {
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+      scroller.scrollLeft += wheelDeltaPx(delta, event);
     };
     const onWheel = (event: WheelEvent) => {
-      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY)) moveStrip(event);
+      if (held(event) && Math.abs(event.deltaX) > Math.abs(event.deltaY))
+        moveStrip(event, event.deltaX);
     };
     const onSidewaysWheel = (event: WheelEvent) => {
       if (event.defaultPrevented) return;
-      if (sidewaysWheelScrollsStrip(event.composedPath(), scroller, event.deltaX, event.deltaY)) {
-        moveStrip(event);
+      const shifted = event.shiftKey && event.deltaX === 0;
+      const delta = shifted ? event.deltaY : event.deltaX;
+      if (
+        sidewaysWheelScrollsStrip(event.composedPath(), scroller, delta, shifted ? 0 : event.deltaY)
+      ) {
+        moveStrip(event, delta);
       }
     };
     const onPointerDown = (event: PointerEvent) => {
