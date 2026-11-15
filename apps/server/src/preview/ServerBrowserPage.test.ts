@@ -23,6 +23,24 @@ import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
+describe("JPEG screenshot dimensions", () => {
+  const encode = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 24, 0, 32];
+
+  it("reads valid dimensions and rejects invalid or incomplete frames", () => {
+    expect(ServerBrowserPage.jpegSize(encode(frame))).toEqual({ width: 32, height: 24 });
+    for (const bytes of [
+      [],
+      [0xff, 0xd8, 0xff, 0xe1, 0, 20, 1],
+      frame.slice(0, -1),
+      [...frame.slice(0, 7), 0, 0, 0, 32],
+      [...frame.slice(0, 9), 0, 0],
+    ]) {
+      expect(() => ServerBrowserPage.jpegSize(encode(bytes))).toThrow("Invalid JPEG screenshot.");
+    }
+  });
+});
+
 describe("snapshot deadline diagnostics", () => {
   const never = () => new Promise<never>(() => {});
   const stalledSnapshot = async (options: {
@@ -591,7 +609,7 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+    const input = {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
@@ -599,7 +617,8 @@ describe("server browser snapshot screenshot", () => {
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
-    });
+    };
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot(input);
     // The server has no DOM types, so the decoder runs as page source.
     const points = [
       [0.15, 0.75],
@@ -618,7 +637,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, fullScreenshot, pixels };
+    return { screenshot, fullScreenshot, pixels, input };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -633,13 +652,20 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels, input } = await screenshotOf(halves(""));
+    const metadata = await ServerBrowserPage.snapshotMetadata(input);
 
     expect({
       size: [screenshot.width, screenshot.height],
       fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      metadataSize: metadata.screenshot,
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+    }).toEqual({
+      size: [1280, 800],
+      fullSize: [2560, 1600],
+      metadataSize: { width: 1280, height: 800 },
+      colors: ["blue", "red", "red"],
+    });
   });
 
   it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
@@ -762,6 +788,52 @@ describe("server browser drag", () => {
     } finally {
       await browser.close();
     }
+  });
+});
+
+describe("server browser action timeout", () => {
+  type StepOptions = { readonly timeout?: number };
+  it.each([
+    {
+      action: "hover",
+      act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
+      last: ["#a.hover 1"],
+    },
+    {
+      action: "drag",
+      act: (page: Page) =>
+        ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
+      last: ["#a.dragTo 1", "#b.boundingBox 1"],
+    },
+  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const box = { x: 0, y: 0, width: 20, height: 20 };
+    const page = {
+      locator: (selector: string) => {
+        const record = (step: string, options: StepOptions) =>
+          steps.push(`${selector}.${step} ${options.timeout}`);
+        return {
+          // Each step that finds the target takes 5 of the 9 seconds.
+          scrollIntoViewIfNeeded: async (options: StepOptions) => {
+            record("scrollIntoViewIfNeeded", options);
+            now += 5_000;
+          },
+          boundingBox: async (options: StepOptions) => {
+            record("boundingBox", options);
+            now += 5_000;
+            return box;
+          },
+          hover: async (options: StepOptions) => record("hover", options),
+          dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
+        };
+      },
+    } as unknown as Page;
+
+    await act(page);
+
+    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
   });
 });
 

@@ -6,11 +6,12 @@ import {
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
+import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 
-const ODS_PREVIEW_MAX_ROWS = 500;
-const ODS_PREVIEW_MAX_COLUMNS = 50;
+const TABLE_PREVIEW_MAX_ROWS = 500;
+const TABLE_PREVIEW_MAX_COLUMNS = 50;
 
 // `text` and `attrs` hold decoded values: escaped text is decoded once, CDATA stays literal.
 type XmlNode = { name: string; attrs: Record<string, string>; children: XmlNode[]; text: string };
@@ -27,6 +28,7 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
+  "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
   "http://www.w3.org/1999/xhtml": "",
   "http://www.idpf.org/2007/opf": "",
@@ -274,6 +276,7 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   if (
     [
       "office:annotation",
+      "presentation:notes",
       "text:tracked-changes",
       "office:scripts",
       "draw:object",
@@ -295,13 +298,20 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
   };
   const tag = tags[node.name];
   if (!tag) return children;
-  reserveMarkup(tag.length * 2 + 5);
-  return `<${tag}>${children}</${tag}>`;
+  const count =
+    tag === "tr"
+      ? repeat(node.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS)
+      : tag === "td"
+        ? repeat(node.attrs["table:number-columns-repeated"], TABLE_PREVIEW_MAX_COLUMNS)
+        : 1;
+  const markup = `<${tag}>${children}</${tag}>`;
+  reserveMarkup(count * markup.length - children.length);
+  return markup.repeat(count);
 }
 function repeat(value: string | undefined, max: number) {
   const count = Number(value ?? 1);
   if (!Number.isSafeInteger(count) || count < 1)
-    throw new Error("This spreadsheet contains invalid repeated cells.");
+    throw new Error("This document contains invalid repeated content.");
   return Math.min(count, max);
 }
 export async function openDocument(
@@ -332,34 +342,35 @@ export async function openDocument(
               find(cell, "text:p", "office:annotation").map(text).join("\n") ||
               cell.attrs["office:value"] ||
               cell.attrs["office:date-value"] ||
+              cell.attrs["office:time-value"] ||
               cell.attrs["office:boolean-value"] ||
               cell.attrs["office:string-value"] ||
               "";
             const count = repeat(
               cell.attrs["table:number-columns-repeated"],
-              ODS_PREVIEW_MAX_COLUMNS + 1,
+              TABLE_PREVIEW_MAX_COLUMNS + 1,
             );
-            if (value && cells.length + count > ODS_PREVIEW_MAX_COLUMNS) truncated = true;
-            for (let i = 0; i < count && cells.length < ODS_PREVIEW_MAX_COLUMNS; i++) {
+            if (value && cells.length + count > TABLE_PREVIEW_MAX_COLUMNS) truncated = true;
+            for (let i = 0; i < count && cells.length < TABLE_PREVIEW_MAX_COLUMNS; i++) {
               if (value.length > 10_000)
                 throw new Error("A spreadsheet cell is too large to preview.");
               cells.push(value);
             }
           }
           while (cells.at(-1) === "") cells.pop();
-          const count = repeat(row.attrs["table:number-rows-repeated"], ODS_PREVIEW_MAX_ROWS + 1);
+          const count = repeat(row.attrs["table:number-rows-repeated"], TABLE_PREVIEW_MAX_ROWS + 1);
           if (!cells.length) {
-            pendingEmptyRows = Math.min(ODS_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
+            pendingEmptyRows = Math.min(TABLE_PREVIEW_MAX_ROWS + 1, pendingEmptyRows + count);
             continue;
           }
-          while (pendingEmptyRows > 0 && rows.length < ODS_PREVIEW_MAX_ROWS) {
+          while (pendingEmptyRows > 0 && rows.length < TABLE_PREVIEW_MAX_ROWS) {
             rows.push([]);
             pendingEmptyRows--;
           }
           pendingEmptyRows = 0;
-          if (rows.length + count > ODS_PREVIEW_MAX_ROWS) truncated = true;
-          if (rows.length >= ODS_PREVIEW_MAX_ROWS) break;
-          for (let i = 0; i < count && rows.length < ODS_PREVIEW_MAX_ROWS; i++) {
+          if (rows.length + count > TABLE_PREVIEW_MAX_ROWS) truncated = true;
+          if (rows.length >= TABLE_PREVIEW_MAX_ROWS) break;
+          for (let i = 0; i < count && rows.length < TABLE_PREVIEW_MAX_ROWS; i++) {
             cellBytes += cells.reduce((size, cell) => size + cell.length, 0);
             if (cellBytes > 8 * 1024 * 1024)
               throw new Error("This spreadsheet has too much text to preview.");
@@ -431,12 +442,14 @@ function notebookText(value: unknown, limit = 256_000): string {
   if (result.length > limit) throw new Error("A notebook cell is too large to preview.");
   return result;
 }
-// IPython traceback frames may omit a final newline or follow it with ANSI SGR sequences.
+// IPython traceback frames carry ANSI SGR colors and may omit a final newline.
 function tracebackLines(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
-  const frames = value.filter((frame): frame is string => typeof frame === "string");
+  const frames = value
+    .filter((frame): frame is string => typeof frame === "string")
+    .map(terminalOutputPlainText);
   return frames.map((frame, index) =>
-    index && !/\n(?:\u001b\[[\d;:]*m)*$/.test(frames[index - 1]!) ? `\n${frame}` : frame,
+    index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
   );
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
@@ -480,6 +493,31 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   });
   return { type: "notebook", language, cells };
 }
+
+// Characters RTF writes as control symbols (`\~`) and control words (`\emspace`).
+const RTF_CHARACTERS = new Map([
+  ["~", "\u00a0"],
+  ["_", "\u2011"],
+  ["-", "\u00ad"],
+  ["tab", "\t"],
+  ["cell", "\t"],
+  ["endash", "–"],
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
+  ["emdash", "—"],
+  ["bullet", "•"],
+  ["lquote", "‘"],
+  ["rquote", "’"],
+  ["ldblquote", "“"],
+  ["rdblquote", "”"],
+  ["enspace", "\u2002"],
+  ["emspace", "\u2003"],
+  ["qmspace", "\u2005"],
+  ["zwbo", "\u200b"],
+  ["zwnj", "\u200c"],
+  ["zwj", "\u200d"],
+  ["ltrmark", "\u200e"],
+  ["rtlmark", "\u200f"],
+]);
 
 export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024)
@@ -582,7 +620,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       }
       const match = /^([a-z]+)(-?\d+)? ?/i.exec(source.slice(i));
       if (!match) {
-        if (next === "~") emit("\u00a0");
+        const character = RTF_CHARACTERS.get(next!);
+        if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
         else if ((next === "\n" || next === "\r") && !state.skip) html += "<br>";
         i++;
@@ -675,15 +714,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         fallback = state.uc;
       } else if (!state.skip && word === "page") finishPage();
       else if (!state.skip && (word === "par" || word === "line" || word === "row")) html += "<br>";
-      else if (word === "tab" || word === "cell") emit("\t");
-      else if (word === "endash") emit("–");
-      // oxlint-disable-next-line t3code/no-em-dash-copy -- Preserve the RTF document's punctuation.
-      else if (word === "emdash") emit("—");
-      else if (word === "bullet") emit("•");
-      else if (word === "lquote") emit("‘");
-      else if (word === "rquote") emit("’");
-      else if (word === "ldblquote") emit("“");
-      else if (word === "rdblquote") emit("”");
+      else {
+        const character = RTF_CHARACTERS.get(word!);
+        if (character) emit(character);
+      }
     } else if (char !== "\r" && char !== "\n" && char) emitByte(char.charCodeAt(0));
   }
   if (stack.length) throw new Error("This rich text document is damaged.");

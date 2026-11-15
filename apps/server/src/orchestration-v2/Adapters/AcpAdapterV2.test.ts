@@ -2456,12 +2456,7 @@ describe("AcpAdapterV2", () => {
           },
           stopReason === "error",
         );
-        const expectedStatus =
-          stopReason === "error"
-            ? "failed"
-            : stopReason === "cancelled"
-              ? "cancelled"
-              : "completed";
+        const expectedStatus = stopReason === "cancelled" ? "cancelled" : "failed";
         yield* reportNextPromptStopped(stopReason);
         assertReinjectedInstructions(yield* runTurn("Start work.", expectedStatus), "Start work.");
         assertReinjectedInstructions(
@@ -3080,6 +3075,131 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("replaces and removes identified ACP plans across turns", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-cross-turn-plans");
+      const threadId = ThreadId.make("acp-cross-turn-plans");
+      let notify:
+        | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+        | undefined;
+      let ordinal = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  ordinal++;
+                  const send = (update: EffectAcpSchema.SessionUpdate) =>
+                    notify!({ sessionId: "mock-session-1", update });
+                  const plan = (id: string, text: string) =>
+                    send({
+                      sessionUpdate: "plan_update",
+                      plan: {
+                        type: "items",
+                        planId: id,
+                        entries: [{ content: text, priority: "medium", status: "pending" }],
+                      },
+                    });
+                  yield* send({ sessionUpdate: "state_update", state: "running" });
+                  if (ordinal === 1) {
+                    yield* plan("control", "First");
+                    yield* plan("control", "Replacement");
+                    yield* send({ sessionUpdate: "plan_removed", planId: "control" });
+                    yield* plan("later-remove", "Remove on next turn");
+                    yield* plan("later-replace", "Old contents");
+                  } else {
+                    yield* send({ sessionUpdate: "plan_removed", planId: "later-remove" });
+                    yield* plan("later-replace", "New contents");
+                  }
+                  yield* send({
+                    sessionUpdate: "plan",
+                    entries: [{ content: "Anonymous plan", priority: "medium", status: "pending" }],
+                  });
+                  yield* send({
+                    sessionUpdate: "state_update",
+                    state: "idle",
+                    stopReason: "end_turn",
+                  });
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("acp-cross-turn-plans"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const run = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+          );
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
+          ).flatMap((event) => (event.type === "plan.updated" ? [event.plan] : []));
+        });
+      const first = yield* run(1);
+      assert.equal(first.length, 6);
+      assert.equal(first[0]!.id, first[1]!.id);
+      assert.equal(first[1]!.id, first[2]!.id);
+      assert.equal(first[1]!.kind, "todo_list");
+      assert.deepEqual(first[1]!.kind === "todo_list" ? first[1]!.steps.map((s) => s.text) : [], [
+        "Replacement",
+      ]);
+      assert.equal(first[2]!.status, "superseded");
+      const second = yield* run(2);
+      assert.equal(second.length, 3);
+      assert.notEqual(first[5]!.id, second[2]!.id);
+      const removed = second.find((p) => p.id === first[3]!.id && p.status === "superseded");
+      const replacement = second.find(
+        (p) => p.kind === "todo_list" && p.steps.some((s) => s.text === "New contents"),
+      );
+      assert.isDefined(
+        removed,
+        "plan_removed on a later turn must supersede the existing session plan",
+      );
+      assert.equal(removed?.runId, first[3]!.runId);
+      assert.equal(replacement?.runId, first[4]!.runId);
+      assert.equal(removed?.nodeId, first[3]!.nodeId);
+      assert.equal(replacement?.nodeId, first[4]!.nodeId);
+      assert.equal(
+        replacement?.id,
+        first[4]!.id,
+        "the same session plan must be replaced, not duplicated",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("starts a new replay message after ACP v2 plan boundaries", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3583,14 +3703,14 @@ describe("AcpAdapterV2", () => {
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
                     },
-                    {
-                      sessionUpdate: "agent_message_chunk",
-                      content: { type: "text", text: "ONE" },
+                    ...["O", "N", "E"].map((text) => ({
+                      sessionUpdate: "agent_message_chunk" as const,
+                      content: { type: "text" as const, text },
                       _meta: {
                         "cognition.ai/streamingMessageId": "child-result",
                         "cognition.ai/subagent_context": { parentAgentId: "child-a" },
                       },
-                    },
+                    })),
                     {
                       sessionUpdate: "tool_call",
                       toolCallId: "child-later",
@@ -3743,12 +3863,130 @@ describe("AcpAdapterV2", () => {
         (item) => item.threadId === task?.childThreadId && item.type === "assistant_message",
       );
       assert.equal(new Set(childAnswers.map((item) => item.ordinal)).size, 2);
+      // Later chunks coalesce; the subagent's completion flushes the final text.
+      assert.deepEqual(
+        childAnswers.flatMap((item) =>
+          item.type === "assistant_message" && item.text !== "Checking the code."
+            ? [item.text]
+            : [],
+        ),
+        ["O", "ONE"],
+      );
       const parentTools = items.filter(
         (item) => item.threadId === threadId && item.type === "dynamic_tool",
       );
       assert.equal(parentTools.length, 2);
       assert.equal(parentTools[0]?.title, "Parent tool finished");
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("emits coalesced subagent text before a failed turn's terminal", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("devin-failed-flush");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeToolCall: normalizeDevinToolCall,
+          extractSubagentUpdate: extractDevinSubagentUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  const updates = [
+                    {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "child-a",
+                      status: "in_progress",
+                      _meta: {
+                        "cognition.ai/subagent_started": {
+                          agentId: "child-a",
+                          title: "Answer",
+                          task: "Reply ONE.",
+                        },
+                      },
+                    },
+                    ...["O", "N", "E"].map((text) => ({
+                      sessionUpdate: "agent_message_chunk" as const,
+                      content: { type: "text" as const, text },
+                      _meta: {
+                        "cognition.ai/streamingMessageId": "child-result",
+                        "cognition.ai/subagent_context": { parentAgentId: "child-a" },
+                      },
+                    })),
+                  ] satisfies Array<EffectAcpSchema.SessionUpdate>;
+                  for (const update of updates)
+                    yield* handler!({ sessionId: "mock-session-1", update });
+                  return yield* new EffectAcpErrors.AcpRequestError({
+                    code: -32603,
+                    errorMessage: "prompt failed",
+                  });
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("devin-failed-flush-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("devin-failed-flush-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const events = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      );
+      const terminal = events.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
+      const childText = events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "assistant_message" &&
+        event.turnItem.threadId !== threadId
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.equal(childText.at(-1), "ONE");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("routes interleaved Copilot subagent output into subagent threads", () =>

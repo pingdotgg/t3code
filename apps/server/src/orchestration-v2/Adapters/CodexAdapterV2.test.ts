@@ -4596,27 +4596,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const scenario = "codex-provider-retry-stall";
       const nativeThreadId = `native-${scenario}-thread`;
       const nativeTurnId = `native-${scenario}-turn`;
+      const retryNotice = (attempt: number) => ({
+        type: "emit_inbound" as const,
+        label: `error/retry-${attempt}`,
+        frame: {
+          method: "error",
+          params: {
+            threadId: nativeThreadId,
+            turnId: nativeTurnId,
+            willRetry: true,
+            error: {
+              message: `Reconnecting... ${attempt}/5`,
+              additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
+              codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+            },
+          },
+        },
+      });
       const transcript = makeCodexReplayTranscript({
         scenario,
         entries: [
           ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-          {
-            type: "emit_inbound",
-            label: "error/retry",
-            frame: {
-              method: "error",
-              params: {
-                threadId: nativeThreadId,
-                turnId: nativeTurnId,
-                willRetry: true,
-                error: {
-                  message: "Reconnecting... 1/5",
-                  additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
-                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
-                },
-              },
-            },
-          },
+          retryNotice(1),
+          // A later notice in the same retry window must not push the deadline back.
+          { ...retryNotice(2), afterMs: 5 * 60 * 1000 },
           {
             type: "expect_outbound",
             label: "turn/interrupt",
@@ -4675,7 +4678,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         terminal.failure.message,
         "exceeded retry limit, last status: 429 Too Many Requests",
       );
-      assert.equal(terminal.retry?.attempt, 1);
+      assert.equal(terminal.retry?.attempt, 2);
       assert.equal(terminal.threadDisposition, "reusable");
     }).pipe(
       Effect.provide(
@@ -7003,6 +7006,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       notification: false,
       expectedClass: "provider_error",
     },
+    ...([false, true] as const).map(
+      (notification) =>
+        ({
+          name: `disconnected-${notification ? "notification" : "completion"}`,
+          code: "responseStreamDisconnected",
+          errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+          notification,
+          expectedClass: "transport_error",
+        }) as const,
+    ),
+    {
+      name: "connection-failed",
+      code: "responseStreamConnectionFailed",
+      errorInfo: { responseStreamConnectionFailed: { httpStatusCode: null } },
+      notification: false,
+      expectedClass: "transport_error",
+    },
+    {
+      name: "http-connection-failed",
+      code: "httpConnectionFailed",
+      errorInfo: { httpConnectionFailed: { httpStatusCode: null } },
+      notification: false,
+      expectedClass: "transport_error",
+    },
+    {
+      name: "http-provider-failure",
+      code: "httpConnectionFailed",
+      errorInfo: { httpConnectionFailed: { httpStatusCode: 503 } },
+      notification: false,
+      expectedClass: "provider_error",
+    },
     {
       name: "chatgpt-workspace-limit",
       code: "other",
@@ -7038,6 +7072,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedMessage: "Usage settings",
     },
     {
+      name: "terminal-disconnection",
+      code: "responseStreamDisconnected",
+      notification: false,
+      terminalMessage: "Connection lost.",
+      terminalErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+      expectedClass: "transport_error",
+    },
+    {
       name: "sharing-code-mention-retry",
       code: "responseStreamDisconnected",
       errorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
@@ -7046,6 +7088,71 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       willRetry: true,
       expectedClass: "transport_error",
     },
+    ...(
+      [
+        {
+          name: "generic-disconnection",
+          status: null,
+          terminalMessage: "Connection lost.",
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-replacement",
+          status: null,
+          terminalMessage: "A different failure.",
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-http-status",
+          status: 503,
+          terminalMessage: "Connection lost.",
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-truncated-replacement",
+          status: null,
+          details: `${"Connection lost. ".repeat(300)}Network cause.`,
+          terminalMessage: `${"Connection lost. ".repeat(300)}Different cause.`,
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-terminal-status",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseStreamDisconnected: { httpStatusCode: 503 } },
+          expectedClass: "provider_error",
+        },
+        {
+          name: "generic-exhaustion",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          completionErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-blank-details",
+          status: null,
+          details: " ",
+          terminalMessage: "Provider stopped this request.",
+          expectedClass: "transport_error",
+        },
+        {
+          name: "generic-exhaustion-status",
+          status: null,
+          terminalMessage: "Connection lost.",
+          terminalErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: 503 } },
+          completionErrorInfo: { responseTooManyFailedAttempts: { httpStatusCode: null } },
+          expectedClass: "provider_error",
+        },
+      ] as const
+    ).map((scenario) => ({
+      ...scenario,
+      code: "responseStreamDisconnected" as const,
+      errorInfo: { responseStreamDisconnected: { httpStatusCode: scenario.status } },
+      notification: true,
+      details: "details" in scenario ? scenario.details : "Connection lost.",
+    })),
   ] as const)("classifies Codex terminal failures from $name evidence", (scenario) =>
     Effect.gen(function* () {
       const nativeThreadId = `native-limit-${scenario.name}`;
@@ -7169,7 +7276,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     params: {
                       threadId: nativeThreadId,
                       turnId: nativeTurnId,
-                      willRetry: scenario.name === "retry" || "willRetry" in scenario,
+                      willRetry:
+                        scenario.name === "retry" ||
+                        "willRetry" in scenario ||
+                        "terminalMessage" in scenario,
                       error: {
                         message,
                         codexErrorInfo: errorInfo,
@@ -7179,6 +7289,27 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                             : scenario.name === "matching-details"
                               ? "Detailed provider allowance explanation."
                               : null,
+                      },
+                    },
+                  },
+                },
+              ]
+            : []),
+          ...("terminalMessage" in scenario
+            ? [
+                {
+                  type: "emit_inbound" as const,
+                  label: "error/terminal",
+                  frame: {
+                    method: "error",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      willRetry: false,
+                      error: {
+                        message: scenario.terminalMessage,
+                        codexErrorInfo:
+                          "terminalErrorInfo" in scenario ? scenario.terminalErrorInfo : "other",
                       },
                     },
                   },
@@ -7195,12 +7326,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 turn: {
                   ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
                   error: {
-                    message: scenario.name === "replacement" ? "A different failure." : message,
-                    ...(scenario.notification &&
-                    scenario.name !== "matching-details" &&
-                    !("details" in scenario)
-                      ? {}
-                      : { codexErrorInfo: errorInfo }),
+                    message:
+                      "terminalMessage" in scenario
+                        ? scenario.terminalMessage
+                        : scenario.name === "replacement"
+                          ? "A different failure."
+                          : message,
+                    ...("terminalMessage" in scenario
+                      ? {
+                          codexErrorInfo:
+                            "completionErrorInfo" in scenario
+                              ? scenario.completionErrorInfo
+                              : "other",
+                        }
+                      : scenario.notification &&
+                          scenario.name !== "matching-details" &&
+                          !("details" in scenario)
+                        ? {}
+                        : { codexErrorInfo: errorInfo }),
                   },
                 },
               },
@@ -7358,34 +7501,66 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   // regression: #17501 Codex 429 retry exhaustion classifies as a usage limit
   it.effect.each([
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 500,
       completionStatus: 429,
       willRetry: false,
       expectedClass: "usage_limit",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: 500,
       willRetry: true,
       expectedClass: "provider_error",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: null,
       willRetry: false,
       expectedClass: "usage_limit",
     },
     {
+      code: "responseTooManyFailedAttempts",
       notificationStatus: 429,
       completionStatus: null,
       willRetry: true,
       expectedClass: "usage_limit",
     },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: 503,
+      willRetry: false,
+      expectedClass: "provider_error",
+    },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: 503,
+      completionStatus: null,
+      willRetry: false,
+      expectedClass: "transport_error",
+    },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: 503,
+      willRetry: true,
+      expectedClass: "provider_error",
+    },
+    {
+      code: "responseStreamDisconnected",
+      notificationStatus: null,
+      completionStatus: null,
+      willRetry: false,
+      expectedClass: "transport_error",
+    },
   ] as const)(
-    "honors completion HTTP status from $notificationStatus to $completionStatus (retry: $willRetry)",
-    ({ notificationStatus, completionStatus, expectedClass, willRetry }) =>
+    "honors $code completion HTTP status from $notificationStatus to $completionStatus (retry: $willRetry)",
+    ({ code, notificationStatus, completionStatus, expectedClass, willRetry }) =>
       Effect.gen(function* () {
-        const name = `${notificationStatus}-${completionStatus}-${willRetry}`;
+        const name = `${code}-${notificationStatus}-${completionStatus}-${willRetry}`;
         const nativeThreadId = `native-exhaustion-status-${name}`;
         const nativeTurnId = `turn-exhaustion-status-${name}`;
         const message = "Provider stopped this request.";
@@ -7406,7 +7581,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   error: {
                     message,
                     codexErrorInfo: {
-                      responseTooManyFailedAttempts: { httpStatusCode: notificationStatus },
+                      [code]: { httpStatusCode: notificationStatus },
                     },
                     additionalDetails,
                   },
@@ -7425,7 +7600,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     error: {
                       message,
                       codexErrorInfo: {
-                        responseTooManyFailedAttempts: { httpStatusCode: completionStatus },
+                        [code]: { httpStatusCode: completionStatus },
                       },
                     },
                   },
@@ -7449,9 +7624,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(terminal?.status, "failed");
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, expectedClass);
-        assert.equal(terminal.failure.code, "responseTooManyFailedAttempts");
+        assert.equal(terminal.failure.code, code);
         assert.equal(terminal.threadDisposition, "reusable");
-        const notificationClass = notificationStatus === 429 ? "usage_limit" : "provider_error";
+        const notificationClass =
+          code === "responseTooManyFailedAttempts"
+            ? notificationStatus === 429
+              ? "usage_limit"
+              : "provider_error"
+            : notificationStatus === null
+              ? "transport_error"
+              : "provider_error";
         assert.equal(
           terminal.failure.message,
           expectedClass === notificationClass ? additionalDetails : message,
