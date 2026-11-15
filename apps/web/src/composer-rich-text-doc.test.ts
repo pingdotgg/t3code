@@ -314,7 +314,7 @@ describe("composer rich text document model", () => {
     "- [ ] parent\n  - [ ] child\n  - [ ] sibling\n- [ ] uncle",
     "- [ ] empty task follows\n- [ ]",
     "- [ ] **bold** task with @README.md",
-    "para\n- [ ] task\npara",
+    "para\n- [ ] task\n\npara",
     "- [ ]No space stays literal",
     "-[ ] also literal",
     "@README.md explain this",
@@ -498,7 +498,7 @@ describe("composer rich text document model", () => {
     "- **bold** item with @README.md",
     "- [ ] task\n- bullet after",
     "- bullet\n- [x] task after",
-    "para\n- item\npara",
+    "- item\n  indented continuation",
     "\t- tab indented\n\t- again",
     "  - leading indent only",
     "- item\n\n- after a blank",
@@ -599,6 +599,23 @@ describe("composer rich text document model", () => {
   });
 
   it.each([
+    ["para\n- item\npara", "para\n- item\n\npara"],
+    ["1. one\n2. two\nafter", "1. one\n2. two\n\nafter"],
+    ["- [ ] task\nafter", "- [ ] task\n\nafter"],
+    ["- a\n  - b\nafter", "- a\n  - b\n\nafter"],
+    ["- item\n@README.md please", "- item\n\n@README.md please"],
+    ["> quoted\nafter", "> quoted\n\nafter"],
+  ])("separates %j from the block above, which Markdown would fold it into", (glued, settled) => {
+    expect(roundTrip(glued).value).toBe(settled);
+    expect(roundTrip(settled).value).toBe(settled);
+    const blockTypes = (value: string) =>
+      buildDocJson(value, (name) => ({ label: name, description: null })).content.map(
+        (block) => block.type,
+      );
+    expect(blockTypes(settled)).toEqual(blockTypes(glued));
+  });
+
+  it.each([
     "---",
     "***",
     "___",
@@ -694,6 +711,9 @@ describe("composer rich text document model", () => {
       "paragraph",
     ]);
     expect(roundTrip(value).value).toBe(value);
+    for (const spaced of ["- item\r\n\r\npara", "> quote\r\n\r\npara"]) {
+      expect(roundTrip(spaced).value).toBe(spaced);
+    }
   });
 
   it("keeps the caret inside an empty fence", () => {
