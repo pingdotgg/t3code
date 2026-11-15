@@ -3,16 +3,28 @@ import {
   NAVIGATION_TAB_ICONS,
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from "react";
 import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
-import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
+import {
+  Tabs,
+  type TabSelectedEvent,
+  type TabSelectionPreventedEvent,
+  type TabSelectionRejectedEvent,
+} from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
   workspaceTabForNativeSlot,
   workspaceUsesColumns,
-  type WorkspaceTab,
 } from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
@@ -33,8 +45,9 @@ const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
 function RetainedWorkspaceTab(props: {
-  readonly tab: WorkspaceTab;
+  readonly slot: string;
   readonly active: boolean;
+  readonly setMountedSlots: Dispatch<SetStateAction<ReadonlySet<string>>>;
   readonly children: ReactNode;
 }) {
   const workspace = useWorkspaceTabs()!;
@@ -61,6 +74,26 @@ function RetainedWorkspaceTab(props: {
   );
   if (props.active && (content?.workspace !== workspace || content?.children !== props.children))
     setContent({ workspace, children: props.children });
+  const mounted = content !== null;
+  const { slot, setMountedSlots } = props;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which holds the switch until then
+  useEffect(() => {
+    if (!mounted) return;
+    // The header options this mount wrote reach UIKit in the commit after it.
+    const frame = requestAnimationFrame(() =>
+      setMountedSlots((current) => (current.has(slot) ? current : new Set(current).add(slot))),
+    );
+    return () => {
+      cancelAnimationFrame(frame);
+      // A replacement slot (e.g. a re-enabled fourth tab) must report its own mount.
+      setMountedSlots((current) => {
+        if (!current.has(slot)) return current;
+        const next = new Set(current);
+        next.delete(slot);
+        return next;
+      });
+    };
+  }, [mounted, slot, setMountedSlots]);
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
       <WorkspaceSlotOptionsContext value={slotOptions}>
@@ -98,10 +131,15 @@ export function WorkspaceNativeTabs(props: {
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
-  const request = {
-    selectedScreenKey: selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!,
-    baseProvenance: provenance,
-  };
+  const selectedScreenKey =
+    selectedSlot === -1 ? "settings" : NATIVE_WORKSPACE_TAB_SLOTS[selectedSlot]!;
+  // A slot mounts its content the first time it's selected. Showing it in that same commit
+  // shows a blank controller, then its header animates in, so the switch waits for the mount.
+  const [mountedSlots, setMountedSlots] = useState<ReadonlySet<string>>(() => new Set());
+  const [shownScreenKey, setShownScreenKey] = useState(selectedScreenKey);
+  if (shownScreenKey !== selectedScreenKey && mountedSlots.has(selectedScreenKey))
+    setShownScreenKey(selectedScreenKey);
+  const request = { selectedScreenKey: shownScreenKey, baseProvenance: provenance };
   return (
     <View style={{ flex: 1 }}>
       <Tabs.Host
@@ -117,6 +155,12 @@ export function WorkspaceNativeTabs(props: {
         }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
           setProvenance(nativeEvent.provenance)
         }
+        onTabSelectionPrevented={({
+          nativeEvent,
+        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
+          const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.preventedScreenKey);
+          if (tab) selectTab(tab);
+        }}
         onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
           setProvenance(nativeEvent.provenance);
           if (nativeEvent.actionOrigin === "programmatic-js") return;
@@ -133,6 +177,8 @@ export function WorkspaceNativeTabs(props: {
               // Stable slot controllers keep UIKit's stacks attached when a section moves into Settings.
               key={slot}
               screenKey={slot}
+              // Taps on an unmounted slot select it from JS, which shows it once it has mounted.
+              preventNativeSelection={!mountedSlots.has(slot) && slot !== shownScreenKey}
               title=""
               tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
               ios={{
@@ -149,7 +195,8 @@ export function WorkspaceNativeTabs(props: {
               }}
             >
               <RetainedWorkspaceTab
-                tab={tab}
+                slot={slot}
+                setMountedSlots={setMountedSlots}
                 active={settings ? selectedSlot === -1 : selectedSlot === index}
               >
                 {props.children}
