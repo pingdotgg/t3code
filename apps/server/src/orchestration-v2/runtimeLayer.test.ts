@@ -3978,6 +3978,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "unauthenticated", activityFails: false, activityFailure: "failed" },
     { reason: "failed", activityFails: true, activityFailure: "forbidden" },
     { reason: "failed", activityFails: true, activityFailure: "unauthenticated" },
+    { reason: "activity-only", activityFails: true, activityFailure: "forbidden" },
+    { reason: "activity-only", activityFails: true, activityFailure: "unauthenticated" },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails, $activityFailure)",
     ({ reason, activityFails, activityFailure }) =>
@@ -4053,7 +4055,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 detail: () =>
                   genericFailure
                     ? Effect.die("host read failed")
-                    : disconnected
+                    : disconnected && reason !== "activity-only"
                       ? (activityFails ? Queue.take(activityFailures) : Effect.void).pipe(
                           Effect.andThen(Effect.fail(readFailure("detail", reason))),
                         )
@@ -4106,6 +4108,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             reason === "failed" &&
             activityFailure === "failed" &&
             (pass === 0 || (pass >= 2 && pass <= 8));
+          if (reason === "activity-only" && pass === 7) passed = true;
           yield* TestClock.adjust("2 minutes");
           yield* sweep;
         }
@@ -4120,7 +4123,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const blocked = [reason, activityFailure].some(
           (failure) => failure === "forbidden" || failure === "unauthenticated",
         );
-        const expected = blocked ? ["#8: host access blocked, watching for recovery"] : [];
+        const blockerExpected = blocked ? ["#8: host access blocked, watching for recovery"] : [];
+        const expected =
+          reason === "activity-only"
+            ? [`${blockerExpected[0]}; #8: checks passed`]
+            : blockerExpected;
+        const recoveredExpected =
+          reason === "activity-only" ? expected : [...expected, "#8: checks passed"];
         assert.deepEqual(yield* summaries, expected);
         if (blocked) {
           yield* orchestrator.dispatch({
@@ -4166,26 +4175,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
             blocker,
           );
-          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+          assert.deepEqual(yield* summaries, recoveredExpected);
           disconnected = true;
           for (let pass = 0; pass < 10; pass += 1) {
             yield* TestClock.adjust("2 minutes");
             yield* sweep;
           }
-          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+          assert.deepEqual(yield* summaries, recoveredExpected);
         }
         disconnected = false;
         genericFailure = false;
         passed = true;
         remarksIncomplete = false;
         yield* sweep;
-        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        assert.deepEqual(yield* summaries, recoveredExpected);
         assert.isUndefined(
           (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
         );
         yield* TestClock.adjust("10 minutes");
         yield* sweep;
-        assert.deepEqual(yield* summaries, [...expected, "#8: checks passed"]);
+        assert.deepEqual(yield* summaries, recoveredExpected);
         if (blocked) {
           disconnected = true;
           accessChanged = false;
@@ -4193,7 +4202,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             yield* TestClock.adjust("2 minutes");
             yield* sweep;
           }
-          assert.deepEqual(yield* summaries, [...expected, "#8: checks passed", ...expected]);
+          assert.deepEqual(yield* summaries, [...recoveredExpected, ...blockerExpected]);
         }
         yield* orchestrator.dispatch({
           type: "thread.pull-request.watch",

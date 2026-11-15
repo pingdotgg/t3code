@@ -629,6 +629,7 @@ export const make = Effect.gen(function* () {
         ? activityRead
         : null;
     let newReadBlocker: string | undefined;
+    let blockerWake: ((target: WatchTarget) => Wake) | undefined;
     if (readFailure !== null) {
       if (Cause.hasInterruptsOnly(readFailure.cause))
         return yield* Effect.failCause(readFailure.cause);
@@ -647,22 +648,27 @@ export const make = Effect.gen(function* () {
           const operation = readFailure === detailRead ? "detail" : "activity";
           newReadBlocker = `${operation}:${reason}:${yield* random.uuidV4()}`;
           const readBlocker = newReadBlocker;
-          yield* eachTarget(group, (target) =>
-            target.watch.readBlocker !== undefined
-              ? Effect.void
-              : record(
-                  target,
-                  { ...target.watch, readBlocker },
-                  {
-                    text: `T3 Code cannot read pull request #${target.link.number} (${target.link.url}): host ${operation} access is ${reason}. The watch remains active and will resume after access recovers. Report this blocker once; do not restart the watch or merge without check and review evidence.`,
-                    notification: {
-                      source: { kind: "monitor" },
-                      outcome: "failed",
-                      summary: `#${target.link.number}: host access blocked, watching for recovery`,
-                    },
-                  },
-                ).pipe(Effect.tap(() => woke(target))),
-          );
+          blockerWake = (target) => ({
+            text: `T3 Code cannot read pull request #${target.link.number} (${target.link.url}): host ${operation} access is ${reason}. The watch remains active and will resume after access recovers. Report this blocker once; do not restart the watch or merge without check and review evidence.`,
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "failed",
+              summary: `#${target.link.number}: host access blocked, watching for recovery`,
+            },
+          });
+          if (Exit.isFailure(detailRead)) {
+            const wake = blockerWake;
+            yield* eachTarget(group, (target) =>
+              target.watch.readBlocker !== undefined
+                ? Effect.void
+                : hold({
+                    groupKey: group.key,
+                    target,
+                    next: { ...target.watch, readBlocker },
+                    wake: wake(target),
+                  }),
+            );
+          }
         }
       } else {
         if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
@@ -742,8 +748,9 @@ export const make = Effect.gen(function* () {
         remarks === null && readBlocker !== undefined
           ? { ...evaluated, next: { ...evaluated.next, readBlocker } }
           : evaluated;
+      const accessWake = target.watch.readBlocker === undefined ? blockerWake?.(target) : undefined;
       if (report.changes.length > 0) {
-        const wake = {
+        const changeWake = {
           ...pullRequestWatchMessage({
             number: target.link.number,
             url: target.link.url,
@@ -753,6 +760,13 @@ export const make = Effect.gen(function* () {
           }),
           includesRemarks: report.changes.some((change) => change.kind === "remarks"),
         };
+        const wake =
+          accessWake === undefined
+            ? changeWake
+            : {
+                ...combinePullRequestWatchWakes([accessWake, changeWake]),
+                includesRemarks: changeWake.includesRemarks,
+              };
         // An ending watch keeps what this pass saw, so watching again starts from it.
         return hold(
           report.exhausted
@@ -766,6 +780,9 @@ export const make = Effect.gen(function* () {
               }
             : { groupKey: group.key, target, next: report.next, wake },
         );
+      }
+      if (accessWake !== undefined) {
+        return hold({ groupKey: group.key, target, next: report.next, wake: accessWake });
       }
       return watchesEqual(report.next, target.watch) ? Effect.void : record(target, report.next);
     });
