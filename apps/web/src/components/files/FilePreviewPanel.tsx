@@ -188,13 +188,19 @@ export function WorkspaceImagePreview(props: {
 }) {
   // Media files report their revision, so an unchanged image keeps its element and zoom
   // when the workspace revision moves; older servers fall back to the workspace revision.
-  const resource = workspaceAssetResource({
+  const mediaResource = workspaceAssetResource({
     kind: "media-file",
     threadRef: props.threadRef,
     draft: props.draft,
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
+  // A file inside the workspace lives on that host only; never fall back to a desktop-local file.
+  const resource =
+    mediaResource._tag === "media-file" &&
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined
+      ? { ...mediaResource, hostOnly: true as const }
+      : mediaResource;
   const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
   const fileRevision = assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision = fileRevision ?? props.workspaceMutationId;

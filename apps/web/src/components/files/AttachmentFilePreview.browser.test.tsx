@@ -1599,7 +1599,11 @@ it("keeps a workspace image and its zoom across agent commands and reloads it wh
     fileRevision: "one",
   });
   await screen.rerender(preview("second"));
-  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+  expect(assetUrlState).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.objectContaining({ _tag: "media-file", hostOnly: true }),
+    "second",
+  );
   expect(screen.container.querySelector("img")).toBe(opened);
   expect(zoomLabel()).toBe(zoomed);
 
