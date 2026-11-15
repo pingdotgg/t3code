@@ -975,6 +975,38 @@ describe("server browser evaluate", () => {
   });
 });
 
+describe("server browser press", () => {
+  it("sends no further key of a chord once its timeout has passed", async () => {
+    vi.useFakeTimers();
+    try {
+      const sent: Array<string> = [];
+      const modifierDown = Promise.withResolvers<void>();
+      const page = {
+        keyboard: {
+          down: (key: string) => {
+            sent.push(`down ${key}`);
+            return key === "Control" ? modifierDown.promise : Promise.resolve();
+          },
+          up: async (key: string) => void sent.push(`up ${key}`),
+        },
+      } as unknown as Page;
+      const pressed = ServerBrowserPage.press(page, { key: "A", modifiers: ["Control"] }, 300).then(
+        () => "pressed",
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await pressed).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+
+      // The browser answers the modifier late: it is released, and "A" is never pressed.
+      modifierDown.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sent).toEqual(["down Control", "up Control"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("server browser type", () => {
   // As on a desktop tab whose Playwright utility world never answers.
   const stalledPage = (focusAnswer: () => Promise<unknown>, typed: string[]) =>

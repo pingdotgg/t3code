@@ -1004,8 +1004,8 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     });
   }
   if (input.clear) {
-    await withinDeadline(deadline, () => page.keyboard.press("ControlOrMeta+A"));
-    await withinDeadline(deadline, () => page.keyboard.press("Delete"));
+    await pressChord(page, "ControlOrMeta+A", deadline);
+    await pressChord(page, "Delete", deadline);
   }
   await withinDeadline(deadline, () => page.keyboard.insertText(input.text));
 };
@@ -1091,14 +1091,44 @@ export const setInputFiles = async (page: Page, input: PreviewAutomationUploadIn
   return true;
 };
 
+/** Splits a chord as Playwright's `keyboard.press` does: "Control+A", and "+" alone is a key. */
+const chordKeys = (chord: string) => {
+  const keys: Array<string> = [];
+  let building = "";
+  for (const char of chord) {
+    if (char === "+" && building) {
+      keys.push(building);
+      building = "";
+    } else building += char;
+  }
+  return [...keys, building];
+};
+
+/**
+ * `keyboard.press` sends a chord's later keys even after its caller timed out. Sending each key
+ * here stops at the deadline; keys already down are still released, behind any stalled keydown.
+ */
+const pressChord = async (page: Page, chord: string, deadline: number) => {
+  const held: Array<string> = [];
+  try {
+    for (const key of chordKeys(chord)) {
+      held.push(key);
+      await withinDeadline(deadline, () => page.keyboard.down(key));
+    }
+  } finally {
+    const released = (async () => {
+      for (const key of held.reverse()) await page.keyboard.up(key).catch(constVoid);
+    })();
+    await withinDeadline(deadline, () => released);
+  }
+};
+
 export const press = async (
   page: Page,
   input: PreviewAutomationPressInput,
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ) => {
-  await withinDeadline(Date.now() + timeoutMs, () =>
-    page.keyboard.press([...(input.modifiers ?? []), input.key].join("+")),
-  );
+  await pressChord(page, [...(input.modifiers ?? []), input.key].join("+"), Date.now() + timeoutMs);
 };
 
 export const scroll = async (
@@ -1115,9 +1145,10 @@ export const scroll = async (
     );
     return;
   }
-  await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta, {
-    timeout: timeoutMs,
-  });
+  // The locator's timeout covers finding the element, not the page answering the call.
+  await withinDeadline(Date.now() + timeoutMs, () =>
+    locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta, { timeout: timeoutMs }),
+  );
 };
 
 const UNRESPONSIVE_SCRIPT_PROBE_MS = 1_000;
