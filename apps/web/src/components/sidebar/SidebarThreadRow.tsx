@@ -68,7 +68,8 @@ import {
 } from "react";
 
 import { useRightPanelStore } from "../../rightPanelStore";
-import { useOpenPrLink } from "../../lib/openPullRequestLink";
+import { beginLayoutContentDrag } from "../../layout/layoutDrag";
+import { readThreadPullRequestSurface, useOpenPrLink } from "../../lib/openPullRequestLink";
 import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -1125,6 +1126,15 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isRouteThread) onThreadActivate(threadRef);
   };
+  const handlePrPress = (event: ReactPointerEvent<HTMLElement>, opensList: boolean) => {
+    const url = pr?.url ?? currentLinkedPr?.url;
+    const surface = opensList
+      ? ({ id: "pull-requests", kind: "pull-requests" } as const)
+      : url
+        ? readThreadPullRequestSurface(threadRef, url)
+        : null;
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
@@ -1143,6 +1153,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         status={prStatus}
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
+        onPress={handlePrPress}
       />
     ) : null;
   const terminalStatusIcon = (

@@ -29,7 +29,13 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRender } from "@base-ui/react/use-render";
-import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
+import {
+  type ReactNode,
+  type AnimationEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactElement,
+} from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
@@ -254,6 +260,7 @@ export function ThreadPullRequestBadgeControl({
   status,
   onOpenList,
   onOpenPullRequest,
+  onPress,
   appearance = "glyph",
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
@@ -264,6 +271,7 @@ export function ThreadPullRequestBadgeControl({
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
   appearance?: ThreadPullRequestBadgeAppearance;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
@@ -280,6 +288,7 @@ export function ThreadPullRequestBadgeControl({
       pullRequests={pullRequests}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
+      onPress={onPress}
     />
   );
 }
@@ -295,6 +304,7 @@ function PullRequestBadge({
   pullRequests,
   onOpenList,
   onOpenPullRequest,
+  onPress,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   appearance: ThreadPullRequestBadgeAppearance;
@@ -306,6 +316,7 @@ function PullRequestBadge({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
 }) {
   const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
@@ -317,14 +328,17 @@ function PullRequestBadge({
   const element = opensList ? (
     <button type="button" />
   ) : (
-    <a href={url} target="_blank" rel="noopener noreferrer" />
+    <a href={url} target="_blank" rel="noopener noreferrer" draggable={false} />
   );
   const control = useRender({
     render,
     props: {
       render: element,
       "aria-label": presentation.label,
-      onPointerDown: (event: MouseEvent<HTMLElement>) => event.stopPropagation(),
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        event.stopPropagation();
+        onPress(event, opensList);
+      },
       onClick,
     },
   });
