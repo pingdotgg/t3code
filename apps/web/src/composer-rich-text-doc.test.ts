@@ -954,7 +954,7 @@ describe("pasting into a path query", () => {
   });
 
   it("parses markdown when the paste does not continue a path query", () => {
-    expect(boldText(paste("Open ", "src/__test__.tsx"))).toEqual(["test"]);
+    expect(boldText(paste("Open ", "__test__ now"))).toEqual(["test"]);
     expect(boldText(paste("Open @a ", "__b__"))).toEqual(["b"]);
     expect(boldText(paste("Open @", " __b__"))).toEqual(["b"]);
   });
