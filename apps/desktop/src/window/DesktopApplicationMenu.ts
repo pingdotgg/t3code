@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type * as Electron from "electron";
+import * as Electron from "electron";
 
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -64,6 +64,9 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
   yield* desktopWindow.runMainContentsCommand(command);
 });
 
+const describeUpdate = (version: string | null) =>
+  version === null ? "A new version of T3 Code" : `T3 Code ${version}`;
+
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -77,6 +80,35 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
+  } else if (updateState.status === "available") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update available",
+      message: `${describeUpdate(updateState.availableVersion)} is available.`,
+      detail: `You're running T3 Code ${updateState.currentVersion}.`,
+      buttons: ["Download", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) yield* updates.download;
+  } else if (updateState.status === "downloading") {
+    yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update downloading",
+      message: `${describeUpdate(updateState.availableVersion)} is already downloading.`,
+      buttons: ["OK"],
+    });
+  } else if (updateState.status === "downloaded") {
+    const { response } = yield* electronDialog.showMessageBox({
+      type: "info",
+      title: "Update ready",
+      message: `${describeUpdate(updateState.downloadedVersion ?? updateState.availableVersion)} is ready to install.`,
+      detail: "T3 Code will restart to install it. Any running tasks will be interrupted.",
+      buttons: ["Restart", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response === 0) yield* updates.install;
   } else if (updateState.status === "error") {
     yield* electronDialog.showMessageBox({
       type: "warning",
@@ -106,14 +138,13 @@ const handleCheckForUpdatesMenuClick = Effect.gen(function* () {
     return;
   }
 
-  // The result dialogs need no main window. Opening one before the backend
-  // answers strands the renderer on a failed auth bootstrap.
+  // Opening a window before backend confirmation can strand it on failed auth bootstrap.
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.activate;
   yield* checkForUpdatesFromMenu;
 }).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -143,10 +174,7 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
-    // Chromium already pastes as plain text for this chord, so the accelerator
-    // needs nothing from the menu: the composer and the terminal each arm
-    // themselves from the same keydown. Routing it through the renderer anyway
-    // lands a second, injected paste and doubles the text.
+    // Chromium and the renderer already handle this chord; injecting another paste duplicates text.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
       _window: Electron.BaseWindow | undefined,
@@ -204,7 +232,21 @@ export const make = Effect.gen(function* () {
                 },
                 { type: "separator" as const },
               ]),
-          { role: environment.platform === "darwin" ? "close" : "quit" },
+          {
+            label: "Close Developer Tools",
+            accelerator: "CmdOrCtrl+W",
+            visible: false,
+            click: () => {
+              Electron.webContents
+                .getAllWebContents()
+                .find((contents) => !contents.isDestroyed() && contents.isDevToolsFocused())
+                ?.closeDevTools();
+            },
+          },
+          // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
+          environment.platform === "darwin"
+            ? { label: "Close Window", click: (_item, window) => window?.close() }
+            : { role: "quit" },
         ],
       },
       {
@@ -238,11 +280,7 @@ export const make = Effect.gen(function* () {
       {
         label: "View",
         submenu: [
-          /*
-            Not the reload, DevTools or zoom roles: those act on the focused
-            webContents, so with a browser page focused they reload or zoom
-            the guest page and the app UI appears stuck.
-          */
+          /* Native reload/DevTools/zoom roles target focused guests; these commands must target the app. */
           { label: "Reload", accelerator: "CmdOrCtrl+R", click: mainContentsClick("reload") },
           {
             label: "Force Reload",
@@ -274,8 +312,7 @@ export const make = Effect.gen(function* () {
               ]
             : []),
           { label: "Zoom Out", accelerator: "CmdOrCtrl+-", click: zoomClick("out") },
-          // The numeric keypad sends its own key codes, so the number-row
-          // accelerators above never match it.
+          // Keypad codes do not match number-row accelerators.
           {
             label: "Actual Size",
             accelerator: "CmdOrCtrl+num0",
@@ -298,7 +335,17 @@ export const make = Effect.gen(function* () {
           { role: "togglefullscreen" },
         ],
       },
-      { role: "windowMenu" },
+      {
+        // Electron's default Window submenu adds a Ctrl+W close role off macOS.
+        role: "windowMenu",
+        submenu: [
+          { role: "minimize" },
+          { role: "zoom" },
+          ...(environment.platform === "darwin"
+            ? [{ type: "separator" as const }, { role: "front" as const }]
+            : []),
+        ],
+      },
       {
         role: "help",
         submenu: [

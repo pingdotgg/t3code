@@ -15,15 +15,15 @@ const SettingsWindow = Schema.NullOr(
 export type SettingsWindow = typeof SettingsWindow.Type;
 const decodeSettingsWindow = Schema.decodeUnknownSync(Schema.fromJsonString(SettingsWindow));
 
-// Window bounds and owner PIDs are available before Screen Recording is granted.
-// Use the bundle identifier rather than the localized app/window title. A single
-// process avoids launching osascript repeatedly while the user moves Settings.
+// Window bounds/PIDs need no Screen Recording grant. Match the bundle id to avoid localized titles.
+// Keep one osascript process while Settings moves.
 const SETTINGS_WINDOW_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
+ObjC.import("unistd");
 function run() {
   let previous = "";
-  while (true) {
+  while ($.getppid() !== 1) {
     const apps = $.NSRunningApplication.runningApplicationsWithBundleIdentifier("com.apple.systempreferences");
     let result = null;
     if (apps.count > 0) {

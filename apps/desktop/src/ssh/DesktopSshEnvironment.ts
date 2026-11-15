@@ -18,11 +18,13 @@ import {
 } from "@t3tools/ssh/errors";
 import * as SshTunnel from "@t3tools/ssh/tunnel";
 import * as Context from "effect/Context";
-import type * as Crypto from "effect/Crypto";
+import type * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -30,7 +32,7 @@ import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
@@ -63,22 +65,47 @@ export class DesktopSshEnvironment extends Context.Service<
     readonly disconnectEnvironment: (
       target: DesktopSshEnvironmentTarget,
     ) => Effect.Effect<void, DesktopSshEnvironmentOperationError>;
+    readonly closeAllTunnels: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/ssh/DesktopSshEnvironment") {}
 
 export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<SshTunnel.RemoteT3RunnerOptions>;
+  readonly resolveLauncherId?: Effect.Effect<string | null>;
 }
+
+// Remote servers record this ID as their owner, so it has to outlive restarts,
+// updates and edits to a saved connection. Without a stored one there is none.
+export const readOrCreateLauncherId = Effect.fn("desktop.ssh.readOrCreateLauncherId")(
+  function* (filePath: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const random = yield* SecureRandom.SecureRandom;
+    // Any other read failure may hide a stored ID, which a new one would overwrite.
+    const stored = yield* fileSystem.readFileString(filePath).pipe(
+      Effect.catchIf(
+        (cause) => cause.reason._tag === "NotFound",
+        () => Effect.succeed(""),
+      ),
+    );
+    if (/^[0-9a-f]{32}$/u.test(stored.trim())) return stored.trim();
+    const launcherId = (yield* random.uuidV4()).replace(/-/g, "");
+    yield* fileSystem.writeFileString(filePath, `${launcherId}\n`);
+    return launcherId;
+  },
+  Effect.orElseSucceed(() => null),
+);
 
 function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
 
+const isSshPasswordPromptError = Schema.is(SshPasswordPromptError);
+
 export function isDesktopSshPasswordPromptCancellation(
   error: unknown,
 ): error is SshPasswordPromptError {
   return (
-    error instanceof SshPasswordPromptError &&
+    isSshPasswordPromptError(error) &&
     DesktopSshPasswordPrompts.isDesktopSshPasswordPromptCancellation(error.cause)
   );
 }
@@ -125,7 +152,7 @@ const makePasswordPrompt = (
     prompts.request(request).pipe(Effect.mapError(toSshPasswordPromptError)),
 });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const manager = yield* SshTunnel.SshEnvironmentManager;
   const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
@@ -133,42 +160,40 @@ export const make = Effect.gen(function* () {
   const passwordPrompt = SshAuth.SshPasswordPrompt.of(makePasswordPrompt(prompts));
 
   return DesktopSshEnvironment.of({
-    discoverHosts: (input) =>
-      discoverDesktopSshHostsEffect(input).pipe(
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.discoverHosts"),
-      ),
-    resolveHost: (alias) =>
-      resolveSshTarget(alias.trim()).pipe(
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.resolveHost"),
-      ),
-    ensureEnvironment: (target, ensureOptions) =>
-      manager
-        .ensureEnvironment(target, ensureOptions)
-        .pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.ensureEnvironment"),
-        ),
-    disconnectEnvironment: (target) =>
-      manager
-        .disconnectEnvironment(target)
-        .pipe(
-          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-          Effect.provide(runtimeContext),
-          Effect.withSpan("desktop.ssh.disconnectEnvironment"),
-        ),
+    discoverHosts: Effect.fn("desktop.ssh.discoverHosts")(function* (input) {
+      return yield* discoverDesktopSshHostsEffect(input);
+    }, Effect.provide(runtimeContext)),
+    resolveHost: Effect.fn("desktop.ssh.resolveHost")(function* (alias) {
+      return yield* resolveSshTarget(alias.trim());
+    }, Effect.provide(runtimeContext)),
+    ensureEnvironment: Effect.fn("desktop.ssh.ensureEnvironment")(
+      function* (target, ensureOptions) {
+        return yield* manager.ensureEnvironment(target, ensureOptions);
+      },
+      Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+      Effect.provide(runtimeContext),
+    ),
+    disconnectEnvironment: Effect.fn("desktop.ssh.disconnectEnvironment")(
+      function* (target) {
+        return yield* manager.disconnectEnvironment(target);
+      },
+      Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+      Effect.provide(runtimeContext),
+    ),
+    closeAllTunnels: manager.closeAllTunnels,
   });
 });
 
 export const layer = (options: DesktopSshEnvironmentLayerOptions = {}) =>
   Layer.effect(DesktopSshEnvironment, make).pipe(
     Layer.provide(
-      SshTunnel.SshEnvironmentManager.layer(
-        options.resolveCliRunner === undefined
+      SshTunnel.SshEnvironmentManager.layer({
+        ...(options.resolveCliRunner === undefined
           ? {}
-          : { resolveCliRunner: options.resolveCliRunner },
-      ),
+          : { resolveCliRunner: options.resolveCliRunner }),
+        ...(options.resolveLauncherId === undefined
+          ? {}
+          : { resolveLauncherId: options.resolveLauncherId }),
+      }),
     ),
   );

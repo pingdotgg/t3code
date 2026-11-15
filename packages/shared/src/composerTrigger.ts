@@ -18,8 +18,10 @@ function composerFileLinkBasename(path: string): string {
   return separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
 }
 
+// Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
+// which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
+  return label.replace(/[\\[\]*_]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
@@ -45,10 +47,7 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
-/**
- * A slash word with a second slash, such as `/tmp/build.sh`, is a path, not a
- * command. The whole word counts, so a caret before the second slash still sees it.
- */
+/** A second slash or backslash makes the whole word a path, even when the caret precedes it. */
 export function isPathWord(
   text: string,
   wordStart: number,
@@ -59,7 +58,7 @@ export function isPathWord(
   while (wordEnd < text.length && !isWhitespaceChar(text[wordEnd] ?? "")) {
     wordEnd += 1;
   }
-  return text.slice(wordStart + 1, wordEnd).includes("/");
+  return /[/\\]/.test(text.slice(wordStart + 1, wordEnd));
 }
 
 /**
@@ -103,7 +102,7 @@ export function detectComposerTrigger(
       };
     }
 
-    const modelMatch = /^\/model(?:\s+(.*))?$/.exec(linePrefix);
+    const modelMatch = /^\/model(?:\s+(.*))?$/i.exec(linePrefix);
     if (modelMatch) {
       return {
         kind: "slash-model",
@@ -171,4 +170,15 @@ export function replaceTextRange(
   const safeEnd = Math.max(safeStart, Math.min(text.length, rangeEnd));
   const nextText = `${text.slice(0, safeStart)}${replacement}${text.slice(safeEnd)}`;
   return { text: nextText, cursor: safeStart + replacement.length };
+}
+
+/** `/clear` as the whole message arms a fresh session instead of sending. */
+export function isClearComposerCommand(text: string): boolean {
+  return /^\/clear\s*$/i.test(text.trim());
+}
+
+/** `/side [prompt]`, or its alias `/btw [prompt]`, as the whole message. */
+export function parseSideChatCommand(text: string): { prompt: string } | null {
+  const match = /^\/(?:side|btw)(?:\s+([\s\S]*))?$/i.exec(text.trim());
+  return match ? { prompt: match[1]?.trim() ?? "" } : null;
 }

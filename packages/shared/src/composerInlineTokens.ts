@@ -26,13 +26,7 @@ const SKILL_MENTION_SOURCE =
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
-/**
- * Unbounded, every whitespace in the composer is a candidate start: the engine scans the rest
- * of the text for a closing `]`, fails, and rescans from the next whitespace — quadratic on
- * input like " [[[[[…". Only a basename ever survives the `label !== basename` check below, so
- * this cannot reject a link a user could meaningfully write; the longest filename any common
- * filesystem allows is 255.
- */
+// Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
 const FILE_LINK_TOKEN_REGEX = new RegExp(
   `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
@@ -100,11 +94,9 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
 }
 
 /**
- * Formulas in composer text, ignoring the `$` and `\[` that file names such as
- * `posts.$postId.tsx` or `[id].tsx` put into a file link. File links are masked with letters,
- * not spaces, so a link at the start of a line cannot become an indented code block.
- * Bare `@path` mentions are not masked: one such as `@README.md$` can run into a formula's
- * closing delimiter, and a mention written inside a real formula stays covered by it.
+ * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`.
+ * Links are masked with letters, not spaces, so a leading link cannot become an indented code
+ * block. Bare `@path` mentions stay unmasked so `@README.md$` can still close a formula.
  */
 export function composerMathRanges(
   text: string,
