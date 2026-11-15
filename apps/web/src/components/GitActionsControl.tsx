@@ -129,6 +129,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { draftModelSelectionApplies, threadHasStarted } from "~/lib/chatThreadActions";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -967,7 +968,8 @@ export default function GitActionsControl({
     return null;
   });
   const threadModelSelection =
-    (composerDraft?.activeProvider
+    (composerDraft?.activeProvider &&
+    draftModelSelectionApplies(composerDraft, threadHasStarted(activeServerThreadShell))
       ? composerDraft.modelSelectionByProvider[composerDraft.activeProvider]
       : undefined) ?? activeServerThread?.modelSelection;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);

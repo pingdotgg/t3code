@@ -449,6 +449,27 @@ describe("serverSettings helpers", () => {
     // A text generator has no provider snapshot; an empty list must not read as unusable.
     const on = settings(true);
     expect(resolveSourceControlWriterModelSelection(on, [], null)).toBe(selection);
+    expect(
+      resolveSourceControlWriterModelSelection(
+        on,
+        [
+          {
+            instanceId: generatorId,
+            driver: ProviderDriverKind.make("codex"),
+            enabled: false,
+            installed: false,
+            version: null,
+            status: "error",
+            auth: { status: "unauthenticated" },
+            checkedAt: "2026-07-27T00:00:00.000Z",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ],
+        null,
+      ),
+    ).toBe(selection);
     expect(resolveSpeechPostProcessingModelSelection(on, [])).toBe(selection);
     expect(resolveReviewGuideModelSelection(on, [], null)).toBe(selection);
     expect(

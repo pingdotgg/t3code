@@ -146,7 +146,11 @@ function isWriterSelectionUsable(
     return false;
   }
   const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
-  return provider === undefined || isWriterProviderSignedIn(provider);
+  return (
+    textGeneratorForSelection(settings, selection.instanceId) !== undefined ||
+    provider === undefined ||
+    isWriterProviderSignedIn(provider)
+  );
 }
 
 function isWriterProviderSignedIn(provider: ServerProvider): boolean {

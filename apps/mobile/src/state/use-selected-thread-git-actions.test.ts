@@ -1,5 +1,5 @@
 import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
-import type { VcsListRefsResult } from "@t3tools/contracts";
+import type { ModelSelection, VcsListRefsResult } from "@t3tools/contracts";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -16,6 +16,8 @@ const state = vi.hoisted(() => ({
     branch: "main",
     worktreePath: null as string | null,
   },
+  draftModelSelection: undefined as ModelSelection | undefined,
+  lastModelSelection: undefined as ModelSelection | undefined,
   commits: 0,
   pushes: 0,
   metadataRequests: [] as { environmentId: string; branch: string }[],
@@ -54,6 +56,9 @@ vi.mock("./queries", () => ({
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
+vi.mock("./use-composer-drafts", () => ({
+  getComposerDraftSnapshot: () => ({ modelSelection: state.draftModelSelection }),
+}));
 vi.mock("./use-remote-environment-registry", () => ({
   environmentConnectedAtom: () => null,
   setPendingConnectionError: () => {},
@@ -109,18 +114,25 @@ vi.mock("./vcs", () => ({
   },
   vcsActionManager: {
     track: (_registry: unknown, _target: unknown, _operation: unknown, run: () => unknown) => run(),
-    runStackedAction: () => async (input: { action: string; featureBranch?: boolean }) => {
-      if (input.featureBranch) state.branch = "feature";
-      if (input.action === "commit") state.commits += 1;
-      if (input.action === "push") state.pushes += 1;
-      state.afterGitAction?.();
-      return AsyncResult.success({
-        branch: input.featureBranch
-          ? { status: "created", name: "feature" }
-          : { status: "skipped_not_requested" },
-        toast: { title: "Done", description: "Done", cta: { kind: "none" } },
-      });
-    },
+    runStackedAction:
+      () =>
+      async (input: {
+        action: string;
+        featureBranch?: boolean;
+        modelSelection?: ModelSelection;
+      }) => {
+        state.lastModelSelection = input.modelSelection;
+        if (input.featureBranch) state.branch = "feature";
+        if (input.action === "commit") state.commits += 1;
+        if (input.action === "push") state.pushes += 1;
+        state.afterGitAction?.();
+        return AsyncResult.success({
+          branch: input.featureBranch
+            ? { status: "created", name: "feature" }
+            : { status: "skipped_not_requested" },
+          toast: { title: "Done", description: "Done", cta: { kind: "none" } },
+        });
+      },
   },
 }));
 
@@ -134,6 +146,8 @@ describe("thread Git mutation permissions", () => {
     state.worktrees = [];
     state.thread.branch = "main";
     state.thread.worktreePath = null;
+    state.draftModelSelection = undefined;
+    state.lastModelSelection = undefined;
     state.commits = 0;
     state.pushes = 0;
     state.metadataRequests = [];
@@ -162,7 +176,12 @@ describe("thread Git mutation permissions", () => {
 
   it("keeps ordinary commits and pushes available without task permission", async () => {
     const actions = useSelectedThreadGitActions();
+    state.draftModelSelection = {
+      instanceId: "claudeAgent" as ModelSelection["instanceId"],
+      model: "claude-haiku-4-5",
+    };
     await actions.onRunSelectedThreadGitAction({ action: "commit" });
+    expect(state.lastModelSelection).toEqual(state.draftModelSelection);
     await actions.onRunSelectedThreadGitAction({ action: "push" });
     expect(state.commits).toBe(1);
     expect(state.pushes).toBe(1);
