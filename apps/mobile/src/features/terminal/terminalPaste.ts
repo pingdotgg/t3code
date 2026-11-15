@@ -1,4 +1,6 @@
-import { chunkTerminalWrite, encodeTerminalPaste } from "./terminalInput";
+import { chunkTerminalWrite } from "@t3tools/contracts";
+
+import { encodeTerminalPaste } from "./terminalInput";
 
 interface TerminalPasteInput {
   readonly readText: () => Promise<string>;

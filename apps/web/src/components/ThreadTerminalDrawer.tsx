@@ -88,6 +88,7 @@ import { readEnvironmentScope } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
 import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
+import { createTerminalInputWriter } from "./terminal/terminalInputWriter";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
 import { observeResize } from "../lib/observeResize";
@@ -923,22 +924,26 @@ function TerminalSessionViewport({
         }
       };
 
-      const sendTerminalInput = async (data: string, fallbackError: string) => {
-        // The server rejects input until the shell runs, and each rejection would print an error.
-        if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
-          return;
-        }
-        const activeTerminal = terminalRef.current;
-        if (!activeTerminal) return;
-        const result = await writeTerminal(data);
-        if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          writeSystemMessage(
-            activeTerminal,
-            error instanceof Error ? error.message : fallbackError,
-          );
-        }
-      };
+      const writeInput = createTerminalInputWriter();
+      const sendTerminalInput = (data: string, fallbackError: string) =>
+        writeInput(data, async (chunk) => {
+          // The server rejects input until the shell runs, and each rejection would print an error.
+          if (writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) === null) {
+            return false;
+          }
+          const activeTerminal = terminalRef.current;
+          if (!activeTerminal) return false;
+          const result = await writeTerminal(chunk);
+          if (result._tag === "Success") return true;
+          if (!isAtomCommandInterrupted(result)) {
+            const error = squashAtomCommandFailure(result);
+            writeSystemMessage(
+              activeTerminal,
+              error instanceof Error ? error.message : fallbackError,
+            );
+          }
+          return false;
+        });
 
       function handleBeforeKey(event: KeyboardEvent): boolean {
         const currentKeybindings = readKeybindings();
