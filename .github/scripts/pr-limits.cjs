@@ -100,7 +100,8 @@ function parseExemptions(text) {
 }
 
 // VOUCHED.td: one `github:login` per line, `#` comments, and `-github:login reason` to denounce.
-// A login listed both ways gets its last line, the same answer issue-vouch.yml reaches.
+// A login listed both ways is an error: pr-vouch.yml's action reads its first line and
+// issue-vouch.yml its last, so no answer here would agree with both labels.
 function parseVouchList(text) {
   const vouched = new Set();
   const denounced = new Set();
@@ -108,8 +109,10 @@ function parseVouchList(text) {
     const match = /^(-?)github:(\S+)/.exec(raw.trim());
     if (!match) continue;
     const login = match[2].toLowerCase();
-    (match[1] ? denounced : vouched).add(login);
-    (match[1] ? vouched : denounced).delete(login);
+    const [listed, other] = match[1] ? [denounced, vouched] : [vouched, denounced];
+    if (other.has(login))
+      throw new Error(`${VOUCHED_PATH}: ${login} is both vouched and denounced`);
+    listed.add(login);
   }
   if (vouched.size === 0) throw new Error(`${VOUCHED_PATH}: no entries`);
   return { vouched, denounced };

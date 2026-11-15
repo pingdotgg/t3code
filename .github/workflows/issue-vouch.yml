@@ -40,9 +40,14 @@ jobs:
               ref: context.payload.repository.default_branch,
             });
             const statusByUser = new Map();
+            const listedBothWays = new Set();
             for (const raw of Buffer.from(file.content, "base64").toString("utf8").split("\n")) {
               const match = /^(-?)github:(\S+)/.exec(raw.trim());
-              if (match) statusByUser.set(match[2].toLowerCase(), match[1] ? "denounced" : "vouched");
+              if (!match) continue;
+              const login = match[2].toLowerCase();
+              const status = match[1] ? "denounced" : "vouched";
+              if (statusByUser.has(login) && statusByUser.get(login) !== status) listedBothWays.add(login);
+              statusByUser.set(login, status);
             }
 
             const issues =
@@ -81,9 +86,11 @@ jobs:
               const reopenedByOther =
                 context.payload.action === "reopened" &&
                 context.payload.sender.login.toLowerCase() !== issue.user.login.toLowerCase();
+              // The PR rules refuse a list that names a login both ways, so nothing closes for one here.
               const trusted =
                 issue.user.type === "Bot" ||
-                ["OWNER", "MEMBER", "COLLABORATOR"].includes(issue.author_association);
+                ["OWNER", "MEMBER", "COLLABORATOR"].includes(issue.author_association) ||
+                listedBothWays.has(issue.user.login.toLowerCase());
               if (status === "denounced" && context.eventName === "issues" && !reopenedByOther && !trusted) {
                 await github.rest.issues.createComment({
                   owner,
