@@ -1,4 +1,5 @@
 import {
+  createReadOnlyPromptFilter,
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
   type TerminalOutputState,
@@ -7,7 +8,9 @@ import {
 /** One writer per mounted native view; intermediate snapshots can be coalesced safely. */
 export function createTerminalOutputWriter(
   writeOutput: (data: string, reset: boolean) => Promise<void>,
+  readOnly: () => boolean,
 ) {
+  const promptFilter = createReadOnlyPromptFilter();
   let cursor = INITIAL_TERMINAL_OUTPUT_CURSOR;
   let pending: TerminalOutputState | null = null;
   let draining: Promise<void> | null = null;
@@ -22,8 +25,10 @@ export function createTerminalOutputWriter(
         pending = null;
         const update = readTerminalOutputUpdate(output, cursor);
         if (update.type === "none") continue;
+        const reset = update.type === "reset";
+        if (reset) promptFilter.reset();
         try {
-          await writeOutput(update.data, update.type === "reset");
+          await writeOutput(promptFilter.filter(update.data, readOnly()), reset);
         } catch (error) {
           if (disposed) return;
           // A rejected command may have partially applied. Replay the latest retained history

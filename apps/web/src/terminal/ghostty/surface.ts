@@ -1,3 +1,4 @@
+import { createReadOnlyPromptFilter } from "@t3tools/client-runtime/state/terminal";
 import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
@@ -637,6 +638,7 @@ export class GhosttyTerminalSurface {
     moved: boolean;
   } | null = null;
   private lastMouseMotionData = "";
+  private readonly promptFilter = createReadOnlyPromptFilter();
   private mouseAnyEventTracking = false;
   private dprMedia: MediaQueryList | null = null;
   // Watch reduced motion changes to restart blink cycles that have no remaining timer.
@@ -766,7 +768,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(
-      data,
+      this.promptFilter.filter(data, this.input.readOnly),
       this.synchronizedRenderTimer === null
         ? undefined
         : () => this.cancelSynchronizedRenderTimer(),
@@ -781,7 +783,24 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.cancelSynchronizedRenderTimer();
     this.lastMouseMotionData = "";
-    this.core.resetAndWrite(data);
+    this.promptFilter.reset();
+    // The history was written at the PTY's grid. Replay it there and then
+    // resize, as a live terminal would, so Ghostty reflows it and clears the
+    // marked prompt that the shell redraws once the PTY takes this size.
+    const replay = this.sharedGrid;
+    if (replay !== null) {
+      this.core.resize(replay.cols, replay.rows, this.metrics.width, this.metrics.height);
+    }
+    this.core.resetAndWrite(this.promptFilter.filter(data, this.input.readOnly));
+    if (replay !== null) {
+      // Before the first fit this surface has no grid of its own yet; keep the
+      // PTY's so that fit applies the real change.
+      if (!this.hasSize) {
+        this.cols = replay.cols;
+        this.rows = replay.rows;
+      }
+      this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+    }
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.forceFullRender = true;

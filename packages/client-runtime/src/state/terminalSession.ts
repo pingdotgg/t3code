@@ -16,6 +16,7 @@ import {
 } from "./terminalOutput.ts";
 
 export {
+  createReadOnlyPromptFilter,
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
   terminalOutputReplay,

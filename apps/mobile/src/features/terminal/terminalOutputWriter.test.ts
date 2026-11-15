@@ -22,7 +22,7 @@ function append(
 
 it("appends across rollover without replay and seeds fresh writers with only bounded history", async () => {
   const write = vi.fn(async (_data: string, _reset: boolean) => {});
-  const writer = createTerminalOutputWriter(write);
+  const writer = createTerminalOutputWriter(write, () => false);
   let state = EMPTY_TERMINAL_BUFFER_STATE;
   const chunks: string[] = [];
   await writer.write(state.output);
@@ -40,7 +40,7 @@ it("appends across rollover without replay and seeds fresh writers with only bou
   expect(write.mock.calls.reduce((total, [data]) => total + data.length, 0)).toBe(2 * 1024 * 1024);
 
   const remountedWrite = vi.fn(async () => {});
-  await createTerminalOutputWriter(remountedWrite).write(state.output);
+  await createTerminalOutputWriter(remountedWrite, () => false).write(state.output);
   expect(remountedWrite.mock.calls).toEqual([[retained, true]]);
 });
 
@@ -48,7 +48,7 @@ it("recovers the newer snapshot queued during a rejected append without a third 
   const started = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
   const write = vi.fn(async () => {});
-  const writer = createTerminalOutputWriter(write);
+  const writer = createTerminalOutputWriter(write, () => false);
   const initial = append(EMPTY_TERMINAL_BUFFER_STATE, "initial");
   await writer.write(initial.output);
   write.mockImplementationOnce(async () => {
@@ -70,4 +70,19 @@ it("recovers the newer snapshot queued during a rejected append without a third 
   ]);
   await writer.write(append(latest, "-next").output);
   expect(write).toHaveBeenLastCalledWith("-next", false);
+});
+
+it("keeps a read-only viewer's prompt when the shell's redraw mark spans two outputs", async () => {
+  const write = vi.fn(async (_data: string, _reset: boolean) => {});
+  let readOnly = true;
+  const writer = createTerminalOutputWriter(write, () => readOnly);
+  const first = append(EMPTY_TERMINAL_BUFFER_STATE, "done\r\n\x1b]133;A;re");
+  await writer.write(first.output);
+  const second = append(first, "draw=1\x07$ ");
+  await writer.write(second.output);
+  readOnly = false;
+  await writer.write(append(second, "\x1b]133;A;redraw=1\x07$ ").output);
+  expect(write.mock.calls.map(([data]) => data).join("")).toBe(
+    "done\r\n\x1b]133;A;redraw=0\x07$ \x1b]133;A;redraw=1\x07$ ",
+  );
 });
