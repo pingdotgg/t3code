@@ -4,11 +4,10 @@ import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-import { run } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
-// A raw-mode process prints rows, then on `b` runs xtermcontrol, which sets the default
-// background with OSC 11, and records its exit status. `x` ends it.
+// A raw-mode process prints rows, then on `b` runs the real xtermcontrol (Debian package
+// xtermcontrol), which sets the default background with OSC 11, and records its exit status.
 const PROGRAM = String.raw`import { writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
@@ -36,12 +35,10 @@ test(
   "A program setting the terminal's default background repaints the whole screen",
   WEB,
   async ({ t3, app, browser, screen }) => {
-    // The producer is the real xtermcontrol; put it on PATH (Debian/Ubuntu package xtermcontrol).
-    await runPromise(run("xtermcontrol", ["--version"]));
     await browser.emulateMedia({ colorScheme: "dark" });
     const project = await t3.project("colors", { "program.mjs": PROGRAM });
     const thread = await t3.thread({ project, title: "Colors", messages: ["hello"] });
-    const read = (file = "state") =>
+    const read = (file: string) =>
       runPromise(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -68,12 +65,12 @@ test(
     await terminal.focus();
     await browser.keyboard.type(`'${process.execPath}' '${project}/program.mjs'`);
     await browser.keyboard.press("Enter");
-    await expect.poll(() => read(), { timeout: 15_000 }).toBe("ready");
+    await expect.poll(() => read("state"), { timeout: 15_000 }).toBe("ready");
     await app.screenshot("before-background");
 
     await terminal.focus();
     await browser.keyboard.type("b");
-    await expect.poll(read, { timeout: 15_000 }).toBe("changed:0");
+    await expect.poll(() => read("state"), { timeout: 15_000 }).toBe("changed:0");
     await app.screenshot("after-background");
 
     // Sample the padding above the rows, a cell beside the printed rows, and the canvas bottom.

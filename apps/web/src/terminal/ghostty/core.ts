@@ -249,10 +249,7 @@ export class GhosttyTerminalCore {
   private scrollbar = 0;
   private rows: GhosttyRow[] = [];
   // Defaults the cached rows resolved; Ghostty marks no row dirty when OSC 10/11 change them.
-  private rowColors: {
-    readonly foreground: GhosttyColor;
-    readonly background: GhosttyColor;
-  } | null = null;
+  private rowColors: Pick<GhosttySnapshot, "foreground" | "background"> | null = null;
   private disposed = false;
   private keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
 
@@ -870,9 +867,14 @@ export class GhosttyTerminalCore {
     );
     const cols = this.getU16(RENDER_DATA.cols);
     const rowCount = this.getU16(RENDER_DATA.rows);
-    const dirty = this.getU32(RENDER_DATA.dirty);
     const foreground = this.getColor(RENDER_DATA.foreground, { r: 229, g: 231, b: 235 });
     const background = this.getColor(RENDER_DATA.background, { r: 0, g: 0, b: 0 });
+    const colorsChanged =
+      this.rowColors !== null &&
+      (!sameColor(this.rowColors.foreground, foreground) ||
+        !sameColor(this.rowColors.background, background));
+    this.rowColors = { foreground, background };
+    const dirty = colorsChanged ? 2 : this.getU32(RENDER_DATA.dirty);
     const cursorHasValue = this.getBool(RENDER_DATA.cursorHasValue);
     const cursor = cursorHasValue ? this.getColor(RENDER_DATA.cursor, foreground) : foreground;
     const cursorInViewport = this.getBool(RENDER_DATA.cursorInViewport);
@@ -889,14 +891,8 @@ export class GhosttyTerminalCore {
       }));
     }
 
-    const colorsChanged =
-      this.rowColors !== null &&
-      (!sameColor(this.rowColors.foreground, foreground) ||
-        !sameColor(this.rowColors.background, background));
-    this.rowColors = { foreground, background };
-
     const dirtyRows = new Set<number>();
-    if (dirty !== 0 || colorsChanged) {
+    if (dirty !== 0) {
       this.assertSuccess(
         "ghostty_render_state_get(row iterator)",
         this.runtime.call(
@@ -912,7 +908,7 @@ export class GhosttyTerminalCore {
         rowIndex < rowCount &&
         this.runtime.call("ghostty_render_state_row_iterator_next", iterator) !== 0
       ) {
-        const rowDirty = dirty === 2 || colorsChanged || this.getRowBool(iterator, ROW_DATA.dirty);
+        const rowDirty = dirty === 2 || this.getRowBool(iterator, ROW_DATA.dirty);
         if (rowDirty) {
           this.rows[rowIndex] = this.readRow(iterator, cols, foreground, background);
           dirtyRows.add(rowIndex);

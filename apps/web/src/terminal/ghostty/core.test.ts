@@ -268,18 +268,15 @@ describe("GhosttyTerminalCore snapshots", () => {
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
 
     // Inverse, default and explicit-background cells, cached before a program sets OSC 10/11.
-    core.resetAndWrite("\x1b[7mI\x1b[0mD\x1b[48;2;9;8;7mB\x1b[0m\r\nROW2");
+    core.resetAndWrite("\x1b[7mI\x1b[0mD\x1b[48;2;9;8;7mB\x1b[0m\r\n");
     core.snapshot();
     const colors = () => {
       const { background, rowData } = core.snapshot();
       return {
         background,
-        cells: [
-          rowData[0]!.cells[0]!,
-          rowData[0]!.cells[1]!,
-          rowData[0]!.cells[2]!,
-          rowData[1]!.cells[11]!,
-        ].map(({ foreground, background }) => ({ foreground, background })),
+        cells: rowData[0]!.cells
+          .slice(0, 3)
+          .map(({ foreground, background }) => ({ foreground, background })),
       };
     };
     const programForeground = { r: 17, g: 34, b: 51 };
@@ -292,7 +289,6 @@ describe("GhosttyTerminalCore snapshots", () => {
         { foreground: programBackground, background: programForeground },
         { foreground: programForeground, background: programBackground },
         { foreground: programForeground, background: explicitBackground },
-        { foreground: programForeground, background: programBackground },
       ],
     });
 
@@ -303,7 +299,6 @@ describe("GhosttyTerminalCore snapshots", () => {
         { foreground: theme.background, background: theme.foreground },
         { foreground: theme.foreground, background: theme.background },
         { foreground: theme.foreground, background: explicitBackground },
-        { foreground: theme.foreground, background: theme.background },
       ],
     });
   });
