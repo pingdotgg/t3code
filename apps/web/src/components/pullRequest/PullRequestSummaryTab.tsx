@@ -988,6 +988,12 @@ export function PullRequestSummaryTab({
               <PullRequestCommentBody
                 key={detail.url}
                 variant="description"
+                defaultExpanded={
+                  conversation.changeRequests.length +
+                    visibleOpenThreads.length +
+                    visibleItems.length <=
+                  2
+                }
                 revealCount={descriptionReveals}
                 className="min-w-0 flex-1"
                 text={description.trim().length > 0 ? description : "_No description provided._"}
