@@ -301,7 +301,7 @@ function markOpenCodeLegacy(
   }>,
 ): Array<ServerProviderModel> {
   const lineKey = ({ providerID, id, family }: OpenCodeRelease) =>
-    family ? `${providerID}/${family}/${id.replace(/\d+(?:\.\d+)*/g, "")}` : undefined;
+    family ? `${providerID}/${family}/${id.replace(/\d+(?:[.-]\d+)*/g, "")}` : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
     const key = lineKey(release);

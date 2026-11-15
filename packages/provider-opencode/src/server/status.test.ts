@@ -902,6 +902,8 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
       const releases = [
         ["opencode", "opus-4-5", "claude-opus", "2025-11-24", "active"],
         ["opencode", "opus-5-5", "claude-opus", "2026-09-22", "active"],
+        ["opencode", "claude-opus-5", "claude-opus", "2026-07-24", "active"],
+        ["opencode", "claude-opus-5-5", "claude-opus", "2026-09-22", "active"],
         ["opencode", "opus-preview", "claude-opus", "2026-10-01", "deprecated"],
         ["opencode", "flash", "flash", "2026-09-10", "active"],
         ["opencode", "flash-free", "flash", "2026-09-10", "active"],
@@ -920,7 +922,12 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
           .filter((model) => model.isLegacy)
           .map((model) => model.slug)
           .toSorted();
-      const expected = ["opencode/opus-4-5", "opencode/opus-preview", "opencode/qwen3.5-plus"];
+      const expected = [
+        "opencode/claude-opus-5",
+        "opencode/opus-4-5",
+        "opencode/opus-preview",
+        "opencode/qwen3.5-plus",
+      ];
 
       runtimeMock.state.inventory = {
         providerList: {
