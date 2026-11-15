@@ -525,6 +525,21 @@ export const make = Effect.gen(function* () {
             });
           yield* git.setBranchUpstream({ ...remoteBranch, branch: localBranch });
           yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
+          if (input.force !== true && branches.includes(localBranch))
+            // The fetch above moved the remote-tracking ref; the checked-out branch
+            // is still at the old tip. Sync like the GitHub provider does: a
+            // re-checkout shows the current pull request content, and ff-only fails
+            // cleanly when the user has local commits on the branch.
+            yield* git.execute({
+              operation: "GitCafeSourceControlProvider.checkoutChangeRequest",
+              cwd: input.cwd,
+              args: [
+                "merge",
+                "--ff-only",
+                "--quiet",
+                `refs/remotes/${remoteName}/${pull.headRefName}`,
+              ],
+            });
         }).pipe(
           Effect.mapError((cause) =>
             error(

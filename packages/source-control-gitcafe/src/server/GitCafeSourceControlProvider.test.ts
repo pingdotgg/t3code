@@ -11,6 +11,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as Vcs from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as GitCafeApi from "./GitCafeApi.ts";
 import * as GitCafeCredentials from "./GitCafeCredentials.ts";
@@ -35,7 +36,10 @@ const NoFiles = FileSystem.layerNoop({});
 /** A provider on git.cafe whose checkout has no remote and which may not run `cafe`. */
 const layerFor = (
   client: HttpClient.HttpClient,
-  options: { readonly files?: Layer.Layer<FileSystem.FileSystem> } = {},
+  options: {
+    readonly files?: Layer.Layer<FileSystem.FileSystem>;
+    readonly git?: Partial<Vcs.SourceControlHost["Service"]["git"]>;
+  } = {},
 ) =>
   Layer.merge(GitCafeApi.layer, options.files ?? NoFiles).pipe(
     Layer.provideMerge(GitCafeCredentials.layer),
@@ -51,6 +55,7 @@ const layerFor = (
                 detail: "No git remote is configured.",
               }),
             ),
+          ...options.git,
         },
       }),
     ),
@@ -329,6 +334,88 @@ describe("GitCafeSourceControlProvider", () => {
               path === "/tmp/body.md" ? Effect.succeed("Body") : Effect.die(path),
           }),
         }),
+      ),
+    );
+  });
+});
+
+describe("GitCafeSourceControlProvider.checkoutChangeRequest", () => {
+  const pullJson = encodeJson({
+    number: 12,
+    title: "Update the thing",
+    state: "open",
+    draft: false,
+    sourceBranch: "fix/one",
+    targetBranch: "main",
+    headOid: null,
+    updatedAt: null,
+    sourceRepo: null,
+    closedAt: null,
+    mergedAt: null,
+  });
+  it.effect("syncs an existing branch to the fetched pull request head on re-checkout", () => {
+    const calls: Array<string> = [];
+    const client = HttpClient.make((request) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response(pullJson))),
+    );
+    const context = {
+      provider: {
+        kind: SourceControlProviderKind.make("gitcafe"),
+        name: "GitCafe",
+        baseUrl: "https://git.cafe",
+      },
+      remoteName: "origin",
+      remoteUrl: "https://git.cafe/team/project",
+    };
+    return Effect.gen(function* () {
+      const provider = yield* GitCafeSourceControlProvider.make;
+      yield* provider.checkoutChangeRequest({
+        cwd: "/repo",
+        reference: "https://git.cafe/team/project/pulls/12",
+        ...(context === undefined ? {} : { context }),
+      });
+      const mergeIndex = calls.findIndex((call) => call.startsWith("execute:merge,--ff-only"));
+      const switchIndex = calls.findIndex((call) => call.startsWith("switchRef:"));
+      assert.isTrue(mergeIndex >= 0, "the existing branch is synced to the fetched head");
+      assert.isTrue(switchIndex >= 0 && mergeIndex > switchIndex, "the sync follows the checkout");
+    }).pipe(
+      Effect.provide(
+        Layer.merge(GitCafeApi.layer, NoFiles).pipe(
+          Layer.provideMerge(GitCafeCredentials.layer),
+          Layer.provideMerge(
+            TestSourceControlHost.layer({
+              git: {
+                listLocalBranchNames: () => {
+                  calls.push("listLocalBranchNames");
+                  return Effect.succeed(["fix/one"]);
+                },
+                fetchRemoteTrackingBranch: () => {
+                  calls.push("fetchRemoteTrackingBranch");
+                  return Effect.void;
+                },
+                fetchRemoteBranch: () => {
+                  calls.push("fetchRemoteBranch");
+                  return Effect.void;
+                },
+                setBranchUpstream: () => {
+                  calls.push("setBranchUpstream");
+                  return Effect.void;
+                },
+                switchRef: (input) => {
+                  calls.push(`switchRef:${input.refName}`);
+                  return Effect.succeed({ refName: input.refName });
+                },
+                execute: (input) => {
+                  calls.push(`execute:${input.args.join(",")}`);
+                  return Effect.succeed(TestSourceControlHost.processOutput(""));
+                },
+              },
+            }),
+          ),
+          Layer.provide(Layer.succeed(HostProcess.Environment, { CAFE_TOKEN: "env-token" })),
+          Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/server")),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        ),
       ),
     );
   });
