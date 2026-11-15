@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
@@ -43,6 +44,7 @@ export function DatabaseStorageNotice({
 }: {
   environments: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>;
 }) {
+  const { t } = useTranslation("settings");
   const environmentIds = environments.map((environment) => environment.environmentId);
   const recommendations = useAtomValue(
     serverEnvironment.databaseCompactionRecommendations(JSON.stringify(environmentIds)),
@@ -68,14 +70,14 @@ export function DatabaseStorageNotice({
     }));
   if (visible.length === 0) return null;
   return (
-    <SettingsSection id="storage-database" title="Database">
+    <SettingsSection id="storage-database" title={t("dbStorage.title")}>
       <SettingsRow
-        title="Reclaim freed database space"
-        description={`These databases still hold space freed by history cleanup.${
+        title={t("dbStorage.reclaimTitle")}
+        description={
           visible.every((recommendation) => recommendation.reclaimable)
-            ? ""
-            : " Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment."
-        }`}
+            ? t("dbStorage.reclaimDescription")
+            : `${t("dbStorage.reclaimDescription")} ${t("dbStorage.reclaimManualHint")}`
+        }
       />
       {visible.map(({ environmentId, status, label, reclaimable }) => {
         const dismiss = (
@@ -84,7 +86,7 @@ export function DatabaseStorageNotice({
             size="xs"
             onClick={() => setDismissed((current) => [...current, environmentId])}
           >
-            Dismiss
+            {t("dbStorage.dismiss")}
           </Button>
         );
         return reclaimable ? (
@@ -98,7 +100,7 @@ export function DatabaseStorageNotice({
         ) : (
           <SettingsRow
             key={environmentId}
-            title={`${formatGiB(status.reclaimableBytes)} on ${label}`}
+            title={t("dbStorage.amountOn", { amount: formatGiB(status.reclaimableBytes), label })}
             description={<code className="select-text break-all">{status.compactCommand}</code>}
             control={
               <div className="flex flex-wrap items-center gap-1.5">
@@ -107,7 +109,7 @@ export function DatabaseStorageNotice({
                   size="xs"
                   onClick={() => copyToClipboard(status.compactCommand, undefined)}
                 >
-                  Copy command
+                  {t("dbStorage.copyCommand")}
                 </Button>
                 {dismiss}
               </div>
@@ -130,6 +132,7 @@ function ReclaimRow({
   readonly status: DatabaseStorageStatus;
   readonly dismiss: ReactNode;
 }) {
+  const { t } = useTranslation("settings");
   const reclaim = useAtomCommand(serverEnvironment.reclaimDatabaseSpace);
   const [confirming, setConfirming] = useState(false);
   const [requested, setRequested] = useState(false);
@@ -144,8 +147,8 @@ function ReclaimRow({
     if (result._tag === "Success") {
       toastManager.add({
         type: "success",
-        title: `Reclaiming ${amount} on ${label}`,
-        description: `T3 Code there restarts and is back in about ${minutes} min.`,
+        title: t("dbStorage.reclaimingToast", { amount, label }),
+        description: t("dbStorage.reclaimingToastDescription", { minutes }),
       });
       return;
     }
@@ -154,17 +157,17 @@ function ReclaimRow({
     const error = squashAtomCommandFailure(result);
     toastManager.add({
       type: "error",
-      title: `Could not reclaim space on ${label}`,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      title: t("dbStorage.reclaimFailedToast", { label }),
+      description: error instanceof Error ? error.message : t("dbStorage.errorOccurred"),
     });
   };
   return (
     <SettingsRow
-      title={`${amount} on ${label}`}
+      title={t("dbStorage.amountOn", { amount, label })}
       description={
         status.reclaimFailure === undefined
-          ? `Restarts T3 Code there. It will be offline for about ${minutes} min.`
-          : `The last attempt failed: ${status.reclaimFailure}`
+          ? t("dbStorage.restartDescription", { minutes })
+          : t("dbStorage.lastAttemptFailed", { error: status.reclaimFailure })
       }
       control={
         <div className="flex flex-wrap items-center gap-1.5">
@@ -174,23 +177,24 @@ function ReclaimRow({
             disabled={restarting}
             onClick={() => setConfirming(true)}
           >
-            {restarting ? "Restarting…" : "Reclaim"}
+            {restarting ? t("dbStorage.restarting") : t("dbStorage.reclaim")}
           </Button>
           {dismiss}
           <AlertDialog open={confirming} onOpenChange={setConfirming}>
             <AlertDialogPopup>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  Reclaim {amount} on {label}?
+                  {t("dbStorage.reclaimConfirmTitle", { amount, label })}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
-                  T3 Code on {label} stops, rebuilds its database, and starts again. It will be
-                  offline for about {minutes} min. Running agents stop when it restarts.
+                  {t("dbStorage.reclaimConfirmDescription", { label, minutes })}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-                <Button onClick={() => void start()}>Restart and reclaim</Button>
+                <AlertDialogClose render={<Button variant="outline" />}>
+                  {t("dbStorage.cancel")}
+                </AlertDialogClose>
+                <Button onClick={() => void start()}>{t("dbStorage.restartAndReclaim")}</Button>
               </AlertDialogFooter>
             </AlertDialogPopup>
           </AlertDialog>

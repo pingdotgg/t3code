@@ -4,6 +4,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { i18n } from "../../i18nCore";
+
 export const parseEasDeviceHostDraft = Schema.decodeUnknownOption(EasDeviceHostConfig);
 
 export const newEasDeviceHost = (id: string): EasDeviceHostConfigType => ({
@@ -38,5 +40,9 @@ export function updateEasDeviceHosts(
 export function easSessionLimits(host: EasDeviceHostConfigType) {
   const sessions =
     host.maxConcurrentSessions === 1 ? "1 session" : `${host.maxConcurrentSessions} sessions`;
-  return `Up to ${sessions} at once, each stopped after ${host.maxSessionMinutes} min or ${host.idleMinutes} idle min`;
+  return i18n.t("deviceSources.easSessionLimits", {
+    sessions,
+    minutes: host.maxSessionMinutes,
+    idle: host.idleMinutes,
+  });
 }

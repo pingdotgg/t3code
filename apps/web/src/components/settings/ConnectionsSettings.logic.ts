@@ -1,5 +1,7 @@
 import * as DateTime from "effect/DateTime";
 
+import { i18n } from "../../i18nCore";
+
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
@@ -64,8 +66,8 @@ export function missingTailscaleEndpointDescription(
   state: Pick<DesktopServerExposureState, "mode" | "tailscaleServeEnabled"> | null,
 ): string {
   return state && state.mode !== "network-accessible" && !state.tailscaleServeEnabled
-    ? "Turn on Network access to detect Tailscale."
-    : "Start Tailscale to set up HTTPS access through MagicDNS.";
+    ? i18n.t("connLogic.missingTailscaleTurnOnNetwork")
+    : i18n.t("connLogic.missingTailscaleStartTailscale");
 }
 
 export function resolveTailscaleServeBaseUrl(
@@ -97,11 +99,11 @@ export function isWslSettingsRowVisible(input: {
  * including retryable failures. Rechecks retain downloaded-update labels; `state` is null outside desktop.
  */
 export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null): string {
-  if (!state) return "Up to date";
+  if (!state) return i18n.t("connLogic.upToDate");
   if (state.status === "downloading") {
     return state.availableVersion
-      ? `Downloading update ${state.availableVersion}`
-      : "Downloading update";
+      ? i18n.t("connLogic.downloadingUpdateVersion", { version: state.availableVersion })
+      : i18n.t("connLogic.downloadingUpdate");
   }
   const action = resolveDesktopUpdateButtonAction(state);
   if (
@@ -110,14 +112,16 @@ export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null)
     (state.status === "checking" && state.downloadedVersion !== null)
   ) {
     const version = getDesktopUpdateDownloadedVersion(state);
-    return version ? `Update ${version} downloaded` : "Update downloaded";
+    return version
+      ? i18n.t("connLogic.updateDownloadedVersion", { version })
+      : i18n.t("connLogic.updateDownloaded");
   }
   if (action === "download") {
     return state.availableVersion
-      ? `Update ${state.availableVersion} available`
-      : "Update available";
+      ? i18n.t("connLogic.updateAvailableVersion", { version: state.availableVersion })
+      : i18n.t("connLogic.updateAvailable");
   }
-  return "Up to date";
+  return i18n.t("connLogic.upToDate");
 }
 
 export type QrEndpointOption = {
@@ -179,7 +183,7 @@ export function parseManualDesktopSshTarget(input: {
 }): DesktopSshEnvironmentTarget {
   const rawHost = input.host.trim();
   if (rawHost.length === 0) {
-    throw new Error("SSH host or alias is required.");
+    throw new Error(i18n.t("connLogic.sshHostRequired"));
   }
 
   let hostname = rawHost;
@@ -215,11 +219,11 @@ export function parseManualDesktopSshTarget(input: {
   }
 
   if (hostname.length === 0) {
-    throw new Error("SSH host or alias is required.");
+    throw new Error(i18n.t("connLogic.sshHostRequired"));
   }
 
   if (port !== null && (!Number.isInteger(port) || port <= 0 || port > 65_535)) {
-    throw new Error("SSH port must be between 1 and 65535.");
+    throw new Error(i18n.t("connLogic.sshPortRange"));
   }
 
   return {
@@ -274,16 +278,16 @@ export function parseRemotePairingFields(input: {
   const host = input.host.trim();
   const pairingCode = input.pairingCode.trim();
   if (!host) {
-    throw new Error("Enter a backend host.");
+    throw new Error(i18n.t("connLogic.enterBackendHost"));
   }
   if (!pairingCode) {
-    throw new Error("Enter a pairing code.");
+    throw new Error(i18n.t("connLogic.enterPairingCode"));
   }
   return { host, pairingCode };
 }
 
 export function formatDesktopSshConnectionError(error: unknown): string {
-  const fallback = "Failed to connect SSH host.";
+  const fallback = i18n.t("connLogic.sshConnectFailed");
   const rawMessage = error instanceof Error ? error.message : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
@@ -304,10 +308,8 @@ export function summarizeAuthorizedClients(
   links: ReadonlyArray<ServerPairingLinkRecord>,
 ): string {
   const parts = [
-    `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
-    links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
-      : null,
+    i18n.t("connLogic.clientsCount", { count: sessions.length }),
+    links.length > 0 ? i18n.t("connLogic.linksCount", { count: links.length }) : null,
   ];
   return parts.filter((part): part is string => part !== null).join(" · ");
 }
@@ -424,17 +426,17 @@ export function isHostedAppPairingUrl(value: string): boolean {
 
 export function endpointShareHint(endpoint: AdvertisedEndpoint, url: string): string {
   if (isHostedAppPairingUrl(url)) {
-    return "Opens the hosted app, no install needed";
+    return i18n.t("connLogic.shareHintHostedApp");
   }
   switch (endpoint.reachability) {
     case "lan":
-      return "Devices on the same network";
+      return i18n.t("connLogic.shareHintLan");
     case "private-network":
-      return "Devices on your private network";
+      return i18n.t("connLogic.shareHintPrivateNetwork");
     case "public":
-      return "Reachable from anywhere";
+      return i18n.t("connLogic.shareHintPublic");
     case "loopback":
-      return "Clients on this machine";
+      return i18n.t("connLogic.shareHintLoopback");
   }
 }
 

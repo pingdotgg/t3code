@@ -8,6 +8,8 @@ import type { DesktopSshEnvironmentTarget, EnvironmentMachineKind } from "@t3too
 import * as Option from "effect/Option";
 import type { ReactNode } from "react";
 
+import { i18n } from "../../i18nCore";
+
 import { cn } from "~/lib/utils";
 import type { EnvironmentPresentation } from "~/state/environments";
 import { usePreparedConnection } from "~/state/session";
@@ -24,7 +26,7 @@ export function environmentTransportLabel(
   activeTarget: ConnectionTarget | null = null,
 ): string {
   const { entry } = environment;
-  if (entry.target._tag === "PrimaryConnectionTarget") return "This machine";
+  if (entry.target._tag === "PrimaryConnectionTarget") return i18n.t("envRow.thisMachine");
   const routes = connectionRoutes(entry);
   if (routes.length > 1) {
     const active =
@@ -35,7 +37,7 @@ export function environmentTransportLabel(
           );
     return active === undefined
       ? connectionRouteLabel(routes[0]!)
-      : `via ${connectionRouteLabel(active)}`;
+      : i18n.t("envRow.viaRoute", { route: connectionRouteLabel(active) });
   }
   if (environment.relayManaged) return "T3 Connect";
   if (isDesktopLocalConnectionTarget(entry.target)) return "WSL";
@@ -46,7 +48,7 @@ export function environmentTransportLabel(
   ) {
     return `SSH ${formatDesktopSshTarget(entry.profile.value.target)}`;
   }
-  return environment.displayUrl ?? "Remote link";
+  return environment.displayUrl ?? i18n.t("envRow.remoteLink");
 }
 
 export function useEnvironmentTransportLabel(environment: EnvironmentPresentation): string {

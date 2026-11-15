@@ -3,6 +3,8 @@ import {
   ProviderDriverKind,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
+
+import { i18n } from "../../i18nCore";
 import { type CustomModelDefinition, createModelCapabilities } from "@t3tools/shared/model";
 
 export interface EditorChoice {
@@ -197,20 +199,20 @@ export function descriptorsFromCapabilities(
 export function validateDraft(draft: CustomModelDraft): string | null {
   const seenIds = new Set<string>();
   for (const [index, descriptor] of draft.descriptors.entries()) {
-    const position = `Option ${index + 1}`;
+    const position = i18n.t("customModel.optionPosition", { index: index + 1 });
     const id = descriptor.id.trim();
-    if (!id) return `${position} needs an id.`;
-    if (seenIds.has(id)) return `${position}: id "${id}" is used twice.`;
+    if (!id) return i18n.t("customModel.needsId", { position });
+    if (seenIds.has(id)) return i18n.t("customModel.idUsedTwice", { position, id });
     seenIds.add(id);
-    if (!descriptor.label.trim()) return `${position} needs a label.`;
+    if (!descriptor.label.trim()) return i18n.t("customModel.needsLabel", { position });
     if (descriptor.type !== "select") continue;
-    if (descriptor.choices.length === 0) return `${position} needs at least one choice.`;
+    if (descriptor.choices.length === 0) return i18n.t("customModel.needsChoice", { position });
     const seenChoices = new Set<string>();
     for (const choice of descriptor.choices) {
       const choiceId = choice.id.trim();
-      if (!choiceId) return `${position} has a choice without a value.`;
+      if (!choiceId) return i18n.t("customModel.choiceNeedsValue", { position });
       if (seenChoices.has(choiceId)) {
-        return `${position}: choice "${choiceId}" is used twice.`;
+        return i18n.t("customModel.choiceUsedTwice", { position, choice: choiceId });
       }
       seenChoices.add(choiceId);
     }

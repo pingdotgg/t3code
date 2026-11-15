@@ -9,6 +9,8 @@ import * as Schema from "effect/Schema";
 
 const parseSimlockDeviceHostDraft = Schema.decodeUnknownOption(SimlockDeviceHostConfig);
 
+import { i18n } from "../../i18nCore";
+
 export const newSimlockDeviceHost = (id: string): SimlockDeviceHostConfigType => ({
   kind: "simlock",
   id,
@@ -46,7 +48,10 @@ export function simlockDeviceHostProblem(host: SimlockDeviceHostConfigType): str
 
 export function simlockLeaseLimits(host: SimlockDeviceHostConfigType) {
   const devices = host.maxLeases === 1 ? "1 device" : `${host.maxLeases} devices`;
-  return `Up to ${devices} at once, each released after ${host.maxLeaseMinutes} min`;
+  return i18n.t("deviceSources.simlockLeaseLimits", {
+    devices,
+    minutes: host.maxLeaseMinutes,
+  });
 }
 
 export interface SimlockHostEnvironment {

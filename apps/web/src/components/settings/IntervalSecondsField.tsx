@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -21,6 +22,7 @@ export function IntervalSecondsField({
   step: number;
   onCommit: (seconds: number, options: { onFailed: () => void }) => void;
 }) {
+  const { t } = useTranslation("settings");
   const [field, setField] = useState({
     saved: value,
     draft: value as number | null,
@@ -66,11 +68,9 @@ export function IntervalSecondsField({
       }}
     >
       <NumberFieldGroup>
-        <NumberFieldDecrement aria-label={`Decrease ${label}`} />
-        <NumberFieldInput
-          aria-label={`${label.charAt(0).toUpperCase()}${label.slice(1)} in seconds`}
-        />
-        <NumberFieldIncrement aria-label={`Increase ${label}`} />
+        <NumberFieldDecrement aria-label={t("interval.decrease", { label })} />
+        <NumberFieldInput aria-label={t("interval.inSeconds", { label })} />
+        <NumberFieldIncrement aria-label={t("interval.increase", { label })} />
       </NumberFieldGroup>
     </NumberField>
   );

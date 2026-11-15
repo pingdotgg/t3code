@@ -4,6 +4,8 @@ import {
   type EnvironmentId,
   SshDeviceHostConfig,
 } from "@t3tools/contracts";
+
+import { i18n } from "../../i18nCore";
 import * as Schema from "effect/Schema";
 
 export interface DeviceHostCheckTarget {
@@ -45,7 +47,7 @@ export async function checkDeviceHostConnections(
     targets.map(async (target) => {
       report(target.environmentId, { status: "pending" });
       try {
-        if (!target.connected) throw new Error("Environment disconnected");
+        if (!target.connected) throw new Error(i18n.t("deviceHost.environmentDisconnected"));
         const result = await probe(target.environmentId, host);
         report(
           target.environmentId,
