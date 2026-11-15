@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.swashxdev.continuumide</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Continuum IDE</name>
+  <summary>Desktop IDE for coding agents</summary>
+  <developer id="io.github.swashxdev">
+    <name>Continuum IDE contributors</name>
+  </developer>
+  <description>
+    <p>
+      Continuum IDE is an open-source desktop app for coding agents. Use the
+      agent subscriptions you already have, switch between agents and accounts
+      without losing context, review changes, and run commands in your projects.
+    </p>
+    <p>
+      Continuum IDE is a community fork of T3 Code by T3 Tools Inc. and is not
+      an official T3 Code release.
+    </p>
+  </description>
+  <launchable type="desktop-id">continuum-ide.desktop</launchable>
+  <icon type="stock">continuum-ide</icon>
+  <provides>
+    <binary>continuum-ide</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+  </categories>
+  <url type="homepage">https://github.com/SwashX-dev/continuum-ide</url>
+  <url type="bugtracker">https://github.com/SwashX-dev/continuum-ide/issues</url>
+  <url type="vcs-browser">https://github.com/SwashX-dev/continuum-ide</url>
+</component>

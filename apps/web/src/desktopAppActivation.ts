@@ -8,6 +8,7 @@ import type {
   ScopedProjectRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { APP_BASE_NAME } from "./branding";
 
 export interface DesktopAppActivationProject {
   readonly id: ProjectId;
@@ -85,7 +86,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "project-create-failed",
-        errorMessage(error, "T3 Code could not add the project."),
+        errorMessage(error, `${APP_BASE_NAME} could not add the project.`),
       );
     }
   }
@@ -99,7 +100,7 @@ export async function handleDesktopAppActivationRequest(
       return failure(
         request.requestId,
         "thread-open-failed",
-        "T3 Code could not open a new thread for the project.",
+        `${APP_BASE_NAME} could not open a new thread for the project.`,
       );
     }
     return {
@@ -113,7 +114,7 @@ export async function handleDesktopAppActivationRequest(
     return failure(
       request.requestId,
       "thread-open-failed",
-      errorMessage(error, "T3 Code could not open a new thread for the project."),
+      errorMessage(error, `${APP_BASE_NAME} could not open a new thread for the project.`),
     );
   }
 }

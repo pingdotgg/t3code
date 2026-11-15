@@ -3,6 +3,7 @@ import { TRIAGE_CLI_COMMAND } from "~/hooks/useStartTriage";
 
 import { InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { APP_BASE_NAME } from "../../branding";
 
 /**
  * The empty-draft hero for a triage session, in place of "What should we work on?".
@@ -31,8 +32,8 @@ export function TriageDraftHero(props: {
             )}
           </TooltipTrigger>
           <TooltipPopup side="bottom">
-            The agent reads T3 Code's logs and source here, and asks before it applies a fix or
-            posts anything.
+            The agent reads {APP_BASE_NAME}'s logs and source here, and asks before it applies a fix
+            or posts anything.
           </TooltipPopup>
         </Tooltip>
         <span aria-hidden className="text-muted-foreground">

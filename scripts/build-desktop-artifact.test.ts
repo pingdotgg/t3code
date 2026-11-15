@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - Tests use Node's glob matcher to verify electron-builder exclusions.
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 import * as NodeCrypto from "node:crypto";
 import * as NodePath from "node:path";
 
@@ -566,7 +567,11 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.t3tools.T3Code");
+      assert.nestedPropertyVal(
+        linux,
+        "linux.desktop.entry.StartupWMClass",
+        PRODUCT_BRAND.linuxDesktopEntryStem,
+      );
     }),
   );
 
@@ -583,10 +588,44 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.notInclude(stable, "${version}");
       assert.notInclude(nightly, "${version}");
       assert.notEqual(stable, nightly);
+      // The README links these stable names under releases/latest/download.
+      assert.equal(stable, "Continuum-IDE-${arch}.${ext}");
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.37",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.nestedPropertyVal(linux, "deb.artifactName", "Continuum-IDE-${arch}.${ext}");
+      assert.nestedPropertyVal(linux, "linux.executableName", PRODUCT_BRAND.executableName);
+      const win = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "0.0.37",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.nestedPropertyVal(win, "nsis.artifactName", "Continuum-IDE-Setup-${arch}.${ext}");
+      assert.nestedPropertyVal(win, "productName", "Continuum IDE");
+      assert.nestedPropertyVal(win, "appId", PRODUCT_BRAND.desktopAppId);
+      // An update feed from the fork's CI must never point at upstream T3 Code releases.
+      assert.deepNestedInclude(win, {
+        "publish[0]": {
+          provider: "github",
+          owner: "SwashX-dev",
+          repo: "continuum-ide",
+          releaseType: "release",
+        },
+      });
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
-          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "SwashX-dev/continuum-ide" } }),
         ),
       ),
     ),
@@ -1564,7 +1603,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "com.t3tools.t3code",
+      appId: PRODUCT_BRAND.desktopAppId,
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
@@ -1587,7 +1626,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.include(entitlements, `<string>ABC1234567.${PRODUCT_BRAND.desktopAppId}</string>`);
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -1598,7 +1637,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
-    const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };
+    const configuration = { appId: PRODUCT_BRAND.desktopAppId, teamId: "ABC1234567" };
     const profile = (entitlements: string, outside = "") =>
       `0\x82\x1f\x9a\x06\t*\x86H<?xml version="1.0"?><plist version="1.0"><dict>${outside}<key>Entitlements</key><dict>${entitlements}</dict></dict></plist>\x00\x01`;
     const teamWildcardGroups = `<key>keychain-access-groups</key>
@@ -1640,7 +1679,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         configuration,
       ),
       {
-        touchIdKeychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn",
+        touchIdKeychainAccessGroup: `ABC1234567.${PRODUCT_BRAND.desktopAppId}.webauthn`,
         browserPasskeys: true,
       },
     );
@@ -1656,7 +1695,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.match(
       entitlements,
-      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.t3tools\.t3code\.webauthn<\/string>\s*<\/array>/u,
+      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.io\.github\.swashxdev\.continuumide\.webauthn<\/string>\s*<\/array>/u,
     );
     assert.match(
       entitlements,

@@ -48,6 +48,7 @@ import {
   prepareAntigravityProfile,
 } from "./antigravityAuthSupport.ts";
 import { type AntigravityReleaseAsset } from "./antigravityRelease.ts";
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
@@ -397,7 +398,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         if (yield* isWithdrawn(installed.version))
           return yield* installationError(
             "resolve",
-            `Antigravity ${installed.version} no longer works with this T3 Code release. Update it in Antigravity setup.`,
+            `Antigravity ${installed.version} no longer works with this ${PRODUCT_BRAND.baseName} release. Update it in Antigravity setup.`,
           );
         return installed;
       }

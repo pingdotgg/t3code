@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./branding": {
+      "types": "./src/branding.ts",
+      "import": "./src/branding.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

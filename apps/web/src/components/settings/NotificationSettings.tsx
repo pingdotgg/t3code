@@ -11,6 +11,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { APP_BASE_NAME } from "../../branding";
 
 export function NotificationSettings() {
   const mode = useScopedSettings((settings) => settings.notificationMode);
@@ -23,7 +24,7 @@ export function NotificationSettings() {
       {...searchableSetting("thread-notifications")}
       description={
         permissionMessage ??
-        "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open."
+        `System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while ${APP_BASE_NAME} is open.`
       }
       control={
         <Select

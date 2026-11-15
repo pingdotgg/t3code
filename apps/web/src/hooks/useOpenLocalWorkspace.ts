@@ -15,6 +15,7 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { reportProjectFailure } from "./useProjectGroupUpdate";
 import { useNewThreadHandler } from "./useHandleNewThread";
+import { APP_BASE_NAME } from "../branding";
 
 /**
  * Opens a folder on this computer as a project in the primary environment: an
@@ -70,7 +71,9 @@ export function useOpenLocalWorkspace() {
         });
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
-          throw error instanceof Error ? error : new Error("T3 Code could not add the project.");
+          throw error instanceof Error
+            ? error
+            : new Error(`${APP_BASE_NAME} could not add the project.`);
         }
         return projectId;
       },

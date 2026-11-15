@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
+const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34", APP_BASE_NAME: "Continuum IDE" }));
 vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
@@ -17,7 +17,7 @@ import {
 } from "./versionSkew";
 
 const MISMATCH_HINT =
-  "Version mismatch. Try syncing the client and server to the same T3 Code version.";
+  "Version mismatch. Try syncing the client and server to the same Continuum IDE version.";
 
 describe("versionSkew", () => {
   it("updates only the proven install and safely quotes its paths", () => {

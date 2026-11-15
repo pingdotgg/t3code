@@ -32,6 +32,7 @@ import * as ServerConfig from "../config.ts";
 import { selectManagedRelease } from "./managedRelease.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 
 const DRIVER = ProviderDriverKind.make("codex");
 const STAGING_STALE_AFTER_MS = 24 * 60 * 60_000;
@@ -386,7 +387,10 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       return executable;
     },
     Effect.mapError(
-      wrapFailure("resolve", "Codex is not installed in T3 Code. Install it to continue."),
+      wrapFailure(
+        "resolve",
+        `Codex is not installed in ${PRODUCT_BRAND.baseName}. Install it to continue.`,
+      ),
     ),
   );
   const acquire = Effect.fn("CodexInstallation.acquire")(function* () {

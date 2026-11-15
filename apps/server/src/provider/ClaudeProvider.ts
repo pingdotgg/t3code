@@ -78,6 +78,7 @@ import {
   resolveClaudeUpdateRequiredModels,
   withUltracodeToggle,
 } from "./ClaudeModelCatalog.ts";
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -698,7 +699,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: `Claude is disabled in ${PRODUCT_BRAND.baseName} settings.`,
       },
     });
   }
@@ -934,7 +935,7 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: `Claude is disabled in ${PRODUCT_BRAND.baseName} settings.`,
         },
       });
     }

@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { BACKEND_QUIT_STOP_TIMEOUT } from "./DesktopBackendManager.ts";
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 
 // The fields of the server's `server-runtime.json` that identify the owner of a T3 home.
 const HomeOwnerRuntimeState = Schema.Struct({
@@ -92,15 +93,15 @@ export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")
 export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
   Option.match(owner, {
     onNone: () =>
-      "Another T3 Code server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try `t3 update`. If the older launcher cannot update, run `t3 service uninstall` and optionally reinstall with `t3 service install` from a current CLI. Use `npx t3@latest` if `t3` is missing or outdated, and pass `--base-dir` with the service's T3 home to each command. Then reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.",
+      `Another ${PRODUCT_BRAND.baseName} server, such as the background service, is using this data directory, or an older background service is set up for it. Stop that server or try \`t3 update\`. If the older launcher cannot update, run \`t3 service uninstall\` and optionally reinstall with \`t3 service install\` from a current CLI. Use \`npx t3@latest\` if \`t3\` is missing or outdated, and pass \`--base-dir\` with the service's T3 home to each command. Then reopen ${PRODUCT_BRAND.baseName}. You can also set a separate T3CODE_HOME and pair with the running server.`,
     onSome: (owner) => {
       const kind = owner.serviceManaged
-        ? "The T3 Code background service"
-        : "Another T3 Code server (for example `t3 serve`, or one started over SSH)";
+        ? `The ${PRODUCT_BRAND.baseName} background service`
+        : `Another ${PRODUCT_BRAND.baseName} server (for example \`t3 serve\`, or one started over SSH)`;
       const version = owner.serverVersion ? `, version ${owner.serverVersion}` : "";
       const stop = owner.serviceManaged
         ? "Stop it with `t3 service uninstall`, passing `--base-dir` with this T3 home"
-        : "If a T3 Code app on another machine started it over SSH, that app restarts it: remove or disconnect that SSH environment there, or quit that app. Then stop the server";
-      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, and reopen T3 Code. You can also set a separate T3CODE_HOME and pair with the running server.`;
+        : `If a ${PRODUCT_BRAND.baseName} app on another machine started it over SSH, that app restarts it: remove or disconnect that SSH environment there, or quit that app. Then stop the server`;
+      return `${kind} is using this T3 home (PID ${owner.pid}, port ${owner.port}${version}). ${stop}, and reopen ${PRODUCT_BRAND.baseName}. You can also set a separate T3CODE_HOME and pair with the running server.`;
     },
   });

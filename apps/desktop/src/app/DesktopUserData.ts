@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -37,62 +38,14 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     readonly isDevelopment: boolean;
     readonly platform: NodeJS.Platform;
   }) {
-    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const names = input.isDevelopment
-      ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
-      : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
-    const destinationPath = path.join(input.appDataDirectory, names.current);
-    const legacyPath = path.join(input.appDataDirectory, names.legacy);
-    const inspect = (resourcePath: string) =>
-      fs
-        .exists(resourcePath)
-        .pipe(
-          Effect.mapError((cause) =>
-            DesktopUserDataInitializationError.fromFileSystem(cause, "inspect", resourcePath),
-          ),
-        );
-    if (input.isDevelopment) {
-      return (yield* inspect(legacyPath)) ? legacyPath : destinationPath;
-    }
-    // Chromium databases require their own profile for each running version.
-    if (input.platform !== "win32") return destinationPath;
-    const destinationState = path.join(destinationPath, "Local State");
-    if (yield* inspect(destinationState)) return destinationPath;
-    const legacyState = path.join(legacyPath, "Local State");
-    const sourceState = (yield* inspect(legacyState))
-      ? legacyState
-      : path.join(input.appDataDirectory, "t3code", "Local State");
-    if (!(yield* inspect(sourceState))) return destinationPath;
-    // Windows safeStorage keys live here. Copy only these preferences, never locked databases.
-    const state = yield* fs
-      .readFileString(sourceState)
-      .pipe(
-        Effect.mapError((cause) =>
-          DesktopUserDataInitializationError.fromFileSystem(cause, "read", sourceState),
-        ),
-      );
-    yield* fs
-      .makeDirectory(destinationPath, { recursive: true })
-      .pipe(
-        Effect.mapError((cause) =>
-          DesktopUserDataInitializationError.fromFileSystem(
-            cause,
-            "create-directory",
-            destinationPath,
-          ),
-        ),
-      );
-    yield* fs.writeFileString(destinationState, state, { flag: "wx" }).pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "AlreadyExists",
-        () => Effect.void,
-      ),
-      Effect.mapError((cause) =>
-        DesktopUserDataInitializationError.fromFileSystem(cause, "write", destinationState),
-      ),
+    // Continuum keeps its own Chromium profile and never adopts T3 Code's (or its safeStorage keys).
+    return path.join(
+      input.appDataDirectory,
+      input.isDevelopment
+        ? PRODUCT_BRAND.developmentUserDataDirectoryName
+        : PRODUCT_BRAND.userDataDirectoryName,
     );
-    return destinationPath;
   },
 );
 

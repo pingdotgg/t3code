@@ -27,6 +27,7 @@ import * as Cause from "effect/Cause";
 import { Atom } from "effect/reactivity";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
+import { APP_BASE_NAME } from "../../branding";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
 
@@ -660,7 +661,7 @@ async function persistScopedSettingsPlan(
       return [
         {
           ...environment,
-          message: "This environment does not support this setting. Update T3 Code on it.",
+          message: `This environment does not support this setting. Update ${APP_BASE_NAME} on it.`,
         },
       ];
     }

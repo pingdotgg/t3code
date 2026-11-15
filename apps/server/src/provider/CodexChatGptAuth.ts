@@ -34,6 +34,7 @@ import { withChatGptSessionLock } from "./CodexChatGptSessionLock.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 
 const isSetupError = Schema.is(ProviderSetupError);
 const RESOURCE = "https://api.openai.com/v1";
@@ -613,7 +614,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               ? { prompt: "consent" }
               : {}),
           }
-        : { agent_name_hint: "T3 Code" }),
+        : { agent_name_hint: `${PRODUCT_BRAND.baseName}` }),
       ext_agent_host_id: hostId,
       response_type: "code",
       redirect_uri: redirectUri,

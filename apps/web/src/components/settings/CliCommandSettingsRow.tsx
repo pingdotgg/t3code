@@ -10,6 +10,7 @@ import { Button } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { APP_BASE_NAME } from "../../branding";
 
 const FAILURE_TITLES = {
   install: "Could not install t3",
@@ -53,9 +54,9 @@ export function CliCommandSettingsRow() {
   if (!state?.supported) return null;
   const installed = state.installedPath !== null;
   const description = state.shadowedBy
-    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use T3 Code's.`
+    ? `Another t3 at ${state.shadowedBy} runs first in a new terminal. Remove it to use ${APP_BASE_NAME}'s.`
     : !installed
-      ? "Run T3 Code's CLI as `t3` from any terminal."
+      ? `Run ${APP_BASE_NAME}'s CLI as \`t3\` from any terminal.`
       : state.onPath
         ? `Installed at ${state.installedPath}. Open a new terminal to use it.`
         : state.pathSetup?.added
