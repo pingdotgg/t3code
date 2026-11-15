@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import {
@@ -210,6 +211,7 @@ function ProviderCommandArguments({
 }: Pick<ProviderSettingsFormProps, "value" | "onChange"> & {
   readonly managedReason: string | undefined;
 }) {
+  const { t } = useTranslation("settings");
   const args = configuredCommandArgs(value);
   const [storedDraft, setDraft] = useState(() => seedRowsDraft(args, toCommandArgumentRows));
   const draft = reconcileRowsDraft(storedDraft, args, commandArgumentsEqual, toCommandArgumentRows);
@@ -237,7 +239,7 @@ function ProviderCommandArguments({
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
-          Add argument
+          {t("providerPanel.addArgument")}
         </Button>
       }
     >
@@ -678,6 +680,7 @@ export function ProviderSettingsForm({
   managed,
   environmentId,
 }: ProviderSettingsFormProps) {
+  const { t } = useTranslation("settings");
   const fields = deriveProviderSettingsFields(definition, value);
   const isLocalAcp =
     definition.driverKind === "acpRegistry" &&

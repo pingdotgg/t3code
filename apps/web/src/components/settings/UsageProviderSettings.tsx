@@ -1,6 +1,7 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -28,6 +29,7 @@ export function UsageProviderSettings({
   readonly sources: UnifiedSettings["usageLimitSources"];
   readonly readOnly: boolean;
 }) {
+  const { t } = useTranslation("settings");
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [adding, setAdding] = useState(false);
   const entries = Object.entries(sources);
@@ -40,13 +42,13 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              Add hub
+              {t("addUsageLimitSource.addHub")}
             </Button>
           ) : null
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title="No hubs configured." />
+          <SettingsRow title={t("addUsageLimitSource.noHubs")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -56,7 +58,8 @@ export function UsageProviderSettings({
                 title={label}
                 description={
                   <span className="break-all">
-                    CLI Proxy{source.enabled ? "" : " · Disabled"}
+                    {t("addUsageLimitSource.cliProxy")}
+                    {source.enabled ? "" : ` ${t("addUsageLimitSource.disabledDot")}`}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
                 }
@@ -93,11 +96,12 @@ function RemoveUsageProviderButton({
   readonly label: string;
   readonly onConfirm: () => void;
 }) {
+  const { t } = useTranslation("settings");
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {t("common.remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
@@ -110,7 +114,9 @@ function RemoveUsageProviderButton({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              {t("common.cancel")}
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -118,7 +124,7 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              Remove hub
+              {t("addUsageLimitSource.removeHub")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

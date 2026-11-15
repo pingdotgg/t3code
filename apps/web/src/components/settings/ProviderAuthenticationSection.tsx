@@ -12,6 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { lazy, Suspense, useRef, useState } from "react";
 import { CopyIcon } from "lucide-react";
+import { useTranslation, Trans } from "react-i18next";
 
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { ensureLocalApi } from "../../localApi";
@@ -40,6 +41,7 @@ export function ProviderAuthenticationSection({
   readonly provider: ServerProvider;
   readonly readOnly: boolean;
 }) {
+  const { t } = useTranslation("settings");
   const target = { environmentId, input: { instanceId } };
   const query = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
   const commands = { reportFailure: false, reportDefect: false };
@@ -165,11 +167,11 @@ export function ProviderAuthenticationSection({
 
   return (
     <SettingsRow
-      title="Account"
+      title={t("providerWizardAuth.accountTitle")}
       description={
         signedIn && !active && provider.auth.email?.trim() ? (
           <span>
-            Signed in as{" "}
+            {t("providerWizardAuth.signedInAs")}{" "}
             <RedactedSensitiveText
               key={provider.auth.email}
               value={provider.auth.email}
@@ -222,13 +224,13 @@ export function ProviderAuthenticationSection({
                 disabled={disabled}
                 onClick={() => void openBrowser()}
               >
-                Open browser
+                {t("providerWizardAuth.openBrowser")}
               </Button>
               <Tooltip>
                 <TooltipTrigger
                   render={
                     <Button
-                      aria-label="Copy sign-in link"
+                      aria-label={t("providerWizardAuth.copySignInLink")}
                       size="icon-sm"
                       variant="ghost-muted"
                       disabled={disabled}
@@ -247,7 +249,7 @@ export function ProviderAuthenticationSection({
                     </Button>
                   }
                 />
-                <TooltipPopup>Copy sign-in link</TooltipPopup>
+                <TooltipPopup>{t("providerWizardAuth.copySignInLink")}</TooltipPopup>
               </Tooltip>
             </>
           ) : null}
@@ -260,13 +262,13 @@ export function ProviderAuthenticationSection({
                   <a href={provider.setup.documentationUrl} target="_blank" rel="noreferrer" />
                 }
               >
-                Open docs
+                {t("providerWizardAuth.openDocs")}
               </Button>
             ) : active && auth?.flowId ? (
               <Button
                 size="sm"
                 variant="ghost-muted"
-                aria-label="Cancel sign-in"
+                aria-label={t("providerWizardAuth.cancelSignIn")}
                 disabled={disabled}
                 onClick={() =>
                   void run(() =>
@@ -274,7 +276,7 @@ export function ProviderAuthenticationSection({
                   )
                 }
               >
-                Cancel
+                {t("common.cancel")}
               </Button>
             ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
               <Button
@@ -321,7 +323,7 @@ export function ProviderAuthenticationSection({
                     });
                 }}
               >
-                Sign out
+                {t("providerWizardAuth.signOut")}
               </Button>
             ) : null}
           </>
@@ -337,16 +339,20 @@ export function ProviderAuthenticationSection({
         <>
           {interaction?.type === "deviceCode" ? (
             <p className="py-2 text-sm text-muted-foreground">
-              Enter code{" "}
-              <code className="select-all font-mono text-foreground">{interaction.userCode}</code>{" "}
-              in your browser.
+              <Trans
+                i18nKey="providerWizardAuth.enterCode"
+                values={{ userCode: interaction.userCode }}
+                components={{ code: <code className="select-all font-mono text-foreground" /> }}
+              />
             </p>
           ) : null}
           {interaction?.type === "terminal" ? (
             <div className="py-2">
               <Suspense
                 fallback={
-                  <p className="text-xs text-muted-foreground">Loading sign-in terminal…</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("providerWizardAuth.loadingTerminal")}
+                  </p>
                 }
               >
                 <ProviderAuthTerminal
@@ -427,7 +433,7 @@ export function ProviderAuthenticationSection({
                 className="w-fit"
                 disabled={disabled}
               >
-                Connect
+                {t("providerWizardAuth.connect")}
               </Button>
             </form>
           ) : null}
@@ -448,7 +454,7 @@ export function ProviderAuthenticationSection({
               }}
             >
               <label className="grid gap-1">
-                If the final localhost page does not load, paste its full URL here.
+                {t("providerWizardAuth.pasteCallbackUrl")}
                 <Input
                   size="sm"
                   id={`provider-callback-${instanceId}`}
@@ -467,7 +473,7 @@ export function ProviderAuthenticationSection({
                 className="w-fit"
                 disabled={disabled || !values.callback?.trim()}
               >
-                Continue
+                {t("common.continue")}
               </Button>
             </form>
           ) : null}

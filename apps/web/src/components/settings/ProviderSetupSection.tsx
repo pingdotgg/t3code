@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { Trash2Icon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { ensureLocalApi } from "../../localApi";
 import { useEnvironmentQuery } from "../../state/query";
@@ -46,15 +47,16 @@ export function readAntigravityAuthMethod(config: unknown): AntigravityAuthMetho
 }
 
 export function ProviderSetupSection(props: ProviderSetupSectionProps) {
+  const { t } = useTranslation("settings");
   return (
     <section
-      aria-label="Antigravity setup"
+      aria-label={t("providerSetup.aria")}
       className="@container/setup divide-y divide-border/50 text-xs [&_[data-slot=settings-row]]:rounded-none"
     >
       <SettingsRow
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
-        title="Environment"
-        description="Device that runs this provider."
+        title={t("providerSetup.environment")}
+        description={t("providerSetup.environmentDescription")}
         control={
           <div className="flex min-w-0 flex-col gap-2 sm:items-end">
             <span className="text-muted-foreground [overflow-wrap:anywhere]">
@@ -62,7 +64,7 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
             </span>
             {!props.enabled && !props.readOnly ? (
               <Button size="sm" variant="outline" onClick={props.onEnable}>
-                Enable Antigravity
+                {t("providerSetup.enable")}
               </Button>
             ) : null}
           </div>
@@ -105,6 +107,7 @@ function ProviderSetupActions({
   readonly provider: ServerProvider;
   readonly authMethod: AntigravityAuthMethod;
 }) {
+  const { t } = useTranslation("settings");
   const target = { environmentId, input: { instanceId } };
   const authQuery = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
   const installQuery = useEnvironmentQuery(serverEnvironment.providerInstallState(target));
@@ -199,14 +202,10 @@ function ProviderSetupActions({
         status={
           <div className="space-y-2">
             {usesCustomBinary ? (
-              <p className="text-muted-foreground">
-                Uses the custom binary path below. Installation keeps that path.
-              </p>
+              <p className="text-muted-foreground">{t("providerSetup.customBinaryNote")}</p>
             ) : null}
             {!installed && !provider.setup?.canInstall ? (
-              <p className="text-muted-foreground">
-                Automatic installation unavailable. Set a binary path or use another environment.
-              </p>
+              <p className="text-muted-foreground">{t("providerSetup.autoInstallUnavailable")}</p>
             ) : null}
           </div>
         }
@@ -253,7 +252,7 @@ function ProviderSetupActions({
                       );
                     }}
                   >
-                    Cancel installation
+                    {t("providerSetup.cancelInstallation")}
                   </Button>
                 ) : !installActive && provider.setup?.canInstall ? (
                   <Button
@@ -285,7 +284,7 @@ function ProviderSetupActions({
                         size="icon-sm"
                         variant="ghost"
                         className="col-start-1 row-start-1"
-                        aria-label="Remove downloaded runtime"
+                        aria-label={t("providerSetup.removeRuntime")}
                         disabled={actionsDisabled || authActive}
                         onClick={() => void removeRuntime()}
                       />
@@ -293,7 +292,7 @@ function ProviderSetupActions({
                   >
                     <Trash2Icon className="size-3.5" />
                   </TooltipTrigger>
-                  <TooltipPopup>Remove downloaded runtime</TooltipPopup>
+                  <TooltipPopup>{t("providerSetup.removeRuntime")}</TooltipPopup>
                 </Tooltip>
               ) : null}
             </div>
@@ -324,7 +323,7 @@ function ProviderSetupActions({
                 installQuery.refresh();
               }}
             >
-              Retry setup status
+              {t("providerSetup.retryStatus")}
             </Button>
           ) : null}
         </div>

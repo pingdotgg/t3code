@@ -1,5 +1,6 @@
 import { ArrowDownIcon, ArrowUpIcon, PencilIcon, PlusIcon, StarIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
@@ -135,6 +136,7 @@ export function ProviderModelsSection({
   onToggleFavorite,
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
+  const { t } = useTranslation("settings");
   const [input, setInput] = useState("");
   const [isAdding, setIsAdding] = useState(false);
   const [filter, setFilter] = useState("");
@@ -333,7 +335,7 @@ export function ProviderModelsSection({
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">
-            {models.length} model{models.length === 1 ? "" : "s"}
+            {t("customModel.modelCount", { count: models.length })}
             {favoriteCount > 0
               ? ` · ${favoriteCount} favorite${favoriteCount === 1 ? "" : "s"}`
               : ""}
@@ -350,7 +352,7 @@ export function ProviderModelsSection({
             onClick={() => setIsAdding(true)}
           >
             <PlusIcon className="size-3" />
-            Add custom model
+            {t("customModel.addCustomModel")}
           </Button>
         ) : null}
       </div>
@@ -425,10 +427,10 @@ export function ProviderModelsSection({
           />
           <div className="flex shrink-0 gap-2">
             <Button size="sm" variant="outline" onClick={handleAdd}>
-              Add
+              {t("customModel.add")}
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
-              Cancel
+              {t("customModel.cancel")}
             </Button>
           </div>
         </div>
@@ -472,6 +474,7 @@ function ProviderModelRow({
   readonly onToggleEdit: (slug: string) => void;
   readonly onRemove: (slug: string) => void;
 }) {
+  const { t } = useTranslation("settings");
   const capLabels = describeModelCapabilities(model, flagMissingReasoning);
   const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground/90");
   const pickerTooltip = model.isCustom
@@ -530,7 +533,9 @@ function ProviderModelRow({
           </TooltipPopup>
         </Tooltip>
         {model.isCustom ? (
-          <span className="shrink-0 text-2xs text-muted-foreground/70">custom</span>
+          <span className="shrink-0 text-2xs text-muted-foreground/70">
+            {t("customModel.customTag")}
+          </span>
         ) : null}
       </span>
       <span className="text-2xs text-muted-foreground/70">
