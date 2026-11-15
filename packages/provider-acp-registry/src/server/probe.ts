@@ -291,13 +291,10 @@ export function normalizeAcpRegistryCommands(
     seen.add(key);
     const description = boundedText(command.description, MAX_DESCRIPTION_LENGTH);
     const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
-    // Devin marks skills through its own `_meta` namespace instead of the `$` prefix.
-    const isDevinSkill = command._meta?.["cognition.ai/category"] === "Skills";
-    if (name.startsWith("$") || isDevinSkill) {
-      const skillName = boundedOpaqueValue(
-        name.startsWith("$") ? name.slice(1) : name,
-        MAX_ID_LENGTH,
-      );
+    const isDollarSkill = name.startsWith("$");
+    // Devin marks skills in its `_meta` namespace instead of with a `$` prefix.
+    if (isDollarSkill || command._meta?.["cognition.ai/category"] === "Skills") {
+      const skillName = boundedOpaqueValue(isDollarSkill ? name.slice(1) : name, MAX_ID_LENGTH);
       if (skillName === undefined) continue;
       skills.push({
         name: skillName,
@@ -315,31 +312,6 @@ export function normalizeAcpRegistryCommands(
     }
   }
   return { slashCommands, skills };
-}
-
-const LEADING_SKILL_MENTION = /^\s*\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/;
-
-const ACP_REGISTRY_SKILL_COMMAND_PREFIX: Readonly<Record<string, string>> = {
-  // Devin invokes advertised commands as `/name`; skills are plain commands too.
-  devin: "/",
-};
-
-/**
- * Rewrites a leading `$skill` mention to the agent's native invocation form when
- * the mention names an advertised skill. Other text passes through unchanged.
- */
-export function rewriteAcpRegistrySkillMention(
-  text: string,
-  agentId: string,
-  skills: ReadonlyArray<Pick<ServerProviderSkill, "name">>,
-): string {
-  const prefix = ACP_REGISTRY_SKILL_COMMAND_PREFIX[agentId];
-  if (prefix === undefined) return text;
-  const match = LEADING_SKILL_MENTION.exec(text);
-  if (match === null) return text;
-  const name = match[1];
-  if (!skills.some((skill) => skill.name === name)) return text;
-  return prefix + name + text.slice(match[0].length);
 }
 
 export function acpRegistryProbeResult(

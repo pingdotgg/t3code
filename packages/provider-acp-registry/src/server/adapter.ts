@@ -8,6 +8,7 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
+  rewriteDevinSkillMention,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
@@ -42,7 +43,6 @@ import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
-  rewriteAcpRegistrySkillMention,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -275,7 +275,6 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
-          // The composer writes `$name` for a picked skill; Devin runs commands as `/name`.
           ...(runtimeCoordinator === undefined
             ? {}
             : {
@@ -284,8 +283,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                     Effect.map(
                       Option.match({
                         onNone: () => text,
-                        onSome: (commands) =>
-                          rewriteAcpRegistrySkillMention(text, "devin", commands.skills),
+                        onSome: (commands) => rewriteDevinSkillMention(text, commands.skills),
                       }),
                     ),
                   ),

@@ -21,7 +21,7 @@ import {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
-  rewriteAcpRegistrySkillMention,
+  rewriteDevinSkillMention,
   probeAcpRegistryConfiguration,
 } from "@t3tools/provider-acp-registry/testing";
 import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
@@ -337,16 +337,25 @@ describe("ACP Registry probe", () => {
     expect(commands.skills.map((skill) => skill.name)).toEqual(["late-skill"]);
   });
 
-  it("routes dollar-prefixed ACP commands to the provider skill menu", () => {
+  it("routes dollar-prefixed and Devin Skills-category commands to the skill menu", () => {
     expect(
       normalizeAcpRegistryCommands([
         { name: "$workspace-skill", description: "Run the workspace skill" },
         { name: "$WORKSPACE-SKILL", description: "duplicate" },
         { name: "$", description: "empty" },
         { name: "review", description: "Review changes" },
+        {
+          name: "research",
+          description: "Research before deciding",
+          _meta: { "cognition.ai/category": "Skills" },
+        },
+        { name: "compact", description: "Compact", _meta: { "cognition.ai/category": "Session" } },
       ]),
     ).toEqual({
-      slashCommands: [{ name: "review", description: "Review changes" }],
+      slashCommands: [
+        { name: "review", description: "Review changes" },
+        { name: "compact", description: "Compact" },
+      ],
       skills: [
         {
           name: "workspace-skill",
@@ -355,37 +364,6 @@ describe("ACP Registry probe", () => {
           scope: "agent",
           enabled: true,
         },
-      ],
-    });
-  });
-
-  it("routes Devin commands with cognition.ai category Skills to the provider skill menu", () => {
-    expect(
-      normalizeAcpRegistryCommands([
-        {
-          name: "research",
-          description: "Research before deciding",
-          _meta: { "cognition.ai/category": "Skills", "cognition.ai/icon": "zap" },
-        },
-        {
-          name: "compact",
-          description: "Compact the session",
-          _meta: { "cognition.ai/category": "Session", "cognition.ai/icon": "archive" },
-        },
-        {
-          name: "login",
-          description: "Sign in",
-          _meta: { "cognition.ai/category": "Account" },
-        },
-        { name: "review", description: "No meta at all" },
-      ]),
-    ).toEqual({
-      slashCommands: [
-        { name: "compact", description: "Compact the session" },
-        { name: "login", description: "Sign in" },
-        { name: "review", description: "No meta at all" },
-      ],
-      skills: [
         {
           name: "research",
           description: "Research before deciding",
@@ -397,19 +375,12 @@ describe("ACP Registry probe", () => {
     });
   });
 
-  it("rewrites a leading $skill mention to Devin's native /skill command", () => {
-    const skills = [{ name: "research", path: "acp://skill/research", enabled: true }] as const;
-    expect(rewriteAcpRegistrySkillMention("  $research t3 code", "devin", skills)).toBe(
-      "/research t3 code",
-    );
-    expect(rewriteAcpRegistrySkillMention("$missing", "devin", skills)).toBe("$missing");
-    expect(rewriteAcpRegistrySkillMention("$research.md notes", "devin", skills)).toBe(
-      "$research.md notes",
-    );
-    expect(rewriteAcpRegistrySkillMention("use $research later", "devin", skills)).toBe(
-      "use $research later",
-    );
-    expect(rewriteAcpRegistrySkillMention("$research", "kimi", skills)).toBe("$research");
+  it("rewrites only a leading advertised $skill mention to Devin's /skill command", () => {
+    const skills = [{ name: "research" }];
+    expect(rewriteDevinSkillMention("  $research t3 code", skills)).toBe("/research t3 code");
+    expect(rewriteDevinSkillMention("$missing", skills)).toBe("$missing");
+    expect(rewriteDevinSkillMention("$research.md notes", skills)).toBe("$research.md notes");
+    expect(rewriteDevinSkillMention("use $research later", skills)).toBe("use $research later");
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {

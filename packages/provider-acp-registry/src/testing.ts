@@ -9,6 +9,7 @@ export {
   extractDevinSubagentUpdate,
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
+  rewriteDevinSkillMention,
 } from "./server/devinAcp.ts";
 export { extractCopilotSubagentUpdate, makeCopilotSubagentRouting } from "./server/copilotAcp.ts";
 export {
@@ -18,7 +19,6 @@ export {
   logoutAcpRegistry,
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryCommands,
-  rewriteAcpRegistrySkillMention,
   probeAcpRegistryConfiguration,
   type AcpRegistryAvailableCommands,
   type AcpRegistryLiveConfiguration,
