@@ -264,3 +264,30 @@ index 690d069..c60dd79 100644
    getInstances(): NativeLiveActivity[];
 +  dismissEnded(): void;
  }
+diff --git a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+--- a/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
++++ b/android/src/main/java/expo/modules/widgets/WidgetInteractionAction.kt
+@@ -5,6 +5,7 @@
+ import android.net.Uri
+ import androidx.glance.action.Action
+ import androidx.glance.appwidget.action.actionSendBroadcast
++import androidx.glance.appwidget.action.actionStartActivity
+ import expo.modules.widgets.notifications.ExpoWidgetsNotificationReceiver
+ 
+ internal const val WIDGET_INTERACTION_ACTION = "expo.modules.widgets.ACTION_WIDGET_INTERACTION"
+@@ -27,6 +28,15 @@
+ )
+ 
+ internal fun WidgetInteraction.toGlanceAction(context: Context): Action {
++  if (source is InteractionSource.Widget && target.startsWith("url:")) {
++    val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
++    if (launch != null) {
++      val url = target.removePrefix("url:")
++      if (url.isNotEmpty()) launch.setAction(Intent.ACTION_VIEW).setData(Uri.parse(url))
++      launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
++      return actionStartActivity(launch)
++    }
++  }
+   val intent = when (source) {
+     is InteractionSource.Widget -> Intent(WIDGET_INTERACTION_ACTION)
+       .setComponent(widgetProviderComponentName(context, source.name))

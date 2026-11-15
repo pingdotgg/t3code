@@ -19,7 +19,7 @@ export function AgentActivityWidget(
   const light = environment.colorScheme !== "dark";
   const background = light ? "#ffffff" : "#1c1c1e";
   const primary = light ? "#000000" : "#ffffff";
-  const secondary = light ? "#8e8e93" : "#98989f";
+  const secondary = light ? "#66666b" : "#98989f";
   const phaseColor = (phase: AgentActivityPhase): string => {
     switch (phase) {
       case "waiting_for_approval":
@@ -64,8 +64,11 @@ export function AgentActivityWidget(
   const shown = rows.slice(0, 4);
 
   return (
-    // Android lacks widgetURL; one card Button routes taps to the app listener.
-    <Button colors={{ containerColor: background }} modifiers={[fillMaxSize()]} onClick={() => {}}>
+    <Button
+      {...{ target: `url:${props.appUrl ?? ""}` }}
+      colors={{ containerColor: background }}
+      modifiers={[fillMaxSize()]}
+    >
       <Column modifiers={[fillMaxSize(), paddingAll(16)]}>
         <Row modifiers={[fillMaxWidth()]}>
           <Text color={primary} maxLines={1} style={{ fontSize: 14, fontWeight: "900" }}>
@@ -95,29 +98,34 @@ export function AgentActivityWidget(
         {shown.map((row) => (
           // The status sits on the right like iOS; the title stops short of it and truncates.
           // Glance has no layout weights, so a project label would be squeezed to ".."; it is left out.
-          <Box
+          <Button
+            {...{ target: `url:${props.appUrl ?? ""}${row.deepLink.replace(/^\//, "")}` }}
+            enabled={Boolean(props.appUrl && row.deepLink)}
+            colors={{ containerColor: background }}
+            contentPadding={{ start: 0, top: 0, end: 0, bottom: 0 }}
             key={`${row.environmentId}:${row.threadId}`}
-            contentAlignment="centerStart"
             modifiers={[fillMaxWidth(), padding(0, 7, 0, 0)]}
           >
-            <Text
-              color={primary}
-              maxLines={1}
-              style={{ fontSize: 14, fontWeight: "bold" }}
-              modifiers={[fillMaxWidth(), padding(0, 0, 96, 0)]}
-            >
-              {row.threadTitle}
-            </Text>
-            <Box contentAlignment="centerEnd" modifiers={[fillMaxWidth()]}>
+            <Box contentAlignment="centerStart" modifiers={[fillMaxWidth()]}>
               <Text
-                color={phaseColor(row.phase)}
+                color={primary}
                 maxLines={1}
-                style={{ fontSize: 12, fontWeight: "bold" }}
+                style={{ fontSize: 14, fontWeight: "bold" }}
+                modifiers={[fillMaxWidth(), padding(0, 0, 96, 0)]}
               >
-                {row.status}
+                {row.threadTitle}
               </Text>
+              <Box contentAlignment="centerEnd" modifiers={[fillMaxWidth()]}>
+                <Text
+                  color={phaseColor(row.phase)}
+                  maxLines={1}
+                  style={{ fontSize: 12, fontWeight: "bold" }}
+                >
+                  {row.status}
+                </Text>
+              </Box>
             </Box>
-          </Box>
+          </Button>
         ))}
       </Column>
     </Button>

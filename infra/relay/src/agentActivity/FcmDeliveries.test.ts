@@ -551,6 +551,7 @@ describe("Android delivery routing", () => {
       Array.from({ length: 5 }, (_, i) => ({
         ...state,
         threadId: ThreadId.make(`thread-${i}`),
+        deepLink: `/threads/env/thread-${i}`,
         threadTitle: longTitle,
         projectTitle: longTitle,
       })),
@@ -568,9 +569,12 @@ describe("Android delivery routing", () => {
     });
     expect(new TextEncoder().encode(JSON.stringify(data)).length).toBeLessThanOrEqual(3800);
     expect(data.alert_path).toBe("/threads/env/thread");
-    expect(data.activity_path).toBe("/threads/env/thread");
+    expect(data.activity_path).toBe("/threads/env/thread-0");
     expect(data.alert_id).toBe("a".repeat(64));
     expect(data.activity_line_4).toContain("Working\t");
+    for (let index = 0; index < 5; index++) {
+      expect(data[`activity_row_path_${index}`]).toBe(`/threads/env/thread-${index}`);
+    }
     for (const value of Object.values(data))
       expect(new TextDecoder().decode(new TextEncoder().encode(value))).toBe(value);
   });

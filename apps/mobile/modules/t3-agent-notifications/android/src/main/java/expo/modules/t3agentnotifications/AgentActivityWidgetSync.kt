@@ -20,6 +20,7 @@ internal object AgentActivityWidgetSync {
   private const val WIDGET_STORE = "expo.modules.widgets"
   private const val PROPS_KEY = "__expo_widgets_${WIDGET}_props"
   private const val PUSH_AT_KEY = "t3_agent_activity_push_at"
+
   // Pushes arrive only on changes; match the relay's running-row TTL (and the app's
   // AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS) instead of flagging quiet agents.
   private const val STALE_AFTER_MS = 2 * 60 * 60 * 1000L
@@ -33,6 +34,8 @@ internal object AgentActivityWidgetSync {
     if (updatedAt <= store.getLong(PUSH_AT_KEY, 0)) return
     val rows = activityRows(data)
     val path = data["activity_path"].orEmpty()
+    val scheme = context.getSharedPreferences("t3-agent-notifications", Context.MODE_PRIVATE)
+      .getString("scheme", "t3code") ?: "t3code"
     val updated = iso(updatedAt)
     val current = JSONArray()
     val stale = JSONArray()
@@ -50,12 +53,13 @@ internal object AgentActivityWidgetSync {
         .put("phase", phase)
         .put("status", status)
         .put("updatedAt", updated)
-        .put("deepLink", if (index == 0) path else "")
+        .put("deepLink", data["activity_row_path_$index"] ?: if (index == 0) path else "")
       current.put(json(phase, row.status))
       stale.put(if (finished) json(phase, row.status) else json("stale", "Out of date"))
     }
     val staleAt = updatedAt + STALE_AFTER_MS
     val props = JSONObject()
+      .put("appUrl", "$scheme://")
       .put("title", data["activity_title"].orEmpty())
       .put("subtitle", if (rows.isEmpty()) "No active agents" else "")
       .put("activeCount", data["activity_active_count"]?.toIntOrNull() ?: 0)

@@ -42,6 +42,9 @@ export function androidActivityData(aggregate: RelayAgentActivityAggregateState 
       ? `${hero.status}: ${clean(hero.threadTitle)} · ${clean(hero.projectTitle)}`
       : "",
     ...Object.fromEntries(lines.map((line, index) => [`activity_line_${index}`, line])),
+    ...Object.fromEntries(
+      rows.slice(0, 5).map((row, index) => [`activity_row_path_${index}`, row.deepLink]),
+    ),
     activity_path: rows[0]?.deepLink ?? "/",
     activity_expires_at: String(expiresAt),
   };

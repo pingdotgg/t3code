@@ -13,7 +13,8 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [24, 36], manifest = Config.NONE)
 class AgentActivityWidgetSyncTest : AgentNotificationsFixture() {
-  private fun widgetStore() = context.getSharedPreferences("expo.modules.widgets", Context.MODE_PRIVATE)
+  private fun widgetStore() =
+    context.getSharedPreferences("expo.modules.widgets", Context.MODE_PRIVATE)
 
   private fun props() =
     JSONObject(requireNotNull(widgetStore().getString("__expo_widgets_AgentActivity_props", null)))
@@ -25,6 +26,7 @@ class AgentActivityWidgetSyncTest : AgentNotificationsFixture() {
     "activity_title" to "2 active agents",
     "activity_active_count" to "2",
     "activity_path" to "/threads/env/first",
+    "activity_row_path_1" to "/threads/env/second",
   ) + lines.mapIndexed { index, line -> "activity_line_$index" to line }
 
   @Test
@@ -44,6 +46,8 @@ class AgentActivityWidgetSyncTest : AgentNotificationsFixture() {
       (0 until rows.length()).map { rows.getJSONObject(it).getString("phase") }
     )
     assertEquals("Refactor", rows.getJSONObject(1).getString("threadTitle"))
+    assertEquals("/threads/env/second", rows.getJSONObject(1).getString("deepLink"))
+    assertEquals("t3code-dev://", props.getString("appUrl"))
     assertEquals("/threads/env/first", rows.getJSONObject(0).getString("deepLink"))
     val stale = props.getJSONObject("stale")
     assertEquals(now + 2 * 60 * 60 * 1000L, stale.getLong("at"))
@@ -63,7 +67,10 @@ class AgentActivityWidgetSyncTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, push(now - 1000, "Working\tOlder\tweb"))
 
     val props = props()
-    assertEquals("Newer", props.getJSONArray("activities").getJSONObject(0).getString("threadTitle"))
+    assertEquals(
+      "Newer",
+      props.getJSONArray("activities").getJSONObject(0).getString("threadTitle")
+    )
     assertFalse(props.has("stale"))
   }
 }

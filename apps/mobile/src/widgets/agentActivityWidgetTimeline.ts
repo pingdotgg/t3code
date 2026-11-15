@@ -65,6 +65,7 @@ export function agentActivityWidgetTimeline(source: AgentActivityWidgetSource, n
 export const AGENT_ACTIVITY_ANDROID_WIDGET_STALE_AFTER_MS = 2 * 60 * 60_000;
 
 export interface AgentActivityWidgetSnapshot extends AgentActivityProps {
+  readonly appUrl?: string;
   // Android has no timeline, so its layout swaps to these rows once `at` passes.
   readonly stale?: { readonly at: number; readonly activities: AgentActivityProps["activities"] };
 }
