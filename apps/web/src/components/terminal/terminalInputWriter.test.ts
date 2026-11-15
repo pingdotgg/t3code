@@ -73,34 +73,26 @@ describe("createTerminalInputWriter", () => {
     expect(chunks()).toEqual(["a", first, second, "b", "c"]);
   });
 
-  it("bounds outstanding small writes and queues a later paste in dispatch order", async () => {
+  it("dispatches small writes without waiting for acknowledgements and queues a paste behind them", async () => {
     const write = createTerminalInputWriter();
     const { sent, chunks, sends, send } = heldSend();
     const inputs = Array.from({ length: 32 }, (_, index) => `key-${index}`);
     const smallWrites = inputs.map((data) => write(data, send));
-    expect(chunks()).toEqual(inputs.slice(0, 8));
+    expect(chunks()).toEqual(inputs);
 
     const large = "p".repeat(70_000);
     const pasted = write(large, send);
     const after = write("after", send);
-    expect(sent).toHaveLength(8);
-
     // Finishing newer sends first must not let queued input overtake the oldest write.
-    for (let index = 7; index > 0; index--) sent[index]!.settle(true);
-    await Promise.all(smallWrites.slice(1, 8));
-    expect(sent).toHaveLength(8);
+    for (let index = inputs.length - 1; index > 0; index--) sent[index]!.settle(true);
+    await Promise.all(smallWrites.slice(1));
+    expect(sent).toHaveLength(32);
     sent[0]!.settle(true);
-    for (let index = 8; index < inputs.length; index++) {
-      await sends(index + 1);
-      expect(sent).toHaveLength(index + 1);
-      sent[index]!.settle(true);
-    }
-    await Promise.all(smallWrites);
     await sends(33);
-    expect(chunks()).toEqual([...inputs, large.slice(0, 65_536)]);
+    expect(sent[32]!.chunk).toBe(large.slice(0, 65_536));
     sent[32]!.settle(true);
     await sends(34);
-    expect(chunks()).toEqual([...inputs, large.slice(0, 65_536), large.slice(65_536)]);
+    expect(sent[33]!.chunk).toBe(large.slice(65_536));
     sent[33]!.settle(true);
     await pasted;
     await sends(35);

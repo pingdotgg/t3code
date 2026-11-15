@@ -5,13 +5,11 @@ type SendTerminalChunk = (chunk: string) => Promise<boolean | "not-dispatched">;
 
 /**
  * Orders one terminal's input into writes that fit `terminal.write`. A split write goes one chunk
- * per round trip and later input waits behind it; small writes use a bounded immediate window.
+ * per round trip and later input waits behind it; other writes go out immediately, like keystrokes.
  */
 export function createTerminalInputWriter(onIdle = () => {}) {
   let pending: Promise<void> | null = null;
-  // Allow typing ahead of acknowledgements without letting stalled RPCs grow without bound.
   const immediate = new Set<Promise<void>>();
-  const maxImmediateWrites = 8;
 
   let closeInterruptedPaste: (() => Promise<boolean>) | null = null;
   const closePaste = async () => {
@@ -65,12 +63,7 @@ export function createTerminalInputWriter(onIdle = () => {}) {
     };
     const chunks = chunkTerminalWrite(data);
     const run = () => sendChunks(data, chunks, send, recover, interrupted);
-    if (
-      pending === null &&
-      closeInterruptedPaste === null &&
-      chunks.length === 1 &&
-      immediate.size < maxImmediateWrites
-    ) {
+    if (pending === null && closeInterruptedPaste === null && chunks.length === 1) {
       const current = run();
       immediate.add(current);
       void current.then(
