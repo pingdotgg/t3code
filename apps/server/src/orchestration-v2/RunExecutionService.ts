@@ -1192,7 +1192,7 @@ export const layer: Layer.Layer<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
-        // Open root-thread commands and tools of this run; only an ingestion failure ends them.
+        // Open root-thread commands and tools of this run; an ingestion failure that stops the provider ends them.
         const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
@@ -1884,46 +1884,7 @@ export const layer: Layer.Layer<
                     runId: input.run.id,
                     cause,
                   });
-                  if (yield* Ref.get(rootRunFinalized)) {
-                    // The root settled earlier, but work that outlived it has no stream to end it.
-                    const allocateEventId = () =>
-                      idAllocator.allocate.event({ threadId: input.run.threadId });
-                    const open = yield* Ref.getAndSet(
-                      openRunOwnedSubagents,
-                      emptyOpenRunOwnedSubagentProjection(),
-                    );
-                    const abandoned = [...openRootTurnItems.values()];
-                    openRootTurnItems.clear();
-                    const events = [
-                      ...(yield* cascadeTerminalizeRunOwnedSubagents({
-                        run: input.run,
-                        open,
-                        status: "failed",
-                        completedAt,
-                        allocateEventId,
-                      })),
-                      ...(yield* endAbandonedTurnItems({
-                        run: input.run,
-                        items: abandoned,
-                        status: "failed",
-                        completedAt,
-                        allocateEventId,
-                      })),
-                    ];
-                    if (events.length === 0) return;
-                    yield* eventSink.writeWithEffects({ effects: [], events }).pipe(
-                      Effect.andThen(refreshAfterTurn),
-                      Effect.catchCauseIf(
-                        (writeCause) => !Cause.hasInterruptsOnly(writeCause),
-                        (writeCause) =>
-                          Effect.logWarning(
-                            "orchestration V2 failed to end work that outlived its run",
-                            { runId: input.run.id, cause: writeCause },
-                          ),
-                      ),
-                    );
-                    return;
-                  }
+                  if (yield* Ref.get(rootRunFinalized)) return;
                   const providerThread = yield* Ref.get(latestProviderThread);
                   // Stop background work too; the failed consumer cannot persist terminal events.
                   const abandonedProviderTurn =
@@ -1974,8 +1935,13 @@ export const layer: Layer.Layer<
                       expectedStatus: "running",
                     },
                     openRunOwnedSubagents: openSubagents,
-                    abandonedTurnItems: [...openRootTurnItems.values()],
-                    ...(abandonedProviderTurn === null ? {} : { abandonedProviderTurn }),
+                    ...(abandonedProviderTurn === null
+                      ? {}
+                      : {
+                          abandonedProviderTurn,
+                          // The interrupt restarted the runtime, so these items cannot end.
+                          abandonedTurnItems: [...openRootTurnItems.values()],
+                        }),
                     completedAt,
                     terminal: makeFailedTerminalEvent(
                       makeProviderFailure({
