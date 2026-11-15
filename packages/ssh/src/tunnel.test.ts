@@ -1142,8 +1142,9 @@ describe("ssh tunnel scripts", () => {
 
   it.live("concurrent launches on one remote home record the server that owns it", () =>
     // The second row's server never publishes server-runtime.json.
-    Effect.forEach([1_500, null], (publishDelayMs) =>
+    Effect.forEach([1_500, null, "wrapper"] as const, (variant) =>
       Effect.gen(function* () {
+        const publishDelayMs = variant === "wrapper" ? 0 : variant;
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-launch-" });
@@ -1162,6 +1163,12 @@ describe("ssh tunnel scripts", () => {
         );
         const serverScript = path.join(home, "fake-t3.cjs");
         yield* fs.writeFileString(serverScript, fakeT3Serve(publishDelayMs));
+        const wrapperScript = path.join(home, "wrapper.cjs");
+        yield* fs.writeFileString(
+          wrapperScript,
+          `const child = require("node:child_process").spawn(process.execPath, [${JSON.stringify(serverScript)}, ...process.argv.slice(2)], { stdio: "inherit" });
+child.on("exit", (code) => process.exit(code ?? 1));`,
+        );
         // A launch that died holding the lock must not block or double-admit later ones.
         const launchLock = path.join(home, ".t3", "ssh-launch", ".launch.lock");
         yield* fs.makeDirectory(path.dirname(launchLock), { recursive: true });
@@ -1175,7 +1182,7 @@ describe("ssh tunnel scripts", () => {
           targets,
           (target) =>
             SshTunnel.launchOrReuseRemoteServer(target, undefined, {
-              nodeScriptPath: serverScript,
+              nodeScriptPath: variant === "wrapper" ? wrapperScript : serverScript,
             }),
           { concurrency: "unbounded" },
         ).pipe(Effect.provide(localRemoteShellLayer(home)));
