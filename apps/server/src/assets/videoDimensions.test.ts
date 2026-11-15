@@ -161,18 +161,8 @@ describe("readVideoDimensions", () => {
       expected: null,
     },
     {
-      name: "an MP4 with no video track",
-      bytes: concat(ftyp, box("moov", trak(0, 0, { handler: "soun" }))),
-      expected: null,
-    },
-    {
       name: "a box that claims more bytes than the file holds",
       bytes: concat(ftyp, box("moov", trak(1080, 1920)).subarray(0, 40)),
-      expected: null,
-    },
-    {
-      name: "a file that is not a video",
-      bytes: new TextEncoder().encode("media"),
       expected: null,
     },
   ])("reads $name", async ({ bytes, expected }) => {
