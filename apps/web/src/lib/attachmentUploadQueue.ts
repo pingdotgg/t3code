@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
   type ChatAttachment,
   type EnvironmentId,
@@ -47,6 +48,7 @@ interface UploadJob {
   /** Original owner; completion resolves the current owner because uploads can outlive draft moves. */
   readonly draftTarget?: ComposerThreadTarget;
   readonly previous?: ReadyAttachmentUpload;
+  readonly forceReupload?: boolean;
   /** Draft-owned; delete only through releasePersistedAttachmentUpload, never queue cancel/retry. */
   readonly persistedAttachmentId?: string;
   readonly settled: Promise<void>;
@@ -108,6 +110,7 @@ export function markAttachmentClaimFailure(input: {
     setUploadState(attachment.id, {
       status: "failed",
       environmentId: input.environmentId,
+      forceReupload: true,
       ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
         ? { attachmentId: upload.attachmentId }
         : {}),
@@ -201,6 +204,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
+      ...(job.forceReupload ? { forceReupload: true } : {}),
       reason: "This connection cannot upload attachments.",
       ...(job.previous ? { previous: job.previous } : {}),
     });
@@ -247,6 +251,7 @@ async function runUpload(job: UploadJob): Promise<void> {
       setUploadState(job.image.id, {
         status: "failed",
         environmentId: job.environmentId,
+        ...(job.forceReupload ? { forceReupload: true } : {}),
         reason:
           verification.status === "missing"
             ? "Uploaded file expired. Remove it and attach it again."
@@ -267,6 +272,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
+      ...(job.forceReupload ? { forceReupload: true } : {}),
       reason: "Unsupported image type",
       ...(job.previous ? { previous: job.previous } : {}),
     });
@@ -277,6 +283,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
+      ...(job.forceReupload ? { forceReupload: true } : {}),
       reason: "Original file is no longer available",
       ...(job.previous ? { previous: job.previous } : {}),
     });
@@ -288,6 +295,7 @@ async function runUpload(job: UploadJob): Promise<void> {
     setUploadState(job.image.id, {
       status: "failed",
       environmentId: job.environmentId,
+      ...(job.forceReupload ? { forceReupload: true } : {}),
       reason: "This connection cannot upload attachments.",
       ...(job.previous ? { previous: job.previous } : {}),
     });
@@ -363,6 +371,7 @@ async function runUpload(job: UploadJob): Promise<void> {
   setUploadState(job.image.id, {
     status: "failed",
     environmentId: job.environmentId,
+    ...(job.forceReupload ? { forceReupload: true } : {}),
     reason:
       result.step === "mint"
         ? "Upload could not start"
@@ -398,6 +407,7 @@ function pumpUploads(): void {
           setUploadState(job.image.id, {
             status: "failed",
             environmentId: job.environmentId,
+            ...(job.forceReupload ? { forceReupload: true } : {}),
             reason: "Upload failed",
             ...(job.previous ? { previous: job.previous } : {}),
           });
@@ -427,6 +437,7 @@ export function startAttachmentUpload(input: {
   readonly environmentId: EnvironmentId;
   readonly image: ComposerImageAttachment | ComposerFileAttachment;
   readonly draftTarget?: ComposerThreadTarget;
+  readonly force?: boolean;
 }): void {
   if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) return;
   const existingJob = jobsByImageId.get(input.image.id);
@@ -435,7 +446,11 @@ export function startAttachmentUpload(input: {
   }
 
   const existing = readAttachmentUpload(input.image.id);
-  if (existing?.status === "ready" && existing.environmentId === input.environmentId) {
+  if (
+    !input.force &&
+    existing?.status === "ready" &&
+    existing.environmentId === input.environmentId
+  ) {
     // A file restored into a draft after its upload finished (stash, failed send) missed the
     // completion stamp; stamping here keeps it from re-uploading after a reload.
     stampDraftFileUpload(input, existing.attachmentId);
@@ -471,8 +486,10 @@ export function startAttachmentUpload(input: {
     image: input.image,
     environmentId: input.environmentId,
     ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
+    ...(input.force ? { forceReupload: true } : {}),
     ...(previous ? { previous } : {}),
-    ...(input.image.type === "file" &&
+    ...(!input.force &&
+    input.image.type === "file" &&
     input.image.uploadEnvironmentId === input.environmentId &&
     input.image.uploadedAttachmentId
       ? { persistedAttachmentId: input.image.uploadedAttachmentId }
@@ -594,7 +611,10 @@ export function retryAttachmentUpload(input: {
   } else {
     clearUploadState(input.image.id);
   }
-  startAttachmentUpload(input);
+  startAttachmentUpload({
+    ...input,
+    force: previous?.status === "failed" && previous.forceReupload === true,
+  });
 }
 
 /** Verifies uploads before stash restore; pending uploads expire after 24 hours. */
@@ -612,6 +632,66 @@ export function verifyStashedAttachmentUpload(input: {
 
 export async function awaitAttachmentUploads(imageIds: ReadonlyArray<string>): Promise<void> {
   await Promise.all(imageIds.map((imageId) => jobsByImageId.get(imageId)?.settled));
+}
+
+/** Revalidate ready uploads at send time; a long-lived draft can outlive server cleanup. */
+export async function refreshExpiredAttachmentUploads(input: {
+  readonly environmentId: EnvironmentId;
+  readonly images: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
+  readonly draftTarget?: ComposerThreadTarget;
+}): Promise<void> {
+  const canVerify = readEnvironmentScope(input.environmentId, AuthOrchestrationReadScope);
+  await Promise.all(
+    input.images.map(async (image) => {
+      const upload = readAttachmentUpload(image.id);
+      if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) return;
+      if (!canVerify) {
+        if (image.file) {
+          startAttachmentUpload({
+            environmentId: input.environmentId,
+            image,
+            force: true,
+            ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
+          });
+        } else {
+          setUploadState(image.id, {
+            status: "failed",
+            environmentId: input.environmentId,
+            previous: upload,
+            reason: "Uploaded attachment could not be verified. Attach the file again.",
+          });
+        }
+        return;
+      }
+      const verification = await verifyStashedAttachmentUpload({
+        environmentId: input.environmentId,
+        attachmentId: upload.attachmentId,
+      }).catch((error: unknown): PersistedAttachmentVerification => ({ status: "failed", error }));
+      // The user may have removed or replaced the attachment while verification was in flight.
+      if (readAttachmentUpload(image.id) !== upload) return;
+      if (verification.status === "verified") return;
+      if (verification.status === "missing" && image.file) {
+        clearUploadState(image.id);
+        startAttachmentUpload({
+          environmentId: input.environmentId,
+          image,
+          force: true,
+          ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
+        });
+        return;
+      }
+      setUploadState(image.id, {
+        status: "failed",
+        environmentId: input.environmentId,
+        previous: upload,
+        reason:
+          verification.status === "missing"
+            ? "Uploaded attachment expired. Remove it and attach it again."
+            : "Uploaded attachment could not be verified. Retry when the server reconnects.",
+      });
+    }),
+  );
+  await awaitAttachmentUploads(input.images.map((image) => image.id));
 }
 
 export function getUploadedAttachments(input: {

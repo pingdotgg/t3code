@@ -18,6 +18,8 @@ export type AttachmentUploadState =
       readonly status: "failed";
       readonly environmentId: EnvironmentId;
       readonly reason: string;
+      /** A server claim rejected this upload; retry must not reuse its persisted ID. */
+      readonly forceReupload?: boolean;
       /** Retry/release deletes this id; never use a persisted draft attachment id. */
       readonly attachmentId?: string;
       readonly previous?: ReadyAttachmentUpload;
