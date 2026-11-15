@@ -9,7 +9,7 @@ import {
 import type { SidebarThreadSummary } from "../../types";
 import {
   isSidebarHiddenThread,
-  resolveSidebarThreadStatus,
+  resolveSidebarRowStatus,
   type SidebarThreadStatus,
 } from "../Sidebar.logic";
 
@@ -39,6 +39,8 @@ export type BoardThread = Pick<
   | "settledOverride"
   | "pinnedAt"
   | "updatedAt"
+  | "interactionMode"
+  | "hasActionableProposedPlan"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "pendingSubagentRequest"
@@ -65,7 +67,7 @@ const PANEL_BY_STATUS: Record<SidebarThreadStatus, BoardPanelId> = {
 function resolveBoardPanel(thread: BoardThread, now: string): BoardPanelId {
   if (thread.settledOverride === "settled") return "settled";
   if (effectiveSnoozed(thread, { now })) return "snoozed";
-  const status = resolveSidebarThreadStatus(thread);
+  const status = resolveSidebarRowStatus(thread);
   // The card's label reads an unopened failed run as Failed after its runtime is gone.
   if (status === "ready" && hasUnseenRunFailure(thread)) return "failed";
   return PANEL_BY_STATUS[status];

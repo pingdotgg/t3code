@@ -46,6 +46,16 @@ describe("groupThreadsByPanel", () => {
         thread("unseen-failure", {
           latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
         }),
+        thread("unseen-runtime-failure", {
+          runtime: { status: "failed" } as never,
+          latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
+        }),
+        thread("seen-runtime-failure", {
+          runtime: { status: "failed" } as never,
+          latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
+          lastVisitedAt: "2026-01-01T09:30:00.000Z",
+          updatedAt: "2026-01-01T07:00:00.000Z",
+        }),
         thread("seen-failure", {
           latestRun: { status: "failed", completedAt: "2026-01-01T09:00:00.000Z" } as never,
           lastVisitedAt: "2026-01-01T09:30:00.000Z",
@@ -65,8 +75,8 @@ describe("groupThreadsByPanel", () => {
       NOW,
     );
     expect(ids(groups.attention)).toEqual(["approval"]);
-    expect(ids(groups.done)).toEqual(["done", "seen-failure"]);
-    expect(ids(groups.failed)).toEqual(["unseen-failure"]);
+    expect(ids(groups.done)).toEqual(["done", "seen-failure", "seen-runtime-failure"]);
+    expect(ids(groups.failed)).toEqual(["unseen-failure", "unseen-runtime-failure"]);
     expect(ids(groups.settled)).toEqual(["settled"]);
     expect(ids(groups.snoozed)).toEqual(["snoozed"]);
     expect(ids(groups.working)).toEqual([]);
