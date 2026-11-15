@@ -13,47 +13,15 @@ const WINDOWS_SHIM_EXTENSIONS: ReadonlySet<string> = new Set([".cmd", ".bat", ".
 export const isWindowsClaudeLauncherShimPath = (filePath: string): boolean =>
   WINDOWS_SHIM_EXTENSIONS.has(NodePath.win32.extname(filePath).toLowerCase());
 
-/** New packages provide bin/claude.exe; older packages need a JavaScript runtime for cli.js. */
-const NPM_PACKAGE_ENTRY_CANDIDATES = [
+/**
+ * npm: new packages provide bin/claude.exe; older ones need a JavaScript runtime for cli.js.
+ * WinGet: Links\claude.cmd forwards to the package's native executable under ..\Packages.
+ */
+const PACKAGE_ENTRY_CANDIDATES = [
   ["node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe"],
   ["node_modules", "@anthropic-ai", "claude-code", "cli.js"],
+  ["..", "Packages", "Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe", "claude.exe"],
 ] as const;
-
-const WINGET_PACKAGE_ENTRY = [
-  "Microsoft",
-  "WinGet",
-  "Packages",
-  "Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe",
-  "claude.exe",
-] as const;
-
-function resolveWinGetExecutablePath(shimPath: string, environment: NodeJS.ProcessEnv) {
-  const localAppData = Object.entries(environment).find(
-    ([key]) => key.toUpperCase() === "LOCALAPPDATA",
-  )?.[1];
-  if (!localAppData || !NodePath.win32.isAbsolute(localAppData)) return undefined;
-  const launcherPath = NodePath.win32.join(
-    localAppData,
-    "Microsoft",
-    "WinGet",
-    "Links",
-    "claude.cmd",
-  );
-  try {
-    if (
-      NodePath.win32.normalize(shimPath).toLowerCase() !== launcherPath.toLowerCase() &&
-      NodeFS.realpathSync.native(shimPath).toLowerCase() !==
-        NodeFS.realpathSync.native(launcherPath).toLowerCase()
-    )
-      return undefined;
-    const launcher = NodeFS.readFileSync(shimPath, "utf8").replaceAll("\r\n", "\n").trim();
-    const expectedLauncher = `@echo off\n"%LOCALAPPDATA%\\${WINGET_PACKAGE_ENTRY.join("\\")}" %*`;
-    if (launcher.toLowerCase() !== expectedLauncher.toLowerCase()) return undefined;
-    return NodePath.win32.join(localAppData, ...WINGET_PACKAGE_ENTRY);
-  } catch {
-    return undefined;
-  }
-}
 
 export type ExecutableFileCheck = (filePath: string) => boolean;
 
@@ -89,20 +57,15 @@ export const resolveClaudeSdkExecutablePath = Effect.fn("resolveClaudeSdkExecuta
     }
 
     const shimDirectory = NodePath.win32.dirname(resolved);
-    for (const entrySegments of NPM_PACKAGE_ENTRY_CANDIDATES) {
+    for (const entrySegments of PACKAGE_ENTRY_CANDIDATES) {
       const candidate = NodePath.win32.join(shimDirectory, ...entrySegments);
       if (isFile(candidate)) {
         return candidate;
       }
     }
 
-    const winGetExecutable = resolveWinGetExecutablePath(resolved, environment);
-    if (winGetExecutable && isFile(winGetExecutable)) {
-      return winGetExecutable;
-    }
-
     yield* Effect.logWarning(
-      "Claude launcher shim resolved but no known package entry was found; the Claude Agent SDK cannot spawn launcher scripts directly.",
+      "Claude launcher shim resolved but no known package entry was found next to it; the Claude Agent SDK cannot spawn launcher scripts directly.",
       { binaryPath, resolvedShimPath: resolved },
     );
     return binaryPath;
