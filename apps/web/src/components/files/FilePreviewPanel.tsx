@@ -117,11 +117,6 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileMediaDetails } from "./FileMediaDetails";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
-import {
-  PanelTabActions,
-  PanelTabBreadcrumb,
-  useInPanelTabBar,
-} from "~/components/PanelTabBreadcrumb";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -1338,10 +1333,8 @@ export default function FilePreviewPanel({
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
-  const breadcrumbRef = useRef<HTMLDivElement>(null);
-  const inPanelTabBar = useInPanelTabBar();
-  // A narrow pane shares one row between the tabs and these actions, so the
-  // view toggle shrinks to a source icon and Add to chat moves into the More menu.
+  const [breadcrumbElement, setBreadcrumbElement] = useState<HTMLDivElement | null>(null);
+  // Narrow rows use a source icon and move Add to chat into the More menu.
   const [surfaceElement, setSurfaceElement] = useState<HTMLDivElement | null>(null);
   const foldActions = useElementNarrowerThan(surfaceElement, FILE_ACTIONS_FOLD_WIDTH_PX);
   const stackExplorer = useElementNarrowerThan(surfaceElement, FILE_EXPLORER_SIDE_WIDTH_PX);
@@ -1390,22 +1383,6 @@ export default function FilePreviewPanel({
     !renderBrowserFile &&
     file.data?.truncated === true &&
     (draft || isMarkdown || isMermaid || isHtml);
-  const noticeAbove = readOnlyNotice || truncatedNotice;
-  // Source, rendered markdown and the file tree scroll up under a pane's tab
-  // row (--surface-top-inset); a notice above them, and other previews, keep
-  // everything below it.
-  const scrollsUnderTabRow =
-    inPanelTabBar &&
-    !noticeAbove &&
-    (showPreview
-      ? attachment === undefined &&
-        !isMedia &&
-        !renderBrowserFile &&
-        !renderTable &&
-        !renderMermaid &&
-        !isDocument &&
-        file.data != null
-      : showExplorer);
   const renderedMode = isMermaid
     ? ("mermaid" as const)
     : isMarkdown
@@ -1529,16 +1506,22 @@ export default function FilePreviewPanel({
       : NO_FILE_REVISION_ATOM,
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the breadcrumb DOM so the deepest and current crumbs are in view after commit
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the current breadcrumb in view as its path or available width changes
   useEffect(() => {
-    const crumbs = breadcrumbRef.current?.querySelectorAll<HTMLElement>("[data-file-crumb]");
-    // Show the deepest crumb when it fits, but never at the cost of the current one.
-    crumbs?.[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
-    breadcrumbRef.current
-      ?.querySelector<HTMLElement>("[data-current-file-crumb='true']")
-      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const element = breadcrumbElement;
+    if (!element) return;
+    const revealCurrentCrumb = () => {
+      const crumbs = element.querySelectorAll<HTMLElement>("[data-file-crumb]");
+      // Show the deepest crumb when it fits, but never at the cost of the current one.
+      crumbs[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
+      element
+        .querySelector<HTMLElement>("[data-current-file-crumb='true']")
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    };
+    revealCurrentCrumb();
+    return observeResize(element, revealCurrentCrumb);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new path or trail re-renders the crumbs, so the current one scrolls back into view.
-  }, [breadcrumbPath, breadcrumbTrail]);
+  }, [breadcrumbElement, breadcrumbPath, breadcrumbTrail]);
 
   const toggleExplorer = () => {
     setExplorerOpen((current) => {
@@ -1603,15 +1586,13 @@ export default function FilePreviewPanel({
   const addToChat = () => {
     if (relativePath) addFileMentionToChat(composerRef, relativePath);
   };
-  // The file's crumbs and actions: their own row, or in a panel tab bar the
-  // tab's breadcrumb ("Files › file.tsx") and the row's end (pen r7Vc3).
   const fileHeader =
     breadcrumbPath !== null && breadcrumbTrail !== null
       ? {
           crumbs: (
             <ScrollArea
               radius="none"
-              ref={breadcrumbRef}
+              ref={setBreadcrumbElement}
               hideScrollbars
               scrollFade
               className="min-w-0 flex-1"
@@ -1631,20 +1612,6 @@ export default function FilePreviewPanel({
                 />
               </div>
             </ScrollArea>
-          ),
-          tabCrumb: (
-            <FileBreadcrumbs
-              compact
-              cwd={cwd}
-              environmentId={environmentId}
-              isFolder={isFolder}
-              onNavigateFolder={navigateToFolder}
-              onOpenFile={openFileFromSurface}
-              projectName={projectName}
-              relativePath={breadcrumbPath}
-              trail={breadcrumbTrail}
-              workspaceMutationId={workspaceMutationId}
-            />
           ),
           actions: (
             <>
@@ -1757,19 +1724,12 @@ export default function FilePreviewPanel({
     <div
       ref={setSurfaceElement}
       className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
-      data-surface-reaches-under-header={scrollsUnderTabRow ? "" : undefined}
     >
-      {fileHeader && !inPanelTabBar ? (
+      {fileHeader ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           {fileHeader.crumbs}
           {fileHeader.actions}
         </div>
-      ) : null}
-      {fileHeader && inPanelTabBar ? (
-        <>
-          <PanelTabBreadcrumb>{fileHeader.tabCrumb}</PanelTabBreadcrumb>
-          <PanelTabActions>{fileHeader.actions}</PanelTabActions>
-        </>
       ) : null}
       {readOnlyNotice ? (
         <div className="shrink-0 border-b px-3 py-1.5 text-caption text-muted-foreground">
@@ -1992,7 +1952,6 @@ export default function FilePreviewPanel({
                 }
                 selectedPathRevealId={revealRequestId}
                 visible={showExplorer}
-                underPaneHeader={scrollsUnderTabRow}
                 onOpenFile={openFileFromSurface}
                 answersPanelFind={!previewPath}
                 workspaceMutationId={workspaceMutationId}
