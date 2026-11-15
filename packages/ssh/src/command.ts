@@ -392,7 +392,7 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
         // The enclosing operation owns the span for this inline handler.
         onNone: Effect.fnUntraced(function* () {
           const diagnosticStdout = redactSshErrorOutput(output.stdout, input.keepErrorOutputTail);
-          const { stderr } = output;
+          const stderr = redactSshErrorOutput(output.stderr, true);
           yield* Effect.logWarning("ssh.command.timedOut", {
             ...sshTargetLogFields(target),
             timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,

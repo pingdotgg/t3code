@@ -291,7 +291,7 @@ describe("ssh command", () => {
             Stream.never,
           ),
           stderr: Stream.concat(
-            Stream.make(encoder.encode("REMOTE: waiting for archive extraction\n")),
+            Stream.make(encoder.encode("REMOTE: waiting for archive extraction\nToken: secret\n")),
             Stream.never,
           ),
           all: Stream.empty,
@@ -318,7 +318,7 @@ describe("ssh command", () => {
       assert.instanceOf(failure, SshCommandError);
       assert.equal(failure.exitCode, null);
       assert.equal(failure.stdout, 'PROGRESS: extracting\n{"credential":"[redacted]"}\n');
-      assert.equal(failure.stderr, "REMOTE: waiting for archive extraction\n");
+      assert.equal(failure.stderr, "REMOTE: waiting for archive extraction\nToken: [redacted]\n");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)));
   });
 
