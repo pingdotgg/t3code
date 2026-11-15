@@ -77,12 +77,15 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       probe,
     });
   const versionResult = yield* Effect.gen(function* () {
-    const launch = /\.ps1$/i.test(settings.binaryPath)
-      ? yield* museLaunch(settings.binaryPath, museEnvironment)
-      : { command: settings.binaryPath, args: [] };
-    const spawnCommand = yield* resolveSpawnCommand(launch.command, [...launch.args, "--version"], {
+    let spawnCommand = yield* resolveSpawnCommand(settings.binaryPath, ["--version"], {
       env: museEnvironment,
     });
+    if (/\.ps1$/i.test(spawnCommand.command)) {
+      const launch = yield* museLaunch(spawnCommand.command, museEnvironment);
+      spawnCommand = yield* resolveSpawnCommand(launch.command, [...launch.args, "--version"], {
+        env: museEnvironment,
+      });
+    }
     return yield* spawnAndCollect(
       settings.binaryPath,
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
