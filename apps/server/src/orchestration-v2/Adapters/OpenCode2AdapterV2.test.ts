@@ -3022,6 +3022,36 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("names the tool when OpenCode asks for an MCP permission on every resource", () =>
+    Effect.gen(function* () {
+      const mcpAsk = {
+        ...shellAsk.data,
+        action: "github_create_issue",
+        resources: ["*"],
+        save: ["*"],
+      };
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("permission.asked", mcpAsk),
+        ],
+        { supervised: true },
+      );
+      const prompted = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn_item.updated"),
+        Stream.map((event) => event.turnItem),
+        Stream.filter((item) => item.type === "approval_request"),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+      const item = yield* Fiber.join(prompted);
+      assert.include(item?.type === "approval_request" ? item.prompt : "", "github_create_issue");
+    }),
+  );
+
   it.effect("declines a form T3 cannot show with the reason, instead of leaving it open", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
