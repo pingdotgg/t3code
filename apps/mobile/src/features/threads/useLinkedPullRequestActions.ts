@@ -11,7 +11,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { planThreadPullRequestMutation } from "@t3tools/client-runtime/thread-pull-request-compatibility";
+import {
+  canStartThreadPullRequestWatch,
+  planThreadPullRequestMutation,
+} from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
   capitalizeTerm,
   sourceControlClients,
@@ -43,13 +46,7 @@ export function useLinkedPullRequestActions(input: {
   );
   const canEdit = canOperate && capabilities !== undefined;
   const canWatch = canOperate && capabilities?.threadPullRequestWatch === true;
-  const canStartWatch =
-    canWatch &&
-    thread !== null &&
-    thread.archivedAt === null &&
-    thread.settledAt === null &&
-    thread.settledOverride !== "settled" &&
-    thread.lineage.relationshipToParent !== "subagent";
+  const canStartWatch = canWatch && thread !== null && canStartThreadPullRequestWatch(thread);
   const link = useAtomCommand(threadEnvironment.linkPullRequest, { reportFailure: false });
   const unlink = useAtomCommand(threadEnvironment.unlinkPullRequest, { reportFailure: false });
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: false });

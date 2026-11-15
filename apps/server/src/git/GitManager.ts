@@ -18,6 +18,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   GitActionProgressEvent,
@@ -189,6 +190,9 @@ const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
+// Shared by every background caller (backfill, settlement, cleanup), so startup discovery
+// cannot fill the git and forge process slots that foreground work also needs.
+const BRANCH_PR_LOOKUP_CONCURRENCY = 4;
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -270,6 +274,11 @@ export function pullRequestRepositoryKey(value: string): string | null {
 /** Null when the host did not name the repository the head lives in. */
 function resolveHeadRepositoryNameWithOwner(pullRequest: PullRequestHeadRemoteInfo): string | null {
   return normalizeOptionalString(pullRequest.headRepositoryNameWithOwner);
+}
+
+// Both names `resolvePullRequestWorktreeLocalBranchName` gives a fork pull request's branch.
+function isPullRequestWorktreeLocalBranchName(branch: string): boolean {
+  return /^t3code[/-]pr-\d+[/-]/u.test(branch);
 }
 
 function resolvePullRequestWorktreeLocalBranchName(
@@ -523,17 +532,30 @@ function summarizeGitActionResult(
   return { title: "Done" };
 }
 
-function sanitizeCommitMessage(generated: {
-  subject: string;
-  body: string;
-  branch?: string | undefined;
-}): {
+// A backstop for models that ignore the preset's lowercase instruction; acronyms and names like GitHub are left alone.
+const CONVENTIONAL_CAPITALIZED_DESCRIPTION =
+  /^([a-z]+(?:\([^)\n]*\))?!?: )([A-Z][a-z]*)(?![A-Za-z0-9])/;
+
+function sanitizeCommitMessage(
+  generated: {
+    subject: string;
+    body: string;
+    branch?: string | undefined;
+  },
+  conventionalCommits: boolean,
+): {
   subject: string;
   body: string;
   branch?: string | undefined;
 } {
   const rawSubject = generated.subject.trim().split(/\r?\n/g)[0]?.trim() ?? "";
-  const subject = rawSubject.replace(/[.]+$/g, "").trim();
+  const trimmedSubject = rawSubject.replace(/[.]+$/g, "").trim();
+  const subject = conventionalCommits
+    ? trimmedSubject.replace(
+        CONVENTIONAL_CAPITALIZED_DESCRIPTION,
+        (_, prefix: string, word: string) => prefix + word.toLowerCase(),
+      )
+    : trimmedSubject;
   const safeSubject = subject.length > 0 ? subject.slice(0, 72).trimEnd() : "Update project files";
   return {
     subject: safeSubject,
@@ -1848,7 +1870,12 @@ export const make = Effect.gen(function* () {
         };
       }
     }
-    if (headContext.headBranch === details.branch || headContext.isCrossRepository) {
+    // A fork's default branch can be a PR head. When that fork is origin it is also where new
+    // branches start, so only a branch made for a pull request takes it as its head.
+    const tracksForkHead =
+      headContext.isCrossRepository &&
+      (headContext.remoteName !== "origin" || isPullRequestWorktreeLocalBranchName(details.branch));
+    if (headContext.headBranch === details.branch || tracksForkHead) {
       return { headContext, lookup: true };
     }
     const upstreamHeadIsBase =
@@ -2207,7 +2234,11 @@ export const make = Effect.gen(function* () {
           modelSelection: input.settings.modelSelection,
           projectId: input.settings.projectId,
         })
-        .pipe(Effect.map((result) => sanitizeCommitMessage(result)));
+        .pipe(
+          Effect.map((result) =>
+            sanitizeCommitMessage(result, policy?.kind === "conventional_commits"),
+          ),
+        );
 
       return {
         subject: generated.subject,
@@ -2366,6 +2397,7 @@ export const make = Effect.gen(function* () {
     fallbackBranch: string | null,
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
+    pushRemoteRef?: { readonly remoteName: string; readonly upstreamRef: string },
   ) {
     const provider = yield* sourceControlProvider(cwd);
     const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
@@ -2386,10 +2418,12 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const headContext = yield* resolveBranchHeadContext(cwd, {
-      branch,
-      upstreamRef: details.upstreamRef,
-    });
+    // A configured push remote receives the commits while the branch keeps
+    // tracking its upstream, so the PR head is the push remote's branch.
+    const headContext = yield* resolveBranchHeadContext(
+      cwd,
+      pushRemoteRef ? { branch, ...pushRemoteRef } : { branch, upstreamRef: details.upstreamRef },
+    );
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
@@ -2464,6 +2498,16 @@ export const make = Effect.gen(function* () {
         cwd,
         baseRefName: baseBranch,
         headSelector: headContext.preferredHeadSelector,
+        ...(provider.kind === "gitlab" &&
+        headContext.isCrossRepository &&
+        headContext.headRepositoryNameWithOwner
+          ? {
+              source: {
+                repository: headContext.headRepositoryNameWithOwner,
+                refName: headContext.headBranch,
+              },
+            }
+          : {}),
         title: generated.title,
         bodyFile,
       })
@@ -2556,6 +2600,7 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
+  const branchPrLookups = yield* Semaphore.make(BRANCH_PR_LOOKUP_CONCURRENCY);
   const settledPrLookupByBranchKey = new Map<
     string,
     { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
@@ -2856,7 +2901,7 @@ export const make = Effect.gen(function* () {
       });
     }
     return confirmed;
-  });
+  }, branchPrLookups.withPermits(1));
 
   const checkedOutPullRequest: GitManager["Service"]["checkedOutPullRequest"] = Effect.fn(
     "checkedOutPullRequest",
@@ -3392,12 +3437,26 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
+        const upToDateBranch =
+          input.action === "create_pr" &&
+          initialStatus.hasUpstream &&
+          initialStatus.aheadCount === 0
+            ? initialStatus.branch
+            : null;
+        // A current upstream says nothing about a separate push remote, which may lack HEAD.
+        const pushTarget = upToDateBranch
+          ? yield* gitCore
+              .resolvePushTarget(input.cwd, { branch: upToDateBranch, hasUpstream: true })
+              .pipe(Effect.orElseSucceed(() => null))
+          : null;
         const wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
           (input.action === "create_pr" &&
-            (!initialStatus.hasUpstream || initialStatus.aheadCount > 0));
+            (!initialStatus.hasUpstream ||
+              initialStatus.aheadCount > 0 ||
+              pushTarget?.viaPushRemote === true));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
 
         if (input.featureBranch && !wantsCommit) {
@@ -3550,6 +3609,9 @@ export const make = Effect.gen(function* () {
                     currentBranch,
                     input.threadId,
                     progress.emit,
+                    "pushRemote" in push && push.pushRemote && push.upstreamBranch
+                      ? { remoteName: push.pushRemote, upstreamRef: push.upstreamBranch }
+                      : undefined,
                   ),
                 ),
               )
