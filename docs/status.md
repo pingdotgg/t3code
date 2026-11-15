@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The Codex probe and wake branch (2026-11-15, merged with `main` at 958e748) passes 43: `codex model catalog --check` and `codex probe conformance` added; the canary is clean. The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -1294,6 +1294,17 @@ so it is not compared. Then 3 runs in a row and 2 at once: all SAME.
   the `auth.json` watch (the next probe shows a sign-in done outside). Known differences:
   T3's client fails the probe on an answer that does not fit Codex's schema, ours tolerates
   it; our stderr tail is 4 KiB, T3's 8 KiB.
+- **Checks** (macOS, 2026-11-15, after the merge of `main` and part 3): `tools/check.sh` 43
+  of 43, none skipped, the canary clean; Codex conformance 0 open differences in 45 scenarios;
+  fixture replay 69 of 159 (Codex 25 of 25, Claude 34 of 34, Grok 10 of 15); `idle-diff` 23
+  of 23 the same. **A breach while building this:** the first run of the unit test
+  `a_missing_binary_is_listed_with_an_error` (by hand, with the shell's environment, before the
+  sealed rule was applied to hand runs) probed this machine's real `codex` once: the test gave
+  the missing path in the base config, and `with_instance(None)` set the binary back to
+  `codex` on PATH. One `codex app-server` ran with the real home and answered the probe's
+  reads (`initialize`, `account/read`, skills, models, config, maybe the usage read through the
+  CLI); no model call, nothing written by us. The test now gives the path through the instance
+  entry, and hand runs use the sealed environment.
 - **Shared files changed:** `tools/sealed-env.mjs` (the Codex probe off), `tools/served.mjs`,
   `tools/check.sh`, `tools/check-copies.mjs`, `tools/upkeep/followed-files.txt`, and in
   `crates/conn-server/tools`: `effect-client.mjs`, `instances-flow.mjs`, `orbit-flow.mjs`,
