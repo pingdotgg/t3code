@@ -26,6 +26,8 @@ function handleOtpPaste(event: ClipboardEvent) {
   if (code === null) return;
 
   event.preventDefault();
+  // input-otp's own iOS paste handler would otherwise re-apply the raw clipboard text over this value.
+  event.stopPropagation();
   // A full-length code replaces whatever is there; a shorter fragment goes in at the selection.
   const start = code.length === maxLength ? 0 : (input.selectionStart ?? input.value.length);
   const end = code.length === maxLength ? input.value.length : (input.selectionEnd ?? start);

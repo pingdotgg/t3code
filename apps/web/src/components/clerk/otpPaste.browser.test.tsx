@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { useOtpPasteNormalizer } from "./otpPaste";
 
 // Mirrors input-otp's controlled input: a paste with any non-digit is rejected whole.
-function CodeField() {
+function CodeField({ onPaste }: { readonly onPaste?: () => void }) {
   useOtpPasteNormalizer();
   const [value, setValue] = useState("");
   return (
@@ -13,6 +13,7 @@ function CodeField() {
       data-input-otp="true"
       maxLength={6}
       value={value}
+      onPaste={onPaste}
       onChange={(event) => {
         const next = event.currentTarget.value.slice(0, 6);
         if (next.length > 0 && !/^\d+$/.test(next)) return;
@@ -32,7 +33,8 @@ function paste(input: HTMLInputElement, text: string) {
 
 describe("useOtpPasteNormalizer", () => {
   it("fills Clerk's code field from a code copied with surrounding spaces", async () => {
-    await using screen = await render(<CodeField />);
+    const onPaste = vi.fn();
+    await using screen = await render(<CodeField onPaste={onPaste} />);
     const input = screen.container.querySelector<HTMLInputElement>("input[data-input-otp]")!;
     input.focus();
 
@@ -42,6 +44,7 @@ describe("useOtpPasteNormalizer", () => {
     });
 
     expect(event.defaultPrevented).toBe(true);
+    expect(onPaste).not.toHaveBeenCalled();
     // Rerendering makes React restore the DOM from state, so this checks onChange took the code.
     await screen.rerender(<CodeField />);
     await expect.element(input).toHaveValue("123456");
@@ -85,11 +88,5 @@ describe("useOtpPasteNormalizer", () => {
     await expect.element(input).toHaveValue("178345");
     expect(input.selectionStart).toBe(2);
     expect(input.selectionEnd).toBe(2);
-  });
-
-  it("leaves clean codes to the field's own paste handling", async () => {
-    await using screen = await render(<CodeField />);
-    const input = screen.container.querySelector<HTMLInputElement>("input[data-input-otp]")!;
-    expect(paste(input, "123456").defaultPrevented).toBe(false);
   });
 });
