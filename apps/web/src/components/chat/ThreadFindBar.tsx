@@ -57,8 +57,8 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
   const announcement = nextThreadFindAnnouncement(storedAnnouncement, {
     navigationId: props.navigationId,
     text: label,
-    settled: props.settled,
-    failed: props.status === "error",
+    settled: props.settled || props.status === "loading",
+    provisional: props.status !== null,
   });
   if (announcement !== storedAnnouncement) setAnnouncement(announcement);
 
