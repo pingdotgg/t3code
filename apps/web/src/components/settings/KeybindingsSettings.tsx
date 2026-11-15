@@ -1401,7 +1401,7 @@ function KeybindingsList(props: KeybindingsListProps) {
             aria-label="Shortcuts"
             className={cn(
               KEYBINDING_TABLE_GRID,
-              "[&>*+*]:border-t [&>*+*]:border-divider dark:[&>*+*]:border-divider/60",
+              "*:not-first:border-t *:not-first:border-divider dark:*:not-first:border-divider/60",
             )}
           >
             <KeybindingTableHead />

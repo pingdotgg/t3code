@@ -838,7 +838,11 @@ const LOADING_ROW_TITLES = [
 /** Placeholder rows inside a settings group while its list loads. `label` is read to screen readers. */
 export function SettingsLoadingRows({ label, count = 3 }: { label: string; count?: 1 | 2 | 3 }) {
   return (
-    <div role="status" aria-label={label} className="[&>*+*]:border-t [&>*+*]:border-divider">
+    <div
+      role="status"
+      aria-label={label}
+      className="*:not-first:border-t *:not-first:border-divider"
+    >
       {LOADING_ROW_TITLES.slice(0, count).map((title) => (
         <div key={title.key} aria-hidden className="flex flex-col gap-2 px-3 py-3.5 sm:px-4">
           {title}
