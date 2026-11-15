@@ -162,6 +162,11 @@ export interface GhosttyMouseInput {
   readonly anyButtonPressed: boolean;
 }
 
+// Ghostty sends modified F3 as CSI 13;m ~ to stay clear of cursor position reports, but the PTY
+// advertises xterm-256color, whose kf15/kf27/... are CSI 1;m R. Terminfo keys only apply in
+// keypad-transmit mode (smkx), so that mode marks a terminfo reader; raw parsers never set it.
+const MODIFIED_F3 = /^\x1b\[13;(\d+)~$/;
+
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const encoder = new TextEncoder();
 
@@ -602,7 +607,9 @@ export class GhosttyTerminalCore {
     );
     this.runtime.call("ghostty_wasm_free_usize", written);
     if (textPointer !== 0) this.runtime.free(textPointer, textBytes.length);
-    return encoded;
+    return MODIFIED_F3.test(encoded) && this.modeEnabled(66) && this.kittyKeyboardFlags() === 0
+      ? encoded.replace(MODIFIED_F3, "\x1b[1;$1R")
+      : encoded;
   }
 
   encodePaste(data: string): string {
@@ -1038,6 +1045,12 @@ export class GhosttyTerminalCore {
     ]) {
       this.runtime.freeOpaque(slot);
     }
+  }
+
+  private kittyKeyboardFlags(): number {
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    this.runtime.call("ghostty_terminal_get", this.terminal, 8, this.scratch);
+    return this.runtime.bytes(this.scratch, 1)[0]!;
   }
 
   /** Reads a DEC private mode; an unknown mode reads as off. */

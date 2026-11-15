@@ -165,6 +165,34 @@ describe("GhosttyTerminalCore snapshots", () => {
     },
   );
 
+  // smkx is what ncurses keypad(True) sends; a raw-mode parser such as Crossterm never does.
+  it.each([
+    { mode: "", ctrlKey: true, expected: "\x1b[13;5~" },
+    { mode: "\x1b[?1h\x1b=", ctrlKey: true, expected: "\x1b[1;5R" },
+    { mode: "\x1b[?1h\x1b=", shiftKey: true, expected: "\x1b[1;2R" },
+    { mode: "\x1b[?1h\x1b=\x1b[?1l\x1b>", ctrlKey: true, expected: "\x1b[13;5~" },
+    { mode: "\x1b[?1h\x1b=\x1b[>1u", ctrlKey: true, expected: "\x1b[13;5~" },
+  ])(
+    "encodes modified F3 as $expected after $mode",
+    async ({ mode, ctrlKey = false, shiftKey = false, expected }) => {
+      const core = await createCore();
+      core.write(mode);
+      const event = {
+        code: "F3",
+        key: "F3",
+        repeat: false,
+        shiftKey,
+        ctrlKey,
+        altKey: false,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: () => false,
+      } as unknown as KeyboardEvent;
+
+      expect(core.encodeKey(event)).toBe(expected);
+    },
+  );
+
   it.each(["", "\x1b[>1u"])("encodes macOS Option text with keyboard mode %j", async (mode) => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const core = await createCore();
