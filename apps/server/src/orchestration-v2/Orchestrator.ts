@@ -6799,6 +6799,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.createdBy === "user" &&
       command.scheduledTaskId === undefined &&
       command.guestMessageId === undefined &&
+      projection.thread.createdBy === "user" &&
       projection.providerThreads.length === 0 &&
       projection.thread.lineage.parentThreadId === null &&
       projection.messages.length === 0 &&
