@@ -80,21 +80,26 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     });
   const annexed = yield* annexedAdminDir(worktreePath);
   if (Option.isSome(annexed)) {
-    const restoreGitFile = fileSystem.writeFileString(gitFile, `gitdir: ${annexed.value}\n`);
-    yield* fileSystem.remove(gitFile).pipe(
-      Effect.andThen(restoreGitFile),
-      Effect.mapError((cause) => refuse(`failed to restore '${gitFile}'`, cause)),
-    );
-    // A refused removal keeps the worktree, whose annexed files resolve through the symlink.
+    const adminDir = annexed.value;
+    const writeGitFile = fileSystem.writeFileString(gitFile, `gitdir: ${adminDir}\n`);
+    // A kept worktree's annexed files resolve only through the symlink; a gitdir
+    // file is the fallback when it cannot be recreated.
     yield* Effect.addFinalizer(() =>
-      fileSystem
-        .remove(gitFile)
-        .pipe(
-          Effect.andThen(
-            fileSystem.symlink(annexed.value, gitFile).pipe(Effect.catch(() => restoreGitFile)),
-          ),
-          Effect.ignore,
+      fileSystem.exists(worktreePath).pipe(
+        Effect.flatMap((kept) =>
+          kept
+            ? fileSystem.remove(gitFile, { force: true }).pipe(
+                Effect.andThen(fileSystem.symlink(adminDir, gitFile)),
+                Effect.catch(() => writeGitFile),
+              )
+            : Effect.void,
         ),
+        Effect.ignore,
+      ),
+    );
+    yield* fileSystem.remove(gitFile).pipe(
+      Effect.andThen(writeGitFile),
+      Effect.mapError((cause) => refuse(`failed to replace '${gitFile}'`, cause)),
     );
   }
   const linked =
