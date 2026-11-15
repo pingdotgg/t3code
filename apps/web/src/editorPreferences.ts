@@ -57,10 +57,21 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 
 function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const availableEditorIds = new Set(availableEditors);
-  const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  let stored: EditorId | null = null;
+  try {
+    stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
+  } catch (error) {
+    console.warn("Could not read the preferred editor.", error);
+  }
   if (stored && availableEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
-  if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+  if (editor) {
+    try {
+      setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
+    } catch (error) {
+      console.warn("Could not save the preferred editor.", error);
+    }
+  }
   return editor ?? null;
 }
 
