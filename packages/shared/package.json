@@ -463,6 +463,10 @@
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
     },
+    "./diffCutLines": {
+      "types": "./src/diffCutLines.ts",
+      "import": "./src/diffCutLines.ts"
+    },
     "./gitPatchPath": {
       "types": "./src/gitPatchPath.ts",
       "import": "./src/gitPatchPath.ts"
@@ -563,6 +567,10 @@
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
     },
+    "./url": {
+      "types": "./src/url.ts",
+      "import": "./src/url.ts"
+    },
     "./cloneUrl": {
       "types": "./src/cloneUrl.ts",
       "import": "./src/cloneUrl.ts"
@@ -587,6 +595,7 @@
     "mdast-util-to-hast": "^13.2.1",
     "micromark-extension-directive": "catalog:",
     "micromark-util-character": "catalog:",
+    "micromark-util-decode-string": "catalog:",
     "property-information": "^7.2.0",
     "rehype-raw": "catalog:",
     "rehype-sanitize": "catalog:",

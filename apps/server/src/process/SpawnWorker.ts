@@ -6,10 +6,12 @@ import * as NodeWorkerThreads from "node:worker_threads";
 import * as NodeChildProcessSpawner from "@effect/platform-node-shared/NodeChildProcessSpawner";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 // Windows runs CreateProcess synchronously on the calling thread, and antivirus or a busy disk can
-// hold it for seconds. Workers own the children, so only the worker waits.
+// hold it for seconds; Linux's spawn waits for chdir and the PATH search, which a hung mount
+// stalls. Workers own the children, so only the worker waits.
 const MAX_WORKERS = 4;
 const MAX_IDLE_WORKERS = 1;
 
@@ -528,9 +530,12 @@ export const layer = Layer.unwrap(
   }),
 );
 
-/** Only Windows creates processes slowly enough on the calling thread to need workers. */
+/** Workers on Windows, and on Linux where `NonBlockingSpawner` has no GNU `env -C` to use. */
 export const layerServer = Layer.unwrap(
-  Effect.map(HostProcess.Platform, (platform) =>
-    platform === "win32" ? layer : NodeChildProcessSpawner.layer,
-  ),
+  Effect.gen(function* () {
+    const platform = yield* HostProcess.Platform;
+    if (platform === "win32") return layer;
+    if (platform === "linux" && !(yield* Effect.promise(supportsEnvChdir))) return layer;
+    return NodeChildProcessSpawner.layer;
+  }),
 );
