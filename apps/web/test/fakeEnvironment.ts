@@ -34,6 +34,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -55,11 +56,6 @@ import { RpcSchema } from "effect/rpc";
 
 export const ENVIRONMENT_ID = EnvironmentId.make("environment-render");
 export const PROJECT_ID = ProjectId.make("project-render");
-type FakeRpcHandlers = {
-  readonly [Method in keyof WsRpcProtocolClient]?: (
-    input: Parameters<WsRpcProtocolClient[Method]>[0],
-  ) => ReturnType<WsRpcProtocolClient[Method]>;
-};
 const CODEX = ProviderInstanceId.make("codex");
 const MODEL = { instanceId: CODEX, model: "gpt-5.4" };
 const AT = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
@@ -131,7 +127,6 @@ const makeServerConfig = (providers: ReadonlyArray<unknown>): ServerConfig => ({
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
 });
 let baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
-let rpcOverrides: FakeRpcHandlers = {};
 // A server only leaves threads out of the shell when it serves their families.
 const serverConfig = (): ServerConfig =>
   threads.some((thread) => thread.olderSettled)
@@ -519,7 +514,6 @@ const handlers: Record<string, (input: never) => unknown> = {
 // Unanswered calls stay pending, like a server that has not replied yet.
 const client = new Proxy(handlers, {
   get: (target, method: string) =>
-    rpcOverrides[method as keyof WsRpcProtocolClient] ??
     target[method] ??
     (() => {
       const rpc = WsRpcGroup.requests.get(method);
@@ -567,35 +561,33 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 /** Serves the environment's HTTP API and these threads until disposed. */
 export function installFakeEnvironment(
   fixtures: ReadonlyArray<FakeThread>,
-  options: {
+  options?: {
     readonly acceptCommands?: boolean;
-    readonly config?: Partial<ServerConfig>;
-    readonly rpc?: FakeRpcHandlers;
+    readonly keybindings?: ResolvedKeybindingsConfig;
     readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
     /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
     readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
     readonly providers?: ReadonlyArray<unknown>;
-  } = {},
+    readonly config?: Partial<ServerConfig>;
+  },
 ): Disposable {
-  const previousConfig = baseServerConfig;
-  const previousRpc = rpcOverrides;
-  rpcOverrides = options.rpc ?? {};
   threads = fixtures;
   baseServerConfig = {
-    ...makeServerConfig(options.providers ?? [CODEX_PROVIDER]),
-    ...options.config,
+    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER]),
+    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+    ...options?.config,
   };
   dispatched = [];
-  acceptCommands = options.acceptCommands === true;
+  acceptCommands = options?.acceptCommands === true;
   projects = [
     project,
-    ...(options.extraProjects ?? []).map((extra) => ({
+    ...(options?.extraProjects ?? []).map((extra) => ({
       ...project,
       ...extra,
       workspaceRoot: `/workspace/${extra.title}`,
     })),
   ];
-  holdCommand = options.holdCommand ?? (() => false);
+  holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -615,10 +607,9 @@ export function installFakeEnvironment(
   };
   return {
     [Symbol.dispose]: () => {
-      rpcOverrides = previousRpc;
       globalThis.fetch = realFetch;
       threads = [];
-      baseServerConfig = previousConfig;
+      baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
       dispatched = [];
       acceptCommands = false;
       projects = [project];
@@ -666,6 +657,18 @@ export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
 }
 
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
+
+/** Answers one RPC method with `handler` until disposed. */
+export function answerRpc(method: string, handler: (input: never) => unknown): Disposable {
+  const previous = handlers[method];
+  handlers[method] = handler;
+  return {
+    [Symbol.dispose]: () => {
+      if (previous) handlers[method] = previous;
+      else delete handlers[method];
+    },
+  };
+}
 
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");

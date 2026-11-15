@@ -14,6 +14,7 @@ import { getRouter } from "~/router";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  answerRpc,
   installFakeEnvironment,
   threadWithHistory,
   type FakeDriver,
@@ -47,32 +48,34 @@ it("dismisses a previous sidebar message find when the sidebar search changes or
   const messageId = MessageId.make(`${thread.id}-assistant-0`);
   using _environment = installFakeEnvironment([thread], {
     config: { threadFind: true },
-    rpc: {
-      [ORCHESTRATION_V2_WS_METHODS.searchThreads]: ({ query }) =>
-        Effect.succeed({
-          matches:
-            query === "Sidebar.tsx"
-              ? [
-                  {
-                    threadId: thread.id,
-                    projectId: PROJECT_ID,
-                    source: "assistant",
-                    snippet: "checked Sidebar.tsx",
-                    messageId,
-                    messageCreatedAt: null,
-                  },
-                ]
-              : [],
-        }),
-      [ORCHESTRATION_V2_WS_METHODS.searchThread]: () =>
-        Effect.succeed({
-          snapshotSequence: 1,
-          totalMatches: 1,
-          activeIndex: 0,
-          match: { entryId: messageId, runId: thread.runs[0]!.id, occurrence: 0 },
-        }),
-    },
   });
+  using _searchThreads = answerRpc(
+    ORCHESTRATION_V2_WS_METHODS.searchThreads,
+    ({ query }: { readonly query: string }) =>
+      Effect.succeed({
+        matches:
+          query === "Sidebar.tsx"
+            ? [
+                {
+                  threadId: thread.id,
+                  projectId: PROJECT_ID,
+                  source: "assistant",
+                  snippet: "checked Sidebar.tsx",
+                  messageId,
+                  messageCreatedAt: null,
+                },
+              ]
+            : [],
+      }),
+  );
+  using _searchThread = answerRpc(ORCHESTRATION_V2_WS_METHODS.searchThread, () =>
+    Effect.succeed({
+      snapshotSequence: 1,
+      totalMatches: 1,
+      activeIndex: 0,
+      match: { entryId: messageId, runId: thread.runs[0]!.id, occurrence: 0 },
+    }),
+  );
   closeThreadFind();
   using _find = { [Symbol.dispose]: closeThreadFind };
   __setClientSettingsForTests({
