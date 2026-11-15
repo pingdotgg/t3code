@@ -753,6 +753,37 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect(
+    "clears a completion that landed while snoozed, even when processed after the wake",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        const snooze = {
+          snoozedAt: DateTime.makeUnsafe(NOW),
+          snoozedUntil: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
+        };
+        yield* Ref.set(currentShell, shell(snooze));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("2 hours");
+        yield* Ref.set(
+          currentShell,
+          shell({
+            ...snooze,
+            status: "completed",
+            latestRunCompletedAt: DateTime.makeUnsafe("2026-09-04T12:30:00.000Z"),
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map((publication) => publication.state?.phase ?? null),
+          ["running", null],
+        );
+      }),
+  );
+
   it.effect("still publishes a completion when the thread settles during the hold", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay();
