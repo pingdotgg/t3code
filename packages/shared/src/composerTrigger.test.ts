@@ -2,7 +2,11 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
+import {
+  detectComposerTrigger,
+  parseSideChatCommand,
+  serializeComposerFileLink,
+} from "./composerTrigger.ts";
 
 interface MarkdownNode {
   readonly type: string;
@@ -24,6 +28,8 @@ describe("detectComposerTrigger", () => {
     ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
     ["/etc/hosts", "/etc/hosts".length],
     ["Use /etc/hosts now", "Use /et".length],
+    ["cmd /foo\\bar", "cmd /foo\\bar".length],
+    ["/Windows\\System32", "/Windows\\System32".length],
   ])("keeps the path in %j out of the slash menu", (text, cursor) => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
@@ -115,5 +121,21 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("@scope/package.json")).toBe(
       "[package.json](@scope/package.json)",
     );
+  });
+});
+
+describe("parseSideChatCommand", () => {
+  it("reads an optional prompt after /side or /btw", () => {
+    expect(parseSideChatCommand("/side")).toEqual({ prompt: "" });
+    expect(parseSideChatCommand("  /SIDE  why does this fail?\nline two ")).toEqual({
+      prompt: "why does this fail?\nline two",
+    });
+    expect(parseSideChatCommand("/btw check @src/a.ts")).toEqual({ prompt: "check @src/a.ts" });
+  });
+
+  it("ignores other commands and inline mentions", () => {
+    expect(parseSideChatCommand("/sidebar")).toBeNull();
+    expect(parseSideChatCommand("/btwx")).toBeNull();
+    expect(parseSideChatCommand("ask /side later")).toBeNull();
   });
 });
