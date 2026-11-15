@@ -60,7 +60,6 @@ import {
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
   toolGroupSummaryIconName,
   workEntryIconName,
-  workEntryIsExpanded,
 } from "./TimelineWorkEntryRow.logic";
 import { formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 
@@ -197,7 +196,6 @@ function ExpandedWorkGroupEntries({
 }) {
   const {
     workGroupViewState: viewState,
-    toolCallDetailsExpanded,
     onToggleWorkEntry,
     onWorkEntryContentReady,
   } = use(TimelineRowCtx);
@@ -222,7 +220,6 @@ function ExpandedWorkGroupEntries({
 
   const viewedImages = useWorkGroupViewedImages(groupedEntries);
   const groupView = {
-    state: viewState,
     viewedImages,
     onToggleEntry: (collapsed: boolean, entryId: string) =>
       onToggleWorkEntry(disclosureAnchorKey, collapsed, entryId),
@@ -289,12 +286,12 @@ function ExpandedWorkGroupEntries({
   const updateExpandedContentHeight = () => {
     const state = listRef.current?.getState();
     let height = 0;
-    for (const entry of entries) {
-      if (!workEntryIsExpanded(viewState.entryExpansion, entry, toolCallDetailsExpanded)) continue;
-      if (state?.indexByKey(entry.id) === undefined) continue;
+    // Only rows the user opened grow the panel; rows open by default scroll inside its cap.
+    for (const [entryId, open] of viewState.entryExpansion) {
+      if (!open || state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
-        (state.sizes.get(entry.id) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
       );
     }
     setExpandedContentHeight(height);

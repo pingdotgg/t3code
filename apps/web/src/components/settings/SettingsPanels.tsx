@@ -1380,7 +1380,7 @@ function ToolCallDetailsRow() {
   return (
     <SettingsRow
       {...searchableSetting("tool-call-details")}
-      description="Start commands, edits, and thoughts in chat open or closed. Rows you open or close stay that way."
+      description="Start tool calls and thoughts in chat open or closed. A row you open or close keeps that until you reload."
       resetAction={
         settings.toolCallDetailsExpanded !== DEFAULT_UNIFIED_SETTINGS.toolCallDetailsExpanded ? (
           <SettingResetButton

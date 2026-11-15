@@ -136,7 +136,6 @@ export interface WorkGroupViewedImage {
 }
 
 export const WorkGroupViewCtx = createContext<{
-  state: WorkGroupViewState;
   viewedImages: ReadonlyArray<WorkGroupViewedImage>;
   onToggleEntry: (collapsed: boolean, entryId: string) => void;
   onContentReady?: ((entryId: string) => void) | undefined;

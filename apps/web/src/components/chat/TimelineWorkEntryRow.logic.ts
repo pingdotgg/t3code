@@ -3,6 +3,7 @@ import type { Root, RootContent } from "mdast";
 import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
+  workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -92,21 +93,13 @@ export function workEntryRawCommand(
 
 /** Whether a row the user has not opened or closed starts open. */
 export function workEntryStartsExpanded(
-  workEntry: Pick<TimelineWorkEntry, "itemType" | "detail">,
+  workEntry: TimelineWorkEntry,
   expandedByDefault: boolean,
 ): boolean {
-  // A thought opens once it has text; until then there is nothing to show.
-  return (
-    expandedByDefault && (workEntry.itemType !== "reasoning" || Boolean(workEntry.detail?.trim()))
-  );
-}
-
-export function workEntryIsExpanded(
-  entryExpansion: ReadonlyMap<string, boolean>,
-  workEntry: Pick<TimelineWorkEntry, "id" | "itemType" | "detail">,
-  expandedByDefault: boolean,
-): boolean {
-  return entryExpansion.get(workEntry.id) ?? workEntryStartsExpanded(workEntry, expandedByDefault);
+  if (!expandedByDefault || workEntry.questionAnswer) return false;
+  // Viewed images already show in the group's strip; a thought has nothing to show until it has text.
+  if (workEntryViewedImagePath(workEntry) !== null) return false;
+  return workEntry.itemType !== "reasoning" || /\S/.test(workEntry.detail ?? "");
 }
 
 export function buildToolCallExpandedBody(

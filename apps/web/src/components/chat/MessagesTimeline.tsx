@@ -1135,8 +1135,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
-    onToggleWorkEntry: (anchorKey, collapsed, entryId) =>
-      preserveDisclosurePosition(anchorKey, collapsed ? undefined : { entryId }),
+    onToggleWorkEntry: (anchorKey, collapsed, entryId) => {
+      preserveDisclosurePosition(anchorKey, collapsed ? undefined : { entryId });
+      // Positions are otherwise remembered on scroll, so a toggle in an unscrolled thread was lost.
+      rememberPosition(liveFollowEnabled && !anchoredEndSpace);
+    },
     onWorkEntryContentReady: (anchorKey, entryId) => {
       const pending = disclosureRevealRef.current;
       if (
