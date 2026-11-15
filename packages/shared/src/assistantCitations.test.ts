@@ -57,6 +57,9 @@ describe("assistant citation references", () => {
   it("preserves legacy v1 link bytes without adding a comment", () => {
     expect(parseAssistantCitationHref(legacyHref)).toStrictEqual(legacyCitation);
     expect(formatAssistantCitationHref(legacyCitation)).toBe(legacyHref);
+    expect(
+      formatAssistantCitationHref({ ...legacyCitation, occurrence: { index: 0, count: 1 } }),
+    ).toBe(legacyHref);
     expect(formatAssistantCitationHref({ ...legacyCitation, comment: undefined })).toBe(legacyHref);
     expect(serializeAssistantCitation(legacyCitation)).toBe(`[Assistant quote](${legacyHref})`);
   });
