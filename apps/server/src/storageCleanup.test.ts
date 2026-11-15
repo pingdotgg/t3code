@@ -374,9 +374,6 @@ const cleanupFixture = (
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const scriptRuns: Array<{ trigger: string | undefined; worktreeExisted: boolean }> = [];
-    let scriptResult: ProjectSetupScriptRunner.ProjectSetupScriptRunnerResult = {
-      status: "no-script",
-    };
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
       Effect.provideService(GitVcsDriver.GitVcsDriver, {
@@ -538,7 +535,7 @@ const cleanupFixture = (
               trigger: input.trigger,
               worktreeExisted: yield* fs.exists(input.worktreePath),
             });
-            return scriptResult;
+            return { status: "no-script" } as const;
           }),
       } as unknown as ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
@@ -546,9 +543,6 @@ const cleanupFixture = (
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
       scriptRuns,
-      setScriptResult: (next: typeof scriptResult) => {
-        scriptResult = next;
-      },
       repo,
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
@@ -1660,69 +1654,31 @@ describe("deleted thread worktrees", () => {
       }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
-  it.effect("runs the settle script in a deleted thread's worktree before removing it", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW_MS);
-      const fixture = yield* cleanupFixture({
-        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-        worktreeAfterDays: null,
-        worktreeOnDelete: true,
-      });
-      fixture.setDeletedThreads([parent(fixture.worktree)]);
-      fixture.setThreads([]);
-      yield* fixture.service.runNow;
-      expect(fixture.scriptRuns).toEqual([{ trigger: "settle", worktreeExisted: true }]);
-    }).pipe(Effect.provide(cleanupTestLayer)),
-  );
-
-  it.effect("does not run the settle script again for a deleted thread that was settled", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW_MS);
-      const fixture = yield* cleanupFixture({
-        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-        worktreeAfterDays: null,
-        worktreeOnDelete: true,
-      });
-      fixture.setDeletedThreads([
-        { ...parent(fixture.worktree), settledOverride: "settled", settledAt: at(-2 * DAY_MS) },
-      ]);
-      fixture.setThreads([]);
-      yield* fixture.service.runNow;
-      expect(fixture.scriptRuns).toEqual([]);
-      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer)),
-  );
-
-  it.effect("keeps the worktree while its settle script runs and runs it once", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(NOW_MS);
-      const fixture = yield* cleanupFixture({
-        ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-        worktreeAfterDays: null,
-        worktreeOnDelete: true,
-      });
-      fixture.setDeletedThreads([parent(fixture.worktree)]);
-      fixture.setThreads([]);
-      fixture.setScriptResult({
-        status: "started",
-        scriptId: "teardown",
-        scriptName: "Teardown",
-        scriptCommand: "true",
-        terminalId: "settle-teardown",
-        cwd: fixture.worktree,
-        async: true,
-        completion: Effect.succeed({ exitCode: 0, durationMs: 0 }),
-      });
-      const report = yield* fixture.service.runNow;
-      expect(report.entries[0]).toMatchObject({
-        outcome: "kept",
-        reason: "Settle script is running",
-      });
-      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
-      yield* fixture.service.runNow;
-      expect(fixture.scriptRuns).toHaveLength(1);
-      expect(yield* fixture.fs.exists(fixture.worktree)).toBe(false);
-    }).pipe(Effect.provide(cleanupTestLayer)),
+  it.effect.each([
+    { settled: false, runs: [{ trigger: "settle", worktreeExisted: true }] },
+    // Settling already ran the script; removal must not run it a second time.
+    { settled: true, runs: [] },
+  ])(
+    "runs the settle script once before removing a deleted thread's worktree (settled: $settled)",
+    ({ settled, runs }) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture({
+          ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+          worktreeAfterDays: null,
+          worktreeOnDelete: true,
+        });
+        fixture.setDeletedThreads([
+          {
+            ...parent(fixture.worktree),
+            ...(settled ? { settledOverride: "settled" as const, settledAt: at(-2 * DAY_MS) } : {}),
+          },
+        ]);
+        fixture.setThreads([]);
+        const report = yield* fixture.service.runNow;
+        expect(fixture.scriptRuns).toEqual(runs);
+        expect(report.entries.map((entry) => entry.outcome)).toEqual(["removed"]);
+      }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
   it.effect("leaves a deleted owner's subagent on the owner's saved branch", () =>

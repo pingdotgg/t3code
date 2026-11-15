@@ -101,6 +101,8 @@ class WorktreeDirectoryReadError extends Schema.TaggedError<WorktreeDirectoryRea
 const DAY_MS = 86_400_000;
 // Give settle scripts time to open terminals that protect the worktree.
 const SETTLE_SCRIPT_GRACE_MS = 60_000;
+// A teardown waiting on input must not hold the sweep or the removal forever.
+const SETTLE_SCRIPT_TIMEOUT = "10 minutes";
 // Worktree creation can precede its thread row, including review-guide checkouts.
 const ORPHAN_WORKTREE_GRACE_MS = 60 * 60 * 1_000;
 
@@ -332,13 +334,12 @@ const make = Effect.gen(function* () {
   const reconcileBranch = yield* WorktreeBranchSync.makeReconcile;
   const terminals = yield* TerminalManager.TerminalManager;
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const serviceScope = yield* Effect.scope;
+  // One teardown per stretch of thread activity, even when a kept worktree outlives it.
+  const settleScriptRanAt = new Map<string, number>();
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const liveTerminals = new Map<string, Map<string, TerminalSummary>>();
   const orphanSizes = new Map<string, number | null>();
-  // Worktree key to the activity its settle script last ran for, so a kept worktree is not torn down again.
-  const settleScriptRuns = new Map<string, number>();
   const noteTerminal = (terminal: TerminalSummary) => {
     const threadTerminals =
       liveTerminals.get(terminal.threadId) ?? new Map<string, TerminalSummary>();
@@ -1548,14 +1549,17 @@ const make = Effect.gen(function* () {
         const inspection = yield* measureWorktree(worktreePath, true);
         if (inspection.reason !== null) return keep(inspection.reason);
         const bytes = inspection.bytes;
-        // Settling already ran the script. A deleted project has none; other failures keep the worktree.
-        // The runner cannot read a deleted thread, so its link fence is checked here.
+        // A deleted thread has no further activity that could call for a second teardown.
+        const threadActivityAt = deleted ? 0 : storageCleanupActivityAt(thread);
+        const scriptRanAt = settleScriptRanAt.get(thread.id);
+        // Settling already ran the script, and a fenced link's thread never runs the user's scripts.
         if (
           thread.settledOverride !== "settled" &&
-          !(thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin)) &&
-          settleScriptRuns.get(worktreeKey) !== activityAt
+          (scriptRanAt === undefined || (!deleted && scriptRanAt !== threadActivityAt)) &&
+          !(thread.linkOrigin !== undefined && linkOriginIsFenced(thread.linkOrigin))
         ) {
-          const run = yield* projectScripts
+          // Outside the lease, which provider startup waits on.
+          yield* projectScripts
             .runForThread({
               threadId: thread.id,
               projectId: thread.projectId,
@@ -1564,20 +1568,35 @@ const make = Effect.gen(function* () {
               observeCompletion: {},
             })
             .pipe(
-              Effect.catchTags({
-                ProjectSetupScriptProjectNotFoundError: () =>
-                  Effect.succeed({ status: "no-script" } as const),
-              }),
+              Effect.tap(() =>
+                Effect.sync(() => settleScriptRanAt.set(thread.id, threadActivityAt)),
+              ),
+              Effect.flatMap((run) =>
+                run.status !== "started" || run.completion === undefined
+                  ? Effect.void
+                  : run.completion.pipe(
+                      Effect.timeoutOption(SETTLE_SCRIPT_TIMEOUT),
+                      Effect.tap((completion) =>
+                        Option.isSome(completion) && completion.value.exitCode === 0
+                          ? Effect.void
+                          : Effect.logWarning("settle script did not finish cleanly", {
+                              threadId: thread.id,
+                              exitCode: Option.getOrNull(completion)?.exitCode ?? null,
+                            }),
+                      ),
+                      // The script's shell sits in the folder being removed and would keep it as an open terminal.
+                      Effect.andThen(
+                        terminals.close({ threadId: thread.id, terminalId: run.terminalId }),
+                      ),
+                    ),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("settle script could not run before worktree removal", {
+                  threadId: thread.id,
+                  error,
+                }),
+              ),
             );
-          settleScriptRuns.set(worktreeKey, activityAt);
-          if (run.status === "started") {
-            // Its terminal protects the worktree until the script ends; a later sweep removes it.
-            yield* (run.completion ?? Effect.void).pipe(
-              Effect.andThen(requestSweep),
-              Effect.forkIn(serviceScope),
-            );
-            return keep(waitForStop("settle script is running"));
-          }
         }
         yield* withWorkspaceLease(
           worktreePath,
@@ -1926,8 +1945,7 @@ const make = Effect.gen(function* () {
         ),
       ),
   );
-  // Annotated because a worktree sweep requests the next one when its settle script ends.
-  const requestSweep: Effect.Effect<void> = Ref.getAndSet(automaticSweepQueued, true).pipe(
+  const requestSweep = Ref.getAndSet(automaticSweepQueued, true).pipe(
     Effect.flatMap((queued) => (queued ? Effect.void : worker.enqueue(undefined))),
   );
   const runNow = Effect.gen(function* () {
