@@ -2375,7 +2375,10 @@ it.effect.each([
   }),
 );
 
-it.effect("refuses Azure cross-organization reads and writes without its checkout", () =>
+it.effect.each([
+  { case: "another organization", repository: "org-b/project/_git/web" },
+  { case: "a sibling repository", repository: "org-a/project/_git/web-e2e" },
+])("refuses Azure reads and writes in $case without its checkout", ({ repository }) =>
   Effect.gen(function* () {
     const service = yield* makeService({
       projects: [
@@ -2399,15 +2402,20 @@ it.effect("refuses Azure cross-organization reads and writes without its checkou
     const reference = {
       projectId: "org-a" as ProjectId,
       host: "dev.azure.com",
-      repository: "org-b/project/_git/web",
+      repository,
       number: 7,
     };
     const readError = yield* Effect.flip(
       service.summary(reference, { recoverTransientFailure: false }),
     );
     const writeError = yield* Effect.flip(service.runAction({ ...reference, action: "close" }));
-    assert.strictEqual(readError._tag, "PullRequestUnavailableError");
-    assert.strictEqual(writeError._tag, "PullRequestUnavailableError");
+    for (const error of [readError, writeError]) {
+      expect(error).toMatchObject({
+        _tag: "PullRequestUnavailableError",
+        reason: "repository-without-project",
+        message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
+      });
+    }
   }),
 );
 
@@ -3249,6 +3257,40 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
   }),
 );
 
+it.effect("keeps a withheld file's read out of the page's cached diff", () =>
+  Effect.gen(function* () {
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+      getDiff: (input) =>
+        Effect.succeed({
+          patch: input.path === undefined ? "page" : `file ${input.path}`,
+          truncated: input.path === undefined,
+          nextCursor: null,
+        }),
+    });
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [provider],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+    assert.strictEqual(
+      (yield* service.diff({ ...ref, path: "sdk.patch" })).patch,
+      "file sdk.patch",
+    );
+    assert.strictEqual((yield* service.diff(ref)).patch, "page");
+
+    // A host that would answer with its whole diff must not be cached as one file's.
+    const wholeDiffOnly = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        { ...provider, capabilities: { ...provider.capabilities, withheldFileDiff: false } },
+      ],
+    });
+    const error = yield* Effect.flip(wholeDiffOnly.diff({ ...ref, path: "sdk.patch" }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+  }),
+);
+
 it.effect("keeps routed reads separate when the GitHub account changes", () =>
   Effect.gen(function* () {
     for (const operation of ["summary", "detail", "checks", "diff", "filesViewed"] as const) {
@@ -3458,6 +3500,7 @@ it.effect(
               Effect.succeed({
                 ...changeRequest(1, "2026-07-02T00:00:00Z"),
                 isDraft: true,
+                rebaseRequired: false,
                 reviewDecision: "approved",
                 checksState: "passing",
               }),
@@ -3467,6 +3510,7 @@ it.effect(
                 deletions: 3,
                 changedFiles: 5,
                 mergeability: "conflicting",
+                rebaseRequired: true,
               }),
           }),
         ],
@@ -3474,6 +3518,8 @@ it.effect(
       yield* service.summary(reference);
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference);
+      assert.strictEqual(detail.rebaseRequired, true);
+      assert.strictEqual(summary.rebaseRequired, true);
       assert.strictEqual(summary.isDraft, false);
       assert.deepStrictEqual(summary.author, detail.author);
       assert.strictEqual(summary.additions, 14);

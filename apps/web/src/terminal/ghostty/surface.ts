@@ -5,6 +5,7 @@ import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../term
 import {
   GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
+  ghosttyColorsEqual,
   type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
@@ -672,6 +673,8 @@ export class GhosttyTerminalSurface {
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.installEvents();
+    // The input is mounted before the core loads, so focus can land before the listeners.
+    this.focused = document.activeElement === input;
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
@@ -1235,18 +1238,26 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onFocus = () => {
-    this.focused = true;
+    this.setFocused(true);
     this.cursorOn = true;
     this.requestRender();
   };
 
   private readonly onBlur = () => {
-    this.focused = false;
+    this.setFocused(false);
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
   };
+
+  // DOM focus events can repeat without a change; report only real transitions.
+  private setFocused(focused: boolean): void {
+    if (this.focused === focused) return;
+    this.focused = focused;
+    const data = this.core.encodeFocus(focused);
+    if (data.length > 0) this.options.onData(data);
+  }
 
   private readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
@@ -2033,7 +2044,12 @@ export class GhosttyTerminalSurface {
       this.canvasConfigured = true;
       this.canvasDevicePixelRatio = canvasConfiguration.ratio;
     }
+    const previousBackground = this.snapshot?.background;
     this.snapshot = this.core.snapshot();
+    // Only a full render repaints the padding around the rows in the new default background.
+    if (previousBackground && !ghosttyColorsEqual(previousBackground, this.snapshot.background)) {
+      this.forceFullRender = true;
+    }
     if (!this.blinkEnabled()) this.cursorOn = true;
     // Move the origin only on full repaint; dirty-row updates cannot mix origins.
     const scrollState = this.readScrollbarState();
