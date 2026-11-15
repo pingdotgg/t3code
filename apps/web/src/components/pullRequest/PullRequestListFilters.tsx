@@ -22,13 +22,13 @@ import {
   LayersIcon,
   ChevronDownIcon,
   ListFilterIcon,
-  SlidersHorizontalIcon,
   SearchIcon,
+  XIcon,
   TagIcon,
   UserRoundIcon,
   UsersRoundIcon,
 } from "lucide-react";
-import { type ElementType, type ReactNode, useState } from "react";
+import { type ElementType, useRef, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { useDebouncedValue } from "~/state/queries";
@@ -112,14 +112,14 @@ export function PullRequestSearchInput({
   onSubmit: (value: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <InputGroup className="min-w-0 flex-1">
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
       <InputGroupInput
-        // The header's control height: 28px beside the sm menus and icon-sm buttons.
-        size="sm"
+        ref={inputRef}
         type="search"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
@@ -137,18 +137,29 @@ export function PullRequestSearchInput({
           }
         }}
         placeholder="Search pull requests, or label:bug"
-        placeholderTone="dim"
         aria-label="Search pull requests"
       />
+      {(draft ?? value).length > 0 ? (
+        <InputGroupAddon align="inline-end">
+          <Button
+            size="icon-micro"
+            variant="ghost"
+            aria-label="Clear pull request search"
+            onClick={() => {
+              inputRef.current?.focus();
+              setDraft("");
+              onChange("");
+              onSubmit("");
+            }}
+          >
+            <XIcon aria-hidden />
+          </Button>
+        </InputGroupAddon>
+      ) : null}
     </InputGroup>
   );
 }
 
-/**
- * List narrowings live behind one filter control, separate from sorting, state and host, which
- * sit beside it in the header. The trigger carries a count whenever any filter is off its
- * default, so a narrowed list is never a mystery.
- */
 const ALL_PROJECTS_VALUE = "all";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
@@ -225,7 +236,7 @@ function PullRequestFilterRadioGroup<Value extends string>({
   );
 }
 
-export function PullRequestFilterRadioSubmenu<Value extends string>({
+function PullRequestFilterRadioSubmenu<Value extends string>({
   label,
   icon: Icon,
   value,
@@ -484,7 +495,9 @@ function PullRequestLabelFilter({
 }
 
 export function PullRequestFiltersMenu({
-  compactItems,
+  state,
+  stateOptions,
+  onState,
   onOpenChange,
   involvement,
   involvementOptions,
@@ -503,11 +516,9 @@ export function PullRequestFiltersMenu({
   unavailable,
   onProject,
 }: {
-  /**
-   * The header's other controls, for a narrow column: given, the trigger is one sliders icon
-   * and these items lead the menu.
-   */
-  compactItems?: ReactNode;
+  state: PullRequestListState;
+  stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
+  onState: (state: PullRequestListState) => void;
   onOpenChange?: (open: boolean) => void;
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
@@ -533,6 +544,7 @@ export function PullRequestFiltersMenu({
 }) {
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
   const filterCount = [
+    state !== "open",
     involvement !== "all",
     server,
     projectId,
@@ -585,41 +597,26 @@ export function PullRequestFiltersMenu({
   return (
     <Menu onOpenChange={onOpenChange}>
       <MenuTrigger
-        aria-label={
-          (compactItems ? "View and filters" : "Filters") +
-          (filterCount > 0 ? `, ${filterCount} active` : "")
-        }
-        render={
-          <Button
-            variant="ghost-muted"
-            size={compactItems && filterCount === 0 ? "icon-sm" : "sm"}
-          />
-        }
+        aria-label={"Filters" + (filterCount > 0 ? `, ${filterCount} active` : "")}
+        render={<Button variant="ghost" />}
       >
-        {compactItems ? (
-          <SlidersHorizontalIcon aria-hidden className="size-3.5" />
-        ) : (
-          <>
-            <ListFilterIcon aria-hidden className="size-3.5" />
-            Filters
-          </>
-        )}
+        <ListFilterIcon aria-hidden className="size-4" />
+        Filters
         {filterCount > 0 ? (
           <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}
-        {compactItems ? null : (
-          <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
-        )}
+        <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
       </MenuTrigger>
       <MenuPopup align="end" side="bottom" className="w-62">
-        {compactItems ? (
-          <>
-            {compactItems}
-            <MenuSeparator />
-          </>
-        ) : null}
+        <PullRequestFilterRadioSubmenu
+          label="State"
+          icon={PullRequestGlyph.pullRequest}
+          value={state}
+          options={stateOptions}
+          onChange={onState}
+        />
         <PullRequestFilterRadioSubmenu
           label="Involvement"
           icon={UsersRoundIcon}

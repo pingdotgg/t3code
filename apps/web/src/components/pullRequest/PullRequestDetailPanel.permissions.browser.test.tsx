@@ -278,6 +278,17 @@ it("opens a URL-selected pull request without repeatedly reopening its detail", 
     },
   );
   await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
+  await userEvent.type(screen.getByRole("searchbox", { name: "Search pull requests" }), "missing");
+  await userEvent.click(screen.getByRole("button", { name: "Clear pull request search" }));
+  await expect
+    .element(screen.getByRole("searchbox", { name: "Search pull requests" }))
+    .toHaveValue("");
+  await userEvent.click(screen.getByRole("button", { name: "Filters", exact: true }));
+  await userEvent.hover(page.getByRole("menuitem", { name: /^State/ }));
+  await userEvent.click(page.getByRole("menuitemradio", { name: "Closed", exact: true }));
+  await expect.element(screen.getByRole("button", { name: "Filters, 1 active" })).toBeVisible();
+  await userEvent.keyboard("{Escape}{Escape}");
+  await expect.element(screen.getByText("Original description", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("button", { name: "Timeline", exact: true }));
   await expect.element(screen.getByText("Later commit", { exact: true })).toBeVisible();
 });
