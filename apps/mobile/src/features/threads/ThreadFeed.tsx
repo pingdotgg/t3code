@@ -137,8 +137,6 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
-import { resolveOwnedComposerAttachmentFileUri } from "../../lib/composerAttachmentFiles";
-import { Paths } from "expo-file-system";
 import {
   rememberSentImage,
   sentImageHandoff,
@@ -1015,22 +1013,19 @@ function PendingMessageMedia(props: {
   if (isImageAttachment(attachment)) {
     // The composer already showed this image; reuse its pixels and shape instead of a blank box.
     const uri =
-      handoff?.uri ??
-      (fileBacked
-        ? (preview.uri ??
-          resolveOwnedComposerAttachmentFileUri(attachment.fileUri, Paths.document.uri) ??
-          attachment.fileUri)
-        : (attachment.dataUrl ?? attachment.previewUri));
+      handoff?.uri ?? (fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri));
     return (
       <MessageImage
         key={attachment.id}
-        source={{ uri }}
+        source={uri == null ? undefined : { uri }}
         className={props.className}
         maxWidth={props.maxWidth}
         height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
         {...handoffProps(handoff)}
-        onLoad={(size) => props.onImageLoad?.({ uri, aspectRatio: size.width / size.height })}
+        onLoad={(size) => {
+          if (uri) props.onImageLoad?.({ uri, aspectRatio: size.width / size.height });
+        }}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
