@@ -1979,7 +1979,7 @@ describe("AcpRegistryAdapterV2", () => {
           update({ sessionUpdate: "session_info_update", title: "after wake idle" }),
         ],
         undefined,
-        false,
+        true,
         "github-copilot-cli",
       );
       yield* session.runtime.startTurn(session.turnInput(1));
@@ -1990,6 +1990,10 @@ describe("AcpRegistryAdapterV2", () => {
         session.offers.length > 0 || JSON.stringify(wake).includes("Agent 1 finished"),
         "the woken root reply is shown or opens a continuation run",
       );
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continuation), "Agent 1 finished");
+      assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
     }).pipe(Effect.provide(layerTest)),
   );
 
