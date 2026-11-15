@@ -284,6 +284,7 @@ it("opens a repository-relative file from a nested project without a remote", as
       }),
     ),
   );
+  await act(() => useRightPanelStore.setState({ byThreadKey: {} }));
   await userEvent.click(screen.getByText(path, { exact: true }));
   expect(
     selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, context.threadRef),
