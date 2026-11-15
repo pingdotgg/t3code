@@ -113,6 +113,7 @@ vi.mock("../components/ui/Button", () => ({
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
 vi.mock("expo", () => ({
+  requireNativeModule: () => ({ is24HourFormat: () => true }),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -296,6 +297,10 @@ vi.mock("../features/threads/useFileChipShare", () => ({ useFileChipShare: () =>
 vi.mock("../features/threads/ThreadMarkdownImage", async () => {
   const { createContext } = await import("react");
   return { MarkdownImageAvailableWidthContext: createContext(390) };
+});
+vi.mock("../features/threads/ZoomableImagePressable", async () => {
+  const { Pressable } = await import("react-native");
+  return { ZoomableImagePressable: Pressable };
 });
 vi.mock("../features/review/ReviewCommentCard", () => ({ useReviewCommentColors: () => ({}) }));
 vi.mock("../features/prompt-links/prompt-link-actions", () => ({}));
