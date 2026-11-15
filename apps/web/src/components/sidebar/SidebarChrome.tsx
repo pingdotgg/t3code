@@ -1,7 +1,7 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { memo } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
@@ -32,12 +32,15 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
-// Preserve main's measured minimum even though the redesign omits its wordmark.
+// The brand follows the fixed toggle and back/forward buttons, one control gap
+// after them, as main's brand follows its toggle.
+const SIDEBAR_BRAND_OFFSET =
+  "ml-[calc(var(--workspace-controls-left)+var(--workspace-titlebar-control-size)*3+var(--workspace-titlebar-control-gap))]";
+
+// Keeps the sidebar's minimum width wide enough for the brand and the controls before it.
 export function SidebarBrandWidthProbe({
-  isElectron,
   onWidthChange,
 }: {
-  isElectron: boolean;
   onWidthChange: (width: number) => void;
 }) {
   const observeWidth = (probe: HTMLDivElement) =>
@@ -51,16 +54,42 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className="ml-[var(--workspace-titlebar-content-left)] flex gap-1">
-        <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
-          <T3Wordmark className="h-[1cap] w-auto shrink-0" />
-          <span className="truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1">
-            Code
-          </span>
-        </span>
-        {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
+      <div className={cn(SIDEBAR_BRAND_OFFSET, "flex")}>
+        <SidebarBrandMark onBackdrop={false} />
       </div>
     </div>
+  );
+}
+
+function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <Link
+      aria-label="T3 Code home"
+      className={cn(
+        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
+        SIDEBAR_BRAND_OFFSET,
+        onBackdrop ? "text-white light:text-foreground" : "text-foreground",
+      )}
+      to="/"
+    >
+      <SidebarBrandMark onBackdrop={onBackdrop} />
+    </Link>
+  );
+}
+
+function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
+      <T3Wordmark aria-label="T3" className="h-[1cap] w-auto shrink-0" />
+      <span
+        className={cn(
+          "truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1",
+          onBackdrop ? "text-white/70 light:text-muted-foreground" : "text-muted-foreground",
+        )}
+      >
+        Code
+      </span>
+    </span>
   );
 }
 
@@ -98,17 +127,17 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label="Toggle main sidebar"
         />
       </div>
-      {pillLabel ? (
-        // Right of the toggle and the two back/forward slots on the chrome row.
-        <Badge
-          className="relative z-10 ml-1 hidden md:ml-[calc(var(--workspace-controls-left)+var(--workspace-titlebar-control-size)*3+(--spacing(2)))] @[15rem]/sidebar-header:inline-flex"
-          data-environment-identification="pill"
-          size="sm"
-          variant="secondary"
-        >
-          {pillLabel}
-        </Badge>
-      ) : null}
+      {/* As on main, a pill that does not fit beside the brand wraps out of view. */}
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
+        <SidebarBrand onBackdrop={backdropVariant !== null} />
+        {pillLabel ? (
+          <div className="ml-1 hidden h-7 items-center @[15rem]/sidebar-header:flex">
+            <Badge data-environment-identification="pill" size="sm" variant="secondary">
+              {pillLabel}
+            </Badge>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 });
