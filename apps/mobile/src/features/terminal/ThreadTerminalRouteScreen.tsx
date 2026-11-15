@@ -893,7 +893,7 @@ function ThreadTerminal(props: {
               title="No terminal sessions"
               detail="Existing terminals will appear here when another client opens one."
             />
-          ) : !canOperateTerminal && terminal.error !== null ? (
+          ) : terminal.error !== null && (!canOperateTerminal || terminal.status === "error") ? (
             <EmptyState title="Terminal unavailable" detail={terminal.error} />
           ) : (
             <>
