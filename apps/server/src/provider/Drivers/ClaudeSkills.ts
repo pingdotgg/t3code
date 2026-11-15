@@ -241,6 +241,7 @@ const SkillSettings = fromLenientJson(
     skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
     enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     syncClaudeAiPlugins: Schema.optional(Schema.Unknown),
+    syncClaudeAiSkills: Schema.optional(Schema.Unknown),
   }),
 );
 const decodeSkillSettings = Schema.decodeUnknownEffect(SkillSettings);
@@ -275,6 +276,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
   const managedPluginNames = new Set<string>();
   const managedPaths = new Set(claudeManagedSettingsPaths(path, platform, environment));
   let syncedPluginsHidden = false;
+  let syncedSkillsHidden = false;
   const repositoryRoot = cwd === undefined ? undefined : yield* findRepositoryRoot(cwd);
   const projectSettingsPath =
     cwd === undefined ? undefined : path.join(cwd, ".claude", "settings.json");
@@ -321,6 +323,9 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     if (parsed?.syncClaudeAiPlugins === false && settingsPath !== projectSettingsPath) {
       syncedPluginsHidden = true;
     }
+    if (parsed?.syncClaudeAiSkills === false && settingsPath !== projectSettingsPath) {
+      syncedSkillsHidden = true;
+    }
   }
 
   return {
@@ -328,6 +333,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     enabledPlugins,
     managedPluginNames,
     syncedPluginsHidden,
+    syncedSkillsHidden,
   };
 });
 
@@ -628,43 +634,25 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
   return roots;
 });
 
-const ClaudeAccount = Schema.fromJsonString(
-  Schema.Struct({
-    oauthAccount: Schema.optional(
-      Schema.Struct({
-        organizationUuid: Schema.optional(Schema.String),
-        accountUuid: Schema.optional(Schema.String),
-      }),
-    ),
-  }),
-);
-
 const SYNCED_SKILL_PREFIX = "anthropic-skills";
 
-// claude.ai org skills sync into one `<org>_<account>` bucket per login; the CLI loads only the
-// session's bucket, where CLAUDE_CODE_ORGANIZATION_UUID outranks the stored login's organization.
 const discoverSyncedSkillRoot = Effect.fn("discoverSyncedSkillRoot")(function* (
+  config: Pick<ClaudeSettings, "homePath">,
   configDirPath: string,
-  accountConfigPath: string,
   environment: NodeJS.ProcessEnv,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const account = yield* fileSystem.readFileString(accountConfigPath).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(ClaudeAccount)),
-    Effect.map((config) => config.oauthAccount),
-    Effect.orElseSucceed(() => undefined),
-  );
-  const organization = (
-    environment.CLAUDE_CODE_ORGANIZATION_UUID?.trim() || account?.organizationUuid?.trim()
-  )?.toLowerCase();
-  if (!organization) return [];
-  const accountUuid =
-    account?.accountUuid?.trim() || environment.CLAUDE_CODE_ACCOUNT_UUID?.trim() || "unbound";
-  const bucket = `${organization}_${accountUuid.toLowerCase()}`;
+  const bucket = yield* resolveSyncedPluginBucket(config, configDirPath, environment);
+  if (bucket === undefined) return [];
+  const syncedPath = path.join(configDirPath, "skills", "synced");
+  const hasBucketMarker = yield* fileSystem
+    .exists(path.join(syncedPath, `.bucket-${bucket}`))
+    .pipe(Effect.orElseSucceed(() => false));
+  if (!hasBucketMarker) return [];
   return [
     {
-      directory: path.join(configDirPath, "skills", "synced", bucket),
+      directory: path.join(syncedPath, bucket),
       scope: "user" as const,
       prefix: SYNCED_SKILL_PREFIX,
       synced: true,
@@ -772,8 +760,13 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const path = yield* Path.Path;
   const env = environment ?? process.env;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, env, cwd);
-  const { skillOverrides, enabledPlugins, managedPluginNames, syncedPluginsHidden } =
-    yield* readSkillSettings(configDirPath, cwd, env);
+  const {
+    skillOverrides,
+    enabledPlugins,
+    managedPluginNames,
+    syncedPluginsHidden,
+    syncedSkillsHidden,
+  } = yield* readSkillSettings(configDirPath, cwd, env);
   const managedDirectory = claudeManagedDirectory(path, yield* HostProcess.Platform, env);
   // Most installs have no synced folder; skip reading `.claude.json` for them.
   const hasSyncedPlugins =
@@ -807,15 +800,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         scope: "project" as const,
       })),
     // Ahead of plugins: Claude Code reserves `anthropic-skills:` names for synced skills.
-    ...(yield* discoverSyncedSkillRoot(
-      configDirPath,
-      yield* claudeAccountConfigPath(
-        config.homePath.trim() || (environment ?? process.env).CLAUDE_CONFIG_DIR?.trim()
-          ? configDirPath
-          : undefined,
-      ),
-      environment ?? process.env,
-    )),
+    ...(syncedSkillsHidden ? [] : yield* discoverSyncedSkillRoot(config, configDirPath, env)),
     ...inlinePlugins.roots,
     ...(yield* discoverPluginSkillRoots(
       configDirPath,
@@ -872,7 +857,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
           ? declaredName.slice(root.prefix.length + 1)
           : declaredName;
-        name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+        name = `${root.prefix}:${root.synced ? entry : (unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
         // Advertise only exact native names the shared composer grammar can invoke.
         const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
         if (mention?.[2] !== name) continue;

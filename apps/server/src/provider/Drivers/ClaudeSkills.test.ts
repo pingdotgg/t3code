@@ -55,6 +55,9 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         }),
       );
 
+      assert.deepEqual(yield* discoverClaudeSkills({ homePath: configDir }), []);
+      yield* fs.writeFileString(path.join(synced, `.bucket-${org}_${account}`), "");
+      yield* writeSkill(path.join(synced, `${org}_${account}`), "pdf.v2", "# Unsupported name");
       const skills = yield* discoverClaudeSkills({ homePath: configDir });
       assert.deepEqual(skills, [
         {
@@ -65,6 +68,22 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           description: "PDFs.",
         },
       ]);
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        '{"syncClaudeAiSkills":false}',
+      );
+      assert.deepEqual(yield* discoverClaudeSkills({ homePath: configDir }), []);
+      yield* fs.writeFileString(path.join(configDir, "settings.json"), "{}");
+      const tokenAccount = "55555555-5555-4555-8555-555555555555";
+      yield* writeSkill(path.join(synced, `${org}_${tokenAccount}`), "token-skill", "# Token");
+      yield* fs.writeFileString(path.join(synced, `.bucket-${org}_${tokenAccount}`), "");
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: configDir }, undefined, {
+          CLAUDE_CODE_OAUTH_TOKEN: "token",
+          CLAUDE_CODE_ACCOUNT_UUID: tokenAccount,
+        })).map((skill) => skill.name),
+        ["anthropic-skills:token-skill"],
+      );
     }),
   );
 
@@ -81,6 +100,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const bucket = path.join(synced, `${sessionOrg}_${account}`);
       yield* writeSkill(path.join(synced, `${storedOrg}_${account}`), "stored-org", "# Stored");
       yield* writeSkill(bucket, "pdf", "---\ndescription: Synced PDFs.\n---\n");
+      yield* fs.writeFileString(path.join(synced, `.bucket-${sessionOrg}_${account}`), "");
       yield* writeSkill(bucket, "docs", "# Docs");
       yield* writeSkill(bucket, "xlsx", "# Sheets");
       const local = path.join(configDir, "skills");
