@@ -2448,6 +2448,26 @@ it.layer(
       }),
     );
 
+    it.effect("stamps a rescan whose awaited scan already published the change", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        const ordinary = yield* h.refresh("/workspace", true).pipe(Effect.forkChild);
+        const completeOrdinary = yield* h.nextScan("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        yield* Queue.take(h.first.reports);
+        // Let the consumer reach its wait on the running scan.
+        yield* TestClock.adjust(0);
+        yield* completeOrdinary("hook");
+        yield* Fiber.join(ordinary);
+        const completeRescan = yield* h.nextScan("/workspace");
+        yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.isString(yield* h.rescannedAtOf);
+      }),
+    );
+
     it.effect("leaves workspaceRescannedAt unset when a rescan changes nothing", () =>
       Effect.gen(function* () {
         const h = yield* makeWorkspaceRescanHarness;

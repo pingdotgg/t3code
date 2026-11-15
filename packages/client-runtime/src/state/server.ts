@@ -1586,6 +1586,11 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
+      // A rescan during the request must leave the stored basis behind the new stamp.
+      onStart: ({ environmentId, input }, registry) =>
+        registry
+          .get(configValueAtom(environmentId))
+          ?.providers.find((provider) => provider.instanceId === input.instanceId),
       execute: (input, registry, environmentId) => {
         const { instanceId, cwd } = input;
         const provider =
@@ -1607,7 +1612,7 @@ export function createServerEnvironmentAtoms<R, E>(
             : {}),
         });
       },
-      onSuccess: ({ environmentId, input }, registry, result) =>
+      onSuccess: ({ environmentId, input }, registry, result, startedProvider) =>
         Effect.sync(() => {
           const { instanceId, cwd } = input;
           if (instanceId === undefined || cwd === undefined) return;
@@ -1629,9 +1634,7 @@ export function createServerEnvironmentAtoms<R, E>(
               current,
               { instanceId, cwd, fresh: input.fresh === true },
               result.providers,
-              registry
-                .get(configValueAtom(environmentId))
-                ?.providers.find((provider) => provider.instanceId === instanceId),
+              startedProvider,
             ),
           );
         }),
