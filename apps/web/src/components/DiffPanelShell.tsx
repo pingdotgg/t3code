@@ -21,8 +21,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
 
 export function DiffPanelShell(props: {
   mode: DiffPanelMode;
-  /** Null when a panel tab bar carries the header (PanelTabBreadcrumb, PanelTabActions). */
-  header: ReactNode | null;
+  header: ReactNode;
   children: ReactNode;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
@@ -30,16 +29,13 @@ export function DiffPanelShell(props: {
   return (
     <div
       className={cn(
-        // Under a pane's tab row the diff reaches up to the pane's top edge
-        // (--surface-top-inset, index.css).
-        "flex h-[calc(100%+var(--surface-top-inset,0px))] min-w-0 flex-col bg-background",
+        "flex h-full min-w-0 flex-col bg-background",
         props.mode === "inline"
           ? "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border"
           : "w-full",
       )}
-      data-surface-reaches-under-header={props.header === null ? "" : undefined}
     >
-      {props.header === null ? null : shouldUseDragRegion ? (
+      {shouldUseDragRegion ? (
         <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
       ) : (
         <div className={getDiffPanelHeaderRowClassName(props.mode)} data-surface-subheader>
