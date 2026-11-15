@@ -3,6 +3,7 @@ import { TextInputWrapper } from "expo-paste-input";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo, useState } from "react";
 import { ScrollView, View, useWindowDimensions } from "react-native";
+import * as Dialog from "../../components/ui/Dialog";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
@@ -86,13 +87,14 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
   const handleNativePaste = useNativePaste((uris) => {
     void (async () => {
       try {
-        const images = await convertPastedImagesToAttachments({
+        const result = await convertPastedImagesToAttachments({
           uris,
           existingCount: attachments.length,
         });
-        if (images.length > 0) {
-          setAttachments((current) => [...current, ...images]);
+        if (result.attachments.length > 0) {
+          setAttachments((current) => [...current, ...result.attachments]);
         }
+        if (result.error) Dialog.alert("Could not paste image", result.error);
       } catch (error) {
         console.error("[review comment] error converting pasted images", error);
       }

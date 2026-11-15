@@ -86,6 +86,7 @@ it.effect.each([false, true])(
       const historyStarted = yield* Deferred.make<void>();
       const releaseHistory = yield* Deferred.make<void>();
       const quitting = yield* Ref.make(false);
+      const tokenRequested = yield* Deferred.make<void>();
       const events: string[] = [];
       const record = (event: string) =>
         Effect.sync(() => {
@@ -144,7 +145,7 @@ it.effect.each([false, true])(
             configure: Effect.void,
           } as PreviewPasskeys.PreviewPasskeys["Service"]),
           Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
-            configure: Effect.void,
+            configure: record("menu"),
           }),
           Effect.provideService(DesktopUpdates.DesktopUpdates, {
             configure: Effect.void,
@@ -222,7 +223,12 @@ it.effect.each([false, true])(
             Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
             Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
             Layer.mock(DesktopIpc.DesktopIpc, {}),
-            Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),
+            Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+              getBearerToken: record("token").pipe(
+                Effect.andThen(Deferred.succeed(tokenRequested, undefined)),
+                Effect.as("token"),
+              ),
+            }),
             Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
             Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
             Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
@@ -253,7 +259,13 @@ it.effect.each([false, true])(
       );
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
-      assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
+      yield* Deferred.await(tokenRequested);
+      // The backend spawns before menus, and its token is minted without waiting for the renderer.
+      assert.deepEqual(
+        events.filter((event) => event !== "token"),
+        ["identity", "ready", "identity", "backend", "menu", "window"],
+      );
+      assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       const shutdown = yield* DesktopShutdown.DesktopShutdown;
       yield* shutdown.request;
