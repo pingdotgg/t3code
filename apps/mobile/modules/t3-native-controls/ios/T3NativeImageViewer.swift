@@ -37,6 +37,7 @@ final class T3NativeImageViewer: NSObject {
     viewer.onRetry = { [weak self] index in self?.load(index, retry: true) }
     viewer.onDismissed = { [weak self] in self?.finish() }
     controller = viewer
+    viewer.loadViewIfNeeded()
     for index in urls.indices {
       if let placeholder = sourceView(index).flatMap(Self.thumbnail(of:)) {
         viewer.setImage(placeholder, at: index, full: false)
@@ -388,7 +389,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   @available(*, unavailable)
   required init?(coder: NSCoder) { nil }
 
-  override var prefersStatusBarHidden: Bool { chromeHidden || transitioning }
+  override var prefersStatusBarHidden: Bool { chromeHidden }
   override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
   override var prefersHomeIndicatorAutoHidden: Bool { chromeHidden }
   override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation { .fade }
