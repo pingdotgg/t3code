@@ -548,6 +548,7 @@ function RenameClientDialog({
           </DialogDescription>
         </DialogHeader>
         <form
+          className="flex min-h-0 flex-col"
           onSubmit={(event) => {
             event.preventDefault();
             void handleRename();
