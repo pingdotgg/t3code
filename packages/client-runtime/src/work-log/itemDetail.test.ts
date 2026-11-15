@@ -113,3 +113,72 @@ describe("tool image output parsing", () => {
     },
   );
 });
+
+describe("tool text output formatting", () => {
+  it.each([
+    '{"id":1234567890123456789,"name":"x"}',
+    '{"id":1}\n{"id":-9007199254740993}',
+    '{"id":9.007199254740993e15}',
+    '{"id":1e309}',
+  ])("keeps %j as returned when parsing would change a number", (text) => {
+    expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(text);
+  });
+
+  it.each(['{"id":42,"note":"12345678901234567890"}', '{"ratio":0.1234567890123456789}'])(
+    "still pretty-prints %j",
+    (text) => {
+      expect(turnItemOutputText(toolItem({ content: [{ type: "text", text }] }))).toBe(
+        JSON.stringify(JSON.parse(text), null, 2),
+      );
+    },
+  );
+});
+
+describe("MCP app tool output", () => {
+  it("shows the tool result, not the app wrapper", () => {
+    const text = "Notice\nview\tcount\n/home\t42";
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "aggregate_rum_events",
+        resourceUri: "ui://repro/dataviz",
+      },
+      result: { content: [{ type: "text", text }] },
+    });
+    expect(turnItemOutputText(item)).toBe(text);
+  });
+
+  it("reads a result with metadata and marks images it cannot preview", () => {
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: {
+        content: [
+          { type: "text", text: "chart" },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        _meta: { "ui/resourceUri": "ui://repro/chart" },
+      },
+    });
+    expect(turnItemOutputText(item)).toBe("chart\n[image]");
+
+    const bounded = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: [
+        { type: "text", text: "chart" },
+        { type: "image", mimeType: "image/png" },
+      ],
+    });
+    expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
