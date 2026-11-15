@@ -57,7 +57,11 @@ import {
 } from "~/terminal/ghostty/surface";
 import { type GhosttyColor, type GhosttyTheme } from "~/terminal/ghostty/core";
 import { useOpenInPreferredEditor } from "../editorPreferences";
-import { isTerminalUrl, resolveTerminalLinkTarget } from "../terminal-links";
+import {
+  isCwdRelativeTerminalPath,
+  isTerminalUrl,
+  resolveTerminalLinkTarget,
+} from "../terminal-links";
 import {
   isDiffToggleShortcut,
   isTerminalClearShortcut,
@@ -480,6 +484,12 @@ interface TerminalViewportProps {
   keybindings: ResolvedKeybindingsConfig;
 }
 
+interface TerminalLinkLocation {
+  readonly text: string;
+  readonly cwd: string;
+  readonly target: string;
+}
+
 interface TerminalLaunchLocation {
   readonly cwd: string;
   readonly worktreePath?: string | null;
@@ -525,47 +535,8 @@ function TerminalSessionViewport({
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const [linkPath, setLinkPath] = useState<string | null>(null);
-  const metadataThreadRef = useContext(FileMetadataThreadContext);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const hostname = serverConfig?.hostname;
-  const readHostname = useEffectEvent(() => hostname);
-  const linkMetadataQuery =
-    linkPath !== null && canOpenHostEditor && canReadFilesystem
-      ? getFileMetadataQueryAtom(
-          environmentId,
-          resolveTerminalLinkTarget(linkPath, cwd, hostname),
-          cwd,
-          metadataThreadRef,
-        )
-      : null;
-  const canActivateTerminalLink = useEffectEvent((text: string) => {
-    if (isTerminalUrl(text)) return true;
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-    if (text !== linkPath || !linkMetadataQuery) return false;
-    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
-  });
-  const validateTerminalLink = useEffectEvent(async (text: string) => {
-    if (isTerminalUrl(text)) return true;
-    if (
-      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
-      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
-    )
-      return false;
-    const query = getFileMetadataQueryAtom(
-      environmentId,
-      resolveTerminalLinkTarget(text, cwd, hostname),
-      cwd,
-      metadataThreadRef,
-    );
-    if (!query) return false;
-    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
-    return (
-      result._tag === "Success" &&
-      (result.value?.kind === "file" || result.value?.kind === "directory")
-    );
-  });
   const openInPreferredEditor = useOpenInPreferredEditor(
     environmentId,
     serverConfig?.availableEditors ?? [],
@@ -623,6 +594,99 @@ function TerminalSessionViewport({
   // the surface reads the session itself, so output chunks never re-render here.
   useAtomMount(terminalSessionAtom);
   const readTerminalSession = useEffectEvent(() => appAtomRegistry.get(terminalSessionAtom));
+  // A relative link resolves where the shell is when it is hovered or pressed. The existence
+  // check and the editor share that location, so they always agree on the file.
+  const [linkLocation, setLinkLocation] = useState<TerminalLinkLocation | null>(null);
+  const linkLocationRef = useRef<TerminalLinkLocation | null>(null);
+  const linkLocationRequestRef = useRef(0);
+  const showLinkLocation = useEffectEvent((location: TerminalLinkLocation | null) => {
+    linkLocationRef.current = location;
+    setLinkLocation(location);
+  });
+  const runForegroundCwd = useAtomCommand(terminalEnvironment.foregroundCwd, {
+    reportFailure: false,
+  });
+  const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const locationExists = useEffectEvent(async (location: TerminalLinkLocation) => {
+    const query = getFileMetadataQueryAtom(
+      environmentId,
+      location.target,
+      location.cwd,
+      metadataThreadRef,
+    );
+    if (!query) return false;
+    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    return (
+      result._tag === "Success" &&
+      (result.value?.kind === "file" || result.value?.kind === "directory")
+    );
+  });
+  const linkLocationFor = useEffectEvent(async (text: string): Promise<TerminalLinkLocation> => {
+    const pid = readTerminalSession().pid;
+    let shellCwd = cwd;
+    // Keep the platform skip aligned with Linux-only discovery in server terminal/foregroundCwd.ts.
+    if (
+      pid !== null &&
+      !["darwin", "windows"].includes(serverConfig?.environment.platform.os ?? "unknown") &&
+      isCwdRelativeTerminalPath(text)
+    ) {
+      const result = await runForegroundCwd({
+        environmentId,
+        input: { threadId, terminalId, pid },
+      });
+      // Older servers, other platforms and ended or replaced shells fall back to the launch cwd.
+      if (result._tag === "Success" && result.value !== null) shellCwd = result.value;
+    }
+    const shellLocation = {
+      text,
+      cwd: shellCwd,
+      target: resolveTerminalLinkTarget(text, shellCwd, hostname),
+    };
+    if (shellCwd === cwd) return shellLocation;
+    // Tools such as cargo and `git diff --stat` print root-relative paths from a subdirectory.
+    const launchLocation = { text, cwd, target: resolveTerminalLinkTarget(text, cwd, hostname) };
+    return (await locationExists(shellLocation)) || !(await locationExists(launchLocation))
+      ? shellLocation
+      : launchLocation;
+  });
+  const hoverTerminalLink = useEffectEvent((text: string | null) => {
+    const request = ++linkLocationRequestRef.current;
+    showLinkLocation(null);
+    if (text === null || isTerminalUrl(text)) return;
+    void linkLocationFor(text).then((location) => {
+      if (request === linkLocationRequestRef.current) showLinkLocation(location);
+    });
+  });
+  const linkMetadataQuery =
+    linkLocation !== null && canOpenHostEditor && canReadFilesystem
+      ? getFileMetadataQueryAtom(
+          environmentId,
+          linkLocation.target,
+          linkLocation.cwd,
+          metadataThreadRef,
+        )
+      : null;
+  const canActivateTerminalLink = useEffectEvent((text: string) => {
+    if (isTerminalUrl(text)) return true;
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+    if (text !== linkLocation?.text || !linkMetadataQuery) return false;
+    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
+    return metadata?.kind === "file" || metadata?.kind === "directory";
+  });
+  const validateTerminalLink = useEffectEvent(async (text: string) => {
+    if (isTerminalUrl(text)) return true;
+    if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+    )
+      return false;
+    const location = await linkLocationFor(text);
+    return (await locationExists(location)) ? location : false;
+  });
+  const checkedLinkTarget = useEffectEvent((text: string) => {
+    const location = linkLocationRef.current;
+    return location?.text === text ? location.target : null;
+  });
   const subscribeTerminalSession = useEffectEvent(
     (listener: (session: TerminalSessionState) => void) =>
       appAtomRegistry.subscribe(terminalSessionAtom, listener),
@@ -728,8 +792,12 @@ function TerminalSessionViewport({
         beforeKey: (event) => handleBeforeKey(event),
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
-        validateLink: (text) => validateTerminalLink(text),
-        onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
+        validateLink: async (text) => {
+          const validated = await validateTerminalLink(text);
+          if (typeof validated === "boolean") return validated;
+          return (event: MouseEvent) => handleLinkActivate(text, event, validated.target);
+        },
+        onLinkHover: (text) => hoverTerminalLink(text),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
@@ -1033,7 +1101,7 @@ function TerminalSessionViewport({
         return false;
       }
 
-      function handleLinkActivate(text: string, event: MouseEvent): void {
+      function handleLinkActivate(text: string, event: MouseEvent, validatedTarget?: string): void {
         if (
           !isTerminalUrl(text) &&
           !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
@@ -1071,7 +1139,9 @@ function TerminalSessionViewport({
           );
           return;
         }
-        const target = resolveTerminalLinkTarget(text, cwd, readHostname());
+        // Only the location whose existence was checked opens, never a fresh guess.
+        const target = validatedTarget ?? checkedLinkTarget(text);
+        if (target === null) return;
         void (async () => {
           const result = await openTerminalPath(target);
           if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
@@ -1149,7 +1219,7 @@ function TerminalSessionViewport({
         mount.focus({ preventScroll: true });
       }
     };
-  }, [cwd, environmentId, terminalId, terminalSessionAtom, threadId]);
+  }, [environmentId, terminalId, terminalSessionAtom, threadId]);
 
   const attachContainer = (mount: HTMLDivElement) => {
     containerRef.current = mount;

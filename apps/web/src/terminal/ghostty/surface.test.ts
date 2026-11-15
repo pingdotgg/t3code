@@ -609,23 +609,31 @@ describe("GhosttyTerminalSurface visibility", () => {
     expect(onLinkActivate).not.toHaveBeenCalled();
   });
 
-  it.each([
-    { scenario: "missing", exists: false },
-    { scenario: "file", exists: true },
-    { scenario: "replaced", exists: true },
-    { scenario: "superseded", exists: false },
-    { scenario: "hidden", exists: false },
-    { scenario: "dragged", exists: true },
-    { scenario: "keyboard-selected", exists: false },
-    { scenario: "selection-cleared", exists: true },
-    { scenario: "output-cleaned", exists: true },
-  ])(
-    "validates a quick click without waiting for hover: $scenario",
-    async ({ scenario, exists }) => {
+  it.each(
+    [
+      { scenario: "missing", exists: false },
+      { scenario: "file", exists: true },
+      { scenario: "replaced", exists: true },
+      { scenario: "superseded", exists: false },
+      { scenario: "hidden", exists: false },
+      { scenario: "dragged", exists: true },
+      { scenario: "keyboard-selected", exists: false },
+      { scenario: "selection-cleared", exists: true },
+      { scenario: "output-cleaned", exists: true },
+    ]
+      .map((test) => ({ ...test, bound: false }))
+      .concat([
+        { scenario: "file", exists: true, bound: true },
+        { scenario: "replaced", exists: true, bound: true },
+      ]),
+  )(
+    "validates a quick click without waiting for hover: $scenario (bound: $bound)",
+    async ({ scenario, exists, bound }) => {
       vi.stubGlobal("navigator", { platform: "Linux x86_64" });
       const harness = createHarness();
-      let resolveValidation!: (exists: boolean) => void;
-      const validation = new Promise<boolean>((resolve) => {
+      const activateValidated = vi.fn();
+      let resolveValidation!: (result: boolean | ((event: MouseEvent) => void)) => void;
+      const validation = new Promise<boolean | ((event: MouseEvent) => void)>((resolve) => {
         resolveValidation = resolve;
       });
       const validateLink = vi.fn(() => validation);
@@ -658,9 +666,10 @@ describe("GhosttyTerminalSurface visibility", () => {
         key(surface, "a", "KeyA", { ctrlKey: true, shiftKey: true });
       if (scenario === "selection-cleared") surface.clearSelection();
       if (scenario === "output-cleaned") surface.clearSelection({ source: "output" });
-      resolveValidation(exists);
+      resolveValidation(exists && bound ? activateValidated : exists);
       await validation;
-      expect(onLinkActivate).toHaveBeenCalledTimes(
+      if (bound) expect(onLinkActivate).not.toHaveBeenCalled();
+      expect(bound ? activateValidated : onLinkActivate).toHaveBeenCalledTimes(
         scenario === "file" || scenario === "output-cleaned" ? 1 : 0,
       );
       if (scenario === "missing" || scenario === "selection-cleared")

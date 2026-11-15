@@ -5,7 +5,7 @@ import {
   splitFilePathPosition,
 } from "@t3tools/shared/fileLinks";
 import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { isHostPath, stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -160,6 +160,11 @@ export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
 
 export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
+}
+
+/** Whether `resolveTerminalLinkTarget` joins `text` onto its `cwd`. */
+export function isCwdRelativeTerminalPath(text: string): boolean {
+  return !/^file:\/\//iu.test(text) && !isHostPath(splitFilePathPosition(text).path);
 }
 
 /**

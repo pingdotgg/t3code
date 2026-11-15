@@ -24,6 +24,7 @@ import {
   type TerminalAttachInput,
   type TerminalAttachStreamEvent,
   type TerminalClearInput,
+  type TerminalForegroundCwdInput,
   type TerminalCloseInput,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
@@ -76,6 +77,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { increment, terminalSessionsTotal } from "../observability/Metrics.ts";
 import { expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProcessRunner from "../processRunner.ts";
+import { foregroundProcessCwd } from "./foregroundCwd.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import { terminalOutputStream } from "./OutputProtocol.ts";
@@ -224,6 +226,9 @@ export class TerminalManager extends Context.Service<
     ) => Effect.Effect<void, TerminalError>;
 
     readonly clear: (input: TerminalClearInput) => Effect.Effect<void, TerminalError>;
+
+    /** Where the terminal's foreground process is now; null when that cannot be known. */
+    readonly foregroundCwd: (input: TerminalForegroundCwdInput) => Effect.Effect<string | null>;
 
     /** Omit terminalId to close all sessions for the thread. */
     readonly close: (input: TerminalCloseInput) => Effect.Effect<void, TerminalError>;
@@ -3768,6 +3773,32 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }),
     );
 
+  const foregroundCwd: TerminalManager["Service"]["foregroundCwd"] = Effect.fn(
+    "terminal.foregroundCwd",
+  )(function* (input) {
+    const session = yield* getSession(input.threadId, input.terminalId);
+    // A restart keeps the terminal id, so only the shell the caller saw may answer.
+    if (
+      Option.isNone(session) ||
+      session.value.status !== "running" ||
+      session.value.pid !== input.pid
+    ) {
+      return null;
+    }
+    const process = session.value.process;
+    const cwd = yield* foregroundProcessCwd(input.pid, platform).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+    );
+    const current = yield* getSession(input.threadId, input.terminalId);
+    return Option.isSome(current) &&
+      current.value === session.value &&
+      current.value.status === "running" &&
+      current.value.pid === input.pid &&
+      current.value.process === process
+      ? cwd
+      : null;
+  });
+
   const close: TerminalManager["Service"]["close"] = (input) =>
     withThreadLock(
       input.threadId,
@@ -3859,6 +3890,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     write,
     resize,
     clear,
+    foregroundCwd,
     close,
     closeIdle,
     closeOnSettle,

@@ -34,6 +34,7 @@ const fixture = vi.hoisted(() => ({
     _status: "closed" | "starting" | "running",
     _version: number,
     _generation?: number,
+    _pid?: number,
   ) => {},
   sessionEvent: (_thread: ScopedThreadRef, _type: "snapshot" | "restarted", _pid = 123) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
@@ -42,6 +43,10 @@ const fixture = vi.hoisted(() => ({
   runWrite: (): Promise<{ _tag: "Success" }> => Promise.resolve({ _tag: "Success" }),
   runResize: (_input: unknown): Promise<AsyncResult.AsyncResult<unknown, unknown>> =>
     Promise.resolve(AsyncResult.success(undefined)),
+  foregroundCwdCommand: {},
+  foregroundCwd: (_input: unknown): Promise<AsyncResult.AsyncResult<string | null, unknown>> =>
+    Promise.resolve(AsyncResult.success(null)),
+  opened: [] as string[],
   metadata: new Map<
     string,
     Atom.Writable<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>
@@ -110,11 +115,12 @@ vi.mock("../state/terminalSessions", async () => {
   fixture.resetSessions = () => {
     sessions = new Map();
   };
-  fixture.setSession = (thread, status, version, generation) => {
+  fixture.setSession = (thread, status, version, generation, pid) => {
     appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
       ...EMPTY_TERMINAL_SESSION_STATE,
       status,
       version,
+      ...(pid === undefined ? {} : { pid }),
       ...(generation === undefined
         ? {}
         : { output: { ...EMPTY_TERMINAL_SESSION_STATE.output, generation } }),
@@ -159,6 +165,7 @@ vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
     (command: object) => async (args: { input: { threadId: string; data?: string } }) => {
       if (command === fixture.resizeCommand) return fixture.runResize(args);
+      if (command === fixture.foregroundCwdCommand) return fixture.foregroundCwd(args);
       if (args.input.data !== undefined) {
         fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
         return fixture.runWrite();
@@ -173,7 +180,11 @@ vi.mock("../state/server", async () => {
   return { serverEnvironment: { configValueAtom: () => config } };
 });
 vi.mock("../state/terminal", () => ({
-  terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
+  terminalEnvironment: {
+    write: {},
+    resize: fixture.resizeCommand,
+    foregroundCwd: fixture.foregroundCwdCommand,
+  },
 }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../state/projects", async () => {
@@ -200,7 +211,12 @@ vi.mock("../state/projects", async () => {
     },
   };
 });
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
+vi.mock("../editorPreferences", () => ({
+  useOpenInPreferredEditor: () => (target: string) => {
+    fixture.opened.push(target);
+    return Promise.resolve(AsyncResult.success("vscode"));
+  },
+}));
 vi.mock("./preview/openTerminalLinkInPreview", () => ({ openTerminalLinkInPreview: () => {} }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => null }));
 vi.mock("../hooks/useSettings", async () => {
@@ -262,6 +278,8 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.reportedSize = null;
   fixture.runResize = () => Promise.resolve(AsyncResult.success(undefined));
   fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+  fixture.foregroundCwd = () => Promise.resolve(AsyncResult.success(null));
+  fixture.opened = [];
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
   useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
@@ -398,7 +416,7 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
     appAtomRegistry.set(pending, AsyncResult.success({ kind: "file" }));
   });
   expect(canActivate("src/main.ts:12:7")).toBe(true);
-  expect(await pressedValidation).toBe(true);
+  expect(typeof (await pressedValidation)).toBe("function");
   expect(canActivate("missing/file.ts")).toBe(false);
   await hover("missing/file.ts");
   expect(canActivate("missing/file.ts")).toBe(false);
@@ -422,7 +440,7 @@ it("only activates terminal paths confirmed to exist on their environment", asyn
   await act(async () => {
     fixture.pendingSurfaces.shift()?.();
   });
-  expect(await validate("~/notes.ts:5:2")).toBe(true);
+  expect(typeof (await validate("~/notes.ts:5:2"))).toBe("function");
   await hover("~/notes.ts:5:2");
   expect(canActivate("~/notes.ts:5:2")).toBe(true);
 });
@@ -515,6 +533,130 @@ it("closes an interrupted paste after disposal before input from a remounted vie
     fixture.typeIntoSurface?.("after");
   });
   expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 6, 5]);
+});
+
+it("opens a relative terminal path where the shell is when the link is used", async () => {
+  const { other: threadRef } = setup();
+  const exists = (...paths: string[]) => {
+    for (const path of paths) {
+      fixture.metadata.set(
+        JSON.stringify([threadRef.environmentId, path]),
+        Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+          AsyncResult.success<FilesystemEntryMetadata | null>({ kind: "file" }),
+        ),
+      );
+    }
+  };
+  exists(
+    "/repo/package.json",
+    "/repo/sub/package.json",
+    "/repo/sub/deeper/../package.json",
+    "/repo/crates/foo/src/lib.rs",
+    "/etc/hosts",
+  );
+  const lookups: unknown[] = [];
+  let shellCwd: Promise<AsyncResult.AsyncResult<string | null, unknown>> = Promise.resolve(
+    AsyncResult.success("/repo/sub"),
+  );
+  fixture.foregroundCwd = (args) => {
+    lookups.push(args);
+    return shellCwd;
+  };
+  fixture.setSession(threadRef, "running", 1, undefined, 4242);
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <Drawer threadRef={threadRef} onCloseTerminal={() => {}} />
+    </AppAtomRegistryProvider>,
+  );
+  await act(async () => {
+    fixture.pendingSurfaces.shift()?.();
+  });
+  const surface = () => fixture.surfaceOptions.at(-1)!;
+  const hover = (text: string | null) => act(async () => surface().onLinkHover!(text));
+  const activate = (text: string) =>
+    act(async () => surface().onLinkActivate(text, new MouseEvent("click")));
+  const openAfterHover = async (text: string) => {
+    await hover(text);
+    await vi.waitFor(() => expect(surface().canActivateLink!(text)).toBe(true));
+    await activate(text);
+  };
+
+  await openAfterHover("./package.json:2");
+  // A press before the hover settles validates and opens the same location.
+  await hover(null);
+  const validated = await surface().validateLink!("./package.json:2");
+  expect(typeof validated).toBe("function");
+  if (typeof validated === "function") await act(async () => validated(new MouseEvent("click")));
+  shellCwd = Promise.resolve(AsyncResult.success("/repo/sub/deeper"));
+  await openAfterHover("../package.json");
+  // A root-relative path printed from a subdirectory still opens where the shell launched.
+  await openAfterHover("crates/foo/src/lib.rs:1:27");
+  expect(fixture.opened).toEqual([
+    "/repo/sub/package.json:2",
+    "/repo/sub/package.json:2",
+    "/repo/sub/deeper/../package.json",
+    "/repo/crates/foo/src/lib.rs:1:27",
+  ]);
+  expect(lookups).toContainEqual({
+    environmentId: threadRef.environmentId,
+    input: { threadId: threadRef.threadId, terminalId: "term-1", pid: 4242 },
+  });
+
+  // The same text may resolve elsewhere while the press waits for cwd or stat.
+  for (const hoverCompletion of ["pending", "before-cwd", "before-stat"]) {
+    const pendingStat = Atom.make<AsyncResult.AsyncResult<FilesystemEntryMetadata | null>>(
+      AsyncResult.initial(),
+    );
+    fixture.metadata.set(
+      JSON.stringify([threadRef.environmentId, "/repo/sub/package.json"]),
+      pendingStat,
+    );
+    let finishPress = (_cwd: string) => {};
+    shellCwd = new Promise((resolve) => {
+      finishPress = (cwd) => resolve(AsyncResult.success(cwd));
+    });
+    const pressed = surface().validateLink!("./package.json:2");
+    let finishHover = (_cwd: string) => {};
+    shellCwd = new Promise((resolve) => {
+      finishHover = (cwd) => resolve(AsyncResult.success(cwd));
+    });
+    await hover("./package.json:2");
+    if (hoverCompletion === "before-cwd") await act(async () => finishHover("/repo"));
+    await act(async () => finishPress("/repo/sub"));
+    if (hoverCompletion === "before-stat") await act(async () => finishHover("/repo"));
+    await act(async () => appAtomRegistry.set(pendingStat, AsyncResult.success({ kind: "file" })));
+    const validatedPress = await pressed;
+    expect(typeof validatedPress).toBe("function");
+    const openedCount = fixture.opened.length;
+    if (typeof validatedPress === "function")
+      await act(async () => validatedPress(new MouseEvent("click")));
+    expect(fixture.opened).toHaveLength(openedCount + 1);
+    expect(fixture.opened.at(-1)).toBe("/repo/sub/package.json:2");
+    if (hoverCompletion === "pending") await act(async () => finishHover("/repo"));
+  }
+
+  // Absolute targets never ask where the shell is.
+  const asked = lookups.length;
+  fixture.opened = [];
+  await openAfterHover("/etc/hosts");
+  await openAfterHover("file:///etc/hosts");
+  expect(lookups).toHaveLength(asked);
+
+  // A shell that cannot say where it is resolves against the directory it launched in.
+  shellCwd = Promise.resolve(AsyncResult.success(null));
+  await openAfterHover("./package.json:2");
+  expect(fixture.opened).toEqual(["/etc/hosts", "/etc/hosts", "/repo/package.json:2"]);
+
+  // A lookup that finishes after the pointer moved on cannot replace the newer link.
+  let finishLate = (_cwd: string) => {};
+  shellCwd = new Promise((resolve) => {
+    finishLate = (cwd) => resolve(AsyncResult.success(cwd));
+  });
+  await hover("./package.json:2");
+  await hover("/etc/hosts");
+  await act(async () => finishLate("/repo/sub"));
+  expect(surface().canActivateLink!("./package.json:2")).toBe(false);
+  expect(surface().canActivateLink!("/etc/hosts")).toBe(true);
 });
 
 it("resends a failed resize once in each writable session", async () => {
