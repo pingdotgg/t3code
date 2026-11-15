@@ -4497,6 +4497,193 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
     }),
   );
 
+  // Older builds recorded a steered send as a follow-up task that no child run owns.
+  it.effect("recovery settles a follow-up task no child run owns once its child finished", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:orphan-followup-parent");
+      const projectId = ProjectId.make("project:orphan-followup-parent");
+      const runId = RunId.make("run:orphan-followup-parent");
+      const rootNodeId = NodeId.make("node:orphan-followup-parent-root");
+      const originalTaskId = NodeId.make("node:orphan-followup-original");
+      const followupTaskId = NodeId.make("node:orphan-followup-steered");
+      const childThreadId = ThreadId.make("thread:orphan-followup-child");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: originalTaskId,
+        deliveryState: "delivered",
+        parentRunStatus: "completed",
+        now,
+      });
+      yield* eventSink.write({
+        commandId: CommandId.make("command:seed-orphan-followup"),
+        events: [
+          {
+            id: EventId.make("event:orphan-followup-child:thread"),
+            type: "thread.created",
+            threadId: childThreadId,
+            occurredAt: now,
+            payload: {
+              createdBy: "agent",
+              creationSource: "server",
+              id: childThreadId,
+              projectId,
+              title: "orphan follow-up child",
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: threadId,
+                relationshipToParent: "subagent",
+                rootThreadId: threadId,
+              },
+              forkedFrom: { type: "node", nodeId: originalTaskId },
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:orphan-followup:original-child"),
+            type: "subagent.updated",
+            threadId,
+            runId,
+            nodeId: originalTaskId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: originalTaskId,
+              threadId,
+              runId,
+              parentNodeId: rootNodeId,
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId,
+              nativeTaskRef: null,
+              prompt: "Run the original task.",
+              title: null,
+              model: null,
+              completionWake: "always",
+              completionDelivery: { state: "delivered", observedByRunId: null },
+              status: "completed",
+              result: "child finished",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:orphan-followup:steered-task"),
+            type: "subagent.updated",
+            threadId,
+            runId,
+            nodeId: followupTaskId,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: {
+              id: followupTaskId,
+              threadId,
+              runId,
+              parentNodeId: rootNodeId,
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId,
+              nativeTaskRef: null,
+              prompt: "Include the parent's latest guidance.",
+              title: null,
+              model: null,
+              completionWake: "always",
+              completionDelivery: { state: "pending", observedByRunId: null },
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+          {
+            id: EventId.make("event:orphan-followup:steered-item"),
+            type: "turn-item.updated",
+            threadId,
+            runId,
+            nodeId: followupTaskId,
+            occurredAt: now,
+            payload: {
+              id: TurnItemId.make("turn-item:orphan-followup-steered"),
+              threadId,
+              runId,
+              nodeId: followupTaskId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "running",
+              title: "orphan follow-up child",
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: followupTaskId,
+              origin: "app_owned",
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              childThreadId,
+              prompt: "Include the parent's latest guidance.",
+              result: null,
+            },
+          },
+          runEvent({
+            threadId: childThreadId,
+            runId: RunId.make("run:orphan-followup-child:1"),
+            ordinal: 1,
+            status: "completed",
+            now,
+          }),
+          runEvent({
+            threadId: childThreadId,
+            runId: RunId.make("run:orphan-followup-child:2"),
+            ordinal: 2,
+            status: "completed",
+            now,
+          }),
+        ],
+      });
+
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const recovered = yield* orchestrator.getThreadProjection(threadId);
+      const task = recovered.subagents.find((row) => row.id === followupTaskId);
+      assert.notEqual(task?.status, "running");
+      assert.isFalse(
+        (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks?.some(
+          (pending) => pending.kind === "subagent" && pending.childThreadId === childThreadId,
+        ) ?? false,
+      );
+    }),
+  );
+
   it.effect("settles a restart-cancelled child whose continuation declines to start", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
