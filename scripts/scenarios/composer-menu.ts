@@ -40,7 +40,7 @@ export async function openFileSuggestionsUnderTallDraft(browser: Browser, screen
     .toBeGreaterThan(FILE_NAMES.length);
 }
 
-/** Wheels the suggestions from a point inside the visible drawer until they stop scrolling. */
+/** Wheels the suggestions from a point inside the visible drawer until they reach that end. */
 export async function wheelSuggestions(browser: Browser, direction: "up" | "down") {
   const point = await browser.evaluate(() => {
     const layer = document.querySelector('[data-composer-drawer-layer="true"]');
@@ -52,20 +52,21 @@ export async function wheelSuggestions(browser: Browser, direction: "up" | "down
   });
   expect(point).not.toBeNull();
   await browser.mouse.move(point!.x, point!.y);
-  const scrollTop = () =>
-    browser.evaluate(
-      () =>
-        document.querySelector(
+  // Wheel scrolling lands a frame or more later, so keep wheeling until the list is at its end.
+  await expect
+    .poll(async () => {
+      await browser.mouse.wheel(0, direction === "down" ? 4000 : -4000);
+      return browser.evaluate((direction) => {
+        const viewport = document.querySelector(
           '[data-composer-command-drawer] [data-slot="scroll-area-viewport"]',
-        )?.scrollTop ?? -1,
-    );
-  let previous = -1;
-  let current = await scrollTop();
-  while (current !== previous) {
-    await browser.mouse.wheel(0, direction === "down" ? 4000 : -4000);
-    previous = current;
-    current = await scrollTop();
-  }
+        );
+        if (!viewport) return false;
+        return direction === "down"
+          ? viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1
+          : viewport.scrollTop <= 0;
+      }, direction);
+    })
+    .toBe(true);
 }
 
 /**
