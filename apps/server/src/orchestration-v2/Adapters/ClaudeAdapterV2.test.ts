@@ -861,28 +861,27 @@ describe("ClaudeAdapterV2 device instructions", () => {
     readonly browserToolsAvailable?: boolean;
   }) => (options(input).systemPrompt as { readonly append?: string }).append ?? "";
 
-  it("gives a session with device access the device block and the ToolSearch line to load it", () => {
+  it("gives a session with device or browser access that block, and the ToolSearch line for devices", () => {
     const text = append({ mcp: true, deviceToolsAvailable: true });
     assert.include(text, T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH);
     assert.include(text, "Use `delegate_task`");
+    assert.include(
+      append({ mcp: true, deviceToolsAvailable: false, browserToolsAvailable: true }),
+      T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim(),
+    );
   });
 
-  it("leaves the device block out without device access or without T3 tools", () => {
-    assert.notInclude(append({ mcp: true, deviceToolsAvailable: false }), "## T3 Code devices");
-    assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
-  });
-
-  it("gives the browser block only to a session with browser access", () => {
-    const text = append({ mcp: true, deviceToolsAvailable: false, browserToolsAvailable: true });
-    assert.include(text, T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim());
-    assert.notInclude(
-      append({ mcp: true, deviceToolsAvailable: false, browserToolsAvailable: false }),
-      "## T3 Code browser",
-    );
-    assert.notInclude(
-      append({ mcp: false, deviceToolsAvailable: false, browserToolsAvailable: true }),
-      "## T3 Code browser",
-    );
+  it("leaves the device and browser blocks out without that access or without T3 tools", () => {
+    const withoutAccess = append({ mcp: true, deviceToolsAvailable: false });
+    assert.notInclude(withoutAccess, "## T3 Code devices");
+    assert.notInclude(withoutAccess, "## T3 Code browser");
+    const withoutMcp = append({
+      mcp: false,
+      deviceToolsAvailable: true,
+      browserToolsAvailable: true,
+    });
+    assert.notInclude(withoutMcp, "## T3 Code devices");
+    assert.notInclude(withoutMcp, "## T3 Code browser");
   });
 
   it("gives native subagents browser and device blocks only with the corresponding access", async () => {
