@@ -3124,12 +3124,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         attachments: ReadonlyArray<ChatAttachment>,
       ) {
         const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
-        const selectedSlug =
-          appliedModel ??
-          (baselineModel === null ? null : `${baselineModel.provider}/${baselineModel.modelId}`);
-        const selectedModel = discoveredModels?.find((model) =>
-          selectedSlug === `${recordString(model, "provider")}/${recordString(model, "id")}`,
-        );
+        let selectedSlug = appliedModel;
+        if (selectedSlug === null && baselineModel !== null) {
+          selectedSlug = `${baselineModel.provider}/${baselineModel.modelId}`;
+        }
+        const selectedModel = discoveredModels?.find((model) => {
+          const provider = recordString(model, "provider");
+          const id = recordString(model, "id");
+          return `${provider}/${id}` === selectedSlug;
+        });
         const supportsImageInput = modelImageInputSupport(selectedModel);
         const message = yield* providerMessageTextWithAttachmentPaths({
           text,
