@@ -14,8 +14,10 @@ import {
   isChangeRequestOnProjectHost,
   parseChangeRequestPath,
   parseCommitPath,
+  repositoryUrlFromPagePath,
   projectChangeRequestHost,
 } from "@t3tools/source-control-core/shared/definition";
+import { parseUrl } from "@t3tools/shared/url";
 import { icon } from "./icon.ts";
 
 const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
@@ -23,6 +25,7 @@ const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 const CHANGE_REQUEST_PATH = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+\/[^/]+)\/commits\/([0-9a-f]+)\/?$/iu;
+const REPOSITORY_PAGE_PATH = /^\/([^/]+\/[^/]+)\/src\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("bitbucket");
 
@@ -62,7 +65,7 @@ export const settings = makeProviderSettingsSchema(
     apiToken: secret({
       title: "API token",
       description:
-        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
+        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, plus read:user:bitbucket and read:workspace:bitbucket.",
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },
@@ -96,6 +99,8 @@ export const definition = defineSourceControl({
   commitUrl: (input) => buildCommitUrl(input, "commits"),
   parseCommitUrl: (url) =>
     isBitbucketHost(url.hostname) ? parseCommitPath(url, COMMIT_PATH) : null,
+  repositoryUrlFromPage: (url) =>
+    isBitbucketHost(url.hostname) ? repositoryUrlFromPagePath(url, REPOSITORY_PAGE_PATH) : null,
   changeRequestUrlFromReferenceAutolink: () => null,
   // No endpoint reopens a declined pull request, and nothing documented moves one in or out of
   // draft, so neither is offered rather than failing when pressed.
@@ -111,7 +116,7 @@ export const definition = defineSourceControl({
   reviewSummaryRequired: () => false,
   checkoutCommandArgument: () => null,
   isChangeRequestReference: (reference) => {
-    const url = URL.parse(reference);
+    const url = parseUrl(reference);
     return (
       url !== null &&
       isBitbucketHost(url.hostname) &&
