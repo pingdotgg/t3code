@@ -2985,8 +2985,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         "repos/acme/web/actions/runs?head_sha=abc123&per_page=100",
       );
       expect(runs).toEqual([
-        { id: 0, name: "queued", url: null },
-        { id: 1, name: "in_progress", url: null },
+        { pullRequestNumbers: [], id: 0, name: "queued", url: null },
+        { pullRequestNumbers: [], id: 1, name: "in_progress", url: null },
       ]);
     }),
   );
