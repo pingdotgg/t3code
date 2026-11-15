@@ -372,6 +372,6 @@ describe("browser GitHub routing permissions", () => {
         ConnectionTransientError,
       );
       expect(yield* second.get(entry)).toBe("off");
-    }).pipe(Effect.scoped),
+    }),
   );
 });
