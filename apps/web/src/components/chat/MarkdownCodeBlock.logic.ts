@@ -68,6 +68,18 @@ export function isClosedCodeFence(
   );
 }
 
+// Markdown code blocks gain one "\n" when they become HTML. The text of a raw
+// HTML <pre> is the author's, so its final newline stays.
+export function codeBlockCopyText(
+  node: ReactMarkdownExtraProps["node"],
+  text: string,
+  code: string,
+): string {
+  const start = node?.position?.start.offset;
+  if (start === undefined || text.startsWith("<", start) || !code.endsWith("\n")) return code;
+  return code.slice(0, -1);
+}
+
 export function nodeToPlainText(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") {
     return String(node);

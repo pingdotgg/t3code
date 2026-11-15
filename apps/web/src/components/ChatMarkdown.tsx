@@ -221,6 +221,7 @@ import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFr
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
+  codeBlockCopyText,
   extractCodeBlock,
   extractFenceLanguage,
   extractFenceTitle,
@@ -1697,6 +1698,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return <MarkdownMath tex={codeBlock.code} display focusable={!inline} />;
     }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const copyText = codeBlockCopyText(node, text, codeBlock.code);
     const highlightedCode = (
       <RenderErrorBoundary
         resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
@@ -1722,6 +1724,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <MarkdownMermaidCodeBlock
           code={codeBlock.code}
+          copyText={copyText}
           fenceTitle={fenceTitle}
           theme={resolvedTheme}
           isStreaming={isStreaming && !isClosedCodeFence(node, text, codeBlock.code)}
@@ -1739,6 +1742,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
+        copyText={copyText}
         language={language}
         fenceTitle={fenceTitle}
         theme={resolvedTheme}

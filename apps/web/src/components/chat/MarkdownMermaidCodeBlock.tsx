@@ -10,6 +10,7 @@ import { MermaidDiagram } from "./MermaidDiagram";
 
 export function MarkdownMermaidCodeBlock({
   code,
+  copyText,
   fenceTitle,
   theme,
   isStreaming,
@@ -17,6 +18,7 @@ export function MarkdownMermaidCodeBlock({
   children,
 }: {
   code: string;
+  copyText: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
   isStreaming: boolean;
@@ -32,6 +34,7 @@ export function MarkdownMermaidCodeBlock({
   return (
     <MarkdownCodeBlock
       code={code}
+      copyText={copyText}
       language="mermaid"
       fenceTitle={fenceTitle}
       theme={theme}
