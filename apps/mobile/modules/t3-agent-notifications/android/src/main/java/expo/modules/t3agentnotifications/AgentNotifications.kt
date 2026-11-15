@@ -402,13 +402,7 @@ object AgentNotifications {
       )
       .setDefaults(if (channel == ALERT_CHANNEL) Notification.DEFAULT_ALL else 0)
       .setSmallIcon(R.drawable.agent_activity_mark)
-      .setVisibility(
-        if (channel == ACTIVITY_CHANNEL) {
-          NotificationCompat.VISIBILITY_PUBLIC
-        } else {
-          NotificationCompat.VISIBILITY_PRIVATE
-        }
-      )
+      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
       .setShowWhen(false)
 
   private fun contentIntent(
