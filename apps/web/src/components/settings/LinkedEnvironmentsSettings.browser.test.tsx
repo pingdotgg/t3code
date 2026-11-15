@@ -121,6 +121,7 @@ const settings = (registry: AtomRegistry.AtomRegistry) => (
 
 it("keeps an in-flight renewal exclusive across collapsing and reopening Settings", async () => {
   setup();
+  state.links = [{ ...destination, access: "full-access" }];
   const pending = deferred<RenewalResult>();
   state.renew.mockReturnValue(pending.promise);
   const registry = AtomRegistry.make();
@@ -128,8 +129,10 @@ it("keeps an in-flight renewal exclusive across collapsing and reopening Setting
   await using screen = await render(settings(registry));
   const row = () => screen.getByRole("button", { name: /^Destination/ });
   await row().click();
+  await screen.getByRole("combobox", { name: "Permissions", exact: true }).click();
+  await page.getByRole("option", { name: /^Read only/ }).click();
   await screen.getByRole("textbox", { name: /^Pairing code/ }).fill("test-code");
-  await screen.getByRole("button", { name: "Renew", exact: true }).click();
+  await screen.getByRole("button", { name: "Save & renew", exact: true }).click();
   try {
     await row().click();
     await row().click();
@@ -147,11 +150,14 @@ it("keeps an in-flight renewal exclusive across collapsing and reopening Setting
     expect(state.unlink).not.toHaveBeenCalled();
   } finally {
     await act(async () => {
-      pending.resolve(AsyncResult.failure(Cause.fail(new Error("Offline"))));
+      pending.resolve(AsyncResult.success({ label: destination.label }));
       await pending.promise;
     });
   }
   await expect.element(screen.getByRole("button", { name: "Forget", exact: true })).toBeEnabled();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Permissions", exact: true }))
+    .toHaveTextContent("Read only");
 });
 
 it("follows refreshed permissions while pristine and retains edits and codes through filtering and failed renewal", async () => {

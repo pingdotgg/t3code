@@ -19,7 +19,7 @@ import { mintPairingCodeOn } from "~/state/peerPairingCode";
 import { peerLinkEnvironment, useLinkableMachines } from "~/state/peerLinks";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { usePeerLinkMutation } from "~/state/use-peer-link-mutation";
+import { usePeerLinkAccess, usePeerLinkMutation } from "~/state/use-peer-link-mutation";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -46,9 +46,8 @@ export function LinkedEnvironmentEditor({
   const mayMint = useEnvironmentScope(link.environmentId, AuthAccessWriteScope);
   const renew = useAtomCommand(peerLinkEnvironment.link, { label: "renew environment link" });
   const [draftAccess, setDraftAccess] = useState<AuthMcpClientAccess | null>(null);
-  const [confirmedAccess, setConfirmedAccess] = useState<AuthMcpClientAccess | null>(null);
-  if (confirmedAccess === link.access) setConfirmedAccess(null);
-  const currentAccess = confirmedAccess ?? link.access;
+  const confirmed = usePeerLinkAccess(environmentId, link.environmentId, link.access);
+  const currentAccess = confirmed.access;
   const access = draftAccess ?? currentAccess;
   const [pairingCode, setPairingCode] = useState("");
   const [mintFailed, setMintFailed] = useState(false);
@@ -96,7 +95,7 @@ export function LinkedEnvironmentEditor({
         },
       });
       if (result._tag === "Success") {
-        setConfirmedAccess(access);
+        confirmed.confirm(access);
         setDraftAccess(null);
         setPairingCode("");
         setSaved(true);
