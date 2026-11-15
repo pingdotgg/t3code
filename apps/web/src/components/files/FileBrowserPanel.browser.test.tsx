@@ -300,9 +300,9 @@ describe("FileBrowserPanel", () => {
     }
     await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
     expect(new Set(load.mock.calls.map(([path]) => path)).size).toBe(batches * perBatch);
-    // Expanding every listed folder on each update instead of only the new ones adds about 600
-    // lookups, and asking the tree about all folders per expansion about 100,000.
-    expect(getItem.mock.calls.length).toBeLessThan(7_400);
+    // About 1,100 lookups. Rescanning every folder for the button state adds about 5,000, and a
+    // second scan of every folder per listing about 800.
+    expect(getItem.mock.calls.length).toBeLessThan(1_400);
   });
 
   it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {

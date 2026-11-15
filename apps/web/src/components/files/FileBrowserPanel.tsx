@@ -316,7 +316,9 @@ export default function FileBrowserPanel({
   const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
   const allDirectoriesExpanded = useSyncExternalStore(
     (listener) => subscribeOncePerTask(model, listener),
-    () => areAllDirectoriesExpanded(model, expandableDirectoryPaths),
+    // The expand-all effect keeps every folder open, and collapsing one turns Expand all off.
+    () =>
+      (expandAll && !query.trim()) || areAllDirectoriesExpanded(model, expandableDirectoryPaths),
   );
   const toggleAllDirectories = () => {
     const expanded = !(expandAll || allDirectoriesExpanded);
@@ -350,16 +352,22 @@ export default function FileBrowserPanel({
   const expansionRoot = `${environmentId}:${cwd}`;
   // Folders expanded when the panel last unmounted; each reopens once lazy loading lists it.
   const [pendingExpandedPaths] = useState(() => new Set(readExpandedDirectories(expansionRoot)));
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
+  const directoryPathsRef = useRef(directoryPaths);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- forgets expanded folders that left the listing before the Pierre tree model notifies about them
   useEffect(() => {
+    directoryPathsRef.current = directoryPaths;
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
+  }, [directoryPaths]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
+  useEffect(() => {
+    // Not rerun per listing: adding its paths to the model notifies this listener once.
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
       let changed = false;
-      for (const path of directoryPaths) {
+      for (const path of directoryPathsRef.current) {
         const item = model.getItem(path);
         if (item?.isDirectory() && pendingExpandedPaths.delete(path) && "expand" in item) {
           item.expand();
@@ -384,7 +392,7 @@ export default function FileBrowserPanel({
     };
     loadExpanded();
     return subscribeOncePerTask(model, loadExpanded);
-  }, [directoryPaths, expansionRoot, load, model, pendingExpandedPaths]);
+  }, [expansionRoot, load, model, pendingExpandedPaths]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes ignored-file status into the imperative Pierre tree model
   useEffect(() => {
     model.setGitStatus(
