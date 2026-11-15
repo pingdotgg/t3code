@@ -1,5 +1,5 @@
 {
-  "commit": "86e151dcb72f67b6068150967363eeb68a924659",
+  "contractDigest": "c42da1e14ce266b32855196f595a46749bb410d3f9b43164b86447a21412045b",
   "methods": [
     {
       "tag": "agentSessions.import",

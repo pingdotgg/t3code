@@ -47,8 +47,9 @@ pub struct MethodInfo {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MethodsFile {
-    commit: String,
+    contract_digest: String,
     methods: Vec<MethodInfo>,
 }
 
@@ -64,9 +65,10 @@ pub fn methods() -> &'static [MethodInfo] {
     &methods_file().methods
 }
 
-/// The last commit that changed the contract inputs when the files were generated.
-pub fn contract_commit() -> &'static str {
-    &methods_file().commit
+/// The sha256 of the contract inputs (`packages/contracts` and T3's `ProviderAdapter.ts`) the
+/// files were generated from, by path; `gen-contract.mjs --check` fails when the tree moved.
+pub fn contract_digest() -> &'static str {
+    &methods_file().contract_digest
 }
 
 pub fn method(tag: &str) -> Option<&'static MethodInfo> {
@@ -107,7 +109,7 @@ mod tests {
         assert!(method("orchestration.subscribeShell").unwrap().stream);
         assert!(!method("orchestration.dispatchCommand").unwrap().stream);
         assert!(method("nope").is_none());
-        assert_eq!(contract_commit().len(), 40);
+        assert_eq!(contract_digest().len(), 64);
     }
 
     #[test]

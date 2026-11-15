@@ -14,7 +14,7 @@ import * as NodePath from "node:path";
 
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
-import { canaryEnv, gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
+import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
 
 const argv = process.argv.slice(2);
@@ -113,15 +113,9 @@ async function startTs() {
   ];
   // Without --model, no provider or host CLI is on the T3 server's PATH, so its provider and
   // source control probes can start none of this machine's (they find nothing, as on a host
-  // without them). Fails here when one is found.
-  if (noModel) {
-    const clis = ["claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe", "cursor-agent", "opencode", "kiro-cli"];
-    const found = tsPath.flatMap((dir) => clis.filter((cli) => NodeFS.existsSync(NodePath.join(dir, cli))).map((cli) => NodePath.join(dir, cli)));
-    if (found.length > 0) {
-      console.error(`parity: the T3 server's PATH holds provider or host CLIs: ${found.join(", ")}`);
-      process.exit(1);
-    }
-  }
+  // without them). A folder that holds one (a CI image's /usr/bin has gh and az) is replaced
+  // by links to the rest (`sealedPath`).
+  const tsPathText = noModel ? sealedPath(NodePath.join(root, "ts"), tsPath.join(":")) : tsPath.join(":");
   const { origin, code } = await start(
     node,
     [
@@ -145,7 +139,7 @@ async function startTs() {
         // `--model` runs one real Haiku turn, which needs the real `claude` and its login.
         HOME: noModel ? tsHome : NodeOS.homedir(), // canary: allow (--model only)
         USER: NodeOS.userInfo().username,
-        PATH: tsPath.join(":"),
+        PATH: tsPathText,
         T3CODE_HOME: base,
         T3CODE_NO_BROWSER: "1",
         SHELL: "/bin/sh",

@@ -3,6 +3,7 @@
 // Path: Schema.toCodecJson (Effect RPC's JSON codec) -> SchemaRepresentation IR -> serde types.
 // A shape it cannot map exactly becomes `Opaque` (listed in generated/report.json), never looser.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
@@ -1255,23 +1256,28 @@ roots.forEach((root, i) => {
 fixtureStats.samples = fixtures.length;
 fixtureStats.keys = registryKeys.length;
 
-const commit = (() => {
-  try {
-    return NodeChildProcess.execFileSync(
-      "git",
-      [
-        "log",
-        "-1",
-        "--format=%H",
-        "--",
-        "packages/contracts",
-        "packages/provider-core/src/server/ProviderAdapter.ts",
-      ],
-      { encoding: "utf8", cwd: repoDir, env: gitEnv() },
-    ).trim();
-  } catch {
-    return "0".repeat(40);
+// The contract inputs' digest: sha256 over each tracked input file's path and bytes, by path.
+// It depends only on the tree. A commit id cannot be recorded here: a commit that changes the
+// contract cannot name itself, and a shallow checkout sees no history (2026-11-15).
+const CONTRACT_INPUTS = ["packages/contracts", "packages/provider-core/src/server/ProviderAdapter.ts"];
+const contractDigest = (() => {
+  const listed = NodeChildProcess.execFileSync("git", ["ls-files", "-z", "--", ...CONTRACT_INPUTS], {
+    encoding: "utf8",
+    cwd: repoDir,
+    env: gitEnv(),
+  });
+  const files = listed
+    .split("\0")
+    .filter((file) => file.length > 0)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  if (files.length === 0) throw new Error(`no tracked contract inputs under ${repoDir}`);
+  const hash = NodeCrypto.createHash("sha256");
+  for (const file of files) {
+    hash.update(`${file}\0`);
+    hash.update(NodeFS.readFileSync(NodePath.join(repoDir, file)));
+    hash.update("\0");
   }
+  return hash.digest("hex");
 })();
 
 const reportJson = {
@@ -1306,7 +1312,10 @@ const outputs = {
   "tests/fixtures/sampled.jsonl": fixtures.map((f) => JSON.stringify(f) + "\n").join(""),
   "methods.json":
     JSON.stringify(
-      { commit, methods: methods.map(({ tag, stream, origin }) => ({ tag, stream, origin })) },
+      {
+        contractDigest,
+        methods: methods.map(({ tag, stream, origin }) => ({ tag, stream, origin })),
+      },
       null,
       2,
     ) + "\n",

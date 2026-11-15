@@ -121,7 +121,7 @@ async fn health(State(state): State<AppState>) -> Json<Value> {
         "status": "ok",
         "server": "conn-server",
         "version": env!("CARGO_PKG_VERSION"),
-        "contractCommit": conn_contract::contract_commit(),
+        "contractDigest": conn_contract::contract_digest(),
         "methods": { "implemented": coverage.implemented, "total": coverage.total },
     }))
 }

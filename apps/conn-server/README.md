@@ -10,8 +10,8 @@ provider protocols). We do not translate the TypeScript.
 
 **Base:** the Conn monorepo this folder sits in (`apps/conn-server` of `nckrtl/conn`). The tools
 read the contract, the web client and `apps/server` from the same tree.
-**Contract:** `crates/conn-contract/methods.json` records the commit in which `packages/contracts`
-last changed.
+**Contract:** `crates/conn-contract/methods.json` records `contractDigest`, the sha256 of the
+tracked contract inputs, so a contract change fails `gen-contract.mjs --check`.
 
 ## Run
 

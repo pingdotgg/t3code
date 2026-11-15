@@ -270,17 +270,19 @@ The Conn Server moves to its own repository, `conn-server`. For delivery:
   build downloads the pinned artifact per platform into the app bundle and signs it with the
   app.
 - **Version reporting.** `conn-server --version` prints its own version, the T3 server
-  version whose contract it speaks, and the Conn commit the contract came from
-  (`conn-server 0.1.0 (T3 server 0.1.9 contract, Conn commit 415dd48…)`). Release notes name
-  the same three.
-- **The contract commit.** `crates/conn-contract/methods.json` pins the Conn commit whose
-  `packages/contracts` generated the types; `gen-contract.mjs --check` against the monorepo
-  it sits in shows when Conn's contract moved. A Conn release that changes the
+  version whose contract it speaks, and the digest of the contract it was generated from
+  (`conn-server 0.1.0 (T3 server 0.1.9 contract, contract digest 3f2a9c…)`). Release notes
+  name the same three.
+- **The contract digest.** `crates/conn-contract/methods.json` records `contractDigest`, the
+  sha256 of the tracked contract inputs (`packages/contracts` and T3's `ProviderAdapter.ts`)
+  by path. It depends only on the tree: a commit id could not name the commit that changes
+  the contract, and a shallow checkout has no history. `gen-contract.mjs --check` fails when
+  Conn's contract moved. A Conn release that changes the
   contract needs a Conn Server release built from it before Orbit or the desktop takes both.
 - **Which server a client talks to.** The descriptor (`/.well-known/t3/environment`) stays
   T3's: `serverVersion` is the T3 version whose contract is served, so clients' version checks
   behave. `GET /health` answers only on the Conn Server, with
-  `{"server":"conn-server","version","contractCommit","methods"}`; the T3 server has no such
+  `{"server":"conn-server","version","contractDigest","methods"}`; the T3 server has no such
   route. A typed field (for example `serverImplementation` in the descriptor) would need a
   contract change in Conn first.
 - **Tools that need Conn.** `tools/gen-keybindings.mjs`, `fixtures/recorder` and the other

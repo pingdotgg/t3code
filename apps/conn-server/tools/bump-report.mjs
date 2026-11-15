@@ -111,10 +111,12 @@ line(`# Conn changes ${short(from)} → ${short(to)} (${direction})`);
 
 const oldMethods = readJson(before, "crates/conn-contract/methods.json");
 const newMethods = readJson(repoRoot, "crates/conn-contract/methods.json");
-if (oldMethods && newMethods && oldMethods.commit !== newMethods.commit) {
-  line(`Contract commit: ${short(oldMethods.commit)} → ${short(newMethods.commit)}`);
+// Files from before 2026-11-15 hold `commit`; later ones the inputs' `contractDigest`.
+const contractId = (file) => file?.contractDigest ?? file?.commit;
+if (oldMethods && newMethods && contractId(oldMethods) !== contractId(newMethods)) {
+  line(`Contract: ${short(contractId(oldMethods))} → ${short(contractId(newMethods))}`);
 } else if (newMethods) {
-  line(`Contract commit: ${short(newMethods.commit)} (unchanged)`);
+  line(`Contract: ${short(contractId(newMethods))} (unchanged)`);
 }
 
 const serverVersion = (root) =>
