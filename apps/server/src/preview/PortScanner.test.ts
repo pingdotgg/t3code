@@ -842,6 +842,7 @@ effectIt.effect.each([
   { platform: "darwin", renamed: false, retryParent: false },
   { platform: "darwin", renamed: true, retryParent: false },
   { platform: "darwin", renamed: true, retryParent: true },
+  { platform: "darwin", renamed: true, retryParent: "fallback" },
 ] as const)(
   "attributes listeners after the agent exits on $platform (renamed: $renamed, retry parent: $retryParent)",
   ({ platform, renamed, retryParent }) => {
@@ -913,7 +914,9 @@ effectIt.effect.each([
                     ? input.args.at(-1)?.split(",").includes("4241")
                       ? (parentReadable
                           ? `  4240 node parent.js ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`
-                          : "") + `  4241 shell ${PortScanner.AGENT_THREAD_ENV}=other-thread\n`
+                          : retryParent === "fallback"
+                            ? "  4240 (node)\n"
+                            : "") + `  4241 shell ${PortScanner.AGENT_THREAD_ENV}=other-thread\n`
                       : "  4242 renamed-server\n"
                     : `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n`) +
                     "  5000 postgres -D /data PATH=/usr/bin\n",

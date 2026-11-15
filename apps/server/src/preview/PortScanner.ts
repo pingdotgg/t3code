@@ -1150,9 +1150,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const variables = new Map<number, ReadonlyMap<string, string>>();
     for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
       const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
-      }
+      if (!match) continue;
+      // macOS ps wraps the command name in parentheses when KERN_PROCARGS2 fails.
+      if (hostPlatform === "darwin" && /^\(.*\)$/.test(match[2]!.trim())) continue;
+      variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
     }
     return variables;
   });
