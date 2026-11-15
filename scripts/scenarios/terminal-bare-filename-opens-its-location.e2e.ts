@@ -3,7 +3,6 @@
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { runPromise, test, WEB } from "./t3.ts";
@@ -11,18 +10,6 @@ import { runPromise, test, WEB } from "./t3.ts";
 // gcc prints a file compiled from its own folder by bare name.
 const DIAGNOSTIC = "main.c:1:25: error: 'missing' undeclared";
 const EDITOR_ARGS = `${T3_HOME}/editor-args.txt`;
-
-// The scenario home's `bin` leads the server's PATH, and Cursor is the first editor it picks,
-// so this fake records the launch and no real editor opens.
-const installFakeEditor = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const editor = path.join(T3_HOME, "bin", "cursor");
-  yield* fs.makeDirectory(path.dirname(editor), { recursive: true });
-  yield* fs.writeFileString(editor, `#!/bin/sh\nprintf '%s\\n' "$@" > '${EDITOR_ARGS}'\n`);
-  yield* fs.chmod(editor, 0o755);
-  yield* fs.remove(EDITOR_ARGS, { force: true });
-});
 
 /** The file's lines, or none while it does not exist. */
 const readLines = (file: string) =>
@@ -38,7 +25,9 @@ test(
   "Ctrl+click on a bare compiler filename in the terminal opens that file at its line and column",
   WEB,
   async ({ t3, app, browser, screen }) => {
-    await runPromise(installFakeEditor);
+    await runPromise(
+      Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(EDITOR_ARGS, { force: true })),
+    );
     const project = await t3.project("demo", {
       "main.c": "int main(void) { return missing; }\n",
       // Enough rows that the middle of the terminal shows the diagnostic, whatever its height.

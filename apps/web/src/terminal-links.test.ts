@@ -83,10 +83,14 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("does not treat prose as a path", () => {
-    expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
-    expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
-    expect(extractTerminalLinks("see README.md, Node.js v22 on 127.0.0.1:3000")).toEqual([]);
+  it.each([
+    'error: "something went wrong"',
+    'error: "something went wrong."',
+    "see README.md, Node.js v22 on 127.0.0.1:3000",
+    "README.md(42,7): see details",
+    "main.cs(42,7): error CS1002: expected semicolon",
+  ])("does not treat prose or unsupported locations as a path: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
   });
 
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
@@ -156,6 +160,9 @@ describe("extractTerminalLinks", () => {
     "app/routes/posts.$id.tsx:5",
     "main.c:1:25",
     "page.test.tsx:5:3",
+    "foo$bar.ts:12:3",
+    "+page.svelte:12:4",
+    "contact@support.ts:12:3",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },
