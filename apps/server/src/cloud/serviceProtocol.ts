@@ -23,6 +23,9 @@ export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
 export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 /** Held by a Windows launcher while it runs: Task Scheduler tracks only the task's console host. */
 export const SERVICE_LAUNCHER_LOCK_FILE = "service-launcher.lock";
+/** Held by a launcher while it has, or is about to start, a server: an SSH launch waits for that
+    server instead of starting its own. Released while the launcher idles. */
+export const SERVICE_SERVING_LOCK_FILE = "service-serving.lock";
 
 const unquoteSystemdValue = (raw: string) =>
   (raw.startsWith('"') && raw.endsWith('"')
@@ -61,6 +64,20 @@ export function serviceUnitBaseDirOf(contents: string): string | undefined {
   if (unix !== undefined) return unix;
   const task = /<Arguments>[^<]* "--base-dir" "([^"]*)"/.exec(contents)?.[1];
   return task === undefined ? undefined : unquoteWindowsArgument(task);
+}
+
+/**
+ * The user unit directory a systemd manager reads, from its UnitPath property. The persistent
+ * control directory identifies the manager's config root despite UnitPath overrides.
+ */
+export function systemdUnitDirectoryOf(unitPath: ReadonlyArray<string>): string | undefined {
+  const controlDirectory = unitPath.find(
+    (directory) =>
+      directory.startsWith("/") &&
+      directory.endsWith("/systemd/user.control") &&
+      unitPath.includes(directory.slice(0, -".control".length)),
+  );
+  return controlDirectory?.slice(0, -".control".length);
 }
 
 /** The file systemd or launchd appends the service's output to. */

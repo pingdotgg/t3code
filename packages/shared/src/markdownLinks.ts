@@ -68,7 +68,7 @@ const POSIX_FILE_ROOT_PREFIXES = [
   "/workspaces/",
 ] as const;
 
-const EXTENSIONLESS_FILE_NAMES = new Set([
+export const EXTENSIONLESS_FILE_NAMES: ReadonlySet<string> = new Set([
   "Makefile",
   "makefile",
   "GNUmakefile",
@@ -202,7 +202,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
     if (!FILE_EXTENSION_PATTERN.test(basename)) {
-      if (!hasPosition) return null;
+      if (!hasPosition) return EXTENSIONLESS_FILE_NAMES.has(basename) ? candidate : null;
       // A `:line` suffix alone does not make `I/W217:220` a file reference.
       if (
         withoutPosition.includes("/") &&
@@ -383,10 +383,33 @@ function markdownLinkTailScanner(markdown: string) {
   };
 }
 
+// micromark's own nesting limit. It also keeps link scanning linear: a scan only runs past another
+// link's opening parenthesis while that parenthesis counts toward this depth.
+const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
+
+function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number | null {
+  const delimiter = /[\s()\\]/g;
+  delimiter.lastIndex = start;
+  let depth = 0;
+  while (true) {
+    const index = delimiter.exec(markdown)?.index ?? markdown.length;
+    const char = markdown[index];
+    if (char === "\\") {
+      if (/[()\\]/.test(markdown[index + 1] ?? "")) delimiter.lastIndex = index + 2;
+    } else if (char === "(") {
+      if (depth === MAX_BARE_DESTINATION_PAREN_DEPTH) return null;
+      depth += 1;
+    } else if (char === ")" && depth > 0) {
+      depth -= 1;
+    } else {
+      return depth === 0 ? index : null;
+    }
+  }
+}
+
 function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
   const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
-  const bareEnd = markdownRunEndFinder(markdown, /[\s)]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);
@@ -400,8 +423,8 @@ function markdownLinkDestinationScanner(markdown: string) {
         if (end !== null) return { hrefStart: hrefStart + 1, hrefEnd, end };
       }
     }
-    const hrefEnd = bareEnd(hrefStart);
-    if (hrefEnd === hrefStart) return null;
+    const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
+    if (hrefEnd === null || hrefEnd === hrefStart) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
