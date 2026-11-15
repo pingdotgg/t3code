@@ -89,6 +89,10 @@ describe("extractTerminalLinks", () => {
     "see README.md, Node.js v22 on 127.0.0.1:3000",
     "README.md(42,7): see details",
     "main.cs(42,7): error CS1002: expected semicolon",
+    "Connecting to api.example.com:443...",
+    "dial tcp: lookup db.internal:5432: no such host",
+    "redis.local:6379> PING",
+    "postgres@db.internal:5432",
   ])("does not treat prose or unsupported locations as a path: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });
