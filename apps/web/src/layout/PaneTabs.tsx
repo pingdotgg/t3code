@@ -1,4 +1,8 @@
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { resolveTerminalActivityStatus } from "@t3tools/client-runtime/state/terminal";
 import type {
   ContextMenuItem,
@@ -47,6 +51,7 @@ import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
+import { requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
@@ -930,6 +935,15 @@ function LayoutPaneTabButton({
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
     useLayoutStore.getState().focusTab(tab.id);
+    // Choosing a side chat's tab puts the keyboard in its message box.
+    const { content } = tab;
+    if (content.kind === "surface" && content.surfaceId.startsWith("side-chat:")) {
+      requestWorkspaceFocus({
+        area: "panel",
+        surface: { threadKey: scopedThreadKey(content.threadRef), surfaceId: content.surfaceId },
+        selector: `[data-side-chat-pane="${CSS.escape(content.surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+      });
+    }
   };
   const openMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
