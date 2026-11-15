@@ -164,6 +164,7 @@ export interface GhosttyMouseInput {
 
 // Ghostty's legacy modified F3 is CSI 13;m ~, but the PTY advertises xterm-256color, whose
 // terminfo (kf15, kf27, ...) expects xterm's CSI 1;m R. Kitty keyboard mode keeps CSI 13;m ~.
+// Matching xterm also keeps its cursor-position-report ambiguity for legacy parsers.
 const LEGACY_MODIFIED_F3 = /^\x1b\[13;(\d+)~$/;
 
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
