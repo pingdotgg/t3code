@@ -188,14 +188,17 @@ describe("planClaudeSkillDispatch", () => {
       dispatches: false,
     },
   ])("dispatches only user-typed skills: $name", ({ prompt, dispatches }) => {
-    const start = prompt.indexOf("$implement");
-    expect(planClaudeSkillDispatch(prompt, SKILLS)).toEqual(
-      dispatches
-        ? {
-            leadingText: prompt.replace("$implement", "/implement"),
-            commandText: prompt.slice(start).replace("$implement", "/implement"),
-          }
-        : undefined,
-    );
+    // Inline handoff history shifts every range by its length.
+    for (const history of ["", "Context handoff:\n$review the diff\n"]) {
+      const start = prompt.indexOf("$implement");
+      expect(planClaudeSkillDispatch(history + prompt, SKILLS, history.length)).toEqual(
+        dispatches
+          ? {
+              leadingText: history + prompt.replace("$implement", "/implement"),
+              commandText: prompt.slice(start).replace("$implement", "/implement"),
+            }
+          : undefined,
+      );
+    }
   });
 });
