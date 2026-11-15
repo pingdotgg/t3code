@@ -336,7 +336,7 @@ const ConnectMcpRpc = Rpc.make(CLIENT_METHODS.mcp_connect, {
 });
 
 const MessageMcpRpc = Rpc.make(CLIENT_METHODS.mcp_message, {
-  payload: AcpSchema.MessageMcpRequest,
+  payload: Schema.Union([AcpSchema.MessageMcpRequest, AcpCompat.McpServerMessage]),
   success: AcpSchema.MessageMcpResponse,
   error: AcpSchema.Error,
 });
