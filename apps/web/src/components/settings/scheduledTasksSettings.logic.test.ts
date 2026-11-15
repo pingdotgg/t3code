@@ -448,9 +448,10 @@ it("shows schedule times in the Time format setting", () => {
   const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
   expect(scheduleLabel(daily, "24-hour")).toBe(`Daily at ${clock(false, 17, 30)}`);
   expect(scheduleLabel(daily, "12-hour")).toBe(`Daily at ${clock(true, 17, 30)}`);
-  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour")).toBe(
-    `Daily at ${clock(false, 0, 5)}`,
-  );
+  const midnight = scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour");
+  expect(midnight).toBe(`Daily at ${clock(false, 0, 5)}`);
+  // An h24 clock would print midnight as 24:05 in both the label and the helper.
+  expect(midnight).not.toContain("24");
 
   // A local wall time, so the label reads 17:30 in any host zone.
   const runAt = new Date(2026, 10, 20, 17, 30);
