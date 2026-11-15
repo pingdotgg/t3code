@@ -218,6 +218,7 @@ final class T3NativeFilePresentation: NSObject, QLPreviewControllerDataSource,
       if url.isFileURL {
         try FileManager.default.copyItem(at: url, to: download)
       } else if url.scheme == "data" {
+        if url.absoluteString.lowercased().hasPrefix("data:image/svg+xml") { mimeType = "image/svg+xml" }
         try Data(contentsOf: url).write(to: download, options: .atomic)
       } else {
         guard ["https", "http"].contains(url.scheme?.lowercased() ?? "") else {
