@@ -143,7 +143,7 @@ export function diffFileSection(patch: string, path: string): string | null {
     // Only the header names the file; hunks can be megabytes.
     const hunk = section.indexOf("\n@@");
     const [entry] = parseEntries(hunk === -1 ? section : section.slice(0, hunk));
-    if (entry !== undefined && (entry.newPath === path || entry.oldPath === path)) return section;
+    if (entry !== undefined && (entry.newPath ?? entry.oldPath) === path) return section;
     start = end;
   }
   return null;

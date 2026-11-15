@@ -586,6 +586,20 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
+  const [withheldLoads, setWithheldLoads] = useState<{
+    readonly scope: string;
+    readonly paths: ReadonlyArray<string>;
+    /** Loads whose file has not been unfolded yet. */
+    readonly unopened: ReadonlyArray<string>;
+  }>({ scope: "", paths: NO_PATHS, unopened: NO_PATHS });
+  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
+  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
+  const atomRegistry = useContext(RegistryContext);
+  const withheldFileDiff = (path: string) =>
+    pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } });
+  const refreshWithheldFiles = useEffectEvent(() => {
+    for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
+  });
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
@@ -596,6 +610,7 @@ function PullRequestCodeTab({
     // applied page is forgotten too.
     setAppliedPage(null);
     refreshFirstDiffPage();
+    refreshWithheldFiles();
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
@@ -606,6 +621,7 @@ function PullRequestCodeTab({
     // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
     setSliceState((previous) => ({ ...previous, cursor: null }));
     refreshFirstDiffPage();
+    refreshWithheldFiles();
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
@@ -639,20 +655,11 @@ function PullRequestCodeTab({
     `pull-request:${scopeKey}:${resolvedTheme}:${ignoreWhitespace}`,
     ignoreWhitespace,
   );
-  const [withheldLoads, setWithheldLoads] = useState<{
-    readonly scope: string;
-    readonly paths: ReadonlyArray<string>;
-    /** Loads whose file has not been unfolded yet. */
-    readonly unopened: ReadonlyArray<string>;
-  }>({ scope: "", paths: NO_PATHS, unopened: NO_PATHS });
-  const withheldPaths = withheldLoads.scope === scopeKey ? withheldLoads.paths : NO_PATHS;
-  const withheldInput = { ...reference, ...(commit === null ? {} : { commit }) };
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(
       JSON.stringify({ environmentId, input: withheldInput, paths: withheldPaths }),
     ),
   );
-  const atomRegistry = useContext(RegistryContext);
   const withheldStatuses = new Map<string, WithheldFileStatus>();
   const withheldFiles = new Map<string, (typeof pagedFiles)[number]>();
   withheldPaths.forEach((path, index) => {
@@ -699,12 +706,13 @@ function PullRequestCodeTab({
   const loadedFiles =
     withheldFiles.size === 0
       ? pagedFiles
-      : pagedFiles.map((file) => withheldFiles.get(resolveFileDiffPath(file)) ?? file);
+      : // A refreshed page may carry the file's patch itself now.
+        pagedFiles.map((file) =>
+          file.hunks.length === 0 ? (withheldFiles.get(resolveFileDiffPath(file)) ?? file) : file,
+        );
   const loadWithheldFile = (path: string) => {
     if (withheldPaths.includes(path)) {
-      atomRegistry.refresh(
-        pullRequestEnvironment.diff({ environmentId, input: { ...withheldInput, path } }),
-      );
+      atomRegistry.refresh(withheldFileDiff(path));
       return;
     }
     setWithheldLoads({
