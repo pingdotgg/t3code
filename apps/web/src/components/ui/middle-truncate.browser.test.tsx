@@ -24,6 +24,24 @@ describe("MiddleTruncate", () => {
     expect(label()).toHaveStyle({ clipPath: "none" });
   });
 
+  it("fits every head mounted in the same commit", async () => {
+    const values = ["t3/investigate-release-build-times", "t3/remove-stale-worktree-branches"];
+    await using screen = await render(
+      <>
+        {values.map((value) => (
+          <div key={value}>{narrow(value)}</div>
+        ))}
+      </>,
+    );
+    const heads = () => [
+      ...screen.container.querySelectorAll<HTMLElement>("[title] > span:first-child"),
+    ];
+
+    await expect
+      .poll(() => heads().filter((head) => head.hasAttribute("data-overflow")).length)
+      .toBe(2);
+  });
+
   it.each([
     ["Fix the sidebar", 7],
     ["report\u2003\u2003draft.txt", 9],
