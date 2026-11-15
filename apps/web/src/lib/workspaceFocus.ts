@@ -9,12 +9,11 @@ const FOCUSABLE_SELECTOR =
   'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable="true"], [tabindex]';
 
 /** Props that make an element one stop in the F6 cycle; `order` sets its place in the cycle. */
-export function workspaceAreaProps(name: string, order: number, label: string) {
+export function workspaceAreaProps(name: string, order: number, label?: string) {
   return {
     "data-workspace-area": name,
     "data-workspace-order": order,
-    "aria-label": label,
-    role: "region",
+    ...(label ? { "aria-label": label, role: "region" } : {}),
     tabIndex: -1,
   } as const;
 }
@@ -271,7 +270,12 @@ export function createWorkspaceFocusController(doc: Document) {
     if (areas.length === 0) return false;
     const activeArea = doc.activeElement?.closest<HTMLElement>(AREA_SELECTOR);
     const currentId = fromArea ?? activeArea?.dataset.workspaceArea ?? lastArea;
-    const current = areas.findIndex((area) => area.dataset.workspaceArea === currentId);
+    // A side chat nests areas with the main chat's names, so prefer the focused element.
+    const activeIndex = fromArea || !activeArea ? -1 : areas.indexOf(activeArea);
+    const current =
+      activeIndex === -1
+        ? areas.findIndex((area) => area.dataset.workspaceArea === currentId)
+        : activeIndex;
     const index =
       current === -1
         ? direction === 1

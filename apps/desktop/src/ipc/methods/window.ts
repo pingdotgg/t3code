@@ -1,5 +1,6 @@
 import {
   ContextMenuItemSchema,
+  ContextMenuSource,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
+import { withPathDirectoryListings } from "@t3tools/shared/shell";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
@@ -25,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
+import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
@@ -34,6 +37,7 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronApp from "../../electron/ElectronApp.ts";
+import * as ElectronAudio from "../../electron/ElectronAudio.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
@@ -58,6 +62,7 @@ const ContextMenuPosition = Schema.Struct({
 const ContextMenuInput = Schema.Struct({
   items: Schema.Array(ContextMenuItemSchema),
   position: Schema.optionalKey(ContextMenuPosition),
+  source: Schema.optionalKey(ContextMenuSource),
 });
 
 function toWebSocketBaseUrl(httpBaseUrl: URL): string {
@@ -204,6 +209,20 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// Ask the distro: its automount root is configurable, so /mnt/<drive> is only the default.
+const windowsPathToWsl = Effect.fn("desktop.ipc.window.windowsPathToWsl")(function* (
+  distro: string | null,
+  windowsPath: string,
+) {
+  const linuxUncPath = wslUncPathToLinuxPath(windowsPath);
+  if (linuxUncPath !== null) return Option.some(linuxUncPath);
+  const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+  return yield* wslEnvironment.windowsToWslPath(
+    extractDistroFromUncPath(windowsPath) ?? distro,
+    windowsPath,
+  );
+});
+
 export const pickFolder = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PICK_FOLDER_CHANNEL,
   payload: Schema.UndefinedOr(PickFolderOptionsSchema),
@@ -250,17 +269,26 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
     if (!useWsl) {
       return selectedPath.value;
     }
-
-    const linuxUncPath = wslUncPathToLinuxPath(selectedPath.value);
-    if (linuxUncPath !== null) {
-      return linuxUncPath;
-    }
-
-    const converted = yield* wslEnvironment.windowsToWslPath(
-      extractDistroFromUncPath(selectedPath.value) ?? wslDistro,
-      selectedPath.value,
-    );
+    const converted = yield* windowsPathToWsl(wslDistro, selectedPath.value);
     return Option.getOrElse(converted, () => selectedPath.value);
+  }),
+});
+
+export const toLocalBackendPath = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.TO_LOCAL_BACKEND_PATH_CHANNEL,
+  payload: Schema.Struct({ backendId: Schema.String, path: Schema.String }),
+  result: Schema.NullOr(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.toLocalBackendPath")(function* ({ backendId, path }) {
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const instance = yield* pool.get(DesktopBackendManager.BackendInstanceId(backendId));
+    if (Option.isNone(instance)) return null;
+    const config = yield* instance.value.currentConfig;
+    if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) return null;
+    const { runningDistro } = config.value;
+    if (runningDistro === undefined) return path;
+    const uncDistro = extractDistroFromUncPath(path);
+    if (uncDistro !== null && uncDistro.toLowerCase() !== runningDistro.toLowerCase()) return null;
+    return Option.getOrNull(yield* windowsPathToWsl(runningDistro, path));
   }),
 });
 
@@ -316,6 +344,7 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       window: window.value,
       items: input.items,
       position: Option.fromNullishOr(input.position),
+      source: Option.fromNullishOr(input.source),
     });
     return Option.getOrNull(selectedItemId);
   }),
@@ -400,20 +429,26 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const REMOTE_EDITOR_PROBE_CONCURRENCY = 8;
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,
   result: Schema.Array(EditorId),
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
-    const available: Array<EditorId> = [];
     const env = yield* HostProcess.Environment;
-    for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const editor = EDITORS.find((editor) => editor.id === editorId);
-      if (editor && Option.isSome(yield* resolveEditorCommand(editor, env))) {
-        available.push(editorId);
-      }
-    }
-    return available;
+    // Shared listings stop each editor re-stating every PATH entry x PATHEXT candidate on Windows.
+    const resolved = yield* Effect.forEach(
+      REMOTE_CAPABLE_EDITOR_IDS,
+      (editorId) => {
+        const editor = EDITORS.find((editor) => editor.id === editorId);
+        return editor
+          ? resolveEditorCommand(editor, env).pipe(Effect.map(Option.isSome))
+          : Effect.succeed(false);
+      },
+      { concurrency: REMOTE_EDITOR_PROBE_CONCURRENCY },
+    ).pipe(withPathDirectoryListings);
+    return REMOTE_CAPABLE_EDITOR_IDS.filter((_, index) => resolved[index]);
   }),
 });
 
@@ -560,4 +595,11 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),
+});
+
+export const restartAudioService = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RESTART_AUDIO_SERVICE_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Boolean,
+  handler: ElectronAudio.restart,
 });

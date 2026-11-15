@@ -23,7 +23,7 @@ import { HttpApiTest } from "effect/http-api";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { PrimaryEnvironmentHttpClient } from "../src/environments/primary/httpClient";
-import { __setPrimaryHttpRunnerForTests } from "../src/lib/runtime";
+import { __setPrimaryHttpRunnerForTests, type PrimaryHttpEffectRunner } from "../src/lib/runtime";
 
 type BrowserSessionHandler = (
   payload: AuthBrowserSessionRequest,
@@ -116,7 +116,9 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
             )
             .handle("revokePairingLink", () => unexpectedEndpoint("auth.revokePairingLink"))
             .handle("revokeClient", () => unexpectedEndpoint("auth.revokeClient"))
-            .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients")),
+            .handle("revokeOtherClients", () => unexpectedEndpoint("auth.revokeOtherClients"))
+            .handle("approveConnectDevice", () => unexpectedEndpoint("auth.approveConnectDevice"))
+            .handle("revokeConnectDevice", () => unexpectedEndpoint("auth.revokeConnectDevice")),
         ),
       ]),
       Effect.provideService(EnvironmentAuthenticatedAuth, authenticatedAuth),
@@ -125,10 +127,12 @@ export async function installEnvironmentHttpTest(scenario: EnvironmentHttpTestSc
   );
 
   const runtime = ManagedRuntime.make(Layer.succeed(PrimaryEnvironmentHttpClient, client));
-  __setPrimaryHttpRunnerForTests((effect) => runtime.runPromise(effect));
+  const run: PrimaryHttpEffectRunner = (effect) => runtime.runPromise(effect);
+  __setPrimaryHttpRunnerForTests(run);
 
   return {
     calls,
+    run,
     async dispose() {
       __setPrimaryHttpRunnerForTests();
       await runtime.dispose();

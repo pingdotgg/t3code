@@ -9,6 +9,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -40,44 +41,98 @@ function fileItem(relativePath: string): FileItem {
   };
 }
 
-it.effect("filters image searches before applying the result limit", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const items = [
-        ...Array.from({ length: 200 }, (_, index) => fileItem(`src/file-${index}.ts`)),
-        fileItem("public/icon.svg"),
-      ];
-      const fileSearch = vi.fn(async () => ({
-        ok: true as const,
-        value: {
-          items,
-          scores: [],
-          totalMatched: items.length,
-          totalFiles: items.length,
-        },
-      }));
-      const finder = {
-        destroy: vi.fn(),
-        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
-        getScanProgressAsync: async () => ({
-          ok: true as const,
-          value: { isScanning: false },
-        }),
-        watch: () => ({ ok: true as const, value: () => undefined }),
-        fileSearchAsync: fileSearch,
-      } as unknown as FileFinder;
-      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+it.live("image searches match the image subset of a file search without fetching every file", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const vcsProcess = yield* VcsProcess.VcsProcess;
+    const writeFiles = Effect.fn(function* (root: string, relativePaths: ReadonlyArray<string>) {
+      for (const relativePath of relativePaths) {
+        yield* fileSystem.makeDirectory(path.dirname(path.join(root, relativePath)), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(path.join(root, relativePath), "");
+        yield* fileSystem.utimes(path.join(root, relativePath), 0, 0);
+      }
+    });
 
-      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project");
-      const resultWithoutKind = yield* searchIndex.search("", 200, undefined, true);
-      const resultWithDirectoryKind = yield* searchIndex.search("", 200, "directory", true);
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-image-search-" });
+    yield* vcsProcess.run({ operation: "test.gitInit", command: "git", args: ["init"], cwd });
+    yield* fileSystem.writeFileString(path.join(cwd, ".git/info/exclude"), "hidden/\n");
+    yield* writeFiles(cwd, [
+      ...Array.from({ length: 220 }, (_, index) => `assets/source-${index}.ts`),
+      ...PROJECT_FAVICON_EXTENSIONS.flatMap((extension) => [
+        `assets/logo${extension}`,
+        `other/logo${extension.toUpperCase()}`,
+      ]),
+      "assets/logo.ts",
+      "assets/logotype.png",
+      "assetss/logotype.png",
+      "assets/images/logo.PNG",
+      "assets/foo{bar}.png",
+      "assets/[id].png",
+      "hidden/logo.png",
+    ]);
 
-      expect(resultWithoutKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
-      expect(resultWithDirectoryKind.entries).toEqual([{ kind: "file", path: "public/icon.svg" }]);
-      expect(fileSearch).toHaveBeenCalledTimes(2);
-      expect(fileSearch).toHaveBeenCalledWith("", { pageSize: 25_002 });
-    }),
-  ).pipe(Effect.provide(testLayer)),
+    const fileSearch = vi.spyOn(FileFinder.prototype, "fileSearchAsync");
+    const searchIndex = yield* WorkspaceSearchIndex.make(cwd);
+    yield* searchIndex.search("", 200, undefined, true);
+    const nativeResult = yield* Effect.promise(
+      (): ReturnType<FileFinder["fileSearchAsync"]> => fileSearch.mock.results[0]?.value,
+    );
+    if (!nativeResult.ok) return yield* Effect.die(nativeResult.error);
+    expect(nativeResult.value.items.length).toBeLessThanOrEqual(201);
+
+    // The image glob must not change fff's parse of fuzzy paths, globs, negations or locations.
+    for (const query of [
+      "",
+      "logo",
+      "lgo",
+      "*.png",
+      "!*.png",
+      "assets/**",
+      "!assets/",
+      "assets*/",
+      "/assets",
+      "assets/",
+      "logo:12",
+      "/assets/logotype.png",
+      "assets/images/",
+      "logo *.svg !other",
+      "foo{bar}.png",
+      "[id].png",
+      "*.{png,svg}",
+      "hidden/",
+    ]) {
+      const ordinary = yield* searchIndex.search(query, 1000, "file");
+      const expected = ordinary.entries.filter((entry) => isProjectFaviconPath(entry.path));
+      for (const limit of [1, 200]) {
+        const images = yield* searchIndex.search(query, limit, "directory", true);
+        expect(images, `query=${query} limit=${limit}`).toEqual({
+          entries: expected.slice(0, limit),
+          truncated: expected.length > limit,
+        });
+      }
+    }
+
+    // Past 15,000 matches fff drops its filename fallback, which the image glob would otherwise
+    // reorder: "x/logo/logo.png" must keep its place relative to "a/xxlogo.png".
+    const largeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-image-rank-" });
+    yield* writeFiles(largeCwd, [
+      ...Array.from({ length: 14_998 }, (_, index) => `b/logo-${index}.png`),
+      "x/logo/source.ts",
+      "a/xxlogo.png",
+      "x/logo/logo.png",
+    ]);
+    const largeIndex = yield* WorkspaceSearchIndex.make(largeCwd);
+    const pairPaths = ["a/xxlogo.png", "x/logo/logo.png"];
+    const ordinary = yield* largeIndex.search("logo", 20_000, "file");
+    const images = yield* largeIndex.search("logo", 20_000, "file", true);
+    expect(images.entries).toHaveLength(15_000);
+    expect(images.entries.filter((entry) => pairPaths.includes(entry.path))).toEqual(
+      ordinary.entries.filter((entry) => pairPaths.includes(entry.path)),
+    );
+  }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
 
 it.effect("fetches past a first page of Git-ignored results", () =>

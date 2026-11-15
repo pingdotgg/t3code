@@ -1,7 +1,7 @@
 import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
+import { canonicalRepositoryPath, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
@@ -123,7 +123,13 @@ function pickPrimaryRemote(
 function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
   const canonicalPath = canonicalKey.split("/").slice(1).join("/");
   const displayPath = repositoryPathFromRemoteUrl(remoteUrl);
-  return displayPath?.toLowerCase() === canonicalPath ? displayPath : canonicalPath;
+  if (displayPath === null) return canonicalPath;
+  // A host that names repositories literally keeps the `.git` the display path drops.
+  return (
+    [displayPath, `${displayPath}.git`].find(
+      (path) => canonicalRepositoryPath(path) === canonicalRepositoryPath(canonicalPath),
+    ) ?? canonicalPath
+  );
 }
 
 function buildRepositoryOrigin(

@@ -38,6 +38,15 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
+  it("drops launch args that enable user hooks", () => {
+    NodeAssert.deepStrictEqual(
+      codexExecLaunchArgs(
+        "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
+      ),
+      ["--enable", "foo", "--disable", "hooks"],
+    );
+  });
+
   it("does not pair value-taking flags with adjacent flags", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",

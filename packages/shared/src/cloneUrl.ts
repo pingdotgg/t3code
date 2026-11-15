@@ -80,7 +80,13 @@ export function cloneUrlRepositoryPath(url: string): string | null {
   if (isWindowsDrivePath(url.trim())) return null;
   const parsed = parseCloneUrl(url);
   if (!parsed) return null;
-  const segments = [parsed.host, ...parsed.path.split(/[?#]/)[0]!.split("/").filter(Boolean)];
+  let repositoryPath = parsed.path.split(/[?#]/)[0]!;
+  try {
+    if (!parsed.scp) repositoryPath = decodeURIComponent(repositoryPath);
+  } catch {
+    return null;
+  }
+  const segments = [parsed.host, ...repositoryPath.split("/").filter(Boolean)];
   const last = segments.at(-1)!;
   if (last.endsWith(".git")) segments[segments.length - 1] = last.slice(0, -".git".length);
   if (

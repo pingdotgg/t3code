@@ -3,6 +3,7 @@ import {
   AuthFilesystemWriteScope,
   EnvironmentId,
   ProjectId,
+  ProjectReadFileError,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ThreadId,
@@ -49,7 +50,7 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   const metadataRequests: string[][] = [];
   const file = { byteLength: 5 };
   const readResponse = {
-    wait: Effect.void as Effect.Effect<void>,
+    wait: Effect.void as Effect.Effect<void, ProjectReadFileError>,
     missing: false,
   };
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
@@ -146,6 +147,110 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
 });
 
 describe("writeFile metadata", () => {
+  it.effect("retires a saved overlay after an equal read succeeds, preserving newer drafts", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
+      const query = h.commands.readFile({
+        environmentId: ENVIRONMENT_ID,
+        input: { cwd: target.cwd, relativePath: target.relativePath },
+      });
+      h.registry.mount(query);
+      const read = () => AtomRegistry.getResult(h.registry, query, { suspendOnWaiting: true });
+      const original = yield* read();
+      const overlay = h.commands.optimisticFile(target);
+      h.registry.mount(overlay);
+      const saved = { ...original, contents: "saved" };
+      h.registry.set(overlay, { data: saved, saved: true, confirmingQuery: query });
+      h.readResponse.wait = Effect.fail(
+        new ProjectReadFileError({
+          cwd: "/repo",
+          relativePath: "foo",
+          failure: "operation_failed",
+        }),
+      );
+      h.registry.refresh(query);
+      yield* Effect.exit(read());
+      expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+
+      h.readResponse.wait = Effect.void;
+      h.registry.refresh(query);
+      const refreshed = yield* read();
+      // The production query shares equal file values across this failed confirmation.
+      expect(refreshed).toBe(original);
+      expect(h.registry.get(overlay)).toBeNull();
+
+      h.registry.set(overlay, { data: { ...saved, contents: "newer draft" }, saved: false });
+      h.registry.refresh(query);
+      yield* read();
+      expect(h.registry.get(overlay)?.data.contents).toBe("newer draft");
+    }),
+  );
+
+  it.effect.each([true, false])(
+    "keeps a saved overlay when an older read uses different allowMissing options (confirmation: %s)",
+    (allowMissing) =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const target = { environmentId: ENVIRONMENT_ID, cwd: "/repo", relativePath: "foo" };
+        const query = h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: {
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            ...(allowMissing ? { allowMissing: true } : {}),
+          },
+        });
+        const otherQuery = h.commands.readFile({
+          environmentId: ENVIRONMENT_ID,
+          input: {
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            ...(!allowMissing ? { allowMissing: true } : {}),
+          },
+        });
+        const read = (atom: typeof query) =>
+          AtomRegistry.getResult(h.registry, atom, { suspendOnWaiting: true });
+        h.registry.mount(query);
+        const original = yield* read(query);
+        const overlay = h.commands.optimisticFile(target);
+        h.registry.mount(overlay);
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        h.readResponse.wait = Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        );
+        h.registry.mount(otherQuery);
+        const olderRead = yield* read(otherQuery).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        h.registry.set(overlay, {
+          data: { ...original, contents: "saved" },
+          saved: true,
+          confirmingQuery: query,
+        });
+        h.readResponse.wait = Effect.fail(
+          new ProjectReadFileError({
+            cwd: target.cwd,
+            relativePath: target.relativePath,
+            failure: "operation_failed",
+          }),
+        );
+        h.registry.refresh(query);
+        yield* Effect.exit(read(query));
+        expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(olderRead);
+        expect(h.registry.get(overlay)?.data.contents).toBe("saved");
+        expect(Option.getOrNull(AsyncResult.value(h.registry.get(query)))).toBe(original);
+
+        h.readResponse.wait = Effect.void;
+        h.registry.refresh(query);
+        expect(yield* read(query)).toBe(original);
+        expect(h.registry.get(overlay)).toBeNull();
+      }),
+  );
+
   it.effect("preserves optional read results without seeding metadata for an absent file", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

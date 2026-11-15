@@ -21,6 +21,7 @@ export type PullRequestWatchChange =
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" }
+  | { readonly kind: "needs-rebase" }
   | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
@@ -46,6 +47,7 @@ export function evaluatePullRequestWatch(
     | "mergeability"
     | "viewer"
     | "author"
+    | "rebaseRequired"
     | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
@@ -196,11 +198,16 @@ export function evaluatePullRequestWatch(
     ...atLatest.map((remark) => remark.id),
   ];
 
-  // Like a failed check, a conflict a push did not resolve is news for the new head.
+  // Like a failed check, a conflict or rebase a push did not resolve is news for the new head.
   const toldConflict = !headMoved && watch.conflicting;
   if (watch.awaitingBaseline !== "all" && detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
+  const toldRebase = !headMoved && watch.rebaseRequired === true;
+  if (watch.awaitingBaseline !== "all" && detail.rebaseRequired === true && !toldRebase) {
+    changes.push({ kind: "needs-rebase" });
+  }
+  const rebaseRequired = detail.rebaseRequired ?? watch.rebaseRequired;
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
@@ -239,6 +246,7 @@ export function evaluatePullRequestWatch(
       remarksThrough,
       remarkIds,
       conflicting,
+      rebaseRequired,
       mergeQueueRemovalId,
       wakes,
       // Only a read that cannot be trusted to show the checks leaves the baseline to the next one.
@@ -253,9 +261,81 @@ export function evaluatePullRequestWatch(
   };
 }
 
+// GitHub renders these, so in a remark's prose they are presentation, not what the reviewer said.
+// Lowercase only: `Promise<T>` is a type argument.
+const TAG_NAMES =
+  "a|abbr|b|blockquote|br|caption|cite|code|dd|del|details|div|dl|dt|em|h[1-6]|hr|i|img|ins|kbd|li|mark|ol|p|picture|pre|q|s|samp|small|source|span|strike|strong|sub|summary|sup|table|tbody|td|tfoot|th|thead|tr|tt|ul|var";
+// A code span comes first so its tags stay literal; it cannot cross a blank line. A tag stops at
+// the next `<`, which keeps unclosed openers from rescanning the rest of the body.
+const PROSE_MARKUP = new RegExp(
+  "(?<!`)(?<ticks>`+)(?!`)(?:(?!\\n[ \\t\\r]*\\n)[\\s\\S])*?(?<!`)\\k<ticks>(?!`)" +
+    `|<(?<closing>/?)(?<name>${TAG_NAMES})(?=[\\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>`,
+  "g",
+);
+
+function withoutTags(prose: string): string {
+  // An opener glued to an identifier is a type argument (`Vec<code>`); it and its closer stay.
+  const kept = new Map<string, number>();
+  let text = "";
+  let from = 0;
+  for (const match of prose.matchAll(PROSE_MARKUP)) {
+    const name = match.groups?.name;
+    if (name === undefined) continue;
+    const held = kept.get(name) ?? 0;
+    if (match.groups?.closing === "/") {
+      if (held > 0) {
+        kept.set(name, held - 1);
+        continue;
+      }
+    } else if (/\w/.test(prose.charAt(match.index - 1))) {
+      kept.set(name, held + 1);
+      continue;
+    }
+    text += `${prose.slice(from, match.index)} `;
+    from = match.index + match[0].length;
+  }
+  return text + prose.slice(from);
+}
+
+// Drops HTML tags from Markdown prose. Fenced and indented code blocks pass through untouched.
+function withoutMarkup(body: string): string {
+  const parts: Array<string> = [];
+  let prose: Array<string> = [];
+  let fence: string | undefined;
+  let afterText = false;
+  const code = (line: string) => {
+    if (prose.length > 0) parts.push(withoutTags(prose.join("\n")));
+    prose = [];
+    parts.push(line);
+    afterText = false;
+  };
+  for (const line of body.split("\n")) {
+    if (fence !== undefined) {
+      const closer = line.trim();
+      if (closer.length >= fence.length && closer.replaceAll(fence.charAt(0), "") === "") {
+        fence = undefined;
+      }
+      code(line);
+      continue;
+    }
+    const opener = /^ {0,3}(`{3,}|~{3,})([\s\S]*)$/.exec(line);
+    if (opener?.[1] !== undefined && !(opener[1].startsWith("`") && opener[2]?.includes("`"))) {
+      fence = opener[1];
+      code(line);
+    } else if (!afterText && /^(?: {4}| {0,3}\t)\s*\S/.test(line)) {
+      // Indented code needs a blank line before it; after text the indent is a continuation.
+      code(line);
+    } else {
+      prose.push(line);
+      afterText = line.trim() !== "";
+    }
+  }
+  if (prose.length > 0) parts.push(withoutTags(prose.join("\n")));
+  return parts.join("\n");
+}
+
 function snippet(body: string): string {
-  const text = body
-    .replaceAll(/<!--[\s\S]*?-->/g, " ")
+  const text = withoutMarkup(body.replaceAll(/<!--[\s\S]*?-->/g, " "))
     .replaceAll(/\s+/g, " ")
     .trim();
   if (text.length <= SNIPPET_LENGTH) return text;
@@ -308,6 +388,8 @@ function changeLines(
       return [
         `- No checks have reported${context.commit} after ${change.minutes} minutes. None may be configured to run on this change.`,
       ];
+    case "needs-rebase":
+      return [`- The branch requires a rebase onto ${context.baseBranch}.`];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
     case "merge-queue-removed":
@@ -324,6 +406,7 @@ const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "needs-rebase": "rebase required",
   "merge-queue-removed": "removed from merge queue",
 };
 
@@ -388,6 +471,7 @@ export function pullRequestWatchMessage(input: {
     (change) =>
       change.kind === "checks-failed" ||
       change.kind === "conflicting" ||
+      change.kind === "needs-rebase" ||
       change.kind === "merge-queue-removed",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);

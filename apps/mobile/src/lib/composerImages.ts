@@ -561,23 +561,25 @@ function isOwnedPastedImageUri(uri: string): boolean {
       return false;
     }
     const segments = url.pathname.split("/").filter(Boolean);
-    return (
-      segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY && segments.at(-1)?.endsWith(".png") === true
-    );
+    return segments.at(-2) === OWNED_PASTED_IMAGE_DIRECTORY;
   } catch {
     return false;
   }
 }
 
+/** Leave out existingCount when the draft store caps after its duplicate check. */
 export async function convertPastedImagesToAttachments(input: {
   readonly uris: ReadonlyArray<string>;
-  readonly existingCount: number;
+  readonly existingCount?: number;
 }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerImageAttachment>;
   readonly error: string | null;
 }> {
   const { File } = await import("expo-file-system");
-  const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
+  const remainingSlots =
+    input.existingCount === undefined
+      ? Number.POSITIVE_INFINITY
+      : PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   const attachments: DraftComposerImageAttachment[] = [];
   let error: string | null = null;
 

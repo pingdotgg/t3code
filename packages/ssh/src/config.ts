@@ -67,7 +67,7 @@ function parseSshConfigLine(line: string) {
 }
 
 function expandHomePath(input: string, homeDir: string): string {
-  return input.replace(/^~(?=$|\/|\\)/u, homeDir);
+  return input.replace(/^~(?=$|\/|\\)/u, () => homeDir);
 }
 
 const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
@@ -92,7 +92,7 @@ function escapeRegex(value: string): string {
 
 function globToRegExp(pattern: string): RegExp {
   return new RegExp(
-    `^${escapeRegex(pattern).replace(/\\\*/gu, ".*").replace(/\\\?/gu, ".")}$`,
+    `^${escapeRegex(pattern).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
     "u",
   );
 }
