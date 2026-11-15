@@ -309,7 +309,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.resolve.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.resolve.outputs.relay_url }}
       label: macOS arm64 preview
-      runner: macos-26
+      runner: macos-latest
       platform: mac
       target: dmg
       arch: arm64

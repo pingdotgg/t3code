@@ -120,14 +120,14 @@ jobs:
       matrix:
         include:
           - label: macOS arm64
-            runner: macos-26
+            runner: macos-latest
             platform: mac
             target: dmg
             arch: arm64
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
           - label: macOS x64
-            runner: macos-26
+            runner: macos-latest
             platform: mac
             target: dmg
             arch: x64
@@ -200,7 +200,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.bundle.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.bundle.outputs.relay_url }}
       label: macOS arm64
-      runner: macos-26
+      runner: macos-latest
       platform: mac
       target: dmg
       arch: arm64

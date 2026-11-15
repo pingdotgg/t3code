@@ -661,7 +661,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: macOS arm64
-      runner: macos-26
+      runner: macos-latest
       platform: mac
       target: dmg
       arch: arm64
@@ -687,7 +687,7 @@ jobs:
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
       label: macOS x64
-      runner: macos-26
+      runner: macos-latest
       platform: mac
       target: dmg
       arch: x64
