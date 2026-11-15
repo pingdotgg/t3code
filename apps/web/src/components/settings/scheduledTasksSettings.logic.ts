@@ -24,6 +24,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { translateDynamic } from "../../i18nCore";
 
 import {
   resolveProjectSettings,
@@ -33,7 +34,16 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
-export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+/** i18n keys for the weekday names, indexed by `schedule.weekdays` (0 = Sunday). */
+export const WEEKDAY_KEYS = [
+  "weekdaySun",
+  "weekdayMon",
+  "weekdayTue",
+  "weekdayWed",
+  "weekdayThu",
+  "weekdayFri",
+  "weekdaySat",
+] as const;
 
 const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -45,23 +55,32 @@ export function scheduleLabel(
   timeZone?: string,
   runAt?: string | null,
 ): string {
-  if (schedule.type === "webhook") return "On webhook";
-  if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "webhook") return translateDynamic("scheduledTasks.scheduleWebhook");
+  if (schedule.type === "once")
+    return translateDynamic("scheduledTasks.scheduleOnce", {
+      datetime: ONCE_FORMATTER.format(new Date(schedule.runAt)),
+    });
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
-      ? `Every ${minutes} min`
-      : `Every ${Math.round(schedule.everyMs / 1000)} sec`;
+      ? translateDynamic("scheduledTasks.scheduleIntervalMinutes", { count: minutes })
+      : translateDynamic("scheduledTasks.scheduleIntervalSeconds", {
+          count: Math.round(schedule.everyMs / 1000),
+        });
   }
   const weekdays = schedule.weekdays ?? [];
   const days =
     weekdays.length === 0
-      ? "Daily"
+      ? translateDynamic("scheduledTasks.daysDaily")
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
-        ? "Weekdays"
-        : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
+        ? translateDynamic("scheduledTasks.daysWeekdays")
+        : weekdays.map((day) => translateDynamic(`scheduledTasks.${WEEKDAY_KEYS[day]}`)).join(", ");
   const zone = scheduleTimeZoneLabel(timeZone, runAt);
-  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
+  return translateDynamic("scheduledTasks.scheduleFixed", {
+    days,
+    time: schedule.timeOfDay,
+    zone: zone === undefined ? "" : ` ${zone}`,
+  });
 }
 
 export function matchesScheduledTaskScope(
@@ -148,11 +167,19 @@ export function scheduleDraftErrors(draft: DraftState) {
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
     if (Number.isNaN(runAt.getTime()))
-      return [{ title: "Invalid run time", description: "Pick a date and time." }];
+      return [
+        {
+          title: translateDynamic("scheduledTasks.errorInvalidRunTime"),
+          description: translateDynamic("scheduledTasks.errorPickDateAndTime"),
+        },
+      ];
     // A time skipped by a daylight saving change parses to a different clock time.
     if (toDateTimeLocalValue(runAt) !== draft.runAt)
       return [
-        { title: "Invalid run time", description: "That time does not exist in your time zone." },
+        {
+          title: translateDynamic("scheduledTasks.errorInvalidRunTime"),
+          description: translateDynamic("scheduledTasks.errorTimeNotExist"),
+        },
       ];
     return [];
   }
@@ -160,26 +187,30 @@ export function scheduleDraftErrors(draft: DraftState) {
   if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
     return [
       {
-        title: "Invalid age limit",
-        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+        title: translateDynamic("scheduledTasks.errorInvalidAgeLimit"),
+        description: translateDynamic("scheduledTasks.errorEnterWholeMinutes", {
+          max: MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
+        }),
       },
     ];
   const errors: Array<{ title: string; description: string }> = [];
-  for (const [label, value] of [
-    ["Duplicate request key", draft.replayKey],
-    ["Coalesce key", draft.coalesceKey],
+  for (const [labelKey, value] of [
+    ["errorDuplicateRequestKey", draft.replayKey],
+    ["errorCoalesceKey", draft.coalesceKey],
   ] as const) {
     if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
       errors.push({
-        title: "Invalid webhook settings",
-        description: `${label} must contain a valid request placeholder.`,
+        title: translateDynamic("scheduledTasks.errorInvalidWebhookSettings"),
+        description: translateDynamic("scheduledTasks.errorValidRequestPlaceholder", {
+          label: translateDynamic(`scheduledTasks.${labelKey}`),
+        }),
       });
   }
   const window = draft.coalesceWindowSeconds.trim();
   if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
     errors.push({
-      title: "Invalid webhook settings",
-      description: "Coalesce window must be whole seconds from 10 to 3600.",
+      title: translateDynamic("scheduledTasks.errorInvalidWebhookSettings"),
+      description: translateDynamic("scheduledTasks.errorCoalesceWindowRange"),
     });
   return errors;
 }
@@ -188,18 +219,24 @@ export function webhookDeliveryLabel(delivery: {
   readonly outcome: string;
   readonly pendingWindow?: boolean | undefined;
 }) {
-  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
+  if (delivery.outcome === "accepted")
+    return delivery.pendingWindow
+      ? translateDynamic("scheduledTasks.deliveryOpenedWindow")
+      : translateDynamic("scheduledTasks.deliveryRan");
   const labels: Record<string, string> = {
-    dispatch_failed: "Run failed",
-    duplicate: "Duplicate",
-    coalesced: "Coalesced",
-    filtered: "Filtered",
-    rejected_signature: "Bad signature",
-    disabled: "Task paused",
-    rate_limited: "Rate limited",
-    expired: "Too old",
+    dispatch_failed: "deliveryRunFailed",
+    duplicate: "deliveryDuplicate",
+    coalesced: "deliveryCoalesced",
+    filtered: "deliveryFiltered",
+    rejected_signature: "deliveryBadSignature",
+    disabled: "deliveryTaskPaused",
+    rate_limited: "deliveryRateLimited",
+    expired: "deliveryTooOld",
   };
-  return labels[delivery.outcome] ?? delivery.outcome.replaceAll("_", " ");
+  const key = labels[delivery.outcome];
+  return key === undefined
+    ? delivery.outcome.replaceAll("_", " ")
+    : translateDynamic(`scheduledTasks.${key}`);
 }
 
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
