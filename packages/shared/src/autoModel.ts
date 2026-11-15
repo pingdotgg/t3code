@@ -130,12 +130,12 @@ export function isAutoModelSelection(selection: ModelSelection | null | undefine
   return isAutoModelSlug(selection?.model) || stampedLevel(selection) !== undefined;
 }
 
-/** A routed thread's model as the Auto level it came from, for pickers; others unchanged. */
 /** The Auto level a routed thread runs at, or undefined for a thread not on Auto. */
 export function routedAutoLevel(selection: ModelSelection | null | undefined) {
   return stampedLevel(selection);
 }
 
+/** A routed thread's model as the Auto level it came from, for pickers; others unchanged. */
 export function autoLevelSelection<T extends ModelSelection | null | undefined>(
   selection: T,
 ): T | ModelSelection {
@@ -248,9 +248,9 @@ interface AutoResolution {
 }
 
 /**
- * Keeps the thread's model while it fits this level and is under 90% used (no account hop, no
- * lost prompt cache); otherwise the first usable candidate on the best instance (see
- * `compareInstances`). Null when nothing is usable.
+ * Keeps the thread's model while it fits this level, is under 90% used and no better candidate
+ * has room (no account hop, no lost prompt cache); otherwise the first usable candidate on the
+ * best instance (see `compareInstances`). Null when nothing is usable.
  */
 export function resolveAutoModelSelection(input: {
   readonly selection: ModelSelection;
@@ -271,14 +271,27 @@ export function resolveAutoModelSelection(input: {
   const current = input.current;
   if (current && !isAutoModelSlug(current.model)) {
     const provider = input.providers.find((entry) => entry.instanceId === current.instanceId);
-    const candidate = candidates.find(
+    const rank = candidates.findIndex(
       (entry) => entry.driver === provider?.driver && entry.model === current.model,
     );
+    const candidate = candidates[rank];
+    // A thread that fell back to a weaker model returns once a better one has room again.
+    const betterHasRoom = candidates
+      .slice(0, Math.max(rank, 0))
+      .some((better) =>
+        input.providers.some(
+          (entry) =>
+            entry.driver === (better.driver as ProviderDriverKind) &&
+            open(entry, better.model) &&
+            hasRoom(entry),
+        ),
+      );
     if (
       provider &&
       candidate &&
       open(provider, candidate.model) &&
-      peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT
+      hasRoom(provider) &&
+      !betterHasRoom
     ) {
       return { selection: toSelection(provider, candidate, level), level, sticky: true };
     }
