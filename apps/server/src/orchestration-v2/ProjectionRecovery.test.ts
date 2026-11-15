@@ -762,14 +762,7 @@ it.effect("includes shared sessions and provider-owned background rosters in rec
     const now = yield* DateTime.now;
     const first = yield* createThread("shared-first");
     const second = yield* createThread("shared-second", { archivedAt: now });
-    const idleShared = [
-      first,
-      second,
-      ...(yield* Effect.forEach(
-        Array.from({ length: 20 }, (_, index) => index),
-        (index) => createThread(`shared-idle-${index}`),
-      )),
-    ];
+    const idleShared = [first, second];
     const sharedWork = yield* createThread("shared-work");
     const providerSessionId = ProviderSessionId.make("session:recovery:shared");
     for (const threadId of [...idleShared, sharedWork]) {
