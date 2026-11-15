@@ -943,6 +943,20 @@ it.layer(
       }),
   );
 
+  it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: "node" }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+
+      expect(ptyAdapter.processes[0]?.killed).toBe(false);
+    }),
+  );
+
   it.effect("labels a running command by its whole process name, spaces included", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager(5, {
