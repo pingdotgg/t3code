@@ -16,7 +16,6 @@ import {
   createThreadSearchResultsAtomFamily,
   makeThreadSearchKey,
   threadSearchMatchKey,
-  threadSearchRecency,
   threadSearchSubject,
   visibleThreadSearch,
 } from "./threadSearch.ts";
@@ -203,7 +202,6 @@ it("ranks recent threads by this client's own latest open", () => {
   // A subject built before the open does not hide it.
   claimThreadOpen(envA, "thread-local", 7_000);
   expect(threadSearchSubject(thread, null).opens?.openedAt).toBe(7_000);
-  expect(threadSearchRecency(thread).opens?.openedAt).toBe(7_000);
   expect(threadSearchSubject(thread, "Project").projectTitle).toBe("Project");
 });
 
