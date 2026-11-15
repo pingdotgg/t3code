@@ -7,7 +7,7 @@ import { isListedThreadLineage, type EnvironmentId, type ThreadId } from "@t3too
 import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import {
   projectThreadAwarenessV2,
-  subagentAwaitsApproval,
+  subagentAwaitsUser,
   type SubagentRequestAwareness,
 } from "@t3tools/shared/agentAwareness";
 import * as DateTime from "effect/DateTime";
@@ -51,7 +51,7 @@ export function createLiveWidgetActivitiesAtom(input: {
       const threads = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
       const childRequests = new Map<ThreadId, SubagentRequestAwareness>();
       for (const child of snapshot.threads) {
-        if (child.archivedAt !== null || !subagentAwaitsApproval(child)) continue;
+        if (child.archivedAt !== null || !subagentAwaitsUser(child)) continue;
         const request = child.pendingRuntimeRequest;
         if (!request) continue;
         const seen = new Set<ThreadId>([child.id]);
@@ -63,7 +63,11 @@ export function createLiveWidgetActivitiesAtom(input: {
           if (isListedThreadLineage(parent.lineage)) {
             const previous = childRequests.get(parent.id);
             if (!previous || DateTime.isGreaterThan(child.updatedAt, previous.updatedAt)) {
-              childRequests.set(parent.id, { requestId: request.id, updatedAt: child.updatedAt });
+              childRequests.set(parent.id, {
+                requestId: request.id,
+                updatedAt: child.updatedAt,
+                waitsForInput: request.kind === "user_input",
+              });
             }
             break;
           }

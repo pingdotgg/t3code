@@ -820,6 +820,7 @@ describe("AgentAwarenessRelay", () => {
           snoozedAt: DateTime.makeUnsafe(NOW),
           snoozedUntil: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
         };
+        yield* relay.publishThread(THREAD_ID);
         yield* Ref.set(currentShell, shell(snooze));
         yield* relay.publishThread(THREAD_ID);
         yield* TestClock.adjust("2 hours");
@@ -1158,6 +1159,7 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications.at(-1)?.state?.phase, "completed");
       yield* Ref.set(currentShell, {
         ...completed,
+        snoozedAt: yield* DateTime.now,
         snoozedUntil: DateTime.makeUnsafe(60_000),
       });
       yield* relay.publishThread(THREAD_ID);

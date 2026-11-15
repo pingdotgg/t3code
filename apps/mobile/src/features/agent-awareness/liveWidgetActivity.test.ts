@@ -300,6 +300,25 @@ describe("live widget activity", () => {
         h.shellAtoms(ENVIRONMENT),
         shell(
           current.snapshot.value.threads.map((value) =>
+            value.id === ThreadId.make("child")
+              ? {
+                  ...value,
+                  pendingRuntimeRequest: {
+                    id: RuntimeRequestId.make("child-input"),
+                    kind: "user_input",
+                    userOnly: true,
+                    createdAt: DateTime.makeUnsafe(NOW),
+                  },
+                }
+              : value,
+          ),
+        ),
+      );
+      expect(h.registry.get(h.atom).get(ENVIRONMENT)?.at(-1)?.status).toBe("Input");
+      h.registry.set(
+        h.shellAtoms(ENVIRONMENT),
+        shell(
+          current.snapshot.value.threads.map((value) =>
             value.id === ThreadId.make("child") ? { ...value, pendingRuntimeRequest: null } : value,
           ),
         ),

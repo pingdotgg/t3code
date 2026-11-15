@@ -979,8 +979,8 @@ export const make = Effect.gen(function* () {
       now: nowMs,
       projects: projectSnapshot.projects,
       threads: [
-        ...candidates.filter(subagentAwaitsApproval),
-        ...candidates.filter((thread) => !subagentAwaitsApproval(thread)),
+        ...candidates.filter(subagentAwaitsUser),
+        ...candidates.filter((thread) => !subagentAwaitsUser(thread)),
       ],
     });
     if (activeThreadIds.length === 0) {

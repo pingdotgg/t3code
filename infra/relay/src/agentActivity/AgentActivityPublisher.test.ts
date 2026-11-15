@@ -22,23 +22,23 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 import * as ApnsDeliveries from "./ApnsDeliveries.ts";
 
-const layerPublisher = AgentActivityPublisher.layer.pipe(
-  Layer.provide(
-    Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
-      revoke: () => Effect.void,
-      refresh: () => Effect.succeed({ aggregate: null }),
-      notify: () => Effect.succeed([]),
-      process: (job) =>
-        Effect.succeed({
-          deviceId: job.target.deviceId,
-          kind: "widget_refresh",
-          ok: true,
-          apnsStatus: null,
-          apnsReason: null,
-          apnsId: null,
-        }),
+const widgetLayer = Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+  revoke: () => Effect.void,
+  refresh: () => Effect.succeed({ aggregate: null }),
+  notify: () => Effect.succeed([]),
+  process: (job) =>
+    Effect.succeed({
+      deviceId: job.target.deviceId,
+      kind: "widget_refresh",
+      ok: true,
+      apnsStatus: null,
+      apnsReason: null,
+      apnsId: null,
     }),
-  ),
+});
+
+const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(widgetLayer),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -281,7 +281,6 @@ describe("AgentActivityPublisher", () => {
                       replays.push(input.replay === true);
                       return null;
                     }),
-                  sendPushNotificationForTarget: () => Effect.die("Backfill must not notify"),
                 }),
               ),
             ),
@@ -471,7 +470,7 @@ describe("AgentActivityPublisher", () => {
       expect(hasAggregate).toEqual([listCalls > 0]);
     }).pipe(
       Effect.provide(
-        AgentActivityPublisher.layer.pipe(
+        layerPublisher.pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(
@@ -662,6 +661,7 @@ describe("AgentActivityPublisher", () => {
         }),
       );
       const deliveriesLayer = ApnsDeliveries.layer.pipe(
+        Layer.provide(widgetLayer),
         Layer.provide(NodeCryptoLayer.layerMac),
         Layer.provide(
           ApnsClient.layer.pipe(
