@@ -34,6 +34,19 @@ const DevicePanel = lazy(() =>
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
+// File surfaces are immutable requests; closed tabs can restart their numeric IDs.
+const fileRevealRequests = new WeakMap<RightPanelSurface, { id: number }>();
+let nextFileRevealRequestId = 0;
+
+function fileRevealRequest(surface: RightPanelSurface) {
+  let request = fileRevealRequests.get(surface);
+  if (request === undefined) {
+    request = { id: ++nextFileRevealRequestId };
+    fileRevealRequests.set(surface, request);
+  }
+  return request;
+}
+
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
   "visible" | "threadRef" | "surface"
@@ -208,7 +221,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <FilePreviewPanel
-            key={`${props.environmentId}:${
+            key={`${scopedThreadKey(threadRef)}:${
               attachment ? `attachment:${attachment.id}` : files.workspaceRoot
             }`}
             environmentId={props.environmentId}
@@ -223,7 +236,7 @@ export function RightPanelSurfaceContent(props: {
             relativePath={surface.kind === "file" ? surface.relativePath : null}
             {...(attachment ? { attachment } : {})}
             revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
-            revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
+            revealRequest={surface.kind === "file" ? fileRevealRequest(surface) : null}
             onOpenFile={files.onOpenFile}
             onNavigateFolder={(relativePath, folderTrail, keepSource) =>
               useRightPanelStore

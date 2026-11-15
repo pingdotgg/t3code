@@ -4,7 +4,7 @@ import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
-import { act, fakeTimers, render } from "../../../test/render";
+import { act, fakeTimers, render, type Screen } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
 import {
@@ -145,20 +145,32 @@ function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of 
   return filePreview("tasks.md");
 }
 
-function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+function filePreview(
+  relativePath: string,
+  workspaceMutationId: string | null = null,
+  {
+    thread = threadRef,
+    revealLine = null,
+    revealRequest = null,
+  }: {
+    thread?: typeof threadRef;
+    revealLine?: number | null;
+    revealRequest?: { readonly id: number } | null;
+  } = {},
+) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
       relativePath={relativePath}
-      threadRef={threadRef}
-      composerDraftTarget={threadRef}
+      threadRef={thread}
+      composerDraftTarget={thread}
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
+      revealLine={revealLine}
+      revealRequest={revealRequest}
       onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
@@ -265,6 +277,106 @@ describe("source file focus", () => {
     (fileRow.element() as HTMLElement).focus();
     await userEvent.keyboard("{Enter}");
     await vi.waitFor(editorHasFocus);
+  });
+});
+
+describe("source file scroll", () => {
+  const setupSource = () => {
+    const settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    const contents = Array.from(
+      { length: 800 },
+      (_, index) => `export const line${index + 1} = ${index + 1};`,
+    ).join("\n");
+    state.file = {
+      relativePath: "long.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    return {
+      [Symbol.dispose]() {
+        style.remove();
+        settings[Symbol.dispose]();
+      },
+    };
+  };
+  const sized = (preview: ReactNode) => (
+    <div style={{ display: "flex", flexDirection: "column", width: 800, height: 500 }}>
+      {preview}
+    </div>
+  );
+  const scroller = (screen: Screen) => {
+    const element = screen.container.querySelector<HTMLElement>(".file-preview-virtualizer");
+    expect(element).not.toBeNull();
+    return element!;
+  };
+  const scrollTo = async (screen: Screen, top: number) => {
+    await vi.waitFor(() => expect(scroller(screen).scrollHeight).toBeGreaterThan(10_000));
+    await act(() => {
+      // User input ends an outstanding reveal guard before the viewport moves.
+      scroller(screen).dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true }));
+      scroller(screen).scrollTop = top;
+      scroller(screen).dispatchEvent(new Event("scroll"));
+    });
+    expect(scroller(screen).scrollTop).toBeCloseTo(top, 0);
+  };
+  const expectTop = (screen: Screen, top: number) =>
+    vi.waitFor(() => expect(scroller(screen).scrollTop).toBeCloseTo(top, 0));
+  const expectLineVisible = (screen: Screen, line: number) =>
+    vi.waitFor(() => {
+      const row = screen.container
+        .querySelector("diffs-container")
+        ?.shadowRoot?.querySelector(`[data-line="${line}"]`);
+      expect(row).toBeInstanceOf(HTMLElement);
+      const bounds = row!.getBoundingClientRect();
+      const viewport = scroller(screen).getBoundingClientRect();
+      expect(bounds.top).toBeGreaterThanOrEqual(viewport.top);
+      expect(bounds.bottom).toBeLessThanOrEqual(viewport.bottom);
+    });
+
+  it("restores the offset after the panel remounts, per thread", async () => {
+    using _source = setupSource();
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const otherThread = { ...threadRef, threadId: ThreadId.make("other-thread") };
+    await using screen = await render(sized(filePreview("long.ts")));
+    await scrollTo(screen, 6_000);
+
+    await screen.rerender(sized(null));
+    await screen.rerender(sized(filePreview("long.ts", null, { thread: otherThread })));
+    await vi.waitFor(() => expect(scroller(screen).scrollHeight).toBeGreaterThan(10_000));
+    await expectTop(screen, 0);
+    await scrollTo(screen, 2_000);
+
+    await screen.rerender(sized(null));
+    await screen.rerender(sized(filePreview("long.ts")));
+    await expectTop(screen, 6_000);
+  });
+
+  it("lets a new line link win over the saved offset but never replays an old one", async () => {
+    using _source = setupSource();
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const first = { id: 1 };
+    await using screen = await render(
+      sized(filePreview("long.ts", null, { revealLine: 120, revealRequest: first })),
+    );
+    await expectLineVisible(screen, 120);
+    await scrollTo(screen, 8_000);
+
+    await screen.rerender(sized(null));
+    await screen.rerender(
+      sized(filePreview("long.ts", null, { revealLine: 120, revealRequest: first })),
+    );
+    await expectTop(screen, 8_000);
+
+    // A closed tab reopens with the same numeric id, as a new request.
+    await screen.rerender(sized(null));
+    await screen.rerender(
+      sized(filePreview("long.ts", null, { revealLine: 400, revealRequest: { id: 1 } })),
+    );
+    await expectLineVisible(screen, 400);
   });
 });
 
