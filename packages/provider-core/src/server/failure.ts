@@ -41,7 +41,7 @@ const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
 // Gateways answer an oversized body with a 413 page; resending the same history fails identically.
-const REQUEST_TOO_LARGE_STATUS = /^\s*(?:(?:API Error|Error|HTTP|status)\s*:?\s*)?413\b/iu;
+const REQUEST_TOO_LARGE_STATUS = /^\s*(?:(?:API Error|Error|HTTP|status)(?:\s*:)?\s*)?413\b/iu;
 const REQUEST_TOO_LARGE_REASON = /\b(?:Request Entity|Payload|Content) Too Large\b/u;
 const REQUEST_TOO_LARGE_MESSAGE =
   "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.";
