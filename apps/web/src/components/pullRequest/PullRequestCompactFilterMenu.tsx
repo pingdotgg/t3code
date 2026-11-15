@@ -33,7 +33,7 @@ export function PullRequestCompactFilterMenu<Value extends string>({
       <MenuTrigger
         aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
         title={iconOnly ? `${label}: ${current.label}` : undefined}
-        render={<Button variant="ghost" size={iconOnly ? "icon" : "default"} />}
+        render={<Button variant="secondary" size={iconOnly ? "icon" : "default"} />}
         className="min-w-0"
       >
         {iconOnly ? (
