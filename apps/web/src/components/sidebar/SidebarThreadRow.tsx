@@ -802,7 +802,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const showsScratchMachine = !thread.branch && props.scratchMachineLabel !== null;
   const showsMachineIcon =
-    !showsScratchMachine &&
+    (variant === "slim" || !showsScratchMachine) &&
     (props.showLocalMachineIcon || thread.environmentId !== props.currentEnvironmentId);
 
   const detailsTooltip = (
@@ -1254,6 +1254,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {multiline ? titleLineIcons : null}
               {pinIndicator}
               {multiline ? null : terminalStatusIcon}
+              {variant === "slim" ? machineIcon : null}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   Regenerating title
