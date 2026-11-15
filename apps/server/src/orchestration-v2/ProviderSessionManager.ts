@@ -571,6 +571,12 @@ export const layerWithOptions = (
                   Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
                   Effect.orElseSucceed(() => false),
                 );
+                const backgroundWait = yield* registry.get(providerInstanceId).pipe(
+                  Effect.flatMap(
+                    (adapter) => adapter.awaitsBackgroundTasks ?? Effect.succeed(false),
+                  ),
+                  Effect.orElseSucceed(() => false),
+                );
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -593,7 +599,8 @@ export const layerWithOptions = (
                     resolved.capabilities.has("preview") === browserToolsAvailable &&
                     resolved.capabilities.has("device") === deviceToolsAvailable &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    (resolved.thread.backgroundWait === true) === backgroundWait
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -606,6 +613,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  backgroundWait,
                 });
                 yield* mcpSessions.set({
                   ...credential.config,

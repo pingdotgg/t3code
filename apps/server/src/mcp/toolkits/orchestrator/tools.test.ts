@@ -1,8 +1,12 @@
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { Tool } from "effect/ai";
+import { McpSchema, Tool } from "effect/ai";
 
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 
 // Oversized page sizes clamp on decode, so the schema has no `maximum`; Codex also drops
@@ -27,3 +31,33 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
     true,
   );
 });
+
+// Codex has no awaitBackgroundTasks, so every call fails with "This provider cannot mark
+// background work as awaited."
+it.effect("does not list t3_background_wait to a thread whose provider cannot serve it", () =>
+  Effect.gen(function* () {
+    const enabledWhen = Context.getOrUndefined(
+      OrchestratorToolkit.tools.t3_background_wait.annotations,
+      McpSchema.EnabledWhen,
+    );
+    const listed = yield* Effect.sync(
+      () =>
+        enabledWhen === undefined ||
+        enabledWhen({ protocolVersion: "2025-06-18", capabilities: {} }),
+    ).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment-test"),
+        requestNamespace: "codexToken",
+        thread: {
+          threadId: ThreadId.make("thread-codex"),
+          providerSessionId: "codexToken",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set<McpInvocationContext.McpCapability>(["orchestration"]),
+        issuedAt: 1,
+      }),
+    );
+    expect(listed).toBe(false);
+  }),
+);

@@ -1091,7 +1091,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               taskIds: [shellID, shellID, "sh_unknown"],
               awaited,
             }),
-            { matched: [shellID] },
+            { matched: [shellID], running: [shellID] },
           );
           yield* Fiber.join(roster);
         }
@@ -1108,7 +1108,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: false,
           }),
-          { matched: [] },
+          { matched: [], running: [] },
         );
         const settled = yield* runtime.events.pipe(
           Stream.tap((e) =>
@@ -1140,7 +1140,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          { matched: [] },
+          { matched: [], running: [] },
         );
         assert.deepInclude(items.filter((i) => i.type === "command_execution").at(-1), {
           type: "command_execution",
@@ -1303,7 +1303,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           taskIds: [id, "sh_other"],
           awaited: true,
         }),
-        { matched: discovery === "settled" ? [] : [id] },
+        discovery === "settled" ? { matched: [], running: [] } : { matched: [id], running: [id] },
       );
       assert.equal(
         yield* runtime.hasPendingBackgroundWorkForThread!(thread),

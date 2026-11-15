@@ -757,12 +757,16 @@ export interface ProviderAdapterV2SessionRuntime {
   /**
    * Marks or unmarks background tasks the agent will resume from, using the ids the agent saw.
    * Ids not running on this provider thread come back unmatched and change nothing.
+   * `running` lists every id that would match now, so a refusal can name them.
    */
   readonly awaitBackgroundTasks?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly taskIds: ReadonlyArray<string>;
     readonly awaited: boolean;
-  }) => Effect.Effect<{ readonly matched: ReadonlyArray<string> }, ProviderAdapterV2Error>;
+  }) => Effect.Effect<
+    { readonly matched: ReadonlyArray<string>; readonly running: ReadonlyArray<string> },
+    ProviderAdapterV2Error
+  >;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -802,6 +806,11 @@ export class ProviderAdapterV2 extends Context.Service<
   {
     readonly instanceId: ProviderInstanceId;
     readonly driver: ProviderDriverKind;
+    /**
+     * Whether the sessions it opens now implement `awaitBackgroundTasks`; MCP lists
+     * `t3_background_wait` only then. An adapter choosing a runtime per probe answers per runtime.
+     */
+    readonly awaitsBackgroundTasks?: Effect.Effect<boolean>;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error
