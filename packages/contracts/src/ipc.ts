@@ -1069,6 +1069,15 @@ export interface DesktopBridge {
   getWindowTransparency?: () => DesktopWindowTransparencyMode;
   /** Restarts the app so Linux can recreate the window as transparent. */
   relaunchForWindowOpacity?: () => Promise<void>;
+  /**
+   * Lists the video files in a folder and lets the app play them as backgrounds from
+   * `/__media/video?path=…` on its own origin. Absent on older desktop builds.
+   */
+  listVideoFolder?: (folder: string) => Promise<{
+    readonly folder: string;
+    readonly files: ReadonlyArray<string>;
+    readonly error: string | null;
+  }>;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;

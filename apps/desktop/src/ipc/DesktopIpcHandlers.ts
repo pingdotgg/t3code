@@ -5,6 +5,7 @@ import * as DesktopIpc from "./DesktopIpc.ts";
 import { installNotificationBadge } from "./methods/notificationBadge.ts";
 import { getClientSettings, setClientSettings } from "./methods/clientSettings.ts";
 import { getWindowTransparency, relaunchForWindowOpacity } from "./methods/windowTransparency.ts";
+import { listVideoFolder } from "./methods/localVideoMedia.ts";
 import { getConnectionCatalog, setConnectionCatalog } from "./methods/connectionCatalog.ts";
 import {
   getHostEnvironmentId,
@@ -114,6 +115,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getClientSettings);
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(relaunchForWindowOpacity);
+  yield* ipc.handle(listVideoFolder);
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(getSnapShotState);
   yield* ipc.handle(setupSnapShot);

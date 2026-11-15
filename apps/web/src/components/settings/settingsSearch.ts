@@ -22,6 +22,7 @@ export type SettingsPath =
   | "/settings/diagnostics"
   | "/settings/voice"
   | "/settings/appearance"
+  | "/settings/video-theme"
   | "/settings/chat"
   | "/settings/diffs"
   | "/settings/keybindings"
@@ -100,6 +101,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/projects": msg("Projects"),
   "/settings/general": msg("General"),
   "/settings/appearance": msg("Appearance"),
+  "/settings/video-theme": msg("Video theme"),
   "/settings/chat": msg("Chat"),
   "/settings/diffs": msg("Diffs & pull requests"),
   "/settings/keybindings": msg("Keybindings"),
@@ -136,6 +138,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      "/settings/video-theme",
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
@@ -427,6 +430,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Download a model by name",
     to: "/settings/local-models",
     searchTerms: ["ollama pull model library"],
+  },
+  {
+    id: "setting-video-background",
+    title: "Video background",
+    to: "/settings/video-theme",
+    searchTerms: ["video theme galaxy animated moving background wallpaper mp4 webm folder space"],
+  },
+  {
+    id: "setting-video-surface-opacity",
+    title: "Surface opacity over video",
+    to: "/settings/video-theme",
+    searchTerms: ["video background see-through panels opacity"],
   },
   {
     // Prefixed because the slider control owns the `window-opacity` id.
@@ -1479,6 +1494,7 @@ const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id,
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
   "/settings/provider-updates": null,
+  "/settings/video-theme": null,
   "/settings/local-models": null,
   "/settings/memory-vaults": null,
   "/settings/projects": "project",

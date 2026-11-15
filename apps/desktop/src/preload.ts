@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   relaunchForWindowOpacity: () =>
     ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_WINDOW_OPACITY_CHANNEL),
+  listVideoFolder: (folder: string) =>
+    ipcRenderer.invoke(IpcChannels.LIST_VIDEO_FOLDER_CHANNEL, folder),
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),

@@ -159,6 +159,17 @@ export const WindowOpacity = Schema.Int.check(
 export type WindowOpacity = typeof WindowOpacity.Type;
 export const DEFAULT_WINDOW_OPACITY: WindowOpacity = 100;
 
+/** A moving background behind the app: off, the built-in galaxy, or a video from a folder. */
+export const VideoBackgroundSource = Schema.Literals(["off", "galaxy", "file"]);
+export type VideoBackgroundSource = typeof VideoBackgroundSource.Type;
+/** How opaque the app's surfaces stay over a video background. */
+export const MIN_VIDEO_SURFACE_OPACITY = 20;
+export const MAX_VIDEO_SURFACE_OPACITY = 100;
+export const VideoSurfaceOpacity = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_VIDEO_SURFACE_OPACITY, maximum: MAX_VIDEO_SURFACE_OPACITY }),
+);
+export const DEFAULT_VIDEO_SURFACE_OPACITY = 65;
+
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -494,6 +505,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   windowOpacity: WindowOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_WINDOW_OPACITY)),
+  ),
+  videoBackground: VideoBackgroundSource.pipe(
+    Schema.withDecodingDefault(Effect.succeed("off" as const)),
+  ),
+  videoBackgroundFolder: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  videoBackgroundFile: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  videoSurfaceOpacity: VideoSurfaceOpacity.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_VIDEO_SURFACE_OPACITY)),
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
@@ -2078,6 +2097,10 @@ export const ClientSettingsPatch = Schema.Struct({
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   windowOpacity: Schema.optionalKey(WindowOpacity),
+  videoBackground: Schema.optionalKey(VideoBackgroundSource),
+  videoBackgroundFolder: Schema.optionalKey(Schema.String),
+  videoBackgroundFile: Schema.optionalKey(Schema.String),
+  videoSurfaceOpacity: Schema.optionalKey(VideoSurfaceOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

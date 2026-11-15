@@ -45,6 +45,7 @@ import {
   subscribeClientSettings,
 } from "./hooks/useSettings";
 import { syncBrowserChromeTheme } from "./hooks/useTheme";
+import { videoBackgroundActive } from "./components/videoBackground/videoBackground.logic";
 import { startThreadVisitedMigration } from "./hooks/useThreadVisitedMigration";
 import { installDesktopPasteAsText } from "./lib/desktopPasteAsText";
 import {
@@ -65,15 +66,22 @@ import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPicke
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
 
-/** Backdrop surfaces turn see-through; text and controls stay solid so they remain readable. */
-function applyContentWindowOpacity(root: HTMLElement, windowOpacity: number): void {
-  if (windowOpacity >= 100) {
-    root.style.removeProperty("--surface-alpha");
-    delete root.dataset.windowTranslucent;
-  } else {
-    root.style.setProperty("--surface-alpha", `${windowOpacity}%`);
-    root.dataset.windowTranslucent = "";
-  }
+/**
+ * Backdrop surfaces turn see-through for a translucent window or a video background; text and
+ * controls stay solid so they remain readable. The lower of the two wins.
+ */
+function applySurfaceAlpha(
+  root: HTMLElement,
+  input: { readonly windowOpacity: number | null; readonly videoSurfaceOpacity: number | null },
+): void {
+  const windowTranslucent = input.windowOpacity !== null && input.windowOpacity < 100;
+  const alpha = Math.min(input.windowOpacity ?? 100, input.videoSurfaceOpacity ?? 100);
+  if (alpha >= 100) root.style.removeProperty("--surface-alpha");
+  else root.style.setProperty("--surface-alpha", `${alpha}%`);
+  if (windowTranslucent) root.dataset.windowTranslucent = "";
+  else delete root.dataset.windowTranslucent;
+  if (input.videoSurfaceOpacity !== null) root.dataset.videoBackground = "";
+  else delete root.dataset.videoBackground;
   // The theme copies the surface colour onto the page; refresh it so no stale alpha is left behind.
   syncBrowserChromeTheme();
 }
@@ -102,8 +110,15 @@ function startClientAppearance(): void {
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
     }
-    if (fadesContent && previous?.windowOpacity !== settings.windowOpacity) {
-      applyContentWindowOpacity(root, settings.windowOpacity);
+    if (
+      previous?.windowOpacity !== settings.windowOpacity ||
+      previous?.videoBackground !== settings.videoBackground ||
+      previous?.videoSurfaceOpacity !== settings.videoSurfaceOpacity
+    ) {
+      applySurfaceAlpha(root, {
+        windowOpacity: fadesContent ? settings.windowOpacity : null,
+        videoSurfaceOpacity: videoBackgroundActive(settings) ? settings.videoSurfaceOpacity : null,
+      });
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);

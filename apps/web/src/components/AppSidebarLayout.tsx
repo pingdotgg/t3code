@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { VideoBackgroundLayer } from "./videoBackground/VideoBackgroundLayer";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
@@ -460,6 +461,7 @@ export function AppSidebarLayout({
 
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
+      <VideoBackgroundLayer />
       <SidebarProvider
         className="h-dvh! min-h-0!"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}

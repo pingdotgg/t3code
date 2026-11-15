@@ -11,6 +11,10 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeURL from "node:url";
+
+import { resolveMediaRequest } from "../media/LocalVideoMedia.ts";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
@@ -241,6 +245,20 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   });
 });
 
+/** A chosen background video, streamed with Range support so it can loop and seek. */
+function serveLocalMedia(request: Request): Promise<Response> | null {
+  const url = new URL(request.url);
+  if (url.host !== DESKTOP_HOST || !url.pathname.startsWith("/__media/")) return null;
+  const file =
+    request.method === "GET" || request.method === "HEAD" ? resolveMediaRequest(url) : null;
+  if (file === null) return Promise.resolve(new Response(null, { status: 404 }));
+  const range = request.headers.get("range");
+  return Electron.net.fetch(NodeURL.pathToFileURL(file).toString(), {
+    method: request.method,
+    headers: range === null ? {} : { range },
+  });
+}
+
 /** @public */
 export const make = Effect.gen(function* () {
   const registered = yield* Ref.make(false);
@@ -257,6 +275,8 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
+              const media = serveLocalMedia(request);
+              if (media !== null) return media;
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(
                   await runPromise(serveDesktopAsset(request, input.assetDirectory)),
