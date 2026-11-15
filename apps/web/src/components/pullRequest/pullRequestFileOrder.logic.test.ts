@@ -90,8 +90,8 @@ describe("orderDiffFiles", () => {
       order([file("src/a.js", ['import Worker from "./z.js?worker";']), file("src/z.js")]),
     ).toEqual(["src/z.js", "src/a.js"]);
     expect(
-      order([file("src/a.ts", ['import url from "~/lib/b.logic?url";']), file("lib/b.logic.ts")]),
-    ).toEqual(["lib/b.logic.ts", "src/a.ts"]);
+      order([file("a.ts", ['import url from "~/lib/b.logic?url";']), file("lib/b.logic.ts")]),
+    ).toEqual(["lib/b.logic.ts", "a.ts"]);
     expect(
       order([file("src/a.ts", ['import { z } from "#internal/z";']), file("src/z.ts")]),
     ).toEqual(["src/z.ts", "src/a.ts"]);
