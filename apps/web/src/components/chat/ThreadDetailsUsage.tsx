@@ -12,6 +12,7 @@ import {
   formatDuration,
   type LimitPace,
   type LimitPoolWindow,
+  limitPoolNotice,
   limitsNotice,
   paceOf,
   remainingPercent,
@@ -74,7 +75,11 @@ export function ThreadDetailsUsage({
         accounts: pooled.members.length,
       }))
     : (limits?.windows ?? []).map((window) => ({ window, accounts: 1 }));
-  const notice = pool ? null : ownNotice;
+  const poolNotice =
+    providerInstanceId !== null && ownNotice !== null && !pool
+      ? limitPoolNotice(providerInstanceId, providers, sources)
+      : null;
+  const notice = pool ? null : (poolNotice ?? ownNotice);
   return (
     <ThreadDetailsSection title="Usage limits" variant="usage">
       {notice || !rows.length ? (
@@ -83,7 +88,9 @@ export function ThreadDetailsUsage({
           icon={<TimerIcon />}
           fill={null}
           tone={null}
-          value="Unavailable"
+          value={
+            poolNotice && !sources.some((source) => source.error) ? "Not linked" : "Unavailable"
+          }
           tooltip={notice ?? "No usage windows reported."}
         />
       ) : (
