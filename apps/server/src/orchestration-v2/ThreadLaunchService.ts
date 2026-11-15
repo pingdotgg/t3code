@@ -1049,7 +1049,6 @@ const make = Effect.gen(function* () {
             Effect.ignoreCause,
             // Callers reach this from finalizers; shutdown must still be able to stop it.
             Effect.interruptible,
-            Effect.forkIn(preparationScope),
           );
         }),
       ),
