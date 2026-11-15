@@ -54,6 +54,7 @@ function StartFromRemoteRow() {
 }
 
 export function WorktreesSettingsPanel() {
+  const { t } = useTranslation("settings");
   const { scope } = useSettingsScope();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
 
