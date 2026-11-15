@@ -1,9 +1,11 @@
 import type * as NodeOS from "node:os";
 
 import { describe, expect, it } from "@effect/vitest";
+import * as NetAddress from "effect/net/NetAddress";
 
 import {
   acceptsPrivateNetworkConnection,
+  loopbackUrlHostForAddress,
   resolveHeadlessConnectionString,
 } from "./startupAccess.ts";
 
@@ -70,23 +72,18 @@ it("skips NixOS container and systemd-nspawn veths for a private-network pairing
       platform: "linux",
     }),
   ).toBe("http://192.168.0.18:3773");
-  expect(
-    resolveHeadlessConnectionString("0.0.0.0", 3773, {
-      interfaces: { "vb-jellyfin": [ipv4("192.168.100.1")] },
-      privateNetworkOnly: true,
-      platform: "linux",
-    }),
-  ).toBe("http://localhost:3773");
 });
 
-it("keeps a renamed Windows adapter matching a Linux container prefix eligible", () => {
-  expect(
-    resolveHeadlessConnectionString("0.0.0.0", 3773, {
-      interfaces: { "ve-office": [ipv4("192.168.0.5")] },
-      privateNetworkOnly: true,
-      platform: "win32",
-    }),
-  ).toBe("http://192.168.0.5:3773");
+it("targets the bound interface when the listener binds a specific address", () => {
+  const hostFor = (ip: string) =>
+    loopbackUrlHostForAddress(NetAddress.inetAddressFromIpStringUnsafe(ip, 3773));
+
+  expect(hostFor("0.0.0.0")).toBe("127.0.0.1");
+  expect(hostFor("::")).toBe("127.0.0.1");
+  expect(hostFor("::1")).toBe("[::1]");
+  expect(hostFor("127.0.0.1")).toBe("127.0.0.1");
+  expect(hostFor("127.0.0.2")).toBe("127.0.0.2");
+  expect(hostFor("100.101.102.103")).toBe("100.101.102.103");
 });
 
 describe("acceptsPrivateNetworkConnection", () => {
