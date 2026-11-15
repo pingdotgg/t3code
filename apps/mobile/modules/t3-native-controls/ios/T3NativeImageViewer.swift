@@ -542,8 +542,13 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       chrome.addSubview(subview)
     }
     let guide = view.safeAreaLayoutGuide
+    let pinned = header.topAnchor.constraint(equalTo: guide.topAnchor)
+    pinned.priority = .defaultHigh
     NSLayoutConstraint.activate([
-      header.topAnchor.constraint(equalTo: guide.topAnchor),
+      pinned,
+      header.topAnchor.constraint(greaterThanOrEqualTo: guide.topAnchor),
+      // An unfolded iPhone Duo puts the status bar in its side bar and has no top inset.
+      header.topAnchor.constraint(greaterThanOrEqualTo: view.topAnchor, constant: 16),
       header.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
       header.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
       toolbar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
