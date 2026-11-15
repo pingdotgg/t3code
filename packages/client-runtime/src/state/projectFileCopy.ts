@@ -119,15 +119,24 @@ function waitForProjectClone(
 ) {
   return new Promise<ProjectCloneSnapshot | null>((resolve) => {
     let seen = false;
+    // The server lists a clone before `start` replies and sends every new subscription the
+    // current list, so absence is trustworthy once seen or after a resubscribe; a cached
+    // list from before the start is not.
+    let resubscribed = false;
     let settled = false;
     let unsubscribe: (() => void) | null = null;
     const check = (
       clones: AsyncResult.AsyncResult<ReadonlyArray<ProjectCloneSnapshot>, unknown>,
     ) => {
-      if (settled || clones._tag !== "Success") return;
+      if (settled) return;
+      if (clones._tag !== "Success") {
+        resubscribed = true;
+        return;
+      }
       const clone = clones.value.find((candidate) => candidate.projectId === projectId);
       if (clone) seen = true;
-      const result = clone?.phase === "done" ? clone : !clone && seen ? null : undefined;
+      const gone = !clone && (seen || resubscribed);
+      const result = clone?.phase === "done" ? clone : gone ? null : undefined;
       if (result === undefined) return;
       settled = true;
       unsubscribe?.();

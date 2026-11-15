@@ -146,4 +146,20 @@ describe("copying files to a cloned project", () => {
     ]);
     expect(writes).toEqual([]);
   });
+
+  it("trusts a missing clone only on a list sent after it started", async () => {
+    const cached = setup();
+    cached.registry.set(cached.clonesAtom, list([]));
+    const copied = cached.copy("");
+    cached.registry.set(cached.clonesAtom, clone("done"));
+    expect(await copied).toEqual(["huge: Too large to copy.", "locked: denied"]);
+
+    const resubscribed = setup();
+    resubscribed.registry.set(resubscribed.clonesAtom, list([]));
+    const missed = resubscribed.copy("");
+    resubscribed.registry.set(resubscribed.clonesAtom, AsyncResult.initial());
+    resubscribed.registry.set(resubscribed.clonesAtom, list([]));
+    expect(await missed).toHaveLength(3);
+    expect(resubscribed.writes).toEqual([]);
+  });
 });
