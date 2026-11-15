@@ -70,6 +70,9 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+// Holds `session/load` after its replay until `_test/finish-load`, and rejects prompts for a
+// session that is not loaded yet, as agents with a slow warmup do.
+const holdLoadSession = process.env.T3_ACP_HOLD_LOAD_SESSION === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
@@ -499,6 +502,8 @@ const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const nativeCancelRequested = yield* Deferred.make<void>();
   const nativeCancelRelease = yield* Deferred.make<void>();
+  const loadSessionRelease = yield* Deferred.make<void>();
+  let sessionLoaded = !holdLoadSession;
   const publishAntigravityCommands = (targetSessionId: string) =>
     agent.client.sessionUpdate({
       sessionId: targetSessionId,
@@ -729,6 +734,10 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: "replay" },
         },
       });
+      if (holdLoadSession) {
+        yield* Deferred.await(loadSessionRelease);
+        sessionLoaded = true;
+      }
       return {
         configOptions: configOptions(),
       };
@@ -868,6 +877,12 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (!sessionLoaded) {
+        return yield* new AcpError.AcpRequestError({
+          code: -32002,
+          errorMessage: `Resource not found: ${requestedSessionId}`,
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       if (idleError === "grok-background" && promptCount === 1) {
@@ -1916,6 +1931,9 @@ const program = Effect.gen(function* () {
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
         explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
       });
+    }
+    if (method === "_test/finish-load") {
+      return Deferred.succeed(loadSessionRelease, undefined).pipe(Effect.as({}));
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));

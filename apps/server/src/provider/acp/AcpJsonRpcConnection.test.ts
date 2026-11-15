@@ -1286,6 +1286,46 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  it.effect("holds the first prompt until session/load replies after a quiet replay", () =>
+    Effect.gen(function* () {
+      const replayed = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_HOLD_LOAD_SESSION: "1", T3_ACP_LOADED_COMMANDS: "plan" },
+        },
+        resumeSessionId: "mock-session-1",
+        protocolLogging: {
+          logIncoming: true,
+          logger: (event) =>
+            event.direction === "incoming" &&
+            event.stage === "decoded" &&
+            JSON.stringify(event.payload).includes("session/update")
+              ? Deferred.succeed(replayed, undefined)
+              : Effect.void,
+        },
+      });
+      const firstPrompt = yield* runtime
+        .start()
+        .pipe(
+          Effect.andThen(runtime.prompt({ prompt: [{ type: "text", text: "hi" }] })),
+          Effect.forkChild,
+        );
+      yield* Deferred.await(replayed);
+      // Round trips order the replay, then any early prompt, ahead of the agent's load reply.
+      yield* runtime.request("_test/environment", {});
+      // The agent is still warming up when the replay-idle gap passes.
+      yield* TestClock.adjust("3 seconds");
+      yield* runtime.request("_test/environment", {});
+      yield* runtime.request("_test/finish-load", {});
+
+      expect(yield* Fiber.await(firstPrompt)).toMatchObject(
+        Exit.succeed({ stopReason: "end_turn" }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("rejects invalid config option values before sending session/set_config_option", () => {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
     const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
