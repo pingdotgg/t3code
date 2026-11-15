@@ -389,12 +389,12 @@ describe("ghost tabs", () => {
     expect(opened && shapeOf(opened)).toEqual([[[["A", "~child!"]]]]);
   });
 
-  it("are kept by opening them again only while focused and drawn as ghosts", () => {
+  it("are kept by opening them again while focused, even as a lone tab", () => {
     const ghostOfD = (layout: LayoutState) => selectFocusedLayoutGhostId(layout, chatOf("D"));
     expect(ghostOfD(layoutOf([[["A", "~D!"]]]))).toBe("D");
     expect(ghostOfD(layoutOf([[["~D"]], [["A!"]]]))).toBeNull();
     expect(ghostOfD(layoutOf([[["A", "D!"]]]))).toBeNull();
-    expect(ghostOfD(layoutOf([[["~D!"]]]))).toBeNull();
+    expect(ghostOfD(layoutOf([[["~D!"]]]))).toBe("D");
     const lineage = openLayoutGhostChat(layoutOf([[["A!"]]]), refOf("A"), {
       kind: "server",
       threadRef: refOf("D"),

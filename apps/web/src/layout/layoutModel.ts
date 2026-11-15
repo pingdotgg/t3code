@@ -1308,7 +1308,6 @@ export function isLayoutGhostTabShown(state: LayoutState, tabId: string): boolea
   );
 }
 
-/** The focused tab's id when it shows `content` as a ghost; opening that content again keeps it. */
 export function selectFocusedLayoutGhostId(
   state: LayoutState,
   content: LayoutTabContent,
@@ -1316,7 +1315,7 @@ export function selectFocusedLayoutGhostId(
   const focused = selectFocusedTab(state);
   return focused !== null &&
     layoutTabContentKey(focused.content) === layoutTabContentKey(content) &&
-    isLayoutGhostTabShown(state, focused.id)
+    isLayoutGhostTab(focused)
     ? focused.id
     : null;
 }

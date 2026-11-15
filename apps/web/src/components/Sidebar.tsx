@@ -8,6 +8,7 @@ import {
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
 import {
+  isLayoutGhostTabShown,
   selectFocusedLayoutGhostId,
   selectFocusedTab,
   selectLayoutThreadKeys,
@@ -1126,7 +1127,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       : null;
   const [renamingTitle, setRenamingTitle] = useState("");
   const renamingOriginalTitleRef = useRef("");
-  const threadKeptByClickRef = useRef<string | null>(null);
+  const drawnGhostKeptByClickRef = useRef<string | null>(null);
   const settlingThreadKeysRef = useRef(new Set<string>());
   const threadListRef = useRef<HTMLUListElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
@@ -1595,21 +1596,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
-  const keepFocusedGhostChat = (threadRef: ScopedThreadRef) => {
+  const keepFocusedGhostChatWasDrawn = (threadRef: ScopedThreadRef) => {
     const store = useLayoutStore.getState();
     const ghostId = selectFocusedLayoutGhostId(store.layout, {
       kind: "chat",
       target: { kind: "server", threadRef },
     });
     if (ghostId === null) return false;
+    const wasShown = isLayoutGhostTabShown(store.layout, ghostId);
     store.keepTab(ghostId);
-    return true;
+    return wasShown;
   };
 
   const openThreadFromRow = (threadRef: ScopedThreadRef) => {
-    const kept = keepFocusedGhostChat(threadRef);
+    const keptDrawnGhost = keepFocusedGhostChatWasDrawn(threadRef);
     void navigateToThread(threadRef);
-    return kept;
+    return keptDrawnGhost;
   };
 
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
@@ -1754,14 +1756,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         openThreadToTheSide(threadRef);
         return;
       }
-      threadKeptByClickRef.current = openThreadFromRow(threadRef) ? threadKey : null;
+      drawnGhostKeptByClickRef.current = openThreadFromRow(threadRef) ? threadKey : null;
     },
   );
 
   const handleThreadDoubleClick = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
-    const keptByClick = threadKeptByClickRef.current === scopedThreadKey(threadRef);
-    threadKeptByClickRef.current = null;
-    if (keptByClick || keepFocusedGhostChat(threadRef)) return;
+    const keptDrawnGhostByClick = drawnGhostKeptByClickRef.current === scopedThreadKey(threadRef);
+    drawnGhostKeptByClickRef.current = null;
+    if (keepFocusedGhostChatWasDrawn(threadRef) || keptDrawnGhostByClick) return;
     startThreadRename(threadRef, title);
   });
 
