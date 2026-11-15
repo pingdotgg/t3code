@@ -1048,6 +1048,56 @@ it.layer(
           yield* sql`SELECT * FROM orchestration_v2_projection_threads`,
           threadsBefore,
         );
+        for (const [index, scenario] of [
+          {
+            title: undefined,
+            groupingIdentity: undefined,
+            expectedTitle: "Renamed",
+            expectedIdentity: null,
+          },
+          {
+            title: " Restored ",
+            groupingIdentity: identity,
+            expectedTitle: "Restored",
+            expectedIdentity: identity,
+          },
+          {
+            title: undefined,
+            groupingIdentity: identity,
+            expectedTitle: "Restored",
+            expectedIdentity: identity,
+          },
+          {
+            title: " Again ",
+            groupingIdentity: undefined,
+            expectedTitle: "Again",
+            expectedIdentity: identity,
+          },
+        ].entries()) {
+          yield* service.update({
+            commandId: CommandId.make(`group-archive-${index}`),
+            projectId,
+            archived: true,
+          });
+          const restored = yield* service.register({
+            commandId: CommandId.make(`group-restore-${index}`),
+            projectId: ProjectId.make(`unused-restore-${index}`),
+            workspaceRoot: created.workspaceRoot,
+            title: scenario.title,
+            groupingIdentity: scenario.groupingIdentity,
+          });
+          assert.equal(restored.id, created.id);
+          assert.equal(restored.workspaceRoot, created.workspaceRoot);
+          assert.equal(restored.createdAt, created.createdAt);
+          assert.isNull(restored.archivedAt);
+          assert.equal(restored.title, scenario.expectedTitle);
+          assert.equal(restored.groupingIdentity, scenario.expectedIdentity);
+        }
+        assert.lengthOf((yield* service.snapshot).projects, 1);
+        assert.deepEqual(
+          yield* sql`SELECT * FROM orchestration_v2_projection_threads`,
+          threadsBefore,
+        );
       }),
   );
 });

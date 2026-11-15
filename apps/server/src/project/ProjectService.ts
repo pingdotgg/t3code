@@ -494,6 +494,24 @@ export const make = Effect.gen(function* () {
       });
       const existing = yield* getByWorkspaceRoot(workspaceRoot);
       if (Option.isSome(existing)) {
+        if (existing.value.archivedAt !== null) {
+          const title = input.title?.trim();
+          if (title !== undefined && title.length === 0) {
+            return yield* new ProjectInvalidError({
+              projectId: input.projectId,
+              detail: "Project title cannot be empty.",
+            });
+          }
+          return yield* update({
+            commandId: input.commandId,
+            projectId: existing.value.id,
+            archived: false,
+            ...(title === undefined ? {} : { title }),
+            ...(input.groupingIdentity === undefined
+              ? {}
+              : { groupingIdentity: input.groupingIdentity }),
+          });
+        }
         if (input.groupingIdentity === undefined) {
           return yield* new ProjectConflictError({
             projectId: input.projectId,

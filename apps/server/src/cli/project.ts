@@ -516,7 +516,7 @@ const projectAddCommand = Command.make("add", {
           });
           return project.id === projectId
             ? `Added project ${project.id} (${project.title}) at ${project.workspaceRoot}.`
-            : `Set grouping identity for project ${project.id}.`;
+            : `Updated project ${project.id} (${project.title}) at ${project.workspaceRoot}.`;
         }),
       );
     }),
