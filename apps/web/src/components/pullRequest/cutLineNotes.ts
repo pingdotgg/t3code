@@ -1,10 +1,6 @@
-// The note the server appends to a withheld file's line it cut short.
-const CUT_LINE_NOTE = / …\[[\d,]+ more characters\]$/;
-const HIGHLIGHT_NAME = "t3-cut-line-note";
+import { cutLineNoteStart } from "@t3tools/shared/diffCutLines";
 
-export function hasCutLineNotes(patch: string): boolean {
-  return new RegExp(CUT_LINE_NOTE.source, "m").test(patch);
-}
+const HIGHLIGHT_NAME = "t3-cut-line-note";
 
 /**
  * Goes in the diff's shadow root, where the highlighted text lives. A file with cut lines cannot
@@ -40,12 +36,12 @@ export function markCutLineNotes(fileContainer: HTMLElement): void {
   }
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+    if (marked.has(text)) continue;
     const value = text.nodeValue ?? "";
-    if (marked.has(text) || !value.endsWith("more characters]")) continue;
-    const note = CUT_LINE_NOTE.exec(value);
-    if (note === null) continue;
+    const noteStart = cutLineNoteStart(value);
+    if (noteStart === null) continue;
     const range = new Range();
-    range.setStart(text, note.index + 1);
+    range.setStart(text, noteStart);
     range.setEnd(text, value.length);
     highlight.add(range);
     marked.add(text);

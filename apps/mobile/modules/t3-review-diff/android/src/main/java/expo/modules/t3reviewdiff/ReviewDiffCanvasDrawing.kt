@@ -404,6 +404,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     canvas: Canvas,
     content: String,
     tokens: List<DiffToken>?,
+    noteStart: Int?,
     codeX: Float,
     baseline: Float,
     style: DiffStyle,
@@ -421,8 +422,8 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     var line = 0
     var x = codeX
     var column = 0
-    runs.forEach { run ->
-      configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+    splitAtNote(runs, noteStart).forEach { (run, note) ->
+      configureCodePaint(if (note) theme.warningText else run.color ?: theme.text, run.fontStyle, style)
       var start = 0
       while (start < run.content.length) {
         while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
@@ -434,8 +435,19 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
           lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
         ) {
+          val runWidth = textPaint.measureText(run.content, start, end)
+          if (note) {
+            backgroundPaint.color = theme.warningBackground
+            canvas.drawRect(
+              x,
+              lineBaseline + textPaint.fontMetrics.ascent,
+              x + runWidth,
+              lineBaseline + textPaint.fontMetrics.descent,
+              backgroundPaint,
+            )
+          }
           canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += textPaint.measureText(run.content, start, end)
+          x += runWidth
         }
         start = end
       }
@@ -530,5 +542,26 @@ private object ReviewDiffTypefaces {
     "medium", "semibold", "semi-bold" -> medium
     "bold", "heavy", "black" -> bold
     else -> regular
+  }
+}
+
+/** Splits color runs where a cut line's note starts; the flag marks the note's runs. */
+private fun splitAtNote(runs: List<DiffToken>, noteStart: Int?): List<Pair<DiffToken, Boolean>> {
+  if (noteStart == null) return runs.map { it to false }
+  return buildList {
+    var offset = 0
+    for (run in runs) {
+      val end = offset + run.content.length
+      when {
+        end <= noteStart -> add(run to false)
+        offset >= noteStart -> add(run to true)
+        else -> {
+          val cut = noteStart - offset
+          add(run.copy(content = run.content.substring(0, cut)) to false)
+          add(run.copy(content = run.content.substring(cut)) to true)
+        }
+      }
+      offset = end
+    }
   }
 }

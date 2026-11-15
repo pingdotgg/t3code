@@ -143,7 +143,8 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
-import { CUT_LINES_CSS, hasCutLineNotes, markCutLineNotes } from "./cutLineNotes";
+import { hasCutLines } from "@t3tools/shared/diffCutLines";
+import { CUT_LINES_CSS, markCutLineNotes } from "./cutLineNotes";
 import {
   nextPendingReviewCommentId,
   pullRequestReviewKey,
@@ -688,7 +689,7 @@ function PullRequestCodeTab({
     const file = parsed?.kind === "files" ? parsed.files[0] : undefined;
     if (file !== undefined && file.hunks.length > 0) {
       withheldFiles.set(path, file);
-      if (hasCutLineNotes(data.patch)) cutFiles.add(file);
+      if (hasCutLines(data.patch)) cutFiles.add(file);
     } else withheldStatuses.set(path, "empty");
   });
   // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again

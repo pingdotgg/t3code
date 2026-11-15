@@ -61,6 +61,7 @@ class T3ReviewDiffModule : Module() {
         "onToggleViewedFile",
         "onPressLine",
         "onToggleComment",
+        "onPressNotice",
       )
 
       AsyncFunction("scrollToFile") { view: T3ReviewDiffView, fileId: String, animated: Boolean ->

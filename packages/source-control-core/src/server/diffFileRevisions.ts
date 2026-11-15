@@ -1,3 +1,4 @@
+import { cutLineNote } from "@t3tools/shared/diffCutLines";
 import { unquoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 
 const ENTRY = "diff --git ";
@@ -158,8 +159,7 @@ export function truncateLongDiffLines(patch: string, maxLength: number): string 
       if (line.startsWith(ENTRY)) inBody = false;
       else if (line.startsWith("@@")) inBody = true;
       if (!inBody || line.length <= maxLength + 1) return line;
-      const cut = (line.length - 1 - maxLength).toLocaleString("en-US");
-      return `${line.slice(0, maxLength + 1)} …[${cut} more characters]`;
+      return `${line.slice(0, maxLength + 1)}${cutLineNote(line.length - 1 - maxLength)}`;
     })
     .join("\n");
 }
