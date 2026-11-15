@@ -29,7 +29,8 @@ const redactTreeUrl = (value: string, names: ReadonlyArray<string | RegExp>) => 
 };
 
 const redactText = (text: string, names: ReadonlyArray<string | RegExp>) => {
-  if (URL.canParse(text, "https://preview.invalid") && !/\s/.test(text))
+  const firstAbsoluteUrl = text.search(/\b(?:https?|wss?):\/\//i);
+  if (firstAbsoluteUrl <= 0 && URL.canParse(text, "https://preview.invalid") && !/\s/.test(text))
     return UrlParams.redactUrl(text, names);
   return text
     .split("\n")

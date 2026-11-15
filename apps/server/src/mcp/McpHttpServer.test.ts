@@ -213,6 +213,8 @@ it.effect.each([
             "token=ordinary",
           ],
           downloadUrl: "//example.test/file?token=fixture-relative&mode=preview",
+          compactUrls: JSON.stringify([harmless, url]),
+          fragmentUrl: `#${url}`,
           harmless,
         };
         const original = JSON.stringify(response);
@@ -279,6 +281,8 @@ it.effect.each([
               "token=ordinary",
             ],
             downloadUrl: "//example.test/file?token=REDACTED&mode=preview",
+            compactUrls: JSON.stringify([harmless, redacted]),
+            fragmentUrl: `#${redacted}`,
           });
           expect(result.structuredContent).toMatchObject({ toolIcon: { pageUrl: redacted } });
         }
