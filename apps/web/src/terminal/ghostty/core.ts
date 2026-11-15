@@ -162,6 +162,10 @@ export interface GhosttyMouseInput {
   readonly anyButtonPressed: boolean;
 }
 
+// Ghostty's legacy modified F3 is CSI 13;m ~, but the PTY advertises xterm-256color, whose
+// terminfo (kf15, kf27, ...) expects xterm's CSI 1;m R. Kitty keyboard mode keeps CSI 13;m ~.
+const LEGACY_MODIFIED_F3 = /^\x1b\[13;(\d+)~$/;
+
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
 const encoder = new TextEncoder();
 
@@ -600,7 +604,9 @@ export class GhosttyTerminalCore {
     );
     this.runtime.call("ghostty_wasm_free_usize", written);
     if (textPointer !== 0) this.runtime.free(textPointer, textBytes.length);
-    return encoded;
+    return LEGACY_MODIFIED_F3.test(encoded) && this.kittyKeyboardFlags() === 0
+      ? encoded.replace(LEGACY_MODIFIED_F3, "\x1b[1;$1R")
+      : encoded;
   }
 
   encodePaste(data: string): string {
@@ -1031,6 +1037,12 @@ export class GhosttyTerminalCore {
     ]) {
       this.runtime.freeOpaque(slot);
     }
+  }
+
+  private kittyKeyboardFlags(): number {
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    this.runtime.call("ghostty_terminal_get", this.terminal, 8, this.scratch);
+    return this.runtime.bytes(this.scratch, 1)[0]!;
   }
 
   /** Reads a DEC private mode; an unknown mode reads as off. */

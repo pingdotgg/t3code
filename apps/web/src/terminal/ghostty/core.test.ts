@@ -165,6 +165,41 @@ describe("GhosttyTerminalCore snapshots", () => {
     },
   );
 
+  // Legacy rows match `infocmp -1 xterm-256color` (kf3, kf15, kf27, kf39, kf51); the Kitty row
+  // matches the Kitty keyboard protocol's `CSI 13 ~` for F3.
+  it.each([
+    { mode: "", key: "F3", mods: {}, expected: "\x1bOR" },
+    { mode: "", key: "F3", mods: { shiftKey: true }, expected: "\x1b[1;2R" },
+    { mode: "", key: "F3", mods: { altKey: true }, expected: "\x1b[1;3R" },
+    { mode: "", key: "F3", mods: { ctrlKey: true }, expected: "\x1b[1;5R" },
+    { mode: "", key: "F3", mods: { ctrlKey: true, shiftKey: true }, expected: "\x1b[1;6R" },
+    { mode: "\x1b[>4;2m", key: "F3", mods: { ctrlKey: true }, expected: "\x1b[1;5R" },
+    { mode: "\x1b[>1u", key: "F3", mods: { ctrlKey: true }, expected: "\x1b[13;5~" },
+    { mode: "", key: "F1", mods: { ctrlKey: true }, expected: "\x1b[1;5P" },
+    { mode: "", key: "F4", mods: { ctrlKey: true }, expected: "\x1b[1;5S" },
+    { mode: "", key: "F5", mods: { ctrlKey: true }, expected: "\x1b[15;5~" },
+  ])(
+    "encodes $key with modifiers $mods in keyboard mode $mode",
+    async ({ mode, key, mods, expected }) => {
+      const core = await createCore();
+      core.write(mode);
+      const event = {
+        code: key,
+        key,
+        repeat: false,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        isComposing: false,
+        getModifierState: () => false,
+        ...mods,
+      } as unknown as KeyboardEvent;
+
+      expect(core.encodeKey(event)).toBe(expected);
+    },
+  );
+
   it.each(["", "\x1b[>1u"])("encodes macOS Option text with keyboard mode %j", async (mode) => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const core = await createCore();
