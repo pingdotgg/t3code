@@ -309,8 +309,10 @@ it.live("answers content searches with git grep while a slow content index build
       "const Needle = 1;\r\nneedles(a.b);\nnone\n",
     );
     yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "needle\n");
-    // Left out of fff's index (as `.ignore` would), so git results must leave it out too.
-    yield* fileSystem.writeFileString(path.join(cwd, "generated.txt"), "needle\n");
+    // fff leaves out what `.ignore` excludes, so git results must leave it out too.
+    yield* fileSystem.writeFileString(path.join(cwd, ".ignore"), "out/\n");
+    yield* fileSystem.makeDirectory(path.join(cwd, "out/deep"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(cwd, "out/deep/g.txt"), "needle\n");
 
     let isWarmupComplete = false;
     const grep = vi.fn(async () => ({
@@ -329,11 +331,7 @@ it.live("answers content searches with git grep while a slow content index build
       waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
       getScanProgressAsync: async () => ({
         ok: true as const,
-        value: { isScanning: false, isWarmupComplete, scannedFilesCount: 1 },
-      }),
-      fileSearchAsync: async () => ({
-        ok: true as const,
-        value: { items: [fileItem("src/a.ts")], scores: [], totalMatched: 1 },
+        value: { isScanning: false, isWarmupComplete },
       }),
       watch: () => ({ ok: true as const, value: () => undefined }),
       grepAsync: grep,
@@ -390,6 +388,7 @@ it.live("answers content searches with git grep while a slow content index build
         (match) => match.matchRanges,
       ),
     ).toEqual([
+      [{ start: 4, end: 6 }],
       [
         { start: 6, end: 8 },
         { start: 10, end: 12 },

@@ -16,7 +16,6 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
@@ -702,7 +701,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         ],
         cwd,
         allowNonZeroExit: true,
-        timeoutMs: 10_000,
+        // Defender scanning fff's warmup reads slows git too; a late answer beats a failure.
+        timeoutMs: 30_000,
         maxOutputBytes: GIT_GREP_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         appendTruncationMarker: false,
@@ -710,28 +710,39 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       .pipe(Effect.option);
   });
 
-  // The files fff indexed, so git results keep fff's scope (.ignore, hidden files, size limits).
-  const listIndexedFiles = Effect.fn("WorkspaceSearchIndex.listIndexedFiles")(function* () {
-    const deadline = (yield* Clock.currentTimeMillis) + WORKSPACE_INDEX_SCAN_TIMEOUT_MS;
-    while (true) {
-      const progress = yield* Effect.promise(() =>
-        finder.getScanProgressAsync().catch(() => undefined),
-      );
-      if (progress?.ok && !progress.value.isScanning) {
-        const result = yield* Effect.promise(() =>
-          finder
-            .fileSearchAsync("", { pageSize: progress.value.scannedFilesCount + 1 })
-            .catch(() => undefined),
-        );
-        if (!result?.ok) return Option.none<ReadonlySet<string>>();
-        return Option.some<ReadonlySet<string>>(
-          new Set(result.value.items.map((item) => toPosixPath(item.relativePath, hostIsWindows))),
-        );
+  // fff leaves out what `.ignore` files exclude, which git cannot evaluate; the nearest
+  // `.ignore` that matches a path or one of its folders decides, as in decideByIgnoreFiles.
+  const makeIgnoreFileFilter = () => {
+    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
+    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
+      directory: string,
+    ) {
+      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
+      const contents = yield* fileSystem
+        .readFileString(path.join(cwd, directory, ".ignore"))
+        .pipe(Effect.option);
+      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
+      ignoreFiles.set(directory, file);
+      return file;
+    });
+    return Effect.fn("WorkspaceSearchIndex.isExcludedByIgnoreFiles")(function* (
+      relativePath: string,
+    ) {
+      const segments = relativePath.split("/");
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        const candidate = segments.slice(0, depth).join("/");
+        for (let ancestor = depth - 1; ancestor >= 0; ancestor -= 1) {
+          const directory = segments.slice(0, ancestor).join("/");
+          const file = yield* readIgnoreFile(directory);
+          const relative = directory ? candidate.slice(directory.length + 1) : candidate;
+          const decision = file?.decide(relative, depth < segments.length);
+          if (decision === "ignored") return true;
+          if (decision === "included") break;
+        }
       }
-      if ((yield* Clock.currentTimeMillis) >= deadline) return Option.none<ReadonlySet<string>>();
-      yield* Effect.sleep("50 millis");
-    }
-  });
+      return false;
+    });
+  };
 
   // fff's grep before its content index is ready opens every file itself, as slowly as the build.
   // None when git cannot search this folder (not a repository, git missing, no PCRE for a regex).
@@ -743,7 +754,6 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       maxMatchesPerFile: CONTENT_SEARCH_MAX_MATCHES_PER_FILE,
       onlyMatching: false,
     };
-    const indexedFilesFiber = yield* Effect.forkChild(listIndexedFiles());
     let regexMode = input.useRegex;
     let regexFallbackError: string | undefined;
     let result = yield* runGitGrep(input.query, { ...options, regexMode });
@@ -788,8 +798,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       ? undefined
       : new RegExp(escapeRegExp(input.query), input.caseSensitive ? "gu" : "giu");
 
-    const indexedFiles = yield* Fiber.join(indexedFilesFiber);
-    if (Option.isNone(indexedFiles)) return Option.none();
+    const isExcludedByIgnoreFiles = makeIgnoreFileFilter();
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     let rangesCutOff = false;
     for (const record of parseGitGrepRecords(
@@ -798,7 +807,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       result.value.stdoutTruncated,
     )) {
       const [relativePath, lineNumber, rawLine] = record as [string, string, string];
-      if (!indexedFiles.value.has(relativePath)) continue;
+      if (yield* isExcludedByIgnoreFiles(relativePath)) continue;
       const key = `${relativePath}\0${lineNumber}`;
       // Lines past the cut-off of a truncated ranges run have no ranges; stop there instead.
       if (rangesTruncated && !regexMatches.has(key)) {
