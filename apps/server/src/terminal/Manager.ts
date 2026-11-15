@@ -3699,7 +3699,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
     session.inputCount += 1;
     yield* Effect.try({
-      try: () => process.write(input.data),
+      try: () => process.write(PtyAdapter.ptyInput(input.data, input.binary)),
       catch: (cause) =>
         new TerminalWriteError({
           threadId: input.threadId,
