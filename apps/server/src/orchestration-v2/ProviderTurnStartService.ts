@@ -133,6 +133,9 @@ const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
 
+/** Sent in place of a native resume the provider does not support. */
+const MANUAL_RESUME_CONTINUE_TEXT = "Continue where you left off.";
+
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
  * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
@@ -942,10 +945,17 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
+      // Fork: Resume on a provider with no native resume (Grok, OpenCode, Antigravity, or a run
+      // that moved to another provider) used to fail with "Native resume is unavailable". It now
+      // starts an ordinary turn that asks the agent to continue.
+      const continueInstead =
+        manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined;
+      const userText = continueInstead
+        ? MANUAL_RESUME_CONTINUE_TEXT
+        : projectComposerContextForProvider({
+            text: providerMessage.text,
+            records: providerMessage.context?.records ?? [],
+          });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -1708,17 +1718,6 @@ export const layer: Layer.Layer<
         legacyInputRunIds,
         budget,
       } = handoffContext;
-      if (manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined) {
-        yield* settleStartFailure({
-          signal: "resume-unsupported",
-          title: "Native resume is unavailable",
-          error: new ProviderAdapter.ProviderResumeUnsupportedError({
-            driver: session.driver,
-            providerThreadId: providerThread.id,
-          }),
-        });
-        return;
-      }
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
@@ -2039,7 +2038,7 @@ export const layer: Layer.Layer<
               .filter((turn) => turn.providerThreadId === providerThread.id)
               .map((turn) => turn.ordinal),
           ) + 1,
-        resume: manualResume && unsentResumeMessage === undefined,
+        resume: manualResume && unsentResumeMessage === undefined && !continueInstead,
         nativeThreadHasTurns:
           nativeInputRunIds.size > 0 ||
           (legacyInputRunIds.size > 0 &&

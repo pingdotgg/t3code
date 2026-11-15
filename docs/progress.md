@@ -91,3 +91,11 @@
 - Numbers: autoModel 14/14, AutoFailoverService 7/7, server typecheck 0 errors.
 - Cost: moving back up is one more provider handoff (a thread summary). It happens once per reset, on the next message.
 - Next: build the PC desktop app from `tomas/pc-nightly` and install it.
+
+## 2026-11-15: Resume works on every provider; limited hand-picked threads move to Auto
+
+- What happened (PC, thread "Port Hub T3 App Improvements to PC"): Claude hit its 5-hour limit. The thread was not on Auto (it started on the Auto instance before Auto existed, with a plain Opus model), so no failover ran. The composer was switched to Grok and Resume pressed. Grok has no native resume, so each Resume failed at once with "Native resume is unavailable". The one "continue" that reached Grok ran a few tool calls, then hit Grok's free limit, which T3 cannot see in usage windows. Every later "continue" went to Grok again and failed. Result: about ten turns with no answer.
+- Fix 1 (`ProviderTurnStartService`): Resume on a provider without native resume now starts an ordinary turn with "Continue where you left off." (plus the handoff context when the provider changed) instead of failing. Upstream's test "refuses unsupported resume" was rewritten to the new behavior.
+- Fix 2 (`AutoFailoverService`): a thread not on Auto that hits a usage limit now fails over through Auto at the level its model implies (Fable/Sol/Astra high; Sonnet/Haiku/Flash/OpenCode/Luna low; else medium). Delegated threads not on Auto are left alone: their parent chose the model.
+- Setup repo: `fallbackModelSelection` (Grok) is cleared by `apply-auto-settings.py`; the health check warns while it is set.
+- Numbers: AutoFailoverService 8/8; ProviderTurnStartService 65/69, the same 4 failures as before the change (Windows-only git/startup tests); server typecheck 0 errors.
