@@ -189,6 +189,8 @@ export function markdownHtmlContent(
     readonly inTableCell?: boolean;
     /** Rendered text before `content`; defaults to the start of a line. */
     readonly before?: string;
+    /** A block here whose only content is an image reaches the React image slot. */
+    readonly slotHost?: boolean;
   } = {},
 ): string {
   const tags = markdownHtmlTags(content);
@@ -207,9 +209,12 @@ export function markdownHtmlContent(
   };
   for (const match of tags) {
     result += nextText(content.slice(end, match.index));
+    const tagEnd = match.index + match[0].length;
     const replacement = htmlTagMarkdown(match[0], anchors, {
       inTableCell: options.inTableCell,
-      lineStart: atLineStart((options.before ?? "\n") + result),
+      drawnAsBlock:
+        atLineStart((options.before ?? "\n") + result) &&
+        !(options.slotHost && aloneInBlock(result, content.slice(tagEnd))),
     });
     if (replacement) dropSpace = false;
     else if (/^<img\b/i.test(match[0])) dropSpace = endsWithOpener(result);
@@ -219,7 +224,7 @@ export function markdownHtmlContent(
       anchors.open > 0 && /[\s[]/.test(result.at(-1) ?? "")
         ? replacement.replace(/^ /, "")
         : replacement;
-    end = match.index + match[0].length;
+    end = tagEnd;
   }
   return result + nextText(content.slice(end));
 }
@@ -253,6 +258,11 @@ function atLineStart(text: string): boolean {
   return /(?:^|\n)[ \t*_]*$/.test(text);
 }
 
+function aloneInBlock(before: string, after: string): boolean {
+  const rest = after.split(/<\/?(?:p|div|details|summary)\b|\n[ \t]*\n/i)[0] ?? "";
+  return /(?:^|\n[ \t]*\n)[ \t]*$/.test(before) && !rest.replace(/<[^>]*>/g, "").trim();
+}
+
 /**
  * True when a space after `text` is removable: whitespace, or an emphasis delimiter that opens.
  * A delimiter touching the end of a word closes it, and an escaped one is literal.
@@ -265,7 +275,7 @@ function endsWithOpener(text: string): boolean {
 function htmlTagMarkdown(
   tag: string,
   anchors: AnchorState,
-  options: { readonly inTableCell?: boolean; readonly lineStart: boolean },
+  options: { readonly inTableCell?: boolean; readonly drawnAsBlock: boolean },
 ): string {
   if (tag.startsWith("<!--")) return "";
   if (ANCHOR_TAG.test(tag)) {
@@ -278,7 +288,7 @@ function htmlTagMarkdown(
     const src = attribute(tag, "src");
     if (!src) return "";
     // Native draws an image that starts a line as a 200pt block, so those icons keep only their text.
-    if (options.lineStart && iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
+    if (options.drawnAsBlock && iconSized(tag)) return markdownText(attribute(tag, "alt") ?? "");
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
@@ -296,8 +306,15 @@ function htmlTagMarkdown(
 export function markdownWithHtml(markdown: string): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
-  const visit = (node: MarkdownNode, inTableCell: boolean, inLink: boolean) => {
+  const visit = (
+    node: MarkdownNode,
+    inTableCell: boolean,
+    inLink: boolean,
+    before = "\n",
+    inSlotContainer = false,
+  ) => {
     if (!("children" in node)) return;
+    const slotHost = node.type === "root" || (node.type === "blockquote" && inSlotContainer);
     inTableCell ||= node.type === "tableCell";
     const children: readonly MarkdownNode[] = node.children;
     // Inline HTML arrives one tag per node, so anchors pair across phrasing siblings.
@@ -314,7 +331,7 @@ export function markdownWithHtml(markdown: string): string {
             ),
           );
     // An icon that is its own node is dropped here, so the space after it is trimmed across siblings.
-    let previous = "\n";
+    let previous = before;
     let dropSpace = false;
     for (const child of children) {
       const start = child.position?.start.offset;
@@ -332,12 +349,19 @@ export function markdownWithHtml(markdown: string): string {
         continue;
       }
       if (child.type !== "html") {
+        // Phrasing containers continue the line they sit on.
+        const phrasing = "children" in child && !BLOCK_CONTAINERS.has(child.type);
+        visit(child, inTableCell, linkLabel, phrasing ? previous : "\n", slotHost);
         previous += "x";
         dropSpace = false;
-        visit(child, inTableCell, linkLabel);
         continue;
       }
-      const content = markdownHtmlContent(child.value, { anchors, inTableCell, before: previous });
+      const content = markdownHtmlContent(child.value, {
+        anchors,
+        inTableCell,
+        before: previous,
+        slotHost,
+      });
       if (content) {
         previous += content;
         dropSpace = false;
@@ -352,6 +376,17 @@ export function markdownWithHtml(markdown: string): string {
   visit(parser.parse(markdown), false, false);
   return applyMarkdownEdits(markdown, edits);
 }
+
+const BLOCK_CONTAINERS = new Set([
+  "blockquote",
+  "heading",
+  "list",
+  "listItem",
+  "paragraph",
+  "table",
+  "tableCell",
+  "tableRow",
+]);
 
 /** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
 export function markdownReferenceDefinitions(markdown: string): string[] {

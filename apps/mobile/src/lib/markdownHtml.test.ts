@@ -39,6 +39,20 @@ describe("HTML in native Markdown", () => {
         '<img src="https://example.com/ok.png" width="14" alt="Passed"> 3 and <img width="16" src="https://example.com/ok.png" alt="Passed">',
       ),
     ).toBe("Passed 3 and ![Passed](<https://example.com/ok.png>)");
+    expect(
+      markdownWithHtml(
+        'Status: **<img src="https://example.com/ok.png" width="16" alt="Passed"> ready**',
+      ),
+    ).toBe("Status: **![Passed](<https://example.com/ok.png>) ready**");
+    // An image alone in its paragraph is drawn by the React image slot at its own size.
+    expect(markdownWithHtml('<img src="https://example.com/logo.png" width="24" alt="">')).toBe(
+      "![](<https://example.com/logo.png>)",
+    );
+    expect(
+      markdownWithHtml(
+        '<p align="center"><img src="https://example.com/logo.png" width="20" alt="Logo"></p>',
+      ).trim(),
+    ).toBe("![Logo](<https://example.com/logo.png>)");
   });
 
   it("keeps the alt text of SVG images the native renderer would draw as empty boxes", () => {
