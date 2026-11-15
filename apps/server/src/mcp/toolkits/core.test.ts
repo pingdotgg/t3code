@@ -530,6 +530,55 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
   );
 });
 
+it.effect("t3_queue list says a queued message is held and will not start on its own", () => {
+  const projection = McpToolAccessTestkit.idleThreadProjection(
+    McpToolAccessTestkit.liveThreadShell(threadId),
+  );
+  const requestedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  const held = {
+    ...projection,
+    runs: [
+      {
+        id: "run:held",
+        ordinal: 2,
+        status: "queued",
+        queueHeld: true,
+        userMessageId: "message:held",
+        requestedAt,
+      },
+    ],
+    messages: [{ id: "message:held", text: "Second message" }],
+  };
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "t3_queue", arguments: { action: "list" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.structuredContent).toMatchObject({
+      items: [{ queuedRunId: "run:held", held: true }],
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: () => Effect.succeed(held as never),
+            getThreadRecords: () => Effect.succeed(held as never),
+            getMessagesById: () =>
+              Effect.succeed(new Map([["message:held", held.messages[0]]]) as never),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("handoff analytics read only the caller's active run and its message", () => {
   const reads: Array<string> = [];
   const recorded = Deferred.makeUnsafe<void>();
