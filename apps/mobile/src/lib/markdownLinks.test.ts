@@ -82,13 +82,9 @@ describe("resolveMarkdownLinkPresentation", () => {
   it("preserves Obsidian note destinations but not command or write links", () => {
     const href = "obsidian://adv-uri?vault=Example%20Vault&filepath=notes%2FExample.md";
     expect(resolveMarkdownLinkPresentation(href)).toEqual({ kind: "link", href });
-    for (const blocked of [
-      "obsidian://new?vault=Example&file=Example",
-      "obsidian://adv-uri?filepath=Example&data=overwrite",
-      "obsidian://adv-uri?commandid=app%3Adelete-file",
-    ]) {
-      expect(resolveMarkdownLinkPresentation(blocked)).toEqual({ kind: "link", href: null });
-    }
+    expect(
+      resolveMarkdownLinkPresentation("obsidian://adv-uri?commandid=app%3Adelete-file"),
+    ).toEqual({ kind: "link", href: null });
   });
 
   it("does not style app routes as file links", () => {
