@@ -1167,13 +1167,20 @@ export function ProviderInstanceCard({
       <div
         data-slot="provider-card"
         data-selected={selected ? "" : undefined}
+        onClickCapture={(event) => {
+          if (
+            event.target instanceof Element &&
+            !event.target.closest('button, input, [role="switch"], [data-slot="popover-trigger"]')
+          ) {
+            onConfigure?.();
+          }
+        }}
         className={cn(
           "relative flex items-start gap-2.5 rounded-row p-2.5",
           selected ? "surface-selected-soft" : "hover:surface-ghost-hover",
         )}
       >
-        {/* The select button sits under the text rather than around it, so the
-            email, status and enable controls stay separate hit targets. */}
+        {/* The overlay avoids nesting the email and enable controls inside a button. */}
         <button
           type="button"
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

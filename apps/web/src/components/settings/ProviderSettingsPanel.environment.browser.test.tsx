@@ -482,6 +482,40 @@ describe("EnvironmentProviderSettings provider list", () => {
 
     await expect.element(select).toHaveAttribute("aria-current", "true");
   });
+
+  it("selects from status text while keeping the enable switch independent", async () => {
+    await setup();
+    state.settings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [ProviderInstanceId.make("claudeAgent")]: {
+          driver: ProviderDriverKind.make("claudeAgent"),
+          enabled: true,
+        },
+      },
+    };
+    await setProviders([
+      {
+        ...provider(),
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        auth: { status: "authenticated", label: "Claude account" },
+      },
+    ]);
+    await using _screen = await render(panel());
+    const select = page.getByRole("button", { name: "Configure Claude" });
+    const row = page.elementLocator(select.element().closest('[data-slot="provider-card"]')!);
+    await expect.element(select).not.toHaveAttribute("aria-current");
+
+    await userEvent.click(row.getByText("Authenticated", { exact: true }));
+    await expect.element(select).toHaveAttribute("aria-current", "true");
+    expect(state.mutateProviderInstance).not.toHaveBeenCalled();
+
+    await userEvent.click(page.getByRole("button", { name: "Configure Codex" }));
+    await userEvent.click(row.getByRole("switch", { name: "Enable Claude" }));
+    await expect.element(select).not.toHaveAttribute("aria-current");
+    expect(state.mutateProviderInstance).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("EnvironmentProviderSettings instance removal", () => {
