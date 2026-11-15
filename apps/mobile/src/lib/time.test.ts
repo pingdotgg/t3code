@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { formatWorkingDuration, msUntilRelativeTimeChange, relativeTime } from "./time";
+import {
+  byTimestamp,
+  compareTimestamps,
+  formatWorkingDuration,
+  msUntilRelativeTimeChange,
+  relativeTime,
+} from "./time";
 
 const at = "2026-10-19T12:00:00.000Z";
 const timestamp = Date.parse(at);
@@ -11,6 +17,36 @@ it.each([
   [3_725_900, "1h 2m 5s"],
 ])("formats %i ms of work as %s", (elapsedMs, label) => {
   expect(formatWorkingDuration(elapsedMs)).toBe(label);
+});
+
+describe("timestamp order", () => {
+  it("orders host timestamps by instant across offsets and fractional seconds, missing ones first", () => {
+    const dates = [
+      "2026-07-05T00:30:00.5Z",
+      "2026-07-05T01:00:00+02:00",
+      "",
+      "2026-07-05T00:30:00Z",
+    ];
+
+    expect(dates.toSorted(compareTimestamps)).toEqual([
+      "",
+      "2026-07-05T01:00:00+02:00",
+      "2026-07-05T00:30:00Z",
+      "2026-07-05T00:30:00.5Z",
+    ]);
+  });
+  it("keeps equal instants in input order whichever way it sorts", () => {
+    const rows = [
+      { id: "comment", date: "2026-07-05T00:30:00Z" },
+      { id: "commit", date: "2026-07-04T20:30:00-04:00" },
+      { id: "older", date: "2026-07-04T00:00:00Z" },
+    ];
+    const ids = (newestFirst: boolean) =>
+      rows.toSorted(byTimestamp(newestFirst)).map((row) => row.id);
+
+    expect(ids(false)).toEqual(["older", "comment", "commit"]);
+    expect(ids(true)).toEqual(["comment", "commit", "older"]);
+  });
 });
 
 describe("relative time", () => {
