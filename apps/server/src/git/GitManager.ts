@@ -102,6 +102,11 @@ export interface GitRunStackedActionOptions {
   readonly progressReporter?: GitActionProgressReporter;
 }
 
+export interface GitLocalStatusOptions {
+  /** Defaults to true. The branch-wide totals cost about half of a local status read. */
+  readonly includeBranchChanges?: boolean;
+}
+
 export interface GitRemoteStatusOptions extends GitVcsDriver.GitRemoteStatusOptions {
   readonly refreshMissingPullRequest?: boolean;
 }
@@ -132,6 +137,7 @@ export class GitManager extends Context.Service<
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly localStatus: (
       input: VcsStatusInput,
+      options?: GitLocalStatusOptions,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly remoteStatus: (
       input: VcsStatusInput,
@@ -722,6 +728,16 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  // Git fetches from a remote's first URL; `config --get` returns the last of several.
+  const readRemoteUrl = (cwd: string, remoteName: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.readRemoteUrl",
+        cwd,
+        args: ["config", "--get-all", `remote.${remoteName}.url`],
+        allowNonZeroExit: true,
+      })
+      .pipe(Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null));
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
     cwd: string,
   ) {
@@ -1004,7 +1020,7 @@ export const make = Effect.gen(function* () {
         repository: repositoryNameWithOwner,
         ...pullRequestHostOptions(pullRequest.url),
       });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+      const originRemoteUrl = yield* readRemoteUrl(cwd, "origin");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
         pullRequest.headRepositoryOwnerLogin?.trim() ||
@@ -1089,7 +1105,7 @@ export const make = Effect.gen(function* () {
               ? Effect.fail(cause)
               : Effect.gen(function* () {
                   const remoteName = yield* gitCore.resolvePrimaryRemoteName(cwd);
-                  const remoteUrl = yield* gitCore.readConfigValue(cwd, `remote.${remoteName}.url`);
+                  const remoteUrl = yield* readRemoteUrl(cwd, remoteName);
                   const pullRequestKey = pullRequestRepositoryKey(pullRequest.url);
                   if (
                     remoteUrl === null ||
@@ -1118,7 +1134,7 @@ export const make = Effect.gen(function* () {
         repository: repositoryNameWithOwner,
         ...pullRequestHostOptions(pullRequest.url),
       });
-      const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
+      const originRemoteUrl = yield* readRemoteUrl(cwd, "origin");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
       const preferredRemoteName =
         pullRequest.headRepositoryOwnerLogin?.trim() ||
@@ -1192,9 +1208,12 @@ export const make = Effect.gen(function* () {
     behindCount: 0,
     aheadOfDefaultCount: 0,
   };
-  const readLocalStatus = Effect.fn("readLocalStatus")(function* (cwd: string) {
+  const readLocalStatus = Effect.fn("readLocalStatus")(function* (
+    cwd: string,
+    includeBranchChanges: boolean,
+  ) {
     const details = yield* gitCore
-      .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges: true })
+      .statusDetailsLocal(cwd, { includeDivergence: false, includeBranchChanges })
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
@@ -1213,13 +1232,22 @@ export const make = Effect.gen(function* () {
       ...(details.branchChanges ? { branchChanges: details.branchChanges } : {}),
     } satisfies VcsStatusLocalResult;
   });
-  const localStatusResultCache = yield* Cache.makeWith(readLocalStatus, {
-    capacity: STATUS_RESULT_CACHE_CAPACITY,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
-  });
+  const makeLocalStatusResultCache = (includeBranchChanges: boolean) =>
+    Cache.makeWith((cwd: string) => readLocalStatus(cwd, includeBranchChanges), {
+      capacity: STATUS_RESULT_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? STATUS_RESULT_CACHE_TTL : Duration.zero),
+    });
+  // Separate entries, so a read without totals is never served to a caller that shows them.
+  const localStatusResultCache = yield* makeLocalStatusResultCache(true);
+  const localStatusWithoutBranchChangesCache = yield* makeLocalStatusResultCache(false);
   const invalidateLocalStatusResultCache = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
-      Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
+      Effect.flatMap((cacheKey) =>
+        Effect.all([
+          Cache.invalidate(localStatusResultCache, cacheKey),
+          Cache.invalidate(localStatusWithoutBranchChangesCache, cacheKey),
+        ]),
+      ),
     );
   const prLookupEpochByCwd = new Map<string, number>();
   const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
@@ -1528,6 +1556,8 @@ export const make = Effect.gen(function* () {
 
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
+  const readRemoteUrlNullable = (cwd: string, remoteName: string) =>
+    readRemoteUrl(cwd, remoteName).pipe(Effect.orElseSucceed(() => null));
 
   // Whether the remote's host creates change requests in this remote's repository. A host's tools
   // can let configuration, such as gh's default repository, name another one.
@@ -1561,8 +1591,8 @@ export const make = Effect.gen(function* () {
         ? "origin"
         : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
     const remoteUrl =
-      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
-      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+      (yield* readRemoteUrlNullable(cwd, preferredRemoteName)) ??
+      (yield* readRemoteUrlNullable(cwd, "origin"));
 
     const provider = remoteUrl ? sourceControlDefinitions.recognizeRemote(remoteUrl) : null;
     if (!remoteUrl || provider?.kind !== "unknown") return provider;
@@ -1588,7 +1618,7 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+    const remoteUrl = yield* readRemoteUrlNullable(cwd, remoteName);
     let repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
     if (
       remoteUrl !== null &&
@@ -1844,7 +1874,7 @@ export const make = Effect.gen(function* () {
       remoteName = matches[0];
     }
     if (remoteName === undefined) return null;
-    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
+    const remoteUrl = yield* readRemoteUrlNullable(cwd, remoteName);
     return remoteUrl === null ? null : remoteName;
   });
 
@@ -2542,9 +2572,14 @@ export const make = Effect.gen(function* () {
   });
 
   const localStatus: GitManager["Service"]["localStatus"] = Effect.fn("localStatus")(
-    function* (input) {
+    function* (input, options) {
       const cacheKey = yield* normalizeStatusCacheKey(input.cwd);
-      return yield* Cache.get(localStatusResultCache, cacheKey);
+      return yield* Cache.get(
+        options?.includeBranchChanges === false
+          ? localStatusWithoutBranchChangesCache
+          : localStatusResultCache,
+        cacheKey,
+      );
     },
   );
   const remoteStatus: GitManager["Service"]["remoteStatus"] = Effect.fn("remoteStatus")(
@@ -2631,7 +2666,13 @@ export const make = Effect.gen(function* () {
       const readRemoteUrlKey = (remoteName: string | null) =>
         remoteName === null
           ? Effect.succeed(null)
-          : readConfig(`remote.${remoteName}.url`).pipe(
+          : rememberPrLookupGitState(
+              cwd,
+              `remoteUrl\u0000${remoteName}`,
+              fresh,
+              readRemoteUrl(cwd, remoteName),
+            ).pipe(
+              Effect.orElseSucceed(() => null),
               Effect.map((remoteUrl) =>
                 remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
               ),
