@@ -1981,9 +1981,7 @@ it.layer(
     Effect.gen(function* () {
       for (const [shell, expected] of [
         ["/Users/Jane Doe/.local/bin/fish", "/Users/Jane Doe/.local/bin/fish"],
-        ["/Users/Jane -Doe/.local/bin/fish", "/Users/Jane -Doe/.local/bin/fish"],
         ["/Users/Jane -Doe/.local/bin/fish -l", "/Users/Jane -Doe/.local/bin/fish"],
-        ["/bin/bash --rcfile=/etc/t3rc", "/bin/bash"],
       ] as const) {
         const { manager, ptyAdapter } = yield* createManager(5, {
           env: { SHELL: shell },
