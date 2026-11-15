@@ -191,6 +191,20 @@ it("follows refreshed permissions while pristine and retains edits and codes thr
   await expect
     .element(screen.getByRole("textbox", { name: /^Pairing code/ }))
     .toHaveValue("test-code");
+  state.renew.mockResolvedValue(AsyncResult.success({ label: destination.label }));
+  await screen.getByRole("button", { name: "Save & renew", exact: true }).click();
+  await expect.element(screen.getByText("Link renewed.", { exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Permissions", exact: true }))
+    .toHaveTextContent("Read only");
+  await expect.element(screen.getByRole("button", { name: "Renew", exact: true })).toBeVisible();
+  state.links = state.links.map((link) => ({ ...link, access: "read-only" }));
+  await screen.rerender(settings(registry));
+  state.links = state.links.map((link) => ({ ...link, access: "full-access" }));
+  await screen.rerender(settings(registry));
+  await expect
+    .element(screen.getByRole("combobox", { name: "Permissions", exact: true }))
+    .toHaveTextContent("Full access");
 });
 
 const hostId = EnvironmentId.make("mac");

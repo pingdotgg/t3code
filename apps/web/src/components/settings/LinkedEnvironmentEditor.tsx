@@ -46,7 +46,10 @@ export function LinkedEnvironmentEditor({
   const mayMint = useEnvironmentScope(link.environmentId, AuthAccessWriteScope);
   const renew = useAtomCommand(peerLinkEnvironment.link, { label: "renew environment link" });
   const [draftAccess, setDraftAccess] = useState<AuthMcpClientAccess | null>(null);
-  const access = draftAccess ?? link.access;
+  const [confirmedAccess, setConfirmedAccess] = useState<AuthMcpClientAccess | null>(null);
+  if (confirmedAccess === link.access) setConfirmedAccess(null);
+  const currentAccess = confirmedAccess ?? link.access;
+  const access = draftAccess ?? currentAccess;
   const [pairingCode, setPairingCode] = useState("");
   const [mintFailed, setMintFailed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,7 +60,7 @@ export function LinkedEnvironmentEditor({
   const canMint =
     Option.isSome(prepared) && mayMint && (machine?.urls.length ?? 0) > 0 && !mintFailed;
   const urls = linkRenewalUrls(machine?.urls ?? [], link.urls);
-  const dirty = access !== link.access;
+  const dirty = access !== currentAccess;
   const submit = async () => {
     if (
       disabled ||
@@ -93,6 +96,7 @@ export function LinkedEnvironmentEditor({
         },
       });
       if (result._tag === "Success") {
+        setConfirmedAccess(access);
         setDraftAccess(null);
         setPairingCode("");
         setSaved(true);
@@ -116,7 +120,7 @@ export function LinkedEnvironmentEditor({
         <LinkAccessPicker
           value={access}
           onChange={(next) => {
-            setDraftAccess(next === link.access ? null : next);
+            setDraftAccess(next === currentAccess ? null : next);
             setSaved(false);
           }}
           disabled={blocked || !canLink}
