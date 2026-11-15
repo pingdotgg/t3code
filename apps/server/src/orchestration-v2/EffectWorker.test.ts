@@ -813,6 +813,7 @@ it.effect.each([3, 4])(
                 },
               ],
               messages: [],
+              providerThreads: [],
               providerTurns: [],
               runtimeRequests: [],
               turnItems: [],
