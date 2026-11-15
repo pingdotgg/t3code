@@ -276,12 +276,7 @@ function withoutHtmlComments(body: string): string {
   let from = 0;
   for (let open = body.indexOf("<!--"); open !== -1; open = body.indexOf("<!--", from)) {
     const close = body.indexOf("-->", open + 4);
-    if (close === -1) {
-      // Like GitHub: an unclosed opener starting a line hides the rest, but one inside a paragraph is text.
-      const lineStart = body.lastIndexOf("\n", open - 1) + 1;
-      const hidesRest = /^ {0,3}$/.test(body.slice(lineStart, open));
-      return text + body.slice(from, hidesRest ? open : undefined);
-    }
+    if (close === -1) break;
     text += `${body.slice(from, open)} `;
     from = close + 3;
   }

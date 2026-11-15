@@ -758,7 +758,12 @@ describe("evaluatePullRequestWatch", () => {
       remark(
         "summary-bot",
         "2026-10-02T12:10:00Z",
-        `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.\n   <!-- GitHub hides this unclosed block`,
+        `<!-- ${"x".repeat(3_000)} -->\nCheck the retry.`,
+      ),
+      remark(
+        "fencer",
+        "2026-10-02T12:12:00Z",
+        "Use this literal opener:\n```html\n<!--\n```\nGuard the empty list before indexing it.",
       ),
       remark("spacer", "2026-10-02T12:11:00Z", `${"\n".repeat(2_001)}Guard the empty list.`),
     ]);
@@ -774,6 +779,10 @@ describe("evaluatePullRequestWatch", () => {
     assert.include(text, '"Replace `<div>` with ``<span>``: ~~~html <p>Done</p> ~~~"');
     assert.include(text, 'maintainer on src/index.ts: "Guard this , and `<!--` stays escaped."');
     assert.include(text, '"Check the retry."');
+    assert.include(
+      text,
+      '"Use this literal opener: ```html <!-- ``` Guard the empty list before indexing it."',
+    );
     assert.include(text, 'spacer on src/index.ts: "Guard the empty list."');
     assert.notInclude(text, "<picture");
   });
