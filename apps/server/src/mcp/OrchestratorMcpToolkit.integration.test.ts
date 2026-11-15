@@ -81,6 +81,7 @@ const cancellationPrompt = "Remain active until the parent cancels this delegate
 const queuedFollowupPrompt = "Complete the queued follow-up and return the final result.";
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 const decodeThreadRead = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
+const longFollowupResult = "Long delegated follow-up line. ".repeat(1_500);
 
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
@@ -201,11 +202,7 @@ describe("orchestrator MCP toolkit", () => {
     { label: "distinct", result: queuedFollowupResult, latestSummary: queuedFollowupResult },
     { label: "identical", result: delegatedResult, latestSummary: null },
     { label: "emoji", result: "😀", latestSummary: "😀" },
-    {
-      label: "paginated",
-      result: "git safety ".repeat(120),
-      latestSummary: "git safety ".repeat(120),
-    },
+    { label: "long", result: longFollowupResult, latestSummary: longFollowupResult },
   ])("reports $label child results", ({ result, latestSummary }) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("delegated-task-status");
@@ -708,7 +705,7 @@ describe("orchestrator MCP toolkit", () => {
           {
             threadId: delegated.childThreadId,
             limit: 100,
-            maxCharsPerItem: result === "😀" ? 1 : 20_000,
+            maxCharsPerItem: result === "😀" ? 1 : 50_000,
           },
           { ...invocation, thread: undefined },
         ).pipe(Effect.withTracer(tracer));
@@ -751,6 +748,7 @@ describe("orchestrator MCP toolkit", () => {
             threadId: delegated.childThreadId,
             itemId: finalItem!.itemId,
             textOffset: nextTextOffset,
+            maxCharsPerItem: 50_000,
           }).pipe(Effect.withTracer(tracer));
           const nextPage = yield* decodeThreadRead(continuation.structuredContent);
           text += nextPage.items[0]?.text ?? "";
