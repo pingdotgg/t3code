@@ -184,10 +184,12 @@ export function cargoBuildEnv(dir) {
 
 /**
  * What cargo sets for a binary it runs, and what libtest and std read: these pass the cargo
- * runner (`tools/cargo-runner.mjs`). No `CARGO_HOME`, no registry token.
+ * runner (`tools/cargo-runner.mjs`). No `CARGO_HOME`, no registry token. Also macOS's
+ * `__CF_USER_TEXT_ENCODING` (uid and text encoding): without it the system adds it to the
+ * binary's children, and the conformance checks see a variable the parent never had.
  */
 const CARGO_RUN_VARIABLE =
-  /^(CARGO|CARGO_(PKG_\w+|BIN_\w+|CRATE_NAME|MANIFEST_DIR|MANIFEST_PATH|PRIMARY_PACKAGE|TARGET_TMPDIR)|RUST_(BACKTRACE|LIB_BACKTRACE|LOG|MIN_STACK|TEST_\w+)|DYLD_FALLBACK_LIBRARY_PATH|LD_LIBRARY_PATH)$/;
+  /^(__CF_USER_TEXT_ENCODING|CARGO|CARGO_(PKG_\w+|BIN_\w+|CRATE_NAME|MANIFEST_DIR|MANIFEST_PATH|PRIMARY_PACKAGE|TARGET_TMPDIR)|RUST_(BACKTRACE|LIB_BACKTRACE|LOG|MIN_STACK|TEST_\w+)|DYLD_FALLBACK_LIBRARY_PATH|LD_LIBRARY_PATH)$/;
 
 /**
  * Knobs that our tests and examples read from the environment, set by hand
