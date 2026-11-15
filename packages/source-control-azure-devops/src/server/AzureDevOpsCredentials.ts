@@ -46,9 +46,16 @@ interface SavedTokens {
   /** Organizations whose saved entry does not decode; they fail closed. */
   readonly malformed: ReadonlySet<string>;
   readonly secretProviders: ServerSettings["secretProviders"];
+  /** Stored nonempty entries must resolve to a token, even if the secret store lost its value. */
+  readonly required: ReadonlySet<string>;
 }
 
-const NO_SAVED_TOKENS: SavedTokens = { tokens: {}, malformed: new Set(), secretProviders: {} };
+const NO_SAVED_TOKENS: SavedTokens = {
+  tokens: {},
+  malformed: new Set(),
+  secretProviders: {},
+  required: new Set(),
+};
 
 /**
  * The push URL `az --detect` reads from `git remote -v`: origin's when it looks like Azure DevOps,
@@ -101,7 +108,7 @@ export const make = Effect.gen(function* () {
   };
 
   // Each organization's entry decodes alone, so one malformed entry cannot hide the others.
-  const decodeEntries = (settings: ServerSettings): SavedTokens => {
+  const decodeEntries = (settings: ServerSettings, required: ReadonlySet<string>): SavedTokens => {
     const tokens: Record<string, SettingsSecretValue> = {};
     const malformed = new Set<string>();
     for (const [organization, value] of Object.entries(savedEntries(settings))) {
@@ -111,43 +118,48 @@ export const make = Effect.gen(function* () {
       if (decoded === undefined) malformed.add(organization);
       else tokens[organization] = decoded;
     }
-    return { tokens, malformed, secretProviders: settings.secretProviders };
+    return { tokens, malformed, secretProviders: settings.secretProviders, required };
   };
 
   // Settings are read without secrets first: only a saved Azure DevOps token makes a secret store
   // failure this provider's. Once one is saved, any failure to read it fails closed.
   const savedTokens: Effect.Effect<SavedTokens, SettingsSecretUnresolvedError> =
     host.settings.getStored.pipe(
-      Effect.map((settings) => Object.keys(savedEntries(settings)).length > 0),
-      Effect.catch((error) =>
-        // No cause: a settings decode error can quote a hand-edited token.
-        Effect.logWarning("failed to read Azure DevOps tokens from settings", {
-          operation: error.operation,
-        }).pipe(Effect.as(false)),
-      ),
-      Effect.flatMap((saved) =>
-        saved
-          ? host.settings.getWithSecrets(kind).pipe(
-              Effect.map(decodeEntries),
-              Effect.mapError(
-                (error) =>
-                  new SettingsSecretUnresolvedError({
-                    provider: error.providerInstanceId ?? "secret store",
-                  }),
-              ),
-            )
-          : Effect.succeed(NO_SAVED_TOKENS),
-      ),
+      // A failed stored-settings read cannot prove there is no saved account.
+      Effect.mapError(() => new SettingsSecretUnresolvedError({ provider: "settings" })),
+      Effect.flatMap((stored) => {
+        const entries = Object.entries(savedEntries(stored));
+        if (entries.length === 0) return Effect.succeed(NO_SAVED_TOKENS);
+        const required = new Set(
+          entries
+            .filter(([, value]) => typeof value !== "string" || value.trim() !== "")
+            .map(([organization]) => organization),
+        );
+        return host.settings.getWithSecrets(kind).pipe(
+          Effect.map((settings) => decodeEntries(settings, required)),
+          Effect.mapError(
+            (error) =>
+              new SettingsSecretUnresolvedError({
+                provider: error.providerInstanceId ?? "secret store",
+              }),
+          ),
+        );
+      }),
     );
 
   const tokenFor = (organization: string | null) =>
     organization === null
       ? Effect.succeedNone
       : savedTokens.pipe(
-          Effect.flatMap(({ tokens, malformed, secretProviders }) =>
+          Effect.flatMap(({ tokens, malformed, secretProviders, required }) =>
             malformed.has(organization)
               ? Effect.fail(new SettingsSecretUnresolvedError({ provider: "settings" }))
-              : requireSettingsSecretLiteral(tokens[organization], secretProviders),
+              : requireSettingsSecretLiteral(tokens[organization], secretProviders).pipe(
+                  Effect.filterOrFail(
+                    (token) => Boolean(token) || !required.has(organization),
+                    () => new SettingsSecretUnresolvedError({ provider: "secret store" }),
+                  ),
+                ),
           ),
           Effect.map((token) => (token ? Option.some(Redacted.make(token)) : Option.none())),
         );
@@ -166,9 +178,10 @@ export const make = Effect.gen(function* () {
     }),
     savedTokenForCheckout: Effect.fn("AzureDevOpsCredentials.savedTokenForCheckout")(
       function* (cwd) {
-        const { tokens, malformed } = yield* savedTokens;
+        const { tokens, malformed, required } = yield* savedTokens;
         // Most setups save no token; they should not pay for a git lookup on every az run.
-        if (Object.keys(tokens).length === 0 && malformed.size === 0) return Option.none();
+        if (Object.keys(tokens).length === 0 && malformed.size === 0 && required.size === 0)
+          return Option.none();
         const remote = yield* detectedRemote(cwd);
         const organization = remote === null ? null : azureDevOpsOrganizationKey(remote);
         if (organization === null) return Option.none();

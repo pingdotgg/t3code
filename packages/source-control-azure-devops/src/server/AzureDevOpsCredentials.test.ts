@@ -110,27 +110,38 @@ describe("AzureDevOpsCredentials", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  const withUnreadableSecrets = Effect.gen(function* () {
-    const host = yield* SourceControlHost.SourceControlHost;
-    return yield* AzureDevOpsCredentials.make.pipe(
-      Effect.provideService(SourceControlHost.SourceControlHost, {
-        ...host,
-        settings: {
-          ...host.settings,
-          getWithSecrets: () =>
-            Effect.fail(new ServerSettingsError({ settingsPath: "/s", operation: "read-secret" })),
-        },
-      }),
-    );
-  });
+  const withUnreadableSecrets = (stored = false) =>
+    Effect.gen(function* () {
+      const host = yield* SourceControlHost.SourceControlHost;
+      return yield* AzureDevOpsCredentials.make.pipe(
+        Effect.provideService(SourceControlHost.SourceControlHost, {
+          ...host,
+          settings: {
+            ...host.settings,
+            ...(stored
+              ? {
+                  getStored: Effect.fail(
+                    new ServerSettingsError({ settingsPath: "/s", operation: "read-file" }),
+                  ),
+                }
+              : {
+                  getWithSecrets: () =>
+                    Effect.fail(
+                      new ServerSettingsError({ settingsPath: "/s", operation: "read-secret" }),
+                    ),
+                }),
+          },
+        }),
+      );
+    });
 
-  it.effect(
-    "fails when a saved token's secret store cannot be read, rather than finding none",
-    () => {
+  it.effect.each([false, true])(
+    "fails closed when settings cannot be read, stored snapshot: %s",
+    (stored) => {
       const { layer, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
       return Effect.gen(function* () {
         yield* save(savedTokens);
-        const credentials = yield* withUnreadableSecrets;
+        const credentials = yield* withUnreadableSecrets(stored);
         const error = yield* Effect.flip(credentials.savedTokenForCheckout("/w"));
         assert.strictEqual(error._tag, "SettingsSecretUnresolvedError");
       }).pipe(Effect.provide(layer));
@@ -140,10 +151,47 @@ describe("AzureDevOpsCredentials", () => {
   it.effect("ignores an unreadable secret store when no Azure DevOps token is saved", () => {
     const { layer } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
     return Effect.gen(function* () {
-      const credentials = yield* withUnreadableSecrets;
+      const credentials = yield* withUnreadableSecrets();
       assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect.each(["********", "previous-pat", ""])(
+    "distinguishes an unavailable stored PAT from an explicitly unset token: %s",
+    (stored) => {
+      const { layer } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
+      return Effect.gen(function* () {
+        const host = yield* SourceControlHost.SourceControlHost;
+        const settings = yield* host.settings.getStored;
+        const credentials = yield* AzureDevOpsCredentials.make.pipe(
+          Effect.provideService(SourceControlHost.SourceControlHost, {
+            ...host,
+            settings: {
+              ...host.settings,
+              getStored: Effect.succeed({
+                ...settings,
+                sourceControlHosts: {
+                  "azure-devops": { tokens: { "dev.azure.com/acme": stored } },
+                },
+              }),
+              getWithSecrets: () =>
+                Effect.succeed({
+                  ...settings,
+                  sourceControlHosts: { "azure-devops": { tokens: { "dev.azure.com/acme": "" } } },
+                }),
+            },
+          }),
+        );
+        if (stored === "")
+          assert.isTrue(Option.isNone(yield* credentials.savedTokenForCheckout("/w")));
+        else
+          assert.strictEqual(
+            (yield* Effect.flip(credentials.savedTokenForCheckout("/w")))._tag,
+            "SettingsSecretUnresolvedError",
+          );
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("keeps the other organizations' tokens when one saved entry is malformed", () => {
     const { layer, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
@@ -189,22 +237,31 @@ describe("AzureDevOpsCli with a saved token", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("gives az the token for the checkout's organization", () => {
-    const { layer, run, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
-    return Effect.gen(function* () {
-      yield* save(savedTokens);
-      const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
-      yield* cli.execute({ cwd: "/w", args: ["repos", "pr", "list"] });
-      const env = run.mock.calls[0]?.[0].env;
-      // A config directory with no az login accounts, so the extension cannot prefer one.
-      expect(env).toEqual({
-        AZURE_CONFIG_DIR: expect.stringContaining("t3code-az-"),
-        AZURE_EXTENSION_DIR: "/ext",
-        AZURE_DEVOPS_EXT_PAT: "acme-pat",
-      });
-      expect(env?.AZURE_CONFIG_DIR).not.toContain(".azure");
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect.each(["checkout", "explicit remote"] as const)(
+    "gives az the token for the %s organization",
+    (source) => {
+      const { layer, run, save } = setup({ origin: "git@ssh.dev.azure.com:v3/acme/p1/r1" });
+      return Effect.gen(function* () {
+        yield* save({ ...savedTokens, "dev.azure.com/globex": "globex-pat" });
+        const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
+        yield* cli.execute({
+          cwd: "/w",
+          args: ["repos", "pr", "list"],
+          ...(source === "explicit remote"
+            ? { remoteUrl: "https://dev.azure.com/globex/p1/_git/r1" }
+            : {}),
+        });
+        const env = run.mock.calls[0]?.[0].env;
+        // A config directory with no az login accounts, so the extension cannot prefer one.
+        expect(env).toEqual({
+          AZURE_CONFIG_DIR: expect.stringContaining("t3code-az-"),
+          AZURE_EXTENSION_DIR: "/ext",
+          AZURE_DEVOPS_EXT_PAT: source === "explicit remote" ? "globex-pat" : "acme-pat",
+        });
+        expect(env?.AZURE_CONFIG_DIR).not.toContain(".azure");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("leaves az's own credentials alone in another organization", () => {
     const { layer, run, save } = setup({ origin: "https://dev.azure.com/globex/p1/_git/r1" });

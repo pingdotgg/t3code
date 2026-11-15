@@ -80,6 +80,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import type { ServerSettings as ServerSettingsValue } from "@t3tools/contracts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -3769,13 +3770,17 @@ export const make = Effect.gen(function* () {
   // A saved token changes the account reads are made as. Clear viewers and provider reads, then
   // each project's persisted reads (keyed without epochs), and only then move the keys: a read in
   // between was made as the old account and must land under keys nothing builds again.
+  // Acquire the nonreplaying subscription before the snapshot so an intervening write is queued.
+  const credentialChanges = yield* serverSettings.subscribeChanges;
+  const credentialsKey = (settings: ServerSettingsValue) =>
+    JSON.stringify({ hosts: settings.sourceControlHosts, providers: settings.secretProviders });
   let heldHosts = yield* serverSettings.getSettings.pipe(
-    Effect.map((settings) => JSON.stringify(settings.sourceControlHosts)),
+    Effect.map(credentialsKey),
     Effect.orElseSucceed(() => null),
   );
   yield* Effect.forkIn(
-    Stream.runForEach(serverSettings.streamChanges, (settings) => {
-      const hosts = JSON.stringify(settings.sourceControlHosts);
+    Stream.runForEach(credentialChanges, (settings) => {
+      const hosts = credentialsKey(settings);
       if (hosts === heldHosts) return Effect.void;
       heldHosts = hosts;
       return invalidate({}).pipe(

@@ -242,22 +242,25 @@ it.effect("asks az for a token again after the az login account changes", () => 
 });
 
 it.effect.each([
-  { status: 401, concurrentRead: true },
-  { status: 200, concurrentRead: true },
-  { status: 200, concurrentRead: false },
+  { status: 401, concurrentRead: true, saved: false },
+  { status: 200, concurrentRead: true, saved: false },
+  { status: 200, concurrentRead: false, saved: false },
+  { status: 200, concurrentRead: false, saved: true },
 ])(
-  "ignores a delayed HTTP $status from the previous account, concurrent read: $concurrentRead",
-  ({ status, concurrentRead }) =>
+  "handles a delayed HTTP $status across an az account change, concurrent read: $concurrentRead, saved PAT: $saved",
+  ({ status, concurrentRead, saved }) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<Response>();
       const profile = { mtime: SIGNED_IN };
       const { run, execute, layer, read } = setup({
         profile,
+        tokens: saved ? { "dev.azure.com/acme": "acme-pat" } : {},
         issue: () =>
           Effect.sync(() => tokenJson(profile.mtime === SIGNED_IN ? "old" : "new", 3600)),
         respond: (request) =>
-          request.headers.authorization === "Bearer old"
+          request.headers.authorization === "Bearer old" ||
+          request.headers.authorization?.startsWith("Basic ")
             ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
             : ok({ value: [] }),
       });
@@ -270,13 +273,15 @@ it.effect.each([
           release,
           status === 200 ? ok({ account: "old" }) : new Response(null, { status }),
         );
-        assert.isTrue(Option.isNone(yield* Fiber.join(previousAccount)));
+        const previous = yield* Fiber.join(previousAccount);
+        assert.strictEqual(Option.isSome(previous), saved);
         assert.isTrue(Option.isSome(yield* read(ACME)));
-        expect(run).toHaveBeenCalledTimes(2);
+        expect(run).toHaveBeenCalledTimes(saved ? 0 : 2);
+        const auth = saved ? `Basic ${Buffer.from(":acme-pat").toString("base64")}` : "Bearer old";
         expect(execute.mock.calls.map(([request]) => request.headers.authorization)).toEqual([
-          "Bearer old",
+          auth,
           ...(concurrentRead ? ["Bearer new"] : []),
-          "Bearer new",
+          saved ? auth : "Bearer new",
         ]);
       }).pipe(Effect.provide(layer));
     }),
@@ -333,13 +338,18 @@ it.effect("sends nothing when the organization's saved secret cannot be read", (
 
 it.effect("tries a corrected saved token at once, and not the one refused", () => {
   const refused = `Basic ${Buffer.from(":old-pat").toString("base64")}`;
+  const profile = { mtime: SIGNED_IN };
   const { execute, layer, read } = setup({
     respond: (request) =>
       request.headers.authorization === refused ? new Response("", { status: 401 }) : ok({}),
     tokens: { "dev.azure.com/acme": "old-pat" },
+    profile,
   });
   return Effect.gen(function* () {
     assert.isTrue(Option.isNone(yield* read(ACME)));
+    assert.isTrue(Option.isNone(yield* read(ACME)));
+    expect(execute).toHaveBeenCalledTimes(1);
+    profile.mtime = SWITCHED;
     assert.isTrue(Option.isNone(yield* read(ACME)));
     expect(execute).toHaveBeenCalledTimes(1);
 

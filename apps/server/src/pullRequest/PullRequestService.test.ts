@@ -10,6 +10,8 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Scope from "effect/Scope";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -323,6 +325,8 @@ const sshAliasHost = {
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly settingsChanges?: Stream.Stream<ServerSettings>;
+  readonly settingsRead?: Effect.Effect<ServerSettings>;
+  readonly subscribeSettings?: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -335,8 +339,11 @@ function makeService(input: {
     Layer.build(
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
-          getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+          getSettings:
+            input.settingsRead ?? Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
           streamChanges: input.settingsChanges ?? Stream.empty,
+          subscribeChanges:
+            input.subscribeSettings ?? Effect.succeed(input.settingsChanges ?? Stream.empty),
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,
@@ -1928,37 +1935,76 @@ const withToken = (token: string): ServerSettings => ({
   sourceControlHosts: { github: { tokens: { "github.com": token } } },
 });
 
-it.effect("resolves the viewer again after a saved token changes, and only then", () =>
-  Effect.gen(function* () {
-    const feed = yield* settingsFeed;
-    let viewerCalls = 0;
-    const service = yield* makeService({
-      settingsChanges: feed.stream,
-      projects: [
-        project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
-      ],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          getViewer: () => Effect.sync(() => `viewer-${++viewerCalls}`),
-          listChangeRequests: () =>
-            Effect.succeed({ items: [], truncated: false, continues: true }),
-        }),
-      ],
-    });
-    yield* feed.ready;
+it.effect.each(["token", "provider"] as const)(
+  "resolves the viewer again after a %s changes",
+  (kind) =>
+    Effect.gen(function* () {
+      const feed = yield* settingsFeed;
+      let viewerCalls = 0;
+      const service = yield* makeService({
+        settingsChanges: feed.stream,
+        projects: [
+          project({ id: "p1", title: "cloud", workspaceRoot: "/cloud", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () => Effect.sync(() => `viewer-${++viewerCalls}`),
+            listChangeRequests: () =>
+              Effect.succeed({ items: [], truncated: false, continues: true }),
+          }),
+        ],
+      });
+      yield* feed.ready;
 
-    assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
-      "github.com": "viewer-1",
+      assert.deepStrictEqual((yield* service.list({ state: "open" })).viewers, {
+        "github.com": "viewer-1",
+      });
+      // An unrelated settings change keeps the viewer.
+      yield* feed.change(DEFAULT_SERVER_SETTINGS);
+      assert.deepStrictEqual((yield* service.list({ state: "open", limit: 5 })).viewers, {
+        "github.com": "viewer-1",
+      });
+      yield* feed.change(
+        kind === "token"
+          ? withToken("new-token")
+          : {
+              ...DEFAULT_SERVER_SETTINGS,
+              secretProviders: {
+                homelab: { kind: "onepassword", config: { account: "other-account" } },
+              } as ServerSettings["secretProviders"],
+            },
+      );
+      assert.deepStrictEqual((yield* service.list({ state: "open", limit: 6 })).viewers, {
+        "github.com": "viewer-2",
+      });
+    }),
+);
+
+it.effect("captures credential changes between subscription and the initial snapshot", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<ServerSettings>();
+    const invalidated = yield* Deferred.make<void>();
+    let subscribed = false;
+    const provider = fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+      forgetChangeRequestReads: () => Deferred.succeed(invalidated, undefined).pipe(Effect.asVoid),
     });
-    // An unrelated settings change keeps the viewer.
-    yield* feed.change(DEFAULT_SERVER_SETTINGS);
-    assert.deepStrictEqual((yield* service.list({ state: "open", limit: 5 })).viewers, {
-      "github.com": "viewer-1",
+    yield* makeService({
+      projects: [],
+      providers: [provider],
+      settingsChanges: Stream.fromPubSub(changes),
+      subscribeSettings: PubSub.subscribe(changes).pipe(
+        Effect.map((subscription) => {
+          subscribed = true;
+          return Stream.fromSubscription(subscription);
+        }),
+      ),
+      settingsRead: Effect.gen(function* () {
+        assert.isTrue(subscribed);
+        yield* PubSub.publish(changes, withToken("changed-during-initial-read"));
+        return DEFAULT_SERVER_SETTINGS;
+      }),
     });
-    yield* feed.change(withToken("new-token"));
-    assert.deepStrictEqual((yield* service.list({ state: "open", limit: 6 })).viewers, {
-      "github.com": "viewer-2",
-    });
+    yield* Deferred.await(invalidated);
   }),
 );
 
