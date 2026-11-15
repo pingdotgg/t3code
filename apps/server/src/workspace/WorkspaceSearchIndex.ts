@@ -738,11 +738,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (Option.isNone(result) || result.value.exitCode > 1) return Option.none();
 
     const regexRanges = new Map<string, Array<readonly [number, number]>>();
+    let rangesTruncated = false;
     if (regexMode) {
       // Ranges come from git too: running the user's pattern in JS could backtrack without bound.
       const ranges = yield* runGitGrep(input.query, { ...options, regexMode, onlyMatching: true });
       // Without ranges, whole-word filtering would drop every hit and report no matches.
       if (Option.isNone(ranges) || ranges.value.exitCode > 1) return Option.none();
+      rangesTruncated = ranges.value.stdoutTruncated;
       if (ranges.value.exitCode === 0) {
         for (const record of parseGitGrepRecords(
           ranges.value.stdout,
@@ -770,6 +772,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     const indexedFiles = yield* Fiber.join(indexedFilesFiber);
     if (Option.isNone(indexedFiles)) return Option.none();
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
+    let rangesCutOff = false;
     for (const record of parseGitGrepRecords(
       result.value.stdout,
       3,
@@ -777,6 +780,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     )) {
       const [relativePath, lineNumber, rawLine] = record as [string, string, string];
       if (!indexedFiles.value.has(relativePath)) continue;
+      const key = `${relativePath}\0${lineNumber}`;
+      // Lines past the cut-off of a truncated ranges run have no ranges; stop there instead.
+      if (rangesTruncated && !regexRanges.has(key)) {
+        rangesCutOff = true;
+        break;
+      }
       const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
         0,
         CONTENT_LINE_MAX_LENGTH,
@@ -787,10 +796,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
               start: match.index,
               end: match.index + match[0].length,
             }))
-          : mapContentMatchRanges(
-              lineContent,
-              regexRanges.get(`${relativePath}\0${lineNumber}`) ?? [],
-            )
+          : mapContentMatchRanges(lineContent, regexRanges.get(key) ?? [])
       ).filter(
         (range) =>
           range.end <= lineContent.length &&
@@ -807,7 +813,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
     return Option.some({
       matches: matches.slice(0, input.limit),
-      truncated: matches.length > input.limit || result.value.stdoutTruncated,
+      truncated: matches.length > input.limit || result.value.stdoutTruncated || rangesCutOff,
       ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
     });
   });

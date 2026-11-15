@@ -345,6 +345,7 @@ it.live("answers content searches with git grep while a slow content index build
     vi.spyOn(FileFinder, "create")
       .mockReturnValueOnce({ ok: true, value: finder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder })
       .mockReturnValueOnce({ ok: true, value: noPcreFinder });
 
     const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
@@ -391,7 +392,14 @@ it.live("answers content searches with git grep while a slow content index build
     expect(grep).not.toHaveBeenCalled();
 
     // When git cannot give regex results or their ranges, fff answers once ready instead.
-    const failingGitIndex = (failingArgument: string, stderr: string) =>
+    const failingGitIndex = (
+      failingArgument: string,
+      stderr: string,
+      output: { readonly exitCode: number; readonly stdout: string } = {
+        exitCode: 128,
+        stdout: "",
+      },
+    ) =>
       WorkspaceSearchIndex.make(cwd, "content").pipe(
         Effect.provideService(
           VcsProcess.VcsProcess,
@@ -399,10 +407,10 @@ it.live("answers content searches with git grep while a slow content index build
             run: (input) =>
               input.args.includes(failingArgument)
                 ? Effect.succeed({
-                    exitCode: ChildProcessSpawner.ExitCode(128),
-                    stdout: "",
+                    exitCode: ChildProcessSpawner.ExitCode(output.exitCode),
+                    stdout: output.stdout,
                     stderr,
-                    stdoutTruncated: false,
+                    stdoutTruncated: output.exitCode === 0,
                     stderrTruncated: false,
                   })
                 : vcsProcess.run(input),
@@ -425,6 +433,22 @@ it.live("answers content searches with git grep while a slow content index build
     const noRangesIndex = yield* failingGitIndex("-o", "fatal: unexpected failure\n");
     yield* noRangesIndex.searchContents(regexInput);
     expect(grep).toHaveBeenCalledTimes(2);
+    // Ranges output cut off after line 1: line 2 is left out and the result says so.
+    const cutRangesIndex = yield* failingGitIndex("-o", "", {
+      exitCode: 0,
+      stdout: "src/a.ts\u00001\u00007\u0000Needle\nsrc/a.ts\u00002",
+    });
+    expect(yield* cutRangesIndex.searchContents(regexInput)).toEqual({
+      matches: [
+        {
+          path: "src/a.ts",
+          lineNumber: 1,
+          lineContent: "const Needle = 1;",
+          matchRanges: [{ start: 6, end: 12 }],
+        },
+      ],
+      truncated: true,
+    });
 
     isWarmupComplete = true;
     yield* search({});
