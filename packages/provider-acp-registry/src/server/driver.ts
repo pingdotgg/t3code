@@ -82,6 +82,18 @@ interface AcpRegistryEnrichmentCache {
   } | null;
 }
 
+export function isAcpRegistryCacheValid(
+  entry: NonNullable<AcpRegistryEnrichmentCache["entry"]>,
+  inspectedVersion: string | null,
+  local: boolean,
+  now: number,
+): boolean {
+  return (
+    entry.expiresAt > now &&
+    ((local && inspectedVersion === null) || entry.provider.version === inspectedVersion)
+  );
+}
+
 export function updateAcpRegistryEnrichmentCache(input: {
   readonly cache: AcpRegistryEnrichmentCache;
   readonly configuration: AcpRegistryLiveConfiguration;
@@ -467,7 +479,10 @@ export function buildCheckedAcpRegistrySnapshot(
       ? { documentationUrl: input.inspection.documentationUrl }
       : {}),
     installed: readiness.installed,
-    version: readiness.version,
+    version:
+      input.settings.source === "local"
+        ? (input.probe?.probe.agentVersion ?? readiness.version)
+        : readiness.version,
     // Failed discovery is a warning: an installed agent may still run real turns.
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
@@ -717,8 +732,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }),
           );
     });
+    // A local executable's version comes only from probing it, so readiness checks reuse the last report.
+    const reportedLocalVersion = yield* Ref.make<string | null>(null);
     const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+      Effect.flatMap((provider) =>
+        Ref.get(reportedLocalVersion).pipe(
+          Effect.map((version) =>
+            provider.installed && provider.version === null && version !== null
+              ? { ...provider, version }
+              : provider,
+          ),
+        ),
+      ),
       Effect.flatMap(withLiveRuntimeState),
     );
     const enrichProvider = checkAcpRegistryProviderStatus(
@@ -749,8 +775,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const cached = cacheState.entry;
       if (
         cached !== null &&
-        cached.expiresAt > now &&
-        cached.provider.version === baseSnapshot.version
+        isAcpRegistryCacheValid(
+          cached,
+          baseSnapshot.version,
+          effectiveConfig.source === "local",
+          now,
+        )
       ) {
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
@@ -758,6 +788,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         };
       }
       const enriched = yield* enrichProvider;
+      if (effectiveConfig.source === "local" && enriched.status === "ready") {
+        yield* Ref.set(reportedLocalVersion, enriched.version);
+      }
       if (enriched.status === "ready") {
         const completedAt = yield* Clock.currentTimeMillis;
         yield* Ref.update(enrichmentCache, (current) =>

@@ -5314,6 +5314,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    // Queued even while no session is live: it runs after any in-flight turn start publishes one.
+    if (
+      (command.type === "thread.metadata.update" ||
+        command.type === "thread.title.regeneration.complete") &&
+      updatedThread.title !== thread.title
+    ) {
+      yield* Ref.update(effects, (existing) => [
+        ...existing,
+        {
+          id: `effect:${command.commandId}:provider-session.apply-thread-title`,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          request: { type: "provider-session.apply-thread-title", title: updatedThread.title },
+        } satisfies PendingOrchestrationEffectV2,
+      ]);
+    }
+
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
         ...existing,
@@ -10060,6 +10077,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       remoteChild,
       status: command.status,
       result: command.result,
+      ...(command.executedModel === undefined ? {} : { executedModel: command.executedModel }),
       completedAt: now,
       updatedAt: now,
     };
