@@ -313,7 +313,17 @@ const createManager = (
               managedBinaryCacheDir: options.managedBinaryCacheDir,
               managedBinaryToolsDir: options.managedBinaryToolsDir,
             }),
-      });
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (path) => {
+            const pid = /^\/proc\/(\d+)\/stat$/.exec(path)?.[1];
+            return pid === undefined
+              ? fs.readFileString(path)
+              : Effect.succeed(`${pid} (bash) S 1 ${pid} ${pid} 34816 ${pid}`);
+          },
+        }),
+      );
       const eventsRef = yield* Ref.make<ReadonlyArray<TerminalEvent>>([]);
       const unsubscribe = yield* manager.subscribe((event) =>
         Ref.update(eventsRef, (events) => [...events, event]),
@@ -945,6 +955,64 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    ...[
+      "bash",
+      "zsh",
+      "fish",
+      "sh",
+      "dash",
+      "ksh",
+      "mksh",
+      "tcsh",
+      "csh",
+      "nu",
+      "xonsh",
+      "elvish",
+      "pwsh",
+    ].map((command) => ({ command, idle: true })),
+    { command: "tmux", idle: false },
+    { command: "node", idle: false },
+  ])("settles an exec-replaced root according to its command: $command", ({ command, idle }) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        processTable: Effect.succeed([{ pid: 9000, ppid: 1, name: command }]),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      yield* manager.open(openInput());
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+      expect(ptyAdapter.processes[0]?.killed).toBe(idle);
+    }),
+  );
+
+  it.effect("settles idle terminals when ps does not support tpgid", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("linux")),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            const unsupported = input.args?.some((arg) => arg.includes("tpgid")) ?? false;
+            return Effect.succeed({
+              stdout: unsupported ? "" : "9000 1 bash\n",
+              stderr: unsupported ? "ps: bad -o argument 'tpgid'" : "",
+              code: ChildProcessSpawner.ExitCode(unsupported ? 1 : 0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            });
+          },
+        }),
+      );
+      yield* manager.open(openInput());
+      yield* manager.closeOnSettle({ threadId: "thread-1" });
+      expect(ptyAdapter.processes[0]?.killed).toBe(true);
+    }),
+  );
+
   // A pid/ppid/name table read from the live host, shaped like the native sidecar's.
   const nativeShapedProcessTable = Effect.gen(function* () {
     const runner = yield* ProcessRunner.ProcessRunner;
@@ -962,20 +1030,35 @@ it.layer(
       label: "exec root",
       command: `exec node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
       source: "ps",
+      procStat: "real",
     },
     {
       label: "foreground Bash builtin",
       command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
       source: "ps",
+      procStat: "real",
     },
     {
       label: "foreground Bash builtin",
       command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
       source: "native table",
+      procStat: "real",
+    },
+    {
+      label: "foreground Bash builtin",
+      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
+      source: "native table",
+      procStat: "denied",
+    },
+    {
+      label: "foreground Bash builtin",
+      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
+      source: "native table",
+      procStat: "malformed",
     },
   ] as const)(
-    "native settlement preserves active commands: $label ($source)",
-    ({ command, source }, ctx) =>
+    "native settlement preserves active commands: $label ($source, proc stat $procStat)",
+    ({ command, source, procStat }, ctx) =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) !== "linux") {
           return ctx.skip("Only Linux Bash PTY settlement is measured.");
@@ -1000,7 +1083,24 @@ it.layer(
                 ),
               }
             : {}),
-        });
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readFileString: (path) =>
+              procStat === "denied" && path.startsWith("/proc/")
+                ? Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "PermissionDenied",
+                      module: "FileSystem",
+                      method: "readFileString",
+                      cause: { code: "EACCES" },
+                    }),
+                  )
+                : procStat === "malformed" && path.startsWith("/proc/")
+                  ? Effect.succeed("invalid stat")
+                  : fs.readFileString(path),
+          }),
+        );
         const prompt = yield* Deferred.make<void>();
         const ready = yield* Deferred.make<void>();
         let output = "";
@@ -1049,6 +1149,41 @@ it.layer(
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("labels the foreground group leader before a background command", () =>
+    Effect.gen(function* () {
+      const { manager } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
+      }).pipe(
+        Effect.provide(layerWithHostPlatform("darwin")),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () =>
+            Effect.succeed({
+              stdout: "9000 1 200 bash\n100 9000 200 node\n200 9000 200 bash\n",
+              stderr: "",
+              code: ChildProcessSpawner.ExitCode(0),
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+        }),
+      );
+      const label = yield* Deferred.make<string>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "activity"
+          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
+      expect(yield* Deferred.await(label)).toBe("bash");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   // Answers process-table queries after `queryDuration`, honoring the caller's
   // timeout the way ProcessRunner's `timedOutResult` mode does.
   const slowProcessTable = (
@@ -1072,7 +1207,7 @@ it.layer(
             ? ""
             : platform === "win32"
               ? "100|9000|node.exe\n"
-              : "  100  9000    -1 node\n",
+              : "  100  9000 node\n",
           stderr: "",
           code: Option.isSome(completed) ? ChildProcessSpawner.ExitCode(0) : null,
           timedOut: Option.isNone(completed),

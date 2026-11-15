@@ -733,24 +733,33 @@ function subprocessSnapshotPollDelayMs(
   );
 }
 
-function parsePosixProcessTable(stdout: string): TerminalProcessTableSnapshot {
+function parsePosixProcessTable(
+  stdout: string,
+  includeForegroundGroup: boolean,
+): TerminalProcessTableSnapshot {
   const childrenByParent = new Map<number, number[]>();
   const commandById = new Map<number, string>();
-  const foregroundGroupById = new Map<number, number>();
+  const foregroundGroupById = includeForegroundGroup ? new Map<number, number>() : undefined;
   for (const line of stdout.split(/\r?\n/g)) {
-    // The final comm column can contain spaces; only the first three tokens are structural.
-    const match = /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/.exec(line);
+    // The final comm column can contain spaces; only the numeric columns are structural.
+    const match = (
+      includeForegroundGroup ? /^\s*(\d+)\s+(\d+)\s+(-?\d+)\s+(.+)$/ : /^\s*(\d+)\s+(\d+)\s+(.+)$/
+    ).exec(line);
     if (!match) continue;
     const pid = Number(match[1]);
     const ppid = Number(match[2]);
     if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
-    commandById.set(pid, (match[4] ?? "").trim());
-    foregroundGroupById.set(pid, Number(match[3]));
+    commandById.set(pid, (match[includeForegroundGroup ? 4 : 3] ?? "").trim());
+    foregroundGroupById?.set(pid, Number(match[3]));
     const children = childrenByParent.get(ppid) ?? [];
     children.push(pid);
     childrenByParent.set(ppid, children);
   }
-  return { childrenByParent, commandById, foregroundGroupById };
+  return {
+    childrenByParent,
+    commandById,
+    ...(foregroundGroupById === undefined ? {} : { foregroundGroupById }),
+  };
 }
 
 function processTableSnapshotFromProcesses(
@@ -775,6 +784,23 @@ function parseProcStatForegroundGroup(stat: string): number | undefined {
   return Number.isInteger(tpgid) ? tpgid : undefined;
 }
 
+// Startup files may exec a different interactive shell without starting user work.
+const INTERACTIVE_SHELL_COMMANDS = new Set([
+  "bash",
+  "zsh",
+  "fish",
+  "sh",
+  "dash",
+  "ksh",
+  "mksh",
+  "tcsh",
+  "csh",
+  "nu",
+  "xonsh",
+  "elvish",
+  "pwsh",
+]);
+
 function deriveSubprocessInspectResult(
   snapshot: TerminalProcessTableSnapshot,
   terminalPid: number,
@@ -791,6 +817,7 @@ function deriveSubprocessInspectResult(
     platform !== "win32" &&
     shell !== null &&
     rootName !== null &&
+    !INTERACTIVE_SHELL_COMMANDS.has(rootName) &&
     rootName !== normalizeChildCommandName(shell, platform);
   // The PTY root leads its process group, so any other foreground group is a job.
   const foregroundJob = (foregroundGroup ?? 0) > 0 && foregroundGroup !== terminalPid;
@@ -801,9 +828,10 @@ function deriveSubprocessInspectResult(
       commandName(pid) !== rootName ||
       (snapshot.childrenByParent.get(pid)?.length ?? 0) > 0,
   );
+  const foregroundChildPid = children.find((pid) => pid === foregroundGroup);
   const childPid = execReplaced
     ? terminalPid
-    : (userChildPid ?? (foregroundJob ? children[0] : undefined));
+    : (foregroundChildPid ?? userChildPid ?? (foregroundJob ? children[0] : undefined));
   if (childPid === undefined) {
     return { hasRunningSubprocess: false, childCommand: null, processIds: [] };
   }
@@ -841,6 +869,7 @@ const resolvePosixPsCommand = Effect.fn("terminal.resolvePosixPsCommand")(functi
 const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot")(function* (
   psCommand: string,
   timeout: Duration.Input,
+  platform: NodeJS.Platform,
 ): Effect.fn.Return<
   TerminalProcessTableSnapshot,
   TerminalSubprocessCheckError,
@@ -850,7 +879,8 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
   const result = yield* processRunner
     .run({
       command: psCommand,
-      args: ["-eo", "pid=,ppid=,tpgid=,comm="],
+      // BusyBox ps omits tpgid; Linux gets it from procfs for both table sources.
+      args: ["-eo", platform === "darwin" ? "pid=,ppid=,tpgid=,comm=" : "pid=,ppid=,comm="],
       timeout,
       maxOutputBytes: 524_288,
       outputMode: "truncate",
@@ -874,7 +904,7 @@ const posixProcessTableSnapshot = Effect.fn("terminal.posixProcessTableSnapshot"
       stdoutTruncated: result.stdoutTruncated,
     });
   }
-  return parsePosixProcessTable(result.stdout);
+  return parsePosixProcessTable(result.stdout, platform === "darwin");
 });
 
 const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnapshot")(function* (
@@ -1785,7 +1815,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const fallbackProcessTableSnapshot = (timeout: Duration.Input) =>
     (posixPsCommand === undefined
       ? windowsProcessTableSnapshot(timeout)
-      : posixProcessTableSnapshot(posixPsCommand, timeout)
+      : posixProcessTableSnapshot(posixPsCommand, timeout, platform)
     ).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       Effect.result,
@@ -1853,7 +1883,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                       platform,
                     );
                   const result = inspect(table.foregroundGroupById?.get(terminalPid));
-                  // A native table leaves out the foreground group, so a shell whose children all
+                  // Linux tables omit the foreground group, so a shell whose children all
                   // look like prompt helpers reads it from procfs; other platforms keep the table's answer.
                   if (
                     result.hasRunningSubprocess ||
@@ -1864,11 +1894,21 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                     return Effect.succeed(result);
                   }
                   return fileSystem.readFileString(`/proc/${terminalPid}/stat`).pipe(
-                    Effect.map((stat) => {
+                    Effect.mapError(
+                      (cause) =>
+                        new TerminalSubprocessCheckError({ cause, command: "resource-monitor" }),
+                    ),
+                    Effect.flatMap((stat) => {
                       const foregroundGroup = parseProcStatForegroundGroup(stat);
-                      return foregroundGroup === undefined ? result : inspect(foregroundGroup);
+                      return foregroundGroup === undefined
+                        ? Effect.fail(
+                            new TerminalSubprocessCheckError({
+                              command: "resource-monitor",
+                              cause: "Invalid foreground process group in proc stat",
+                            }),
+                          )
+                        : Effect.succeed(inspect(foregroundGroup));
                     }),
-                    Effect.orElseSucceed(() => result),
                   );
                 },
             ),
