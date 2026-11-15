@@ -1,3 +1,4 @@
+import { isLocalEditorFileUrl } from "@t3tools/contracts";
 import { fileBasename, isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 import {
   inlineCodeFilePathCandidate,
@@ -20,6 +21,7 @@ export interface MarkdownFileLinkMeta {
   basename: string;
   line?: number;
   column?: number;
+  endLine?: number;
 }
 
 export function shouldOpenMarkdownFileLinkInEditor(
@@ -29,14 +31,18 @@ export function shouldOpenMarkdownFileLinkInEditor(
   return isTerminalLinkActivation(event, platform);
 }
 
-export function shouldOpenMarkdownFileLinkInBrowserByDefault(path: string): boolean {
-  return /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
-}
-
 export function rewriteMarkdownFileUriHref(href: string | undefined): string | null {
   if (!href) return null;
   const target = parseFileUrlHref(normalizeMarkdownLinkDestination(href));
   return target ? `${target.path}${target.hash}` : null;
+}
+
+export function isLocalEditorFileHref(href: string): boolean {
+  try {
+    return isLocalEditorFileUrl(new URL(href));
+  } catch {
+    return false;
+  }
 }
 
 export function resolveInlineCodeFileLinkMeta(
@@ -75,6 +81,7 @@ export function resolveMarkdownFileLinkMeta(
   const source = href ? parseMarkdownFileLink(href) : null;
   return {
     ...buildFileLinkMetaFromTarget(targetPath, cwd),
+    ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
     workspaceLookupPath:
       source !== null &&
       !isAbsolutePath(source.path) &&
