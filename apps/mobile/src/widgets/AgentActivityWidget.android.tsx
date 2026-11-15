@@ -62,10 +62,13 @@ export function AgentActivityWidget(
               ? "Done"
               : "";
   const shown = rows.slice(0, 4);
+  const firstPath = props.appUrl ? (rows[0]?.deepLink ?? "").replace(/^\//, "") : "";
 
   return (
     <Button
-      {...{ target: `url:${props.appUrl ?? ""}` }}
+      {...{
+        target: `url:${props.appUrl ?? ""}${firstPath}`,
+      }}
       colors={{ containerColor: background }}
       modifiers={[fillMaxSize()]}
     >
