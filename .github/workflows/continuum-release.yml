@@ -111,7 +111,7 @@ jobs:
           --platform ${{ matrix.platform }}
           --target ${{ matrix.target }}
           --arch ${{ matrix.arch }}
-          --version ${{ steps.version.outputs.version }}
+          --build-version ${{ steps.version.outputs.version }}
           --verbose
 
       - name: Add an RPM package
@@ -125,7 +125,7 @@ jobs:
           --platform linux
           --target rpm
           --arch x64
-          --version ${{ steps.version.outputs.version }}
+          --build-version ${{ steps.version.outputs.version }}
           --skip-build
           --verbose
         continue-on-error: true

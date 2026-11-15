@@ -99,6 +99,18 @@ const relayRoute = HttpRouter.add(
       const value = request.headers[name];
       if (value !== undefined) headers[name] = value;
     }
+    // Exactly once per request, whether the stream ends, fails, or the recipient disconnects.
+    let finished = false;
+    const finishOnce = (usage: { inputTokens: number; outputTokens: number }) =>
+      Effect.suspend(() => {
+        if (finished) return Effect.void;
+        finished = true;
+        return admission.finish(usage);
+      });
+    let meter: RelayUsageMeter | null = null;
+    yield* Effect.addFinalizer(() =>
+      finishOnce(meter?.finish().usage ?? { inputTokens: 0, outputTokens: 0 }),
+    );
     const upstreamUrl = `${admission.upstream.baseUrl}${path}${url.value.search}`;
     const client = HttpClient.withScope(yield* HttpClient.HttpClient);
     const outgoing = HttpClientRequest.make(method)(upstreamUrl).pipe(
@@ -108,20 +120,23 @@ const relayRoute = HttpRouter.add(
         : (self) => self,
     );
     const response = yield* client.execute(outgoing).pipe(
-      Effect.tapError(() => admission.finish({ inputTokens: 0, outputTokens: 0 })),
+      Effect.tapError(() => finishOnce({ inputTokens: 0, outputTokens: 0 })),
       Effect.orElseSucceed(() => null),
     );
     if (response === null) {
       return relayError(502, "The owner's AI source did not answer. Try again shortly.");
     }
 
-    const meter = new RelayUsageMeter(
+    const activeMeter = new RelayUsageMeter(
       streaming || (response.headers["content-type"] ?? "").includes("event-stream"),
     );
+    meter = activeMeter;
     const decoder = new TextDecoder();
     const metered = response.stream.pipe(
-      Stream.tap((chunk) => Effect.sync(() => meter.push(decoder.decode(chunk, { stream: true })))),
-      Stream.ensuring(Effect.suspend(() => admission.finish(meter.finish().usage))),
+      Stream.tap((chunk) =>
+        Effect.sync(() => activeMeter.push(decoder.decode(chunk, { stream: true }))),
+      ),
+      Stream.ensuring(Effect.suspend(() => finishOnce(activeMeter.finish().usage))),
     );
     const responseHeaders: Record<string, string> = {};
     for (const name of ["content-type", "request-id", "x-request-id", "retry-after"]) {
