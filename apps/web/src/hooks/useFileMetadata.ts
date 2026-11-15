@@ -28,12 +28,13 @@ export function getFileMetadataQueryAtom(
   threadRef?: ScopedThreadRef | null,
 ) {
   const uri = /^file:\/\//iu.test(path) ? parseFileUrlHref(path) : null;
+  const hostPath = splitFilePathPosition(path).path;
   const targetPath = normalizeProjectPathForComparison(
     uri
       ? safeDecodeURIComponent(uri.path)
-      : splitFilePathPosition(
-          cwd && !path.startsWith("~/") ? resolvePathLinkTarget(path, cwd) : path,
-        ).path,
+      : hostPath.startsWith("~/") || !cwd
+        ? hostPath
+        : resolvePathLinkTarget(hostPath, cwd),
   );
   const absolute = isAbsolutePath(targetPath) || targetPath.startsWith("~/");
   return (

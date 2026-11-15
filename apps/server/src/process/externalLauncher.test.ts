@@ -117,12 +117,8 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
     const spawned: ChildProcess.StandardCommand[] = [];
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of [
-        "~/Applications/My App.app",
-        "/Applications/My App.app",
-        "file:///tmp/a%3A12#L5",
-      ]) {
-        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app", "/tmp/a:12"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd, position: { line: 5 } });
       }
       yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
       yield* launcher.launchEditor({
@@ -229,18 +225,27 @@ it.effect.skipIf(windowsHost)(
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
         yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
-        for (const suffix of ["", "#L5"]) {
-          yield* launcher.launchEditor({ editor: "vscode", cwd: `file://${exactFile}${suffix}` });
+        for (const position of [{}, { line: 5 }]) {
+          yield* launcher.launchEditor({ editor: "vscode", cwd: exactFile, position });
         }
 
-        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${exactFile}` });
-        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${positionedFile}#L5C3` });
-        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${positionedFile}#L7` });
+        yield* launcher.launchEditor({ editor: "zed", cwd: exactFile, position: {} });
+        yield* launcher.launchEditor({
+          editor: "zed",
+          cwd: positionedFile,
+          position: { line: 5, column: 3 },
+        });
+        yield* launcher.launchEditor({ editor: "zed", cwd: positionedFile, position: { line: 7 } });
         yield* launcher.launchEditor({
           editor: "vscode",
-          cwd: `file://${project}/exponent:1e3#L5`,
+          cwd: `${project}/exponent:1e3`,
+          position: { line: 5 },
         });
-        yield* launcher.launchEditor({ editor: "idea", cwd: `file://${exactFile}#L5C3` });
+        yield* launcher.launchEditor({
+          editor: "idea",
+          cwd: exactFile,
+          position: { line: 5, column: 3 },
+        });
       }).pipe(
         Effect.provide(
           layerTest({

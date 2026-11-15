@@ -356,6 +356,20 @@ describe("resolvePathLinkTarget", () => {
     expect(
       resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
+    expect(
+      resolveTerminalLinkTarget(
+        "file://myhost/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
+    expect(
+      resolveTerminalLinkTarget(
+        "file://foreign/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file://foreign/var/tmp/report.txt:12#L5");
     for (const name of ["report.txt:12-64", "report.txt:0", "report.txt:12"]) {
       const uri = `file:///var/tmp/${encodeURIComponent(name)}`;
       expect(resolveTerminalLinkTarget(uri, "/workspace/project")).toBe(uri);
