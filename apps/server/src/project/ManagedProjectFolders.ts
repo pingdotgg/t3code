@@ -1,5 +1,6 @@
 import {
   CommandId,
+  GitCommandError,
   type GitManagerServiceError,
   ProjectId,
   type ThreadId,
@@ -8,7 +9,7 @@ import {
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -18,6 +19,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -27,10 +29,16 @@ import * as ProjectService from "./ProjectService.ts";
 
 export class ScratchUnavailableError extends Schema.TaggedError<ScratchUnavailableError>()(
   "ScratchUnavailableError",
-  {},
+  {
+    baseDir: Schema.String,
+    repositoryRoot: Schema.optional(Schema.String),
+  },
 ) {
   override get message(): string {
-    return "Threads without a project are not available on this environment.";
+    if (this.repositoryRoot === undefined) {
+      return "Threads without a project are not available on this environment.";
+    }
+    return `Threads without a project are off because the T3 home ${this.baseDir} is inside the Git repository ${this.repositoryRoot}. If that repository was created by mistake, move ${this.repositoryRoot}/.git out of the way; otherwise point T3CODE_HOME (or --base-dir) at a folder outside it. Then restart T3 Code.`;
   }
 }
 
@@ -58,7 +66,19 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
   }
 }
 
+/** Where No project threads keep their folders, whether or not this T3 home allows them. */
+export const scratchFolderRoot = (baseDir: string, path: Path.Path) =>
+  path.resolve(baseDir, "scratch");
+
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
+
+// The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
+const isMissingExecutable = (cause: unknown) =>
+  PlatformError.isPlatformError(cause) &&
+  cause.reason._tag === "NotFound" &&
+  cause.reason.method === "spawn";
+
+const isGitCommandError = Schema.is(GitCommandError);
 
 export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
   "NamedProjectFolderError",
@@ -68,7 +88,9 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   },
 ) {
   override get message(): string {
-    return "Failed to create the project folder.";
+    return isGitCommandError(this.cause) && isMissingExecutable(this.cause.cause)
+      ? "Git isn't installed on this machine. Install Git to create a project."
+      : "Failed to create the project folder.";
   }
 }
 
@@ -208,7 +230,7 @@ const make = Effect.gen(function* () {
   const gitWorkflow = yield* GitWorkflow.GitWorkflowService;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* ProjectService.ProjectService;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   // Non-recursive mkdir atomically claims a name; racers move on after AlreadyExists.
   const claimFreeFolder = Effect.fnUntraced(function* <E>(
@@ -232,18 +254,51 @@ const make = Effect.gen(function* () {
 
   // Scratch inside a checkout would inherit its git status and checkpoints; require a data dir outside work trees.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
-    gitWorkflow.isRepository(config.baseDir).pipe(
-      Effect.catchIf(isGitMissing, () => Effect.succeed(false)),
-      Effect.map((isRepository) =>
-        isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
-      ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
+    gitWorkflow.repositoryRoot(config.baseDir).pipe(
+      Effect.catchIf(isGitMissing, () => Effect.succeed(null)),
+      Effect.flatMap(
+        (repositoryRoot): Effect.Effect<Result.Result<string, ScratchUnavailableError>> => {
+          if (repositoryRoot === null) {
+            return Effect.succeed(Result.succeed(scratchFolderRoot(config.baseDir, path)));
+          }
+          const unavailable = new ScratchUnavailableError({
+            baseDir: config.baseDir,
+            repositoryRoot,
+          });
+          return Effect.logWarning(unavailable.message).pipe(Effect.as(Result.fail(unavailable)));
+        },
       ),
     ),
-    Duration.infinity,
+    // A failed git check (say, a timeout on a busy machine) is not an answer; ask again next time.
+    Exit.match({ onSuccess: () => Duration.infinity, onFailure: () => Duration.zero }),
   );
-  const scratchRoot = probe.pipe(Effect.onInterrupt(() => invalidate));
+  const scratchProbe = probe.pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterrupts(cause)
+        ? Effect.interrupt
+        : Effect.succeed(Result.fail(new ScratchUnavailableError({ baseDir: config.baseDir }))),
+    ),
+    Effect.onInterrupt(() => invalidate),
+  );
+  // A symlinked scratch folder lets the No project live at either the link or its target.
+  const scratchProjectRoot = (root: string) =>
+    fileSystem.realPath(root).pipe(
+      Effect.flatMap((target) =>
+        target === root
+          ? Effect.succeed(root)
+          : projects
+              .getByWorkspaceRoot(target)
+              .pipe(Effect.map((project) => (Option.isSome(project) ? target : root))),
+      ),
+      Effect.orElseSucceed(() => root),
+    );
+  const scratchRoot = scratchProbe.pipe(
+    Effect.flatMap((probed) =>
+      Result.isSuccess(probed)
+        ? scratchProjectRoot(probed.success).pipe(Effect.asSome)
+        : Effect.succeedNone,
+    ),
+  );
 
   const makeScratchFolder = (folder: string) =>
     fileSystem
@@ -252,17 +307,11 @@ const make = Effect.gen(function* () {
 
   const ensureScratchProject: ManagedProjectFolders["Service"]["ensureScratchProject"] = Effect.gen(
     function* () {
-      const workspaceRoot = yield* scratchRoot.pipe(
-        Effect.flatMap(
-          Option.match({
-            onNone: () => Effect.fail(new ScratchUnavailableError()),
-            onSome: Effect.succeed,
-          }),
-        ),
-      );
-      yield* makeScratchFolder(workspaceRoot);
-      const id = yield* crypto
-        .randomUUIDv4()
+      const probedRoot = yield* scratchProbe.pipe(Effect.flatMap(Effect.fromResult));
+      yield* makeScratchFolder(probedRoot);
+      const workspaceRoot = yield* scratchProjectRoot(probedRoot);
+      const id = yield* random
+        .uuidV4()
         .pipe(Effect.mapError((cause) => new ScratchProjectError({ workspaceRoot, cause })));
       const bootstrapped = yield* projects
         .bootstrap({
@@ -333,7 +382,7 @@ const make = Effect.gen(function* () {
           ? Effect.succeedSome(folderFor(id.slice(-8)))
           : attempt === 2
             ? Effect.succeedSome(fullFolder)
-            : crypto.randomUUIDv4().pipe(
+            : random.uuidV4().pipe(
                 Effect.map((uuid) => Option.some(`${fullFolder}-${uuid.slice(0, 8)}`)),
                 Effect.mapError((cause) => new ScratchFolderError({ folder: fullFolder, cause })),
               ),
@@ -395,11 +444,12 @@ const make = Effect.gen(function* () {
       path.join(cwd, "assets", "icon.svg"),
       namedProjectIconSvg(name),
     );
-    // Force explicit filenames so global ignore rules cannot drop them.
+    // Force explicit filenames so global ignore rules cannot drop them, and keep
+    // core.safecrlf=true from refusing the LF files under CRLF conversion.
     yield* git.execute({
       operation: "ManagedProjectFolders.add",
       cwd,
-      args: ["add", "--force", "--", "README.md", "assets/icon.svg"],
+      args: ["-c", "core.safecrlf=false", "add", "--force", "--", "README.md", "assets/icon.svg"],
       timeoutMs: 10_000,
     });
     return yield* git
@@ -427,8 +477,8 @@ const make = Effect.gen(function* () {
       scaffoldRepository(workspaceRoot, input.name).pipe(
         Effect.mapError((cause) => new NamedProjectFolderError({ folder: workspaceRoot, cause })),
       ),
-      crypto
-        .randomUUIDv4()
+      random
+        .uuidV4()
         .pipe(Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause }))),
     ]).pipe(Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeFolder)));
     const [commitError, id] = prepared;

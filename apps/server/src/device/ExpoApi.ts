@@ -1,5 +1,5 @@
 /**
- * Expo's GraphQL API for EAS Simulator sessions. The operations in
+ * Expo's GraphQL API for Expo Simulators sessions. The operations in
  * `ExpoApi.graphql` are the ones eas-cli's `simulator:*` commands send; their
  * client is generated from `schema/expo.graphql` (`vp run generate`).
  */
