@@ -451,9 +451,7 @@ function PickerRow(props: {
 
 function WeekdayRow(props: {
   readonly weekdays: ReadonlyArray<number>;
-  readonly onChange: (
-    update: (weekdays: ReadonlyArray<number>) => ReadonlyArray<number>,
-  ) => void;
+  readonly onChange: (update: (weekdays: ReadonlyArray<number>) => ReadonlyArray<number>) => void;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -481,9 +479,7 @@ function WeekdayRow(props: {
           state: props.weekdays.includes(day.index) ? ("on" as const) : undefined,
         })),
       ]}
-      onSelect={(id) =>
-        props.onChange((weekdays) => weekdaysAfterRepeatAction(weekdays, id))
-      }
+      onSelect={(id) => props.onChange((weekdays) => weekdaysAfterRepeatAction(weekdays, id))}
     />
   );
 }
