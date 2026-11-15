@@ -1,7 +1,7 @@
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
-import { createRef, useState, type Ref } from "react";
+import { createRef, useState, type Ref, type RefObject } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -173,27 +173,34 @@ function copy(): string {
   return clipboardData.getData("text/plain");
 }
 
+function renderBigFile(viewerRef: Ref<CodeViewHandle<undefined, undefined>>) {
+  const container = document.createElement("div");
+  container.style.cssText = "display: flex; width: 800px; height: 300px;";
+  return render(
+    <StyledDiffCodeView
+      viewerRef={viewerRef}
+      style={{ width: "100%", height: "100%", overflow: "auto" }}
+      items={[{ id: "big", type: "diff", fileDiff }]}
+    />,
+    { container },
+  );
+}
+
+async function waitForRows(viewerRef: RefObject<CodeViewHandle<undefined, undefined> | null>) {
+  const renderedItem = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element;
+  await vi.waitFor(
+    () =>
+      expect(renderedItem()?.shadowRoot?.querySelectorAll("[data-line]").length).toBeGreaterThan(0),
+    { timeout: 10_000 },
+  );
+  return renderedItem;
+}
+
 describe("StyledDiffCodeView", () => {
   it("copies every line of a file after select all, including rows the virtualizer dropped", async () => {
     const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
-    const container = document.createElement("div");
-    container.style.cssText = "display: flex; width: 800px; height: 300px;";
-    await using _screen = await render(
-      <StyledDiffCodeView
-        viewerRef={viewerRef}
-        style={{ width: "100%", height: "100%", overflow: "auto" }}
-        items={[{ id: "big", type: "diff", fileDiff }]}
-      />,
-      { container },
-    );
-    const renderedItem = () => viewerRef.current?.getInstance()?.getRenderedItems()[0]?.element;
-    await vi.waitFor(
-      () =>
-        expect(renderedItem()?.shadowRoot?.querySelectorAll("[data-line]").length).toBeGreaterThan(
-          0,
-        ),
-      { timeout: 10_000 },
-    );
+    await using _screen = await renderBigFile(viewerRef);
+    const renderedItem = await waitForRows(viewerRef);
     const rows = renderedItem()!.shadowRoot!.querySelectorAll("[data-line]");
     expect(rows.length).toBeLessThan(LINE_COUNT);
 
@@ -229,5 +236,31 @@ describe("StyledDiffCodeView", () => {
 
     document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     expect(copy()).toBe("");
+  });
+
+  it("copies a dragged range after scrolling unmounts its rows", async () => {
+    const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
+    await using _screen = await renderBigFile(viewerRef);
+    const renderedItem = await waitForRows(viewerRef);
+    const row = (line: number) =>
+      renderedItem()!.shadowRoot!.querySelector(`[data-line="${line}"]`);
+    const first = row(1)!;
+    const mounted = renderedItem()!.shadowRoot!.querySelectorAll("[data-line]");
+    const last = mounted[mounted.length - 1]!;
+    const lastLine = Number(last.getAttribute("data-line"));
+
+    first.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+    const selected = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.setBaseAndExtent(first, 0, last, last.childNodes.length);
+    await selected;
+
+    const scroller = renderedItem()!.closest(".diff-render-surface")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    scroller.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(row(1)).toBeNull());
+
+    expect(copy()).toBe(lines.slice(0, lastLine).join("\n"));
   });
 });
