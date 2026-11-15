@@ -1,0 +1,248 @@
+#!/usr/bin/env node
+// Regenerates testdata/<flavor>/*.json from the Conn monorepo at CONN_MONOREPO (after `vp i`):
+//
+//   CONN_MONOREPO=/path/to/conn node crates/conn-provider-acp/tools/capture-ts-events.mjs <flavor> [fixture ...]
+//
+// <flavor> is grok, kiro, fx or acpRegistry. Offline: it replays the T3 test kit's recorded
+// ACP transcripts through T3's own fixture runner and adapter; no agent starts, no model is
+// called. It adds one temporary test to apps/server/src/orchestration-v2/testkit and deletes it.
+//
+// It also runs this crate's own scenarios, testdata/<flavor>-scenarios/<name>/ (written by
+// tools/make-scenarios.mjs), through the same runner and adapter, with no output assertions:
+// T3's adapter decides what the golden events are.
+//
+// Each golden file holds, for one fixture:
+// - `transcript`: the entries exactly as T3's harness handed them to its replay agent, after
+//   `materializeReplayTranscriptRuntimeInstructions` (the runtime notes T3 appends to prompts);
+// - `calls`: every ProviderAdapterV2 session call the orchestrator made (`openSession`,
+//   `ensureThread`, `startTurn`, ...) with its input, in order, and the value it returned;
+// - `events`: every ProviderAdapterV2Event the adapter emitted, `driver` dropped;
+// - `outcome`: `passed` or the T3 test's own failure text;
+// - `gates`: the replay gate labels the fixture holds (`release_replay_gate`), each with the
+//   run that must end first (the `finish_held_run` before it), read from the fixture's input.ts.
+
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
+
+import { monorepo } from "../../../tools/monorepo.mjs";
+import { gitEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
+import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
+
+const HARNESSES = {
+  grok: { name: "GrokOrchestratorReplayHarness", file: "GrokAdapterV2.testkit.ts", transcript: "grok_transcript.ndjson" },
+  kiro: { name: "KiroOrchestratorReplayHarness", file: "KiroAdapterV2.testkit.ts", transcript: "kiro_transcript.ndjson" },
+  fx: { name: "FxOrchestratorReplayHarness", file: "FxAdapterV2.testkit.ts", transcript: "fx_transcript.ndjson" },
+  acpRegistry: {
+    name: "AcpRegistryOrchestratorReplayHarness",
+    file: "AcpRegistryAdapterV2.testkit.ts",
+    transcript: "registry_transcript.ndjson",
+  },
+};
+
+const [flavor, ...only] = process.argv.slice(2);
+const harness = HARNESSES[flavor];
+if (harness === undefined) {
+  console.error(`usage: capture-ts-events.mjs <${Object.keys(HARNESSES).join("|")}> [fixture ...]`);
+  process.exit(2);
+}
+
+const MONOREPO = monorepo();
+
+const CRATE = NodePath.dirname(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)));
+
+const TEST_SOURCE = `
+import * as fs from "node:fs";
+import * as NodeUrl from "node:url";
+import { describe, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
+import { ${harness.name} as HARNESS } from "../Adapters/${harness.file}";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
+
+const OUT = __OUT__;
+const ONLY: ReadonlyArray<string> = __ONLY__;
+const plain = (value: unknown) => JSON.parse(JSON.stringify(value ?? null));
+
+const tapped = (log: Array<unknown>, transcripts: Array<unknown>) => ({
+  ...HARNESS,
+  makeProviderAdapterRegistryLayer: (transcript: any, options?: any) => {
+    transcripts.push(plain(transcript));
+    return Layer.effect(
+      ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+      Effect.gen(function* () {
+        const ctx = yield* Layer.build(HARNESS.makeProviderAdapterRegistryLayer(transcript, options));
+        const registry = ctx.mapUnsafe.get(ProviderAdapterRegistry.ProviderAdapterRegistryV2.key) as any;
+        return {
+          ...registry,
+          get: (id: any) =>
+            registry.get(id).pipe(
+              Effect.map((adapter: any) => ({
+                ...adapter,
+                openSession: (input: any) => {
+                  log.push({ kind: "call", method: "openSession", input: plain(input) });
+                  return adapter.openSession(input).pipe(
+                    Effect.map((runtime: any) => {
+                      const wrapped: Record<string, unknown> = { ...runtime };
+                      for (const [key, value] of Object.entries(runtime)) {
+                        if (typeof value !== "function") continue;
+                        wrapped[key] = (callInput: any, ...rest: Array<any>) => {
+                          const entry: any = { kind: "call", method: key, input: plain(callInput) };
+                          log.push(entry);
+                          const result = (value as any)(callInput, ...rest);
+                          return Effect.isEffect(result)
+                            ? (result as any).pipe(
+                                Effect.onExit((exit: any) =>
+                                  Effect.sync(() => {
+                                    entry.exit = Exit.isSuccess(exit)
+                                      ? { ok: plain(exit.value) }
+                                      : { error: String(exit.cause) };
+                                  }),
+                                ),
+                              )
+                            : result;
+                        };
+                      }
+                      wrapped.events = runtime.events.pipe(
+                        Stream.tap((event: any) => Effect.sync(() => log.push({ kind: "event", event: plain(event) }))),
+                      );
+                      if (Effect.isEffect(runtime.close)) {
+                        wrapped.close = Effect.sync(() => log.push({ kind: "call", method: "close" })).pipe(
+                          Effect.andThen(runtime.close),
+                        );
+                      }
+                      return wrapped;
+                    }),
+                  );
+                },
+              })),
+            ),
+        };
+      }),
+    );
+  },
+});
+
+const capture = (input: any) => {
+    const log: Array<unknown> = [];
+    const transcripts: Array<unknown> = [];
+    return runReplayFixture({ ...input, harness: tapped(log, transcripts) as any }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() =>
+          fs.writeFileSync(
+            \`\${OUT}/\${input.fixtureName}.json\`,
+            JSON.stringify({
+              outcome: Exit.isSuccess(exit) ? "passed" : String(exit.cause),
+              transcripts,
+              log,
+            }),
+          ),
+        ),
+      ),
+      Effect.flatten,
+    );
+};
+
+describe("conn acp capture", () => {
+  itRunsReplayFixtures("${flavor}", (input) => {
+    if (ONLY.length > 0 && !ONLY.includes(input.fixtureName)) return Effect.void;
+    return capture(input);
+  });
+});
+describe("conn acp scenarios", () => {
+__SCENARIO_TESTS__
+});
+`;
+
+const server = NodePath.join(MONOREPO, "apps/server");
+const testkit = NodePath.join(server, "src/orchestration-v2/testkit");
+// The name carries this run's PID, so runs side by side on one checkout do not collide.
+const testFile = NodePath.join(testkit, `ConnAcpCapture${flavor}.${process.pid}.tmp.test.ts`);
+const scenarios = readScenarios(flavor, harness.transcript).filter((s) => only.length === 0 || only.includes(s.name));
+const out = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-"));
+const sealedDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-acp-capture-env-"));
+process.once("exit", () => NodeFS.rmSync(sealedDir, { recursive: true, force: true }));
+const head = NodeChildProcess.execFileSync("git", ["-C", MONOREPO, "rev-parse", "--short", "HEAD"], { env: gitEnv() })
+  .toString()
+  .trim();
+const capturedOn = new Date().toISOString().slice(0, 10);
+
+// Vitest workers do not inherit the environment, so the output folder goes into the source.
+NodeFS.writeFileSync(
+  testFile,
+  TEST_SOURCE.replace("__OUT__", JSON.stringify(out))
+    .replace("__ONLY__", JSON.stringify(only))
+    .replace("__SCENARIO_TESTS__", scenarioTestSource(scenarios, "capture")),
+);
+let status = 0;
+try {
+  NodeChildProcess.execFileSync("vp", ["test", "run", NodePath.relative(server, testFile)], {
+    cwd: server,
+    stdio: "inherit",
+    // Sealed: T3's code and the stub it starts get a throwaway HOME and only what node needs.
+    env: sealedNodeEnv(sealedDir),
+  });
+} catch {
+  // Failing T3 cases are recorded with their outcome, not dropped.
+  status = 1;
+} finally {
+  NodeFS.rmSync(testFile, { force: true });
+}
+
+// `release_replay_gate` steps of a fixture's input.ts, in order, with the run before each.
+function fixtureGates(name) {
+  const file = NodePath.join(testkit, "fixtures", name, "input.ts");
+  if (!NodeFS.existsSync(file)) return [];
+  const source = NodeFS.readFileSync(file, "utf8");
+  const constant = (id) => {
+    const match = source.match(new RegExp(`const ${id}\\s*=\\s*"([^"]*)"`));
+    return match?.[1];
+  };
+  const gates = [];
+  let afterRun = 0;
+  const steps = /\{\s*type:\s*"(finish_held_run|release_replay_gate)",\s*(?:targetRunIndex:\s*(\d+)|label:\s*(?:"([^"]*)"|(\w+)))/g;
+  for (const step of source.matchAll(steps)) {
+    if (step[1] === "finish_held_run") {
+      afterRun = Number(step[2]);
+    } else {
+      const label = step[3] ?? constant(step[4]);
+      if (label === undefined) throw new Error(`${name}: cannot resolve gate label ${step[4]}`);
+      gates.push({ label, afterRun });
+    }
+  }
+  return gates;
+}
+
+const target = NodePath.join(CRATE, "testdata", flavor);
+NodeFS.mkdirSync(target, { recursive: true });
+for (const file of NodeFS.readdirSync(out).toSorted()) {
+  const name = file.replace(/\.json$/, "");
+  const raw = JSON.parse(NodeFS.readFileSync(NodePath.join(out, file), "utf8"));
+  const source = scenarios.some((s) => s.name === name)
+    ? `this crate's testdata/${flavor}-scenarios/${name}/${harness.transcript} (hand-made, see tools/make-scenarios.mjs)`
+    : `fixtures/${name}/${harness.transcript}`;
+  const golden = {
+    note: `ProviderAdapterV2 calls and events from T3's ${flavor} adapter replaying ${source} through the orchestrator fixture runner at ${head}; driver dropped.`,
+    capturedOn,
+    outcome: raw.outcome,
+    gates: fixtureGates(name),
+    transcripts: raw.transcripts.map((t) => t.entries),
+    calls: raw.log.filter((e) => e.kind === "call").map(({ kind: _k, ...rest }) => rest),
+    events: raw.log
+      .filter((e) => e.kind === "event")
+      .map(({ event }) => {
+        const { driver: _driver, ...rest } = event;
+        return rest;
+      }),
+  };
+  NodeFS.writeFileSync(NodePath.join(target, `${name}.json`), `${JSON.stringify(golden, null, 1)}\n`);
+  console.log(`${name}: ${golden.outcome === "passed" ? "passed" : "T3 FAILED"}, ${golden.calls.length} calls, ${golden.events.length} events`);
+}
+NodeFS.rmSync(out, { recursive: true, force: true });
+process.exit(status);

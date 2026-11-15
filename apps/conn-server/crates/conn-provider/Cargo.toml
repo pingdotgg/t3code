@@ -1,0 +1,24 @@
+[package]
+name = "conn-provider"
+description = "The provider trait and its shared types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-contract.workspace = true
+serde.workspace = true
+# `Provider::server_provider_entry` returns a `ServerProvider` JSON value.
+serde_json.workspace = true
+# `HostError`, as the other boundary error types.
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[lints]
+workspace = true

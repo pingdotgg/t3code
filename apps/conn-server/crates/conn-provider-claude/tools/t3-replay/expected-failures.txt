@@ -1,0 +1,2 @@
+# T3 replay scenarios that fail on purpose, one per line: <scenario> <reason>.
+# check.mjs fails when a scenario not listed here fails, and when a listed one passes.

@@ -1,0 +1,8 @@
+#!/bin/sh
+# Cargo's target runner for this workspace (.cargo/config.toml): runs the binary sealed through
+# tools/cargo-runner.mjs. Node is needed; without it no test or example runs, never unsealed.
+if ! command -v node >/dev/null 2>&1; then
+  echo "cargo-runner: node is not on PATH; the sealed runner needs it (no binary runs without it)" >&2
+  exit 127
+fi
+exec node "$(dirname "$0")/cargo-runner.mjs" "$@"

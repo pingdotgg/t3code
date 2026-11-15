@@ -1,0 +1,26 @@
+[package]
+name = "conn-provider-codex"
+description = "The Codex provider: drives `codex app-server` over JSON-RPC on stdio."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support.workspace = true
+conn-contract.workspace = true
+conn-provider.workspace = true
+conn-provider-support.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# `IdAllocator.derive.subagentThread` (a sha256); already linked for the Claude provider.
+sha2.workspace = true
+# Text generation stops a timed-out `codex exec` group with SIGTERM (as `conn-provider-support`).
+rustix = { workspace = true, features = ["process"] }
+thiserror.workspace = true
+# `net`: the Orbit MCP network wait probes TCP before the first spawn (network_gate.rs).
+tokio = { workspace = true, features = ["sync", "process", "io-util", "time", "rt", "macros", "net"] }
+
+[lints]
+workspace = true

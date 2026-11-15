@@ -1,0 +1,4 @@
+# Registered methods without a decode-checked run in effect-client.mjs or replay.mjs.
+# decode-coverage.mjs fails when a registered method is neither covered nor listed here, and
+# when a line here is covered or no longer registered. Give each line a reason.
+

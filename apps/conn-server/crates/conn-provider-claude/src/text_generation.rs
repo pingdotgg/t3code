@@ -1,0 +1,298 @@
+//! Text generation through the `claude` CLI, as `ClaudeTextGeneration.ts` (`runClaudeJson`)
+//! runs it: no SDK and no SDK host, one short CLI run per request.
+//!
+//! `claude -p --output-format json --json-schema <schema> --model <api model> [--effort <e>]
+//! --settings <json> --tools "" --disable-slash-commands --no-session-persistence
+//! [--strict-mcp-config] --permission-mode dontAsk`, the prompt on stdin, in a fresh
+//! temporary folder for a thread title (else the request's folder), 180 s. A CLI before 2.0.63
+//! rejects `--no-session-persistence`; then the run is repeated without it. The answer is the
+//! `structured_output` of the JSON envelope (or of the last `result` message of a list).
+//!
+//! The environment is the Claude process environment (`mergeClaudeProcessEnvironment`, then
+//! `makeClaudeEnvironment`). The model's input attachments are not sent, as in T3.
+
+use std::time::Duration;
+
+use conn_provider::{ProviderError, TextGenerationRequest};
+use conn_provider_support::probe::{CommandError, run_collect};
+use serde_json::{Map, Value, json};
+
+use crate::catalog;
+
+/// `CLAUDE_TIMEOUT_MS`.
+pub const TIMEOUT: Duration = Duration::from_secs(180);
+const NO_SESSION_PERSISTENCE: &str = "--no-session-persistence";
+/// What a Claude Code before 2.0.63 writes on stderr for that flag.
+const NO_SESSION_PERSISTENCE_REJECTED: &str = "error: unknown option '--no-session-persistence'";
+
+fn failed(detail: impl Into<String>) -> ProviderError {
+    ProviderError::Failed {
+        operation: "generate_text",
+        detail: detail.into(),
+    }
+}
+
+/// A boolean option's chosen value (`getModelSelectionBooleanOptionValue`).
+fn chosen_bool(selection: &Value, id: &str) -> Option<bool> {
+    selection["options"]
+        .as_array()?
+        .iter()
+        .find(|o| o["id"] == id)?
+        .get("value")?
+        .as_bool()
+}
+
+/// Whether the catalog model offers a boolean option `id`.
+fn has_boolean(model: &str, id: &str) -> bool {
+    let slug = catalog::resolve_slug(model);
+    catalog::provider_models().iter().any(|m| {
+        m["slug"] == slug.as_str()
+            && m.pointer("/capabilities/optionDescriptors")
+                .and_then(Value::as_array)
+                .is_some_and(|d| d.iter().any(|d| d["id"] == id && d["type"] == "boolean"))
+    })
+}
+
+/// The CLI's arguments for one request (`runClaudeJson`).
+pub fn cli_args(
+    selection: &Value,
+    output_schema: &str,
+    no_session_persistence: bool,
+    managed_mcp_config: bool,
+) -> Vec<String> {
+    let model = selection["model"].as_str().unwrap_or_default();
+    let compiled = catalog::compile(selection);
+    // Only chosen values; Claude Code's own defaults apply otherwise, as in chat turns.
+    let mut settings = Map::new();
+    settings.insert("disableAllHooks".into(), json!(true));
+    if has_boolean(model, "thinking")
+        && let Some(thinking) = chosen_bool(selection, "thinking")
+    {
+        settings.insert("alwaysThinkingEnabled".into(), json!(thinking));
+    }
+    if has_boolean(model, "fastMode") && chosen_bool(selection, "fastMode") == Some(true) {
+        settings.insert("fastMode".into(), json!(true));
+    }
+    if has_boolean(model, "ultracode")
+        && let Some(ultracode) = chosen_bool(selection, "ultracode")
+    {
+        settings.insert("ultracode".into(), json!(ultracode));
+    }
+    let mut args: Vec<String> = [
+        "-p",
+        "--output-format",
+        "json",
+        "--json-schema",
+        output_schema,
+        "--model",
+        &compiled.api_model_id,
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    if let Some(effort) = compiled.effort.filter(|e| !e.is_empty()) {
+        args.extend(["--effort".to_owned(), effort]);
+    }
+    args.extend([
+        "--settings".to_owned(),
+        Value::Object(settings).to_string(),
+        "--tools".to_owned(),
+        String::new(),
+        "--disable-slash-commands".to_owned(),
+    ]);
+    if no_session_persistence {
+        args.push(NO_SESSION_PERSISTENCE.to_owned());
+    }
+    if !managed_mcp_config {
+        args.push("--strict-mcp-config".to_owned());
+    }
+    args.extend(["--permission-mode".to_owned(), "dontAsk".to_owned()]);
+    args
+}
+
+/// `claudeErrorResult`: the last non-empty error text of the JSON output.
+fn error_result(stdout: &str) -> Option<String> {
+    let output: Value = serde_json::from_str(stdout).ok()?;
+    let messages = match output {
+        Value::Array(list) => list,
+        other => vec![other],
+    };
+    messages
+        .iter()
+        .filter(|m| m["is_error"] == true)
+        .map(|m| {
+            m["result"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    m["errors"].as_array().map(|errors| {
+                        errors
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .filter(|e| !e.starts_with("[ede_diagnostic]"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                })
+                .unwrap_or_default()
+                .trim()
+                .to_owned()
+        })
+        .rfind(|r| !r.is_empty())
+}
+
+/// The structured output of `--output-format json`: an envelope, or a list whose last
+/// `result` message carries it.
+fn structured_output(stdout: &str) -> Result<Value, ProviderError> {
+    let unexpected = || failed("Claude CLI returned unexpected output format.");
+    let output: Value = serde_json::from_str(stdout).map_err(|_| unexpected())?;
+    let envelope = match &output {
+        Value::Object(map) if map.contains_key("structured_output") => Some(&output),
+        Value::Array(list) => {
+            if !list.iter().all(|m| m["type"].is_string()) {
+                return Err(unexpected());
+            }
+            list.iter().rev().find(|m| m["type"] == "result")
+        }
+        _ => return Err(unexpected()),
+    };
+    Ok(envelope
+        .and_then(|e| e.get("structured_output"))
+        .cloned()
+        .unwrap_or(Value::Null))
+}
+
+/// One request. `env` is the Claude process environment; `program` the CLI.
+pub async fn generate(
+    program: &str,
+    env: &[(String, String)],
+    managed_mcp_config: bool,
+    request: TextGenerationRequest,
+) -> Result<Value, ProviderError> {
+    let selection = conn_contract::to_json(&request.model_selection);
+    let title = request.operation == "generateThreadTitle";
+    // A thread title runs in a fresh folder of its own (`makeTempDirectoryScoped`), removed
+    // after.
+    let temp = if title {
+        let made = tokio::task::spawn_blocking(|| {
+            let suffix: String = conn_support::uuid_v4()
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .take(6)
+                .collect();
+            let dir = std::env::temp_dir().join(format!("t3code-claude-title-{suffix}"));
+            std::fs::create_dir(&dir).map(|()| dir)
+        })
+        .await
+        .map_err(|e| failed(format!("Failed to create title directory: {e}")))?
+        .map_err(|e| failed(format!("Failed to create title directory: {e}")))?;
+        Some(made)
+    } else {
+        None
+    };
+    let cwd = temp
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from(&request.cwd));
+    let timeout = request.timeout.unwrap_or(TIMEOUT);
+    let run = |persistence: bool| {
+        let args = cli_args(
+            &selection,
+            &request.output_schema,
+            persistence,
+            managed_mcp_config,
+        );
+        let cwd = cwd.clone();
+        let prompt = request.prompt.clone();
+        async move {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            run_collect(program, &args, env, Some(&cwd), Some(&prompt), timeout).await
+        }
+    };
+    let started = tokio::time::Instant::now();
+    let mut result = run(true).await;
+    if let Ok(Some(out)) = &result
+        && out.code != 0
+        && out.stderr.contains(NO_SESSION_PERSISTENCE_REJECTED)
+    {
+        let left = timeout.saturating_sub(started.elapsed());
+        result = if left.is_zero() {
+            Ok(None)
+        } else {
+            tokio::time::timeout(left, run(false))
+                .await
+                .unwrap_or(Ok(None))
+        };
+    }
+    if let Some(dir) = temp {
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(dir)).await;
+    }
+    let out = match result {
+        Ok(Some(out)) => out,
+        Ok(None) => return Err(failed("Claude CLI request timed out.")),
+        Err(CommandError::NotFound) => {
+            return Err(failed(
+                "Failed to spawn Claude CLI process: the executable was not found",
+            ));
+        }
+        Err(CommandError::Failed(e)) => {
+            return Err(failed(format!("Failed to spawn Claude CLI process: {e}")));
+        }
+    };
+    if out.code != 0 {
+        let stdout = out.stdout.trim();
+        let stderr = out.stderr.trim();
+        let detail = error_result(stdout).unwrap_or_else(|| {
+            if stderr.is_empty() {
+                stdout.to_owned()
+            } else {
+                stderr.to_owned()
+            }
+        });
+        return Err(failed(if detail.is_empty() {
+            format!("Claude CLI command failed with code {}.", out.code)
+        } else {
+            format!("Claude CLI command failed: {detail}")
+        }));
+    }
+    structured_output(&out.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_answer_is_the_structured_output() {
+        assert_eq!(
+            structured_output(r#"{"type":"result","structured_output":{"title":"x"}}"#).unwrap(),
+            json!({"title": "x"})
+        );
+        assert_eq!(
+            structured_output(
+                r#"[{"type":"system"},{"type":"result","structured_output":{"title":"y"}}]"#
+            )
+            .unwrap(),
+            json!({"title": "y"})
+        );
+        assert!(structured_output("not json").is_err());
+        assert_eq!(
+            error_result(r#"{"is_error":true,"errors":["[ede_diagnostic] x","boom"]}"#),
+            Some("boom".into())
+        );
+    }
+
+    #[test]
+    fn arguments_follow_run_claude_json() {
+        let args = cli_args(
+            &json!({"instanceId": "claudeAgent", "model": "claude-haiku-4-5"}),
+            "{}",
+            true,
+            false,
+        );
+        assert_eq!(args.first().map(String::as_str), Some("-p"));
+        let tools = args.iter().position(|a| a == "--tools").unwrap();
+        assert_eq!(args[tools + 1], "");
+        assert!(args.ends_with(&["--permission-mode".into(), "dontAsk".into()]));
+        assert!(args.contains(&"--strict-mcp-config".to_owned()));
+    }
+}

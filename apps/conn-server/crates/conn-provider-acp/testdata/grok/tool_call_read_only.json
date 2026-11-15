@@ -1,0 +1,1120 @@
+{
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
+ "capturedOn": "2026-11-14",
+ "outcome": "passed",
+ "transcripts": [
+  [
+   {
+    "type": "expect_outbound",
+    "label": "initialize",
+    "frame": {
+     "kind": "request",
+     "method": "initialize",
+     "params": {
+      "protocolVersion": 2,
+      "info": "<any>",
+      "capabilities": "<any>",
+      "clientCapabilities": "<any>",
+      "clientInfo": "<any>",
+      "_meta": {
+       "clientType": "extension"
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "initialized",
+    "frame": {
+     "kind": "response",
+     "method": "initialize",
+     "result": {
+      "protocolVersion": 1,
+      "agentCapabilities": {
+       "loadSession": true,
+       "mcpCapabilities": {
+        "http": true,
+        "sse": true
+       },
+       "promptCapabilities": {
+        "audio": false,
+        "embeddedContext": true,
+        "image": false
+       }
+      },
+      "authMethods": [
+       {
+        "id": "replay",
+        "name": "Replay"
+       }
+      ],
+      "agentInfo": {
+       "name": "grok-replay",
+       "version": "1"
+      }
+     }
+    }
+   },
+   {
+    "type": "expect_outbound",
+    "label": "session.new",
+    "frame": {
+     "kind": "request",
+     "method": "session/new",
+     "params": {
+      "cwd": "<workspace>",
+      "mcpServers": "<any>"
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "session.created",
+    "frame": {
+     "kind": "response",
+     "method": "session/new",
+     "result": {
+      "sessionId": "grok-replay-session-1",
+      "models": {
+       "currentModelId": "grok-build",
+       "availableModels": [
+        {
+         "modelId": "grok-build",
+         "name": "Grok Build"
+        }
+       ]
+      }
+     }
+    }
+   },
+   {
+    "type": "expect_outbound",
+    "label": "session.prompt",
+    "frame": {
+     "kind": "request",
+     "method": "session/prompt",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "prompt": [
+       {
+        "type": "text",
+        "text": "<t3_code_instructions>\n<any>\n</t3_code_instructions>\n\n<user_request>\nRead /tmp/claude-replay-tool_call_read_only/package.json and /tmp/claude-replay-tool_call_read_only/tsconfig.json, then answer exactly: read only tool fixture complete\n</user_request>"
+       },
+       {
+        "type": "text",
+        "text": "<runtime_info>In case you're asked: you are running in T3 Code through the Grok harness, as grok-build. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n<pull_request_linking>\nLink each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.\n</pull_request_linking>"
+       }
+      ],
+      "_meta": {
+       "promptId": "t3-xai-prompt-1",
+       "requestId": "t3-xai-prompt-1"
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "assistant.progress",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "content": {
+        "type": "text",
+        "text": "Reading both files now.\n"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "tool.package.started",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "read-package",
+       "title": "Read package.json",
+       "kind": "read",
+       "status": "pending",
+       "rawInput": {
+        "path": "/tmp/claude-replay-tool_call_read_only/package.json"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "tool.package.running",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "read-package",
+       "status": "in_progress"
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "tool.package.completed",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "read-package",
+       "status": "completed",
+       "rawOutput": {
+        "content": "{\"name\":\"cursor-read-only-fixture\"}"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "tool.tsconfig.started",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "tool_call",
+       "toolCallId": "read-tsconfig",
+       "title": "Read tsconfig.json",
+       "kind": "read",
+       "status": "pending",
+       "rawInput": {
+        "path": "/tmp/claude-replay-tool_call_read_only/tsconfig.json"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "tool.tsconfig.completed",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "tool_call_update",
+       "toolCallId": "read-tsconfig",
+       "status": "completed",
+       "rawOutput": {
+        "content": "{\"compilerOptions\":{\"target\":\"ES2022\"}}"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "assistant.final",
+    "frame": {
+     "kind": "notification",
+     "method": "session/update",
+     "params": {
+      "sessionId": "grok-replay-session-1",
+      "update": {
+       "sessionUpdate": "agent_message_chunk",
+       "content": {
+        "type": "text",
+        "text": "read only tool fixture complete"
+       }
+      }
+     }
+    }
+   },
+   {
+    "type": "emit_inbound",
+    "label": "prompt.completed",
+    "frame": {
+     "kind": "response",
+     "method": "session/prompt",
+     "result": {
+      "stopReason": "end_turn"
+     }
+    }
+   },
+   {
+    "type": "runtime_exit",
+    "status": "success"
+   }
+  ]
+ ],
+ "calls": [
+  {
+   "method": "openSession",
+   "input": {
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "modelSelection": {
+     "instanceId": "grok",
+     "model": "grok-build"
+    },
+    "runtimePolicy": {
+     "runtimeMode": "full-access",
+     "interactionMode": "default",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only-v7jrrO",
+     "approvalPolicy": "never",
+     "sandboxPolicy": {
+      "type": "readOnly",
+      "access": {
+       "type": "fullAccess"
+      },
+      "networkAccess": false
+     }
+    },
+    "promptSuggestions": {
+     "_id": "Exit",
+     "_tag": "Success",
+     "value": false
+    }
+   }
+  },
+  {
+   "method": "ensureThread",
+   "input": {
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "title": "Replay fixture: tool_call_read_only",
+    "modelSelection": {
+     "instanceId": "grok",
+     "model": "grok-build"
+    },
+    "runtimePolicy": {
+     "runtimeMode": "full-access",
+     "interactionMode": "default",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only-v7jrrO",
+     "approvalPolicy": "never",
+     "sandboxPolicy": {
+      "type": "readOnly",
+      "access": {
+       "type": "fullAccess"
+      },
+      "networkAccess": false
+     }
+    },
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "existingProviderThread": {
+     "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+     "driver": "grok",
+     "providerInstanceId": "grok",
+     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+     "appThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+     "ownerNodeId": null,
+     "nativeThreadRef": null,
+     "nativeConversationHeadRef": null,
+     "status": "not_loaded",
+     "firstRunOrdinal": 1,
+     "lastRunOrdinal": 1,
+     "handoffIds": [],
+     "forkedFrom": null,
+     "pendingBackgroundTasks": [],
+     "contextUsage": null,
+     "nativeMetadata": null,
+     "goal": null,
+     "createdAt": "1970-01-01T00:00:00.001Z",
+     "updatedAt": "1970-01-01T00:00:00.001Z"
+    }
+   },
+   "exit": {
+    "ok": {
+     "id": "provider-thread:provider:grok:provider-instance:grok:native-thread:grok-replay-session-1",
+     "driver": "grok",
+     "providerInstanceId": "grok",
+     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+     "appThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+     "ownerNodeId": null,
+     "nativeThreadRef": {
+      "driver": "grok",
+      "nativeId": "grok-replay-session-1",
+      "strength": "strong"
+     },
+     "nativeConversationHeadRef": null,
+     "status": "idle",
+     "firstRunOrdinal": null,
+     "lastRunOrdinal": null,
+     "handoffIds": [],
+     "forkedFrom": null,
+     "contextUsage": null,
+     "nativeMetadata": {
+      "itemIdentityVersion": 2
+     },
+     "createdAt": "1970-01-01T00:00:00.002Z",
+     "updatedAt": "1970-01-01T00:00:00.002Z"
+    }
+   }
+  },
+  {
+   "method": "getModelContextWindow",
+   "input": {
+    "instanceId": "grok",
+    "model": "grok-build"
+   }
+  },
+  {
+   "method": "startTurn",
+   "input": {
+    "appThread": {
+     "createdBy": "user",
+     "creationSource": "web",
+     "id": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+     "projectId": "project:fixture:tool_call_read_only:f2604e9d-55b7-45de-a716-838867faae7e",
+     "title": "Replay fixture: tool_call_read_only",
+     "providerInstanceId": "grok",
+     "modelSelection": {
+      "instanceId": "grok",
+      "model": "grok-build"
+     },
+     "runtimeMode": "full-access",
+     "interactionMode": "default",
+     "branch": null,
+     "worktreePath": null,
+     "pullRequests": [],
+     "activeProviderThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+     "lineage": {
+      "parentThreadId": null,
+      "relationshipToParent": null,
+      "rootThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+     },
+     "forkedFrom": null,
+     "createdAt": "1970-01-01T00:00:00.000Z",
+     "updatedAt": "1970-01-01T00:00:00.001Z",
+     "archivedAt": null,
+     "settledOverride": null,
+     "settledAt": null,
+     "snoozedUntil": null,
+     "snoozedAt": null,
+     "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+     "deletedAt": null
+    },
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "runOrdinal": 1,
+    "providerTurnOrdinal": 1,
+    "nativeThreadHasTurns": false,
+    "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "providerThread": {
+     "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+     "driver": "grok",
+     "providerInstanceId": "grok",
+     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+     "appThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+     "ownerNodeId": null,
+     "nativeThreadRef": {
+      "driver": "grok",
+      "nativeId": "grok-replay-session-1",
+      "strength": "strong"
+     },
+     "nativeConversationHeadRef": null,
+     "status": "active",
+     "firstRunOrdinal": 1,
+     "lastRunOrdinal": 1,
+     "handoffIds": [],
+     "forkedFrom": null,
+     "contextUsage": null,
+     "nativeMetadata": {
+      "itemIdentityVersion": 2
+     },
+     "createdAt": "1970-01-01T00:00:00.001Z",
+     "updatedAt": "1970-01-01T00:00:00.002Z"
+    },
+    "message": {
+     "messageId": "message:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+     "text": "Read /tmp/claude-replay-tool_call_read_only/package.json and /tmp/claude-replay-tool_call_read_only/tsconfig.json, then answer exactly: read only tool fixture complete",
+     "attachments": [],
+     "createdBy": "user",
+     "creationSource": "web"
+    },
+    "modelSelection": {
+     "instanceId": "grok",
+     "model": "grok-build"
+    },
+    "runtimePolicy": {
+     "runtimeMode": "full-access",
+     "interactionMode": "default",
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only-v7jrrO",
+     "approvalPolicy": "never",
+     "sandboxPolicy": {
+      "type": "readOnly",
+      "access": {
+       "type": "fullAccess"
+      },
+      "networkAccess": false
+     }
+    }
+   },
+   "exit": {
+    "ok": null
+   }
+  }
+ ],
+ "events": [
+  {
+   "type": "provider_turn.updated",
+   "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+   "providerTurn": {
+    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+    "nativeTurnRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1",
+     "strength": "weak"
+    },
+    "ordinal": 1,
+    "status": "running",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "provider_thread.updated",
+   "providerThread": {
+    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "driver": "grok",
+    "providerInstanceId": "grok",
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "appThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "ownerNodeId": null,
+    "nativeThreadRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1",
+     "strength": "strong"
+    },
+    "nativeConversationHeadRef": null,
+    "status": "active",
+    "firstRunOrdinal": 1,
+    "lastRunOrdinal": 1,
+    "handoffIds": [],
+    "forkedFrom": null,
+    "contextUsage": null,
+    "nativeMetadata": {
+     "itemIdentityVersion": 2
+    },
+    "createdAt": "1970-01-01T00:00:00.001Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "assistant_message",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "role": "assistant",
+    "text": "Reading both files now.\n",
+    "attachments": [],
+    "streaming": true,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 101,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "text": "Reading both files now.\n",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "assistant_message",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "role": "assistant",
+    "text": "Reading both files now.\n",
+    "attachments": [],
+    "streaming": false,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 101,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A0",
+    "text": "Reading both files now.\n",
+    "streaming": false
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "running",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 102,
+    "status": "pending",
+    "title": "Read /tmp/claude-replay-tool_call_read_only/package.json",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Read",
+    "input": {
+     "path": "/tmp/claude-replay-tool_call_read_only/package.json"
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "running",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 102,
+    "status": "running",
+    "title": "Read /tmp/claude-replay-tool_call_read_only/package.json",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Read",
+    "input": {
+     "path": "/tmp/claude-replay-tool_call_read_only/package.json"
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "completed",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-package",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-package",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 102,
+    "status": "completed",
+    "title": "Read /tmp/claude-replay-tool_call_read_only/package.json",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Read",
+    "input": {
+     "path": "/tmp/claude-replay-tool_call_read_only/package.json"
+    },
+    "output": {
+     "content": "{\"name\":\"cursor-read-only-fixture\"}"
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "running",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-tsconfig",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-tsconfig",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 103,
+    "status": "pending",
+    "title": "Read /tmp/claude-replay-tool_call_read_only/tsconfig.json",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Read",
+    "input": {
+     "path": "/tmp/claude-replay-tool_call_read_only/tsconfig.json"
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "completed",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-tsconfig",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Atool%3Aread-tsconfig",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "read-tsconfig",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 103,
+    "status": "completed",
+    "title": "Read /tmp/claude-replay-tool_call_read_only/tsconfig.json",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Read",
+    "input": {
+     "path": "/tmp/claude-replay-tool_call_read_only/tsconfig.json"
+    },
+    "output": {
+     "content": "{\"compilerOptions\":{\"target\":\"ES2022\"}}"
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "assistant_message",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "role": "assistant",
+    "text": "read only tool fixture complete",
+    "attachments": [],
+    "streaming": true,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 104,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "text": "read only tool fixture complete",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "assistant_message",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "role": "assistant",
+    "text": "read only tool fixture complete",
+    "attachments": [],
+    "streaming": false,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1:assistant:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 104,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1%3Aassistant%3A1",
+    "text": "read only tool fixture complete",
+    "streaming": false
+   }
+  },
+  {
+   "type": "provider_turn.updated",
+   "threadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+   "providerTurn": {
+    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+    "nativeTurnRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1:turn:1",
+     "strength": "weak"
+    },
+    "ordinal": 1,
+    "status": "completed",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "turnTokenUsage": {
+     "usageScope": "main_agent",
+     "usageStatus": "unavailable",
+     "hasSubagents": false
+    }
+   }
+  },
+  {
+   "type": "provider_thread.updated",
+   "providerThread": {
+    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "driver": "grok",
+    "providerInstanceId": "grok",
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atool_call_read_only%3Aproject%3Aproject%253Afixture%253Atool_call_read_only%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "appThreadId": "thread:fixture:tool_call_read_only:project:project%3Afixture%3Atool_call_read_only%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "ownerNodeId": null,
+    "nativeThreadRef": {
+     "driver": "grok",
+     "nativeId": "grok-replay-session-1",
+     "strength": "strong"
+    },
+    "nativeConversationHeadRef": null,
+    "status": "active",
+    "firstRunOrdinal": 1,
+    "lastRunOrdinal": 1,
+    "handoffIds": [],
+    "forkedFrom": null,
+    "contextUsage": null,
+    "nativeMetadata": {
+     "itemIdentityVersion": 2
+    },
+    "createdAt": "1970-01-01T00:00:00.001Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn.terminal",
+   "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+   "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3Agrok-replay-session-1%3Aturn%3A1",
+   "runOrdinal": 1,
+   "status": "completed",
+   "failure": null,
+   "threadDisposition": "reusable"
+  }
+ ]
+}

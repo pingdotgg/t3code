@@ -1,0 +1,31 @@
+[package]
+name = "conn-features"
+description = "Conn's own server areas beside the engine: scheduled tasks, and the Conn-only stores."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support.workspace = true
+conn-contract.workspace = true
+conn-engine.workspace = true
+# The base ref a new-thread task's worktrees start from (T3's `resolveScheduledTaskBaseRef`).
+conn-vcs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+jiff.workspace = true
+# Webhook deliveries and replay keys, in their own SQLite file as the T3 server keeps them.
+# Already in the binary through conn-engine: no new crate.
+rusqlite.workspace = true
+# The webhook URL token and the prompt frame id, from the OS random source (in the tree).
+getrandom.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time", "test-util"] }
+
+[lints]
+workspace = true

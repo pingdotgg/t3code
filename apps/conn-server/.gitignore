@@ -1,0 +1,7 @@
+/target
+**/target
+/.conn
+node_modules/
+/helpers/sdk-host/dist/
+# Worktrees that the agent harness makes for subagents.
+/.claude/worktrees/

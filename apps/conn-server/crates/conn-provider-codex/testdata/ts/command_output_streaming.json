@@ -1,0 +1,469 @@
+{
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/command_output_streaming.ndjson through the orchestrator fixture runner at 5b571fe04a; driver dropped.",
+  "capturedOn": "2026-11-13",
+  "startTurn": [
+    {
+      "appThread": {
+        "createdBy": "user",
+        "creationSource": "web",
+        "id": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "projectId": "project:fixture:command_output_streaming:f2604e9d-55b7-45de-a716-838867faae7e",
+        "title": "Replay fixture: command_output_streaming",
+        "providerInstanceId": "codex",
+        "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "branch": null,
+        "worktreePath": null,
+        "pullRequests": [],
+        "activeProviderThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "lineage": {
+          "parentThreadId": null,
+          "relationshipToParent": null,
+          "rootThreadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7"
+        },
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.000Z",
+        "updatedAt": "1970-01-01T00:00:00.001Z",
+        "archivedAt": null,
+        "settledOverride": null,
+        "settledAt": null,
+        "snoozedUntil": null,
+        "snoozedAt": null,
+        "lastVisitedAt": "1970-01-01T00:00:00.000Z",
+        "deletedAt": null
+      },
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+      "runOrdinal": 1,
+      "providerTurnOrdinal": 1,
+      "nativeThreadHasTurns": false,
+      "attemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+      "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+      "providerThread": {
+        "id": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "driver": "codex",
+        "providerInstanceId": "codex",
+        "providerSessionId": "provider-session:provider-instance:codex:shared",
+        "appThreadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "ownerNodeId": null,
+        "nativeThreadRef": {
+          "driver": "codex",
+          "nativeId": "01a10004-0a27-7421-852d-0f7f99ace2d6",
+          "strength": "strong"
+        },
+        "nativeConversationHeadRef": null,
+        "status": "active",
+        "firstRunOrdinal": 1,
+        "lastRunOrdinal": 1,
+        "handoffIds": [],
+        "forkedFrom": null,
+        "createdAt": "1970-01-01T00:00:00.001Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "contextUsage": null
+      },
+      "message": {
+        "messageId": "message:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:a209c1b9-9d82-4ff3-ba27-8bd6853514a5",
+        "text": "Run this exact shell command in the foreground and wait for it to finish: `for i in 1 2 3 4; do printf '\\033[32mstream line %s\\033[0m\\n' $i; sleep 1; done; printf 'progress 50%%\\rprogress 100%%\\n'`. Then respond exactly: command output fixture complete",
+        "attachments": [],
+        "createdBy": "user",
+        "creationSource": "web"
+      },
+      "modelSelection": { "instanceId": "codex", "model": "gpt-6-luna" },
+      "runtimePolicy": {
+        "runtimeMode": "full-access",
+        "interactionMode": "default",
+        "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-command_output_streaming-3euyy3",
+        "approvalPolicy": "never",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [],
+          "readOnlyAccess": { "type": "fullAccess" },
+          "networkAccess": false
+        }
+      }
+    }
+  ],
+  "respond": [],
+  "events": [
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a10004-0b1b-78f0-a41c-b253bded078e",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:33.829Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-10-03T04:27:12.408Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "role": "assistant",
+        "text": "I’ll run the command in the foreground and wait for it to finish.",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-10-03T04:27:12.408Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 101,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-10-03T04:27:12.408Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "assistant_message",
+        "phase": "commentary",
+        "messageId": "message:provider:codex:native-item:msg_0038d12d01b50ff0016ac08420563087d2af7fb28a3cee1956",
+        "text": "I’ll run the command in the foreground and wait for it to finish.",
+        "streaming": false
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "running",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-10-03T04:27:15.941Z",
+        "completedAt": null
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "running",
+        "title": null,
+        "startedAt": "2026-10-03T04:27:15.941Z",
+        "completedAt": null,
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/zsh -lc \"for i in 1 2 3 4; do printf '\\\\033[32mstream line %s\\\\033[0m\\\\n' \"'$i; sleep 1; done; printf '\"'progress 50%%\\\\rprogress 100%%\\\\n'\"",
+        "completionWake": "always"
+      }
+    },
+    {
+      "type": "command_output.delta",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "itemId": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+      "chunk": "\u001b[32mstream line 2\u001b[0m\n"
+    },
+    {
+      "type": "command_output.delta",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "itemId": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+      "chunk": "\u001b[32mstream line 3\u001b[0m\n"
+    },
+    {
+      "type": "command_output.delta",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "itemId": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+      "chunk": "\u001b[32mstream line 4\u001b[0m\n"
+    },
+    {
+      "type": "command_output.delta",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "itemId": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+      "chunk": "progress 50%\rprogress 100%\n"
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "tool_call",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-10-03T04:27:15.941Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "exec-1a2dcd5e-1591-48a8-bb8e-47cb40883d2c",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 102,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-10-03T04:27:15.941Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "command_execution",
+        "input": "/bin/zsh -lc \"for i in 1 2 3 4; do printf '\\\\033[32mstream line %s\\\\033[0m\\\\n' \"'$i; sleep 1; done; printf '\"'progress 50%%\\\\rprogress 100%%\\\\n'\"",
+        "output": "\u001b[32mstream line 2\u001b[0m\n\u001b[32mstream line 3\u001b[0m\n\u001b[32mstream line 4\u001b[0m\nprogress 50%\rprogress 100%\n",
+        "exitCode": 0,
+        "completionWake": "always"
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a10004-0b1b-78f0-a41c-b253bded078e",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:33.829Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 17795,
+          "maxTokens": 258400,
+          "inputTokens": 17653,
+          "cachedInputTokens": 3840,
+          "outputTokens": 142,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "node.updated",
+      "node": {
+        "id": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "kind": "assistant_message",
+        "status": "completed",
+        "countsForRun": false,
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+          "strength": "strong"
+        },
+        "runtimeRequestId": null,
+        "checkpointScopeId": null,
+        "startedAt": "2026-10-03T04:27:22.659Z",
+        "completedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "message.updated",
+      "message": {
+        "createdBy": "agent",
+        "creationSource": "provider",
+        "id": "message:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "role": "assistant",
+        "text": "command output fixture complete",
+        "attachments": [],
+        "streaming": false,
+        "createdAt": "2026-10-03T04:27:22.659Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z"
+      }
+    },
+    {
+      "type": "turn_item.updated",
+      "turnItem": {
+        "id": "turn-item:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+        "runId": "run:thread:thread%3Afixture%3Acommand_output_streaming%3Aproject%3Aproject%253Afixture%253Acommand_output_streaming%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+        "nodeId": "node:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "nativeItemRef": {
+          "driver": "codex",
+          "nativeId": "msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+          "strength": "strong"
+        },
+        "parentItemId": null,
+        "ordinal": 103,
+        "status": "completed",
+        "title": null,
+        "startedAt": "2026-10-03T04:27:22.659Z",
+        "completedAt": "1970-01-01T00:00:00.002Z",
+        "updatedAt": "1970-01-01T00:00:00.002Z",
+        "type": "assistant_message",
+        "phase": "final_answer",
+        "messageId": "message:provider:codex:native-item:msg_0038d12d01b50ff0016ac0842a975c87d2bf566b8ae1f7e5f3",
+        "text": "command output fixture complete",
+        "streaming": false
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a10004-0b1b-78f0-a41c-b253bded078e",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "running",
+        "startedAt": "2026-11-13T12:14:33.829Z",
+        "completedAt": null,
+        "tokenUsage": {
+          "usedTokens": 17887,
+          "maxTokens": 258400,
+          "inputTokens": 17879,
+          "cachedInputTokens": 17152,
+          "outputTokens": 8,
+          "reasoningOutputTokens": 0,
+          "updatedAt": "1970-01-01T00:00:00.002Z"
+        }
+      }
+    },
+    {
+      "type": "provider_turn.updated",
+      "threadId": "thread:fixture:command_output_streaming:project:project%3Afixture%3Acommand_output_streaming%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+      "providerTurn": {
+        "id": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+        "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+        "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+        "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+        "nativeTurnRef": {
+          "driver": "codex",
+          "nativeId": "01a10004-0b1b-78f0-a41c-b253bded078e",
+          "strength": "strong"
+        },
+        "ordinal": 1,
+        "status": "completed",
+        "startedAt": "2026-11-13T12:14:33.829Z",
+        "completedAt": "2026-10-03T04:27:22.000Z",
+        "turnTokenUsage": {
+          "usageStatus": "complete",
+          "usageScope": "main_agent",
+          "inputTokens": 35532,
+          "cachedInputTokens": 20992,
+          "cacheCreationTokens": 0,
+          "outputTokens": 150,
+          "reasoningTokens": 0,
+          "hasSubagents": false,
+          "models": ["gpt-6-luna"]
+        },
+        "model": "gpt-6-luna"
+      }
+    },
+    {
+      "type": "turn.terminal",
+      "providerThreadId": "provider-thread:provider:codex:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Acommand_output_streaming%253Aproject%253Aproject%25253Afixture%25253Acommand_output_streaming%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+      "providerTurnId": "provider-turn:provider:codex:native-turn:01a10004-0b1b-78f0-a41c-b253bded078e",
+      "runOrdinal": 1,
+      "status": "completed",
+      "failure": null,
+      "threadDisposition": "reusable"
+    }
+  ]
+}

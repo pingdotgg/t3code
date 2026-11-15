@@ -1,0 +1,49 @@
+[package]
+name = "conn-engine"
+description = "Event store, projections, and the shell and thread streams."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+conn-support.workspace = true
+conn-contract.workspace = true
+conn-provider.workspace = true
+# Git checkpoints per turn (`src/checkpoint.rs`); already in the server binary.
+conn-vcs.workspace = true
+# The host definition registry: pull request link keys as T3 writes them (`src/pull_requests.rs`).
+conn-source-control.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
+# Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
+rusqlite.workspace = true
+
+[features]
+# A scripted provider for the client check (`examples/export_turn.rs`).
+fake-provider = []
+
+[[example]]
+name = "export_turn"
+required-features = ["fake-provider"]
+
+[[example]]
+name = "memory_load"
+required-features = ["fake-provider"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "test-util"] }
+# examples/t3_fixture_replay.rs: T3's recorded Codex fixtures through this engine.
+conn-provider-codex.workspace = true
+# ... and T3's recorded Claude fixtures, on a fake SDK host.
+conn-provider-claude.workspace = true
+# ... and T3's recorded Grok fixtures, on T3's own ACP replay agent.
+conn-provider-acp.workspace = true
+# examples/memory_load.rs: live heap bytes (the workspace forbids the unsafe a counting
+# allocator needs). Dev only; not in the server binary.
+stats_alloc = "0.1"
+
+[lints]
+workspace = true
