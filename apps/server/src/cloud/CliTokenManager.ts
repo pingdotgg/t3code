@@ -457,6 +457,7 @@ const isTransportError = (error: unknown) =>
 const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function* (
   metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint" | "clientId" | "bearerToken">,
   deviceCode: string,
+  codeVerifier: string,
   initialInterval: Duration.Duration,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
@@ -464,6 +465,7 @@ const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function*
     grant_type: DEVICE_CODE_GRANT_TYPE,
     device_code: deviceCode,
     client_id: metadata.clientId,
+    code_verifier: codeVerifier,
   };
   let interval = initialInterval;
   while (true) {
@@ -511,11 +513,15 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
           "This OpenID Connect provider does not support device authorization, which a headless sign-in needs. Turn on its device flow, or sign in where a browser can open.",
       });
     }
+    // Providers that enforce PKCE (Keycloak) refuse device codes without it; others ignore it.
+    const { verifier, challenge } = yield* makePkceRequest;
     const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
     const authorization = yield* HttpClientRequest.post(metadata.deviceAuthorizationEndpoint).pipe(
       HttpClientRequest.bodyUrlParams({
         client_id: metadata.clientId,
         scope: metadata.scopes.join(" "),
+        code_challenge: challenge,
+        code_challenge_method: "S256",
       }),
       httpClient.execute,
       Effect.flatMap(HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)),
@@ -532,7 +538,7 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
       userCode: authorization.user_code,
       expiresIn,
     });
-    return yield* pollDeviceToken(metadata, authorization.device_code, interval).pipe(
+    return yield* pollDeviceToken(metadata, authorization.device_code, verifier, interval).pipe(
       Effect.timeout(expiresIn),
       Effect.catchTags({
         TimeoutError: (cause) => Effect.fail(new CloudCliAuthorizationTimeoutError({ cause })),

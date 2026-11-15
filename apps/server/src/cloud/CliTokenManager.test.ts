@@ -428,10 +428,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");
         assert.equal(authorization.params.get("client_id"), "oauth_client_test");
         assert.equal(authorization.params.get("scope"), "openid profile email offline_access");
+        assert.equal(authorization.params.get("code_challenge_method"), "S256");
+        const challenge = authorization.params.get("code_challenge");
 
         const polls = tokenRequests(server.requests);
         assert.lengthOf(polls, 2);
         for (const poll of polls) {
+          const verifier = poll.params.get("code_verifier") ?? "";
+          const digest = yield* Effect.promise(() =>
+            crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)),
+          );
+          assert.equal(Base64Url.encode(new Uint8Array(digest)), challenge);
           assert.equal(poll.url, "https://clerk.example.test/oauth/token");
           assert.equal(
             poll.params.get("grant_type"),
