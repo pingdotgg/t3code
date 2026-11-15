@@ -749,9 +749,14 @@ export function filterPinnedBrowseEntries(input: {
     ? ""
     : input.filterQuery;
   const { visibleEntries } = filterFilesystemBrowseEntries(input.browseEntries, visibleFilterQuery);
+  const normalizedFilterQuery = input.filterQuery.normalize("NFC");
+  const normalizedMatches = input.browseEntries.filter((entry) =>
+    namesMatch(entry.name.normalize("NFC"), normalizedFilterQuery),
+  );
   const exactEntry =
     input.filterQuery.length > 0
-      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ?? null)
+      ? (input.browseEntries.find((entry) => namesMatch(entry.name, input.filterQuery)) ??
+        (normalizedMatches.length === 1 ? normalizedMatches[0] : null))
       : null;
   return { visibleEntries, exactEntry };
 }

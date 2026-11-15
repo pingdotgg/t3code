@@ -149,9 +149,10 @@ function resolveCommandEditorArgs(
     case "direct-path":
       return [target];
     case "goto":
-      if (Option.isSome(parsedTarget)) return ["--goto", target];
+      // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.
-      return isDirectory ? ["--new-window", target] : [target];
+      if (isDirectory) return ["--new-window", target];
+      return Option.isSome(parsedTarget) ? ["--goto", target] : [target];
     case "line-column":
       return Option.match(parsedTarget, {
         onNone: () => [target],

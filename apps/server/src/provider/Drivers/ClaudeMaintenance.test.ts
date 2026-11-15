@@ -24,6 +24,8 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as Sink from "effect/Sink";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
 
@@ -77,6 +79,13 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
       : platform === "darwin"
         ? "/Library/Application Support/ClaudeCode"
         : "/etc/claude-code";
+  const npmPath = path.join(directory, "bin/npm");
+  if (install === "npm") {
+    yield* fs.makeDirectory(path.dirname(npmPath), { recursive: true });
+    yield* fs.writeFileString(npmPath, "#!/bin/sh\n");
+    yield* fs.chmod(npmPath, 0o755);
+  }
+  const npmProbes: Array<ReadonlyArray<string>> = [];
   let installationReads = 0;
   const testFs = FileSystem.makeNoop({
     ...fs,
@@ -105,11 +114,37 @@ const fixture = Effect.fn("ClaudeMaintenance.test.fixture")(function* (
     managed,
     managedDirectory,
     settingsPath,
+    npmProbes,
     installationReads: () => installationReads,
-    makeResolution: makeClaudeMaintenanceResolution({ binaryPath, env: { PATH: "" } }).pipe(
+    makeResolution: makeClaudeMaintenanceResolution({
+      binaryPath,
+      env: { PATH: install === "npm" ? path.dirname(npmPath) : "" },
+    }).pipe(
       Effect.provideService(
         ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make(() => Effect.die("version checks must not run a subprocess")),
+        ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.command !== npmPath) {
+            return Effect.die("version checks may only ask npm");
+          }
+          npmProbes.push(command.args.map(String));
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.encodeText(
+                Stream.make(JSON.stringify({ "@anthropic-ai/claude-code": { latest: "2.1.316" } })),
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }),
       ),
       Effect.provideService(FileSystem.FileSystem, testFs),
       Effect.provideService(HostProcess.Platform, platform),
@@ -233,12 +268,17 @@ it.layer(NodeServices.layer)("ClaudeMaintenance", (it) => {
         status: row.advisory,
         latestVersion: row.expected,
       });
-      expect(requests).toHaveLength(1);
-      expect(requests[0]).toMatch(
-        row.npm ? /registry\.npmjs\.org/ : new RegExp(`claude-code-releases/${row.channel}$`),
-      );
+      // npm installs ask `npm outdated`, which applies npm's release-age settings.
+      const lookups = row.npm ? f.npmProbes : requests;
+      expect(lookups).toHaveLength(1);
+      if (row.npm) {
+        expect(requests).toEqual([]);
+        expect(f.npmProbes[0]?.[0]).toBe("outdated");
+      } else {
+        expect(requests[0]).toMatch(new RegExp(`claude-code-releases/${row.channel}$`));
+      }
       yield* enrich;
-      expect(requests).toHaveLength(1);
+      expect(lookups).toHaveLength(1);
     }),
   );
 

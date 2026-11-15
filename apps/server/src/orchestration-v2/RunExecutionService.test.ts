@@ -1924,6 +1924,89 @@ it.effect("ends a nested native subagent and its thread when the root run is int
   }),
 );
 
+it.effect("drains queued child output after the root loses provider-thread ownership", () =>
+  Effect.gen(function* () {
+    const childEvents: Array<string> = [];
+    yield* runBackgroundItemScenario(
+      "queued-child-output",
+      (ids) => {
+        const childProviderThreadId = ProviderThreadId.make(
+          "provider-thread:queued-child-output:child",
+        );
+        const snapshot = (child: boolean, pendingBackgroundWork: boolean) => ({
+          type: "provider_thread.updated" as const,
+          driver,
+          providerThread: {
+            id: child ? childProviderThreadId : ids.providerThreadId,
+            driver,
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            providerSessionId: null,
+            appThreadId: child ? ids.childThreadId : ids.threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            pendingBackgroundTasks: [],
+            createdAt: DateTime.makeUnsafe(0),
+            updatedAt: DateTime.makeUnsafe(0),
+          } satisfies OrchestrationV2ProviderThread,
+          pendingBackgroundWork,
+        });
+        const childTurn = (status: "running" | "completed") => ({
+          type: "provider_turn.updated" as const,
+          driver,
+          threadId: ids.childThreadId,
+          providerTurn: {
+            id: ProviderTurnId.make("provider-turn:queued-child-output:child"),
+            providerThreadId: childProviderThreadId,
+            runAttemptId: null,
+            ordinal: 2,
+            status,
+          } as OrchestrationV2ProviderTurn,
+        });
+        const message = (text: string) =>
+          ({
+            type: "message.updated",
+            driver,
+            message: { threadId: ids.childThreadId, runId: null, text },
+          }) as ProviderAdapter.ProviderAdapterV2Event;
+        return [
+          childThreadCreatedEvent(ids),
+          snapshot(false, true),
+          snapshot(true, true),
+          subagentEvent(ids, "running"),
+          rootTerminalEvent(ids, "completed"),
+          snapshot(false, true),
+          subagentEvent(ids, "completed"),
+          childTurn("running"),
+          message("GRANDCHILD_OK"),
+          childTurn("completed"),
+          snapshot(true, false),
+          snapshot(false, false),
+          message("after-drain"),
+        ];
+      },
+      {
+        keepEventStreamOpen: true,
+        hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+        providerThreadOwnerLost: true,
+        onIngest: (event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_turn.updated") {
+              childEvents.push(event.providerTurn.status);
+            }
+            if (event.type === "message.updated") childEvents.push(event.message.text);
+          }),
+      },
+    );
+    assert.deepEqual(childEvents, ["running", "GRANDCHILD_OK", "completed"]);
+  }),
+);
+
 it.effect("keeps ingesting until queued background work clears after the probe goes idle", () =>
   Effect.gen(function* () {
     // The adapter's probe runs ahead of its event queue, so only the queued update may release.
@@ -2102,6 +2185,93 @@ it.effect.each([null, "run:nested-sdk"] as const)(
           "turn_item:running",
           "root-finalized",
         ]);
+    }),
+);
+
+it.effect.each(["none", "sibling", "grandchild"] as const)(
+  "drops a transferred child's pending snapshot but keeps other owned pending work (%s)",
+  (otherPending) =>
+    Effect.gen(function* () {
+      const consumed = yield* Deferred.make<void>();
+      const result = yield* Effect.raceFirst(
+        runBackgroundItemScenario(
+          "child-transfer-pending",
+          (ids) => {
+            const childProviderThreadId = ProviderThreadId.make(
+              "provider-thread:child-transfer-pending:child",
+            );
+            const otherThreadId = ThreadId.make("thread:child-transfer-pending:other");
+            const snapshot = (
+              providerThreadId: ProviderThreadId,
+              appThreadId: ThreadId,
+              pendingBackgroundWork: boolean,
+            ) => ({
+              type: "provider_thread.updated" as const,
+              driver,
+              providerThread: {
+                id: providerThreadId,
+                appThreadId,
+                status: "idle",
+              } as OrchestrationV2ProviderThread,
+              pendingBackgroundWork,
+            });
+            const running = subagentEvent(ids, "running");
+            if (running.type !== "subagent.updated") throw new Error("Missing subagent");
+            const linked = {
+              ...running,
+              subagent: {
+                ...running.subagent,
+                origin: "provider_native" as const,
+                childThreadId: ids.childThreadId,
+                providerThreadId: childProviderThreadId,
+              },
+            };
+            // A grandchild stays with this run when its parent moves; a sibling was never the child's.
+            const other =
+              otherPending === "none"
+                ? []
+                : [
+                    {
+                      ...childThreadCreatedEvent(ids),
+                      appThread: {
+                        id: otherThreadId,
+                        lineage: {
+                          parentThreadId:
+                            otherPending === "grandchild" ? ids.childThreadId : ids.threadId,
+                          relationshipToParent: "subagent",
+                          rootThreadId: ids.threadId,
+                        },
+                      },
+                    } as ProviderAdapter.ProviderAdapterV2Event,
+                    snapshot(
+                      ProviderThreadId.make("provider-thread:child-transfer-pending:other"),
+                      otherThreadId,
+                      true,
+                    ),
+                  ];
+            return [
+              childThreadCreatedEvent(ids),
+              linked,
+              snapshot(childProviderThreadId, ids.childThreadId, true),
+              ...other,
+              rootTerminalEvent(ids, "completed"),
+              { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
+              snapshot(childProviderThreadId, ids.childThreadId, false),
+            ];
+          },
+          {
+            keepEventStreamOpen: true,
+            hasPendingBackgroundWorkForThread: () => Effect.succeed(false),
+            onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+          },
+        ).pipe(Effect.asSome),
+        Deferred.await(consumed).pipe(Effect.as(Option.none())),
+      );
+      assert.strictEqual(
+        Option.isSome(result),
+        otherPending === "none",
+        "only pending work this run still owns may keep the prior subscription open",
+      );
     }),
 );
 
@@ -4099,6 +4269,8 @@ function runBackgroundItemScenario(
     >;
     readonly onSubscribe?: Effect.Effect<void>;
     readonly onEventsConsumed?: Effect.Effect<void>;
+    // Owner-gated root snapshots store nothing, as after a newer run claims the thread.
+    readonly providerThreadOwnerLost?: boolean;
     readonly afterEvents?: (
       activity: PreviewAgentActivity.PreviewAgentActivity["Service"],
     ) => Effect.Effect<void>;
@@ -4177,7 +4349,11 @@ function runBackgroundItemScenario(
                   ]);
                 }
                 // Only the count of stored events matters to the run.
-                return event.type === "provider_thread.updated"
+                return event.type === "provider_thread.updated" &&
+                  !(
+                    options?.providerThreadOwnerLost === true &&
+                    input.writeIfProviderThreadOwner !== undefined
+                  )
                   ? [{} as OrchestrationV2StoredEvent]
                   : [];
               });

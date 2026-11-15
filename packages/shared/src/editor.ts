@@ -7,9 +7,19 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable, resolveCommandPath } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPath, resolveCommandPaths } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
+
+// The nearest Zed folder identifies the channel, even below a user named zedpreview.
+const isPrereleaseZedPath = (filePath: string) => {
+  const install = filePath
+    .split(/[\\/]/)
+    .slice(0, -1)
+    .findLast((folder) => folder.toLowerCase().includes("zed"))
+    ?.toLowerCase();
+  return install !== undefined && (install.includes("nightly") || install.includes("preview"));
+};
 
 const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   vscode: ["Visual Studio Code"],
@@ -59,7 +69,21 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
   const preferZeditor = platform === "linux" && editor.id === "zed";
-  if (!preferBundle && !preferZeditor) {
+  if (platform === "win32" && editor.id === "zed") {
+    const isStable = (resolved: string) => !isPrereleaseZedPath(resolved);
+    let firstCommand: string | undefined;
+    for (const command of editor.commands) {
+      const matches = yield* resolveCommandPaths(command, { env, until: isStable });
+      const stable = matches.find(isStable);
+      // Bypass PATH only when stable is behind a prerelease install.
+      if (stable !== undefined) {
+        const isFirst = firstCommand === undefined && stable === matches[0];
+        return Option.some({ command: isFirst ? command : stable, baseArgs });
+      }
+      if (firstCommand === undefined && matches.length > 0) firstCommand = command;
+    }
+    if (firstCommand !== undefined) return Option.some({ command: firstCommand, baseArgs });
+  } else if (!preferBundle && !preferZeditor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
@@ -189,19 +213,26 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
         .map((entry) => path.join(dir, entry)),
     );
   }
+  const probeZed = editor.id === "zed" && platform !== "win32";
   const rejected = new Set<string>();
   for (const candidate of candidates) {
-    const resolved = yield* resolveCommandPath(candidate, { env });
-    if (resolved === null || rejected.has(resolved)) continue;
-    if (preferZeditor && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
-      rejected.add(resolved);
-      continue;
+    // OpenZFS zed can shadow the editor's zed in an earlier PATH entry.
+    const matches =
+      probeZed && candidate === "zed"
+        ? yield* resolveCommandPaths(candidate, { env, until: () => false })
+        : [yield* resolveCommandPath(candidate, { env })];
+    for (const resolved of matches) {
+      if (resolved === null || rejected.has(resolved)) continue;
+      if (probeZed && path.basename(candidate) === "zed" && !(yield* isZedEditor(resolved))) {
+        rejected.add(resolved);
+        continue;
+      }
+      return Option.some({
+        command: resolved === matches[0] ? candidate : resolved,
+        baseArgs:
+          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+      });
     }
-    return Option.some({
-      command: candidate,
-      baseArgs:
-        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-    });
   }
   return Option.none();
 });
