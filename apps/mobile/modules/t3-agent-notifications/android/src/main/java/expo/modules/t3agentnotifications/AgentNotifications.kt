@@ -43,7 +43,7 @@ class AgentActivityExpiryReceiver : BroadcastReceiver() {
 /** Handles data pushes natively so delivery does not depend on a running JS bridge. */
 object AgentNotifications {
   private const val STORE = "t3-agent-notifications"
-  private const val ACTIVITY_CHANNEL = "agent-activity"
+  private const val ACTIVITY_CHANNEL = "agent-activity-v2"
   private const val ALERT_CHANNEL = "agent-alerts"
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
@@ -345,16 +345,32 @@ object AgentNotifications {
 
   private fun channels(context: Context) {
     if (Build.VERSION.SDK_INT >= 26) {
-      manager(context).createNotificationChannels(
+      val manager = manager(context)
+      // Android cannot raise an existing channel's importance; retain explicit user choices.
+      val previous = manager.getNotificationChannel("agent-activity")
+      val importance = if (previous != null &&
+        (previous.importance == NotificationManager.IMPORTANCE_NONE ||
+          Build.VERSION.SDK_INT >= 29 && previous.hasUserSetImportance())
+      ) previous.importance else NotificationManager.IMPORTANCE_DEFAULT
+      manager.createNotificationChannels(
         listOf(
           NotificationChannel(ALERT_CHANNEL, "Agent alerts", NotificationManager.IMPORTANCE_HIGH),
           NotificationChannel(
             ACTIVITY_CHANNEL,
             "Ongoing agent activity",
-            NotificationManager.IMPORTANCE_LOW
-          ),
+            importance
+          ).apply {
+            if (previous != null) {
+              setSound(previous.sound, previous.audioAttributes)
+              vibrationPattern = previous.vibrationPattern
+              enableVibration(previous.shouldVibrate())
+              lockscreenVisibility = previous.lockscreenVisibility
+              setShowBadge(previous.canShowBadge())
+            }
+          },
         )
       )
+      if (previous != null) manager.deleteNotificationChannel(previous.id)
     }
   }
 
@@ -371,7 +387,13 @@ object AgentNotifications {
       )
       .setDefaults(if (channel == ALERT_CHANNEL) Notification.DEFAULT_ALL else 0)
       .setSmallIcon(R.drawable.agent_activity_mark)
-      .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+      .setVisibility(
+        if (channel == ACTIVITY_CHANNEL) {
+          NotificationCompat.VISIBILITY_PUBLIC
+        } else {
+          NotificationCompat.VISIBILITY_PRIVATE
+        }
+      )
       .setShowWhen(false)
 
   private fun contentIntent(

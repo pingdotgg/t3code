@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ProcessLifecycleOwner
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -565,7 +566,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
         manager.getNotificationChannel(alert.channelId).importance
       )
       assertEquals(
-        NotificationManager.IMPORTANCE_LOW,
+        NotificationManager.IMPORTANCE_DEFAULT,
         manager.getNotificationChannel(card.channelId).importance
       )
     }
@@ -575,7 +576,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     // its hasPromotableCharacteristics() incorrectly requires colorization.
     assertFalse(card.extras.getBoolean(NotificationCompat.EXTRA_COLORIZED))
     assertTrue(card.flags and Notification.FLAG_ONGOING_EVENT != 0)
-    assertEquals(Notification.VISIBILITY_PRIVATE, card.visibility)
+    assertEquals(Notification.VISIBILITY_PUBLIC, card.visibility)
+    assertEquals(Notification.VISIBILITY_PRIVATE, alert.visibility)
   }
 
   @Test
@@ -656,11 +658,34 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
 @Config(sdk = [26, 33, 36], manifest = Config.NONE)
 class AgentNotificationChannelsTest {
   @Test
+  fun activityChannelMigrationPreservesDisabledNotifications() {
+    val context = RuntimeEnvironment.getApplication()
+    val manager = context.getSystemService(NotificationManager::class.java)
+    manager.createNotificationChannel(
+      NotificationChannel("agent-activity", "Ongoing agent activity", NotificationManager.IMPORTANCE_NONE)
+    )
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    assertEquals(
+      NotificationManager.IMPORTANCE_NONE,
+      manager.getNotificationChannel("agent-activity-v2").importance
+    )
+    assertEquals(null, manager.getNotificationChannel("agent-activity"))
+  }
+
+  @Test
   fun mutedAlertChannelKeepsTheSameActivityThroughCompletionUntilDismissedOrExpired() {
     val context = RuntimeEnvironment.getApplication()
     val manager = context.getSystemService(NotificationManager::class.java)
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.clear(context)
+    manager.createNotificationChannel(
+      NotificationChannel("agent-activity", "Ongoing agent activity", NotificationManager.IMPORTANCE_LOW).apply {
+        setSound(android.net.Uri.parse("content://settings/system/notification_sound"), null)
+        vibrationPattern = longArrayOf(0, 150, 50, 150)
+        enableVibration(true)
+      }
+    )
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
     val running = mapOf(
       "device_id" to "device",
@@ -698,7 +723,12 @@ class AgentNotificationChannelsTest {
     val completedCard = manager.activeNotifications.single()
     assertEquals(initialCard.id, completedCard.id)
     assertEquals(initialCard.tag, completedCard.tag)
-    assertEquals("agent-activity", completedCard.notification.channelId)
+    assertEquals("agent-activity-v2", completedCard.notification.channelId)
+    val activityChannel = manager.getNotificationChannel(completedCard.notification.channelId)
+    assertEquals(NotificationManager.IMPORTANCE_DEFAULT, activityChannel.importance)
+    assertEquals(android.net.Uri.parse("content://settings/system/notification_sound"), activityChannel.sound)
+    assertTrue(activityChannel.shouldVibrate())
+    assertArrayEquals(longArrayOf(0, 150, 50, 150), activityChannel.vibrationPattern)
     assertEquals(
       "Test thread",
       completedCard.notification.extras.getString(Notification.EXTRA_TITLE)
