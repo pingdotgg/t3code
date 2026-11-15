@@ -30,7 +30,8 @@ import {
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
 
-const CONTINUE_PROMPT = "Continue where you left off.";
+const CONTINUE_PROMPT =
+  "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
@@ -182,7 +183,11 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    readonly processLossCount?: number;
+  }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -238,7 +243,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       if (DateTime.toEpochMillis(run.requestedAt) < loopWindowStart) break;
       chainLength += 1;
     }
-    if (chainLength >= MAX_CONTINUATION_CHAIN) {
+    if (
+      input.processLossCount === undefined
+        ? chainLength >= MAX_CONTINUATION_CHAIN
+        : input.processLossCount > MAX_CONTINUATION_CHAIN
+    ) {
       yield* Effect.logWarning("Not continuing a run restarted too many times in a row", {
         threadId: input.threadId,
         sourceRunId: input.sourceRunId,
@@ -327,7 +336,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
+        // Disabled instances, and threads above a policy ceiling, cannot resume; still run success
+        // cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -335,6 +345,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
+            }),
+          OrchestratorRuntimeModeAboveCeilingError: () =>
+            Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
             }),
         }),
       );
@@ -345,7 +360,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       Effect.andThen(
         Effect.gen(function* () {
           const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
+          yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId: input.sourceRunId });
         }),
       ),
     ),
