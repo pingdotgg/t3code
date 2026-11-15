@@ -8,6 +8,11 @@ import museLogo from "./logos/muse.png";
 import openClawLogo from "./logos/openclaw.png";
 import pokeLogo from "./logos/poke.png";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 /** How the Connect step hands T3 Code's MCP URL to an app. Every `link` is https. */
 export type McpAppHandoff =
   /** Opens the app's add form with T3 Code filled in. */
@@ -190,25 +195,25 @@ export function mcpHandoffAction(app: McpApp, mcpUrl: string) {
   switch (handoff.kind) {
     case "open":
       return {
-        label: `Open in ${app.name}`,
+        label: td("handoff.openIn", { app: app.name }),
         link: handoff.link(mcpUrl),
         appLink: null,
         copy: null,
       };
     case "copy-url":
       return {
-        label: `Copy URL and open ${app.name}`,
+        label: td("handoff.copyUrlAndOpen", { app: app.name }),
         link: handoff.link,
         appLink: null,
-        copy: { text: mcpUrl, title: "URL copied" },
+        copy: { text: mcpUrl, title: td("urlCopied") },
       };
     case "copy-message": {
       const message = handoff.message(mcpUrl);
       return {
-        label: `Copy message and open ${app.name}`,
+        label: td("handoff.copyMessageAndOpen", { app: app.name }),
         link: handoff.link,
         appLink: handoff.appLink?.(message) ?? null,
-        copy: { text: message, title: "Message copied" },
+        copy: { text: message, title: td("messageCopied") },
       };
     }
     case "commands":

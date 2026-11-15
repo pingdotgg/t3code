@@ -23,6 +23,7 @@ import { pullRequestLinkSubject, pullRequestReviewOutcome } from "./pullRequestD
 import {
   PullRequestActorAvatar,
   PullRequestReviewOutcomeBadge,
+  presentationLabel,
   resolvePullRequestState,
 } from "./pullRequestPresentation";
 
@@ -152,7 +153,7 @@ export function PullRequestLinkPreview({
                   {state === null ? null : (
                     <span className="inline-flex shrink-0 items-center gap-1">
                       <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-                      {state.label}
+                      {presentationLabel(state.label)}
                     </span>
                   )}
                 </div>

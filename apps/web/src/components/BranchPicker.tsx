@@ -2,6 +2,7 @@ import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { cn } from "../lib/utils";
@@ -56,6 +57,7 @@ export function BranchPicker({
   getItemType?: ((value: string) => string) | undefined;
   children: ReactNode;
 }) {
+  const { t } = useTranslation("git");
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
   const handleOpenChange = (nextOpen: boolean) => {
@@ -103,7 +105,7 @@ export function BranchPicker({
       {children}
       <ComboboxPopup {...popupProps}>
         <ComboboxSearchInput
-          placeholder="Search refs..."
+          placeholder={t("branch.searchPlaceholder")}
           value={query}
           onChange={(event) => {
             onQueryChange(event.target.value);

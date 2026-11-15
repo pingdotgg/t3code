@@ -1,4 +1,8 @@
 import type { RelayClientDeviceRecord } from "@t3tools/contracts/relay";
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:profile.${key}`, options);
 
 const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -6,10 +10,10 @@ const mobileClientUpdatedAtFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 const NOTIFICATION_PREFERENCES = [
-  ["notifyOnApproval", "approvals"],
-  ["notifyOnInput", "input requests"],
-  ["notifyOnCompletion", "completions"],
-  ["notifyOnFailure", "failures"],
+  ["notifyOnApproval", "notifyApprovals"],
+  ["notifyOnInput", "notifyInput"],
+  ["notifyOnCompletion", "notifyCompletions"],
+  ["notifyOnFailure", "notifyFailures"],
 ] as const satisfies ReadonlyArray<
   readonly [keyof RelayClientDeviceRecord["notifications"], string]
 >;
@@ -26,7 +30,7 @@ export function mobileClientPlatformLabel(device: RelayClientDeviceRecord): stri
 
 export function mobileClientNotificationDetail(device: RelayClientDeviceRecord): string {
   if (!device.notifications.enabled) {
-    return "Push notifications are disabled on this device.";
+    return td("pushDisabledDevice");
   }
 
   const enabledPreferences = NOTIFICATION_PREFERENCES.flatMap(([preference, label]) =>
@@ -34,12 +38,12 @@ export function mobileClientNotificationDetail(device: RelayClientDeviceRecord):
   );
   return enabledPreferences.length > 0
     ? `Alerts enabled for ${enabledPreferences.join(", ")}.`
-    : "Push notifications are enabled, but no alert types are selected.";
+    : td("pushNoTypesSelected");
 }
 
 export function mobileClientUpdatedAtLabel(updatedAt: string): string {
   const date = new Date(updatedAt);
   return Number.isNaN(date.getTime())
-    ? "Update time unavailable"
-    : `Updated ${mobileClientUpdatedAtFormatter.format(date)}`;
+    ? td("updateTimeUnavailable")
+    : td("updated", { time: mobileClientUpdatedAtFormatter.format(date) });
 }

@@ -18,6 +18,11 @@ import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.logic";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
   remarkPlugins: PluggableList;
@@ -54,7 +59,7 @@ function PullRequestHostVideo({
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
       originalUrl={url}
-      label="Pull request video"
+      label={td("markdown.video")}
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
       onRetry={refreshAssetUrl}
@@ -156,7 +161,7 @@ function PullRequestBodySegmentView({
         key={`${segment.id}:${segment.url}`}
         src={segment.url}
         originalUrl={segment.url}
-        label="Pull request video"
+        label={td("markdown.video")}
         className="w-full"
         videoClassName="rounded-lg border border-border/60"
       />

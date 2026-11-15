@@ -17,6 +17,11 @@ import {
   usePullRequestDefaultMergeMethodResolver,
 } from "./usePullRequestActions";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 type PullRequestSpeedActionEntry = Pick<
   EnvironmentPullRequestEntry,
   "environmentId" | "projectId" | "host" | "repository" | "number" | "state" | "isDraft"
@@ -84,10 +89,10 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
     <SpeedModeGroup
       busy={busy}
       pending={actionPending || closing}
-      label={`Quick actions for ${terminology.singular} #${entry.number}`}
+      label={td("speed.quickActions", { term: terminology.singular, number: entry.number })}
     >
       {actions.map((action) => {
-        const label = ACTIONS[action].label;
+        const label = translateDynamic(`pullRequest:${ACTIONS[action].label}`);
         const Icon = ACTIONS[action].Icon;
         return (
           <Tooltip key={action}>
@@ -97,7 +102,7 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
                   variant={action === "close" ? "destructive-outline" : "outline"}
                   size="xs"
                   disabled={!canWrite || busy || (action === "merge" && entry.stack !== undefined)}
-                  aria-label={`${label} #${entry.number}`}
+                  aria-label={td("speed.actionFor", { label, number: entry.number })}
                   onClick={() => void perform(action)}
                   onPointerDown={(event) => {
                     if (action !== "close" || !event.isPrimary || event.button !== 0) return;
@@ -112,10 +117,10 @@ export function PullRequestSpeedActions<Entry extends PullRequestSpeedActionEntr
             </TooltipTrigger>
             <TooltipPopup>
               {action === "merge" && entry.stack
-                ? `Open this ${terminology.singular} to merge its stack`
+                ? td("speed.openToMergeStack", { term: terminology.singular })
                 : action === "close" && onCloseSweepStart
-                  ? "Close immediately, or drag across rows to close several"
-                  : `${label} immediately`}
+                  ? td("speed.closeHint")
+                  : td("speed.actionImmediately", { label })}
             </TooltipPopup>
           </Tooltip>
         );
@@ -164,8 +169,8 @@ function SpeedModeGroup({
 }
 
 const ACTIONS = {
-  close: { label: "Close", Icon: PullRequestGlyph.closed },
-  merge: { label: "Merge", Icon: PullRequestGlyph.merged },
-  ready: { label: "Ready for review", Icon: PullRequestGlyph.pullRequest },
-  reopen: { label: "Reopen", Icon: PullRequestGlyph.reopen },
+  close: { label: "speed.close", Icon: PullRequestGlyph.closed },
+  merge: { label: "speed.merge", Icon: PullRequestGlyph.merged },
+  ready: { label: "actions.readyForReview", Icon: PullRequestGlyph.pullRequest },
+  reopen: { label: "speed.reopen", Icon: PullRequestGlyph.reopen },
 } as const;

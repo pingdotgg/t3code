@@ -43,7 +43,12 @@ import { Radio, RadioGroup } from "../ui/radio-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { WorkLogRow } from "./WorkLog";
 
-const accessLabel = (access: AuthMcpClientAccess) => accessConfig[access].label;
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
+const accessLabel = (access: AuthMcpClientAccess) => td(accessConfig[access].label);
 
 /** Whether the agent left the machine for the user to pick. */
 const picksMachine = (item: LinkRequestItem) =>

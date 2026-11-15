@@ -9,10 +9,14 @@ import { readLocalApi } from "~/localApi";
 
 import { toastManager } from "../ui/toast";
 
+import { translateDynamic } from "../../i18nCore";
+
 export type PullRequestLinkContextMenuAction = "copy-link" | "open-external";
 
 export const openOnHostLabel = (host: SourceControlDefinition): string =>
-  host === UNKNOWN_SOURCE_CONTROL_CLIENT ? "Open on host" : `Open on ${host.label}`;
+  host === UNKNOWN_SOURCE_CONTROL_CLIENT
+    ? translateDynamic("pullRequest:link.openOnHost")
+    : translateDynamic("pullRequest:link.openOnNamedHost", { host: host.label });
 
 function pullRequestLinkContextMenuItems(
   openLabel: string,

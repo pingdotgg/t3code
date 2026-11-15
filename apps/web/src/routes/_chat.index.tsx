@@ -21,6 +21,11 @@ import {
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 
+import { translateDynamic } from "../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
   const { environments, isReady } = useEnvironments();
@@ -101,7 +106,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       {isElectron ? <WorkspacePageHeader electron /> : null}
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
-          <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
+          <EmptyTitle>{td("couldNotStartThread")}</EmptyTitle>
           <EmptyDescription>
             The project is still available. Try opening the draft again.
           </EmptyDescription>

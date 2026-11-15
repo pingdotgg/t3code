@@ -1,6 +1,6 @@
 import type { PullRequestStack } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
-import { resolvePullRequestState } from "./pullRequestPresentation";
+import { presentationLabel, resolvePullRequestState } from "./pullRequestPresentation";
 
 export function PullRequestStackLayerContent({
   layer,
@@ -20,7 +20,7 @@ export function PullRequestStackLayerContent({
         <span className="block truncate">{layer.title || layer.headBranch}</span>
         <span className="block truncate text-xs font-normal text-muted-foreground">
           #{layer.number} · {compact ? null : `${layer.headBranch} · `}
-          {state.label}
+          {presentationLabel(state.label)}
         </span>
       </span>
     </>

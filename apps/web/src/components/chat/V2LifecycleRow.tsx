@@ -146,13 +146,20 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <>
+            {t("lifecycle.createdThread")}
+            {item.title ? ` · ${item.title}` : ""}
+          </>
+        }
         trailing={
           <InlineButton
-            aria-label={`Open ${item.title ?? "created thread"}`}
+            aria-label={t("lifecycle.openChatA11y", {
+              title: item.title ?? t("lifecycle.createdThread"),
+            })}
             onClick={() => props.onOpenThread(item.targetThreadId)}
           >
-            Open chat
+            {t("lifecycle.openChat")}
           </InlineButton>
         }
       />
@@ -528,7 +535,7 @@ function SubagentTimelineLink(props: {
             <button
               type="button"
               data-v2-item-type="subagent"
-              aria-label={`Open ${props.title}`}
+              aria-label={t("lifecycle.openChatA11y", { title: props.title })}
               aria-description={statusLabel}
               onClick={open}
               className={cn(

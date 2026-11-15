@@ -1,6 +1,7 @@
 import type { SnapShotSource } from "@t3tools/contracts";
 import { ImageIcon, TextIcon } from "lucide-react";
 import { Suspense } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -80,10 +81,13 @@ export function SnapShotContentsButton({
   className?: string;
   side?: "top" | "right" | "bottom" | "left";
 }) {
+  const { t } = useTranslation("chat");
   const includesAccessibility = snapShotIncludesAccessibility(source);
   const ContentsIcon = includesAccessibility ? TextIcon : ImageIcon;
   const accessibilityDetails = snapShotAccessibilityDetails(source);
-  const tooltip = includesAccessibility ? "Accessibility data" : "No accessibility data";
+  const tooltip = includesAccessibility
+    ? t("snapshot.accessibilityData")
+    : t("snapshot.noAccessibilityData");
 
   return (
     <Popover>
@@ -94,7 +98,9 @@ export function SnapShotContentsButton({
               render={
                 <Button
                   aria-label={
-                    includesAccessibility ? "View accessibility data" : "No accessibility data"
+                    includesAccessibility
+                      ? t("snapshot.viewAccessibility")
+                      : t("snapshot.noAccessibilityData")
                   }
                   className={className}
                   onClick={(event) => event.stopPropagation()}
@@ -111,7 +117,7 @@ export function SnapShotContentsButton({
       </Tooltip>
       <PopoverPopup side={side} align="center" width="md">
         <div className="max-h-[min(28rem,70vh)] space-y-2 overflow-y-auto">
-          <PopoverTitle>Accessibility data</PopoverTitle>
+          <PopoverTitle>{t("snapshot.accessibilityData")}</PopoverTitle>
           {accessibilityDetails ? (
             <SnapShotAccessibilityData
               details={accessibilityDetails}
@@ -119,12 +125,11 @@ export function SnapShotContentsButton({
             />
           ) : includesAccessibility ? (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              Structured accessibility elements were included, but they have no readable names or
-              values.
+              {t("snapshot.a11yUnnamed")}
             </div>
           ) : (
             <div className="rounded-md border border-border/70 bg-muted/45 p-2.5 text-muted-foreground text-xs leading-4">
-              The app or capture backend did not provide verified accessibility data.
+              {t("snapshot.a11yUnverified")}
             </div>
           )}
         </div>
@@ -140,6 +145,7 @@ export function SnapShotAttachmentDetails({
   source: SnapShotSource;
   className?: string;
 }) {
+  const { t } = useTranslation("chat");
   return (
     <div
       className={cn(
@@ -160,7 +166,7 @@ export function SnapShotAttachmentDetails({
           <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
         <div className="truncate text-3xs leading-3.5 text-white/70">
-          {source.windowTitle || "Captured window"}
+          {source.windowTitle || t("snapshot.capturedWindow")}
         </div>
       </div>
     </div>

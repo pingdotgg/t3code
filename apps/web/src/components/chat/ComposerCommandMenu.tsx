@@ -37,7 +37,7 @@ import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
-import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { presentationLabel, resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem =
   | {
@@ -256,7 +256,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"
-          aria-label={pullRequestPresentation.label}
+          aria-label={presentationLabel(pullRequestPresentation.label)}
           className={cn("size-4 shrink-0", pullRequestPresentation.toneClassName)}
         />
       ) : null}

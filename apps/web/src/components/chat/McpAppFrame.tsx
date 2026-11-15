@@ -37,13 +37,20 @@ import { mcpAppEnvironment } from "~/state/mcpApps";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { observeResize } from "~/lib/observeResize";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`chat:${key}`, options);
+
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
 }) => {
   const error = squashAtomCommandFailure(result);
   return new McpAppHostRefusal({
     message:
-      error instanceof Error && error.message.trim() !== "" ? error.message : "Request failed.",
+      error instanceof Error && error.message.trim() !== ""
+        ? error.message
+        : td("mcp.requestFailed"),
   });
 };
 
@@ -280,12 +287,12 @@ export function McpAppFrame(props: {
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
-          throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
+          throw new McpAppHostRefusal({ message: td("mcp.cannotCallTool") });
         if (!info.value.readOnly) {
           const approved = await ask(
             `Allow ${app.server} to run ${info.value.title ?? name}?\n${JSON.stringify(args, null, 2)}`,
           );
-          if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+          if (approved !== true) throw new McpAppHostRefusal({ message: td("mcp.declinedByUser") });
         }
         const result = await readLive().callTool({
           environmentId,
@@ -312,9 +319,9 @@ export function McpAppFrame(props: {
       sendMessage: async (text) => {
         const send = readLive().props.onSendMessage;
         if (send === undefined)
-          throw new McpAppHostRefusal({ message: "Messages are not available here." });
+          throw new McpAppHostRefusal({ message: td("mcp.messagesUnavailable") });
         const approved = await ask(`Send this message from ${app.server}?\n${text}`);
-        if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+        if (approved !== true) throw new McpAppHostRefusal({ message: td("mcp.declinedByUser") });
         await send(text);
       },
       updateModelContext: async (context) => {
@@ -349,7 +356,7 @@ export function McpAppFrame(props: {
       downloadFile: async (files) => {
         const names = files.map((file) => file.name).join(", ");
         const approved = await ask(`Save ${names} from ${app.server}?`);
-        if (approved !== true) throw new McpAppHostRefusal({ message: "Declined by the user." });
+        if (approved !== true) throw new McpAppHostRefusal({ message: td("mcp.declinedByUser") });
         for (const file of files) {
           let bytes: Uint8Array | undefined;
           let mimeType = file.mimeType ?? "application/octet-stream";
@@ -458,7 +465,7 @@ export function McpAppFrame(props: {
           >
             <span className="truncate">{app.server}</span>
             <Button
-              aria-label="Exit full screen"
+              aria-label={td("mcp.exitFullScreen")}
               size="icon-sm"
               variant="ghost"
               onClick={() => setDisplayMode("inline")}

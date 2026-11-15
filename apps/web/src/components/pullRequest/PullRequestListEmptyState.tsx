@@ -6,6 +6,11 @@ import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 function BranchMark({ joined }: { joined: boolean }) {
   return (
     <svg
@@ -73,7 +78,7 @@ export function PullRequestListEmptyState({
       <Empty>
         <BranchMark joined={false} />
         <EmptyHeader>
-          <EmptyTitle>No projects in this workspace</EmptyTitle>
+          <EmptyTitle>{td("emptyState.noProjects")}</EmptyTitle>
           <EmptyDescription>
             Add a project, and the pull requests from its repository appear here.
           </EmptyDescription>
@@ -92,7 +97,9 @@ export function PullRequestListEmptyState({
     return (
       <PullRequestListGhost
         rows={5}
-        caption={`Searching every host for “${query.length > 48 ? `${query.slice(0, 48)}…` : query}”`}
+        caption={td("emptyState.searchingHosts", {
+          query: query.length > 48 ? `${query.slice(0, 48)}…` : query,
+        })}
       />
     );
   }
@@ -103,7 +110,9 @@ export function PullRequestListEmptyState({
         <BranchMark joined={false} />
         <EmptyHeader>
           <EmptyTitle>
-            Nothing matches “{query.length > 48 ? `${query.slice(0, 48)}…` : query}”
+            {td("emptyState.nothingMatches", {
+              query: query.length > 48 ? `${query.slice(0, 48)}…` : query,
+            })}
           </EmptyTitle>
           <EmptyDescription>
             The hosts were searched for it. Try fewer words, or search by number, author or branch.
@@ -116,7 +125,7 @@ export function PullRequestListEmptyState({
           </Button>
           <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
             <RefreshIcon size="sm" refreshing={refreshing} />
-            {refreshing ? "Checking..." : "Check again"}
+            {refreshing ? td("emptyState.checking") : td("emptyState.checkAgain")}
           </Button>
         </div>
       </Empty>
@@ -127,22 +136,24 @@ export function PullRequestListEmptyState({
     <Empty>
       <BranchMark joined={false} />
       <EmptyHeader>
-        <EmptyTitle>{filtered ? "Nothing under these filters" : "No pull requests"}</EmptyTitle>
+        <EmptyTitle>
+          {filtered ? td("emptyState.nothingUnderFilters") : td("emptyState.noPullRequests")}
+        </EmptyTitle>
         <EmptyDescription>
           {filtered
-            ? "Widen the state, involvement or project filter to see more."
+            ? td("emptyState.widenFilters")
             : "Pull requests from every project in this workspace appear here."}
         </EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
         {canLoadMore ? (
           <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
-            {loadingMore ? "Loading..." : "Load more pull requests"}
+            {loadingMore ? td("emptyState.loading") : td("emptyState.loadMore")}
           </Button>
         ) : null}
         <Button size="sm" variant="outline" disabled={refreshing} onClick={onRefresh}>
           <RefreshIcon size="sm" refreshing={refreshing} />
-          {refreshing ? "Checking..." : "Check again"}
+          {refreshing ? td("emptyState.checking") : td("emptyState.checkAgain")}
         </Button>
       </div>
     </Empty>

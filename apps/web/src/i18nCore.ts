@@ -14,6 +14,28 @@ import zhHansSettings from "../locales/zh-Hans/settings.json";
 import zhHansTerminal from "../locales/zh-Hans/terminal.json";
 import enSidebar from "../locales/en/sidebar.json";
 import zhHansSidebar from "../locales/zh-Hans/sidebar.json";
+import enPullRequest from "../locales/en/pullRequest.json";
+import zhHansPullRequest from "../locales/zh-Hans/pullRequest.json";
+import enRightPanel from "../locales/en/rightPanel.json";
+import zhHansRightPanel from "../locales/zh-Hans/rightPanel.json";
+import enFiles from "../locales/en/files.json";
+import zhHansFiles from "../locales/zh-Hans/files.json";
+import enPreview from "../locales/en/preview.json";
+import zhHansPreview from "../locales/zh-Hans/preview.json";
+import enDevice from "../locales/en/device.json";
+import zhHansDevice from "../locales/zh-Hans/device.json";
+import enUsage from "../locales/en/usage.json";
+import zhHansUsage from "../locales/zh-Hans/usage.json";
+import enGuest from "../locales/en/guest.json";
+import zhHansGuest from "../locales/zh-Hans/guest.json";
+import enShell from "../locales/en/shell.json";
+import zhHansShell from "../locales/zh-Hans/shell.json";
+import enGit from "../locales/en/git.json";
+import zhHansGit from "../locales/zh-Hans/git.json";
+import enScripts from "../locales/en/scripts.json";
+import zhHansScripts from "../locales/zh-Hans/scripts.json";
+import enUi from "../locales/en/ui.json";
+import zhHansUi from "../locales/zh-Hans/ui.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -33,6 +55,17 @@ declare module "i18next" {
       diffs: typeof enDiffs;
       onboarding: typeof enOnboarding;
       terminal: typeof enTerminal;
+      pullRequest: typeof enPullRequest;
+      rightPanel: typeof enRightPanel;
+      files: typeof enFiles;
+      preview: typeof enPreview;
+      device: typeof enDevice;
+      usage: typeof enUsage;
+      guest: typeof enGuest;
+      shell: typeof enShell;
+      git: typeof enGit;
+      scripts: typeof enScripts;
+      ui: typeof enUi;
     };
   }
 }
@@ -55,7 +88,27 @@ if (!i18next.isInitialized) {
     lng: "en",
     fallbackLng: "en",
     defaultNS: "settings",
-    ns: ["settings", "sidebar", "palette", "chat", "composer", "diffs", "onboarding", "terminal"],
+    ns: [
+      "settings",
+      "sidebar",
+      "palette",
+      "chat",
+      "composer",
+      "diffs",
+      "onboarding",
+      "terminal",
+      "pullRequest",
+      "rightPanel",
+      "files",
+      "preview",
+      "device",
+      "usage",
+      "guest",
+      "shell",
+      "git",
+      "scripts",
+      "ui",
+    ],
     resources: {
       en: {
         settings: enSettings,
@@ -66,6 +119,17 @@ if (!i18next.isInitialized) {
         diffs: enDiffs,
         onboarding: enOnboarding,
         terminal: enTerminal,
+        pullRequest: enPullRequest,
+        rightPanel: enRightPanel,
+        files: enFiles,
+        preview: enPreview,
+        device: enDevice,
+        usage: enUsage,
+        guest: enGuest,
+        shell: enShell,
+        git: enGit,
+        scripts: enScripts,
+        ui: enUi,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -76,6 +140,17 @@ if (!i18next.isInitialized) {
         diffs: zhHansDiffs,
         onboarding: zhHansOnboarding,
         terminal: zhHansTerminal,
+        pullRequest: zhHansPullRequest,
+        rightPanel: zhHansRightPanel,
+        files: zhHansFiles,
+        preview: zhHansPreview,
+        device: zhHansDevice,
+        usage: zhHansUsage,
+        guest: zhHansGuest,
+        shell: zhHansShell,
+        git: zhHansGit,
+        scripts: zhHansScripts,
+        ui: zhHansUi,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.

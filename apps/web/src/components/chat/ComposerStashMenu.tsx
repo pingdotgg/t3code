@@ -1,6 +1,7 @@
 import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
 import { memo, useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
+
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import { translateDynamic } from "../../i18nCore";

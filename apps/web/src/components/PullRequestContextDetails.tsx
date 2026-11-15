@@ -7,7 +7,7 @@ import { ArrowRightIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 
-import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
+import { presentationLabel, resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 
 export function PullRequestContextDetails({ metadata }: { metadata: PullRequestContextMetadata }) {
   const state = resolvePullRequestState(metadata);
@@ -22,7 +22,7 @@ export function PullRequestContextDetails({ metadata }: { metadata: PullRequestC
         <span className="text-foreground">
           {capitalizeTerm(singular)} #{metadata.number}
         </span>
-        <span className={state.toneClassName}>{state.label}</span>
+        <span className={state.toneClassName}>{presentationLabel(state.label)}</span>
       </div>
       <div className="wrap-break-word text-foreground">{metadata.title}</div>
       <div className="flex min-w-0 items-center gap-1 text-secondary-label text-3xs">

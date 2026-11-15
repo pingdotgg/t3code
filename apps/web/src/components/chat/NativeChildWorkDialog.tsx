@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import { ListTreeIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
@@ -31,17 +32,20 @@ export function NativeChildWorkDialog(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const { t } = useTranslation("chat");
   const [open, setOpen] = useState(false);
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
         <ListTreeIcon />
-        <span className="@max-[420px]/composer-surface:sr-only">Subagent work</span>
+        <span className="@max-[420px]/composer-surface:sr-only">
+          {t("chatSurface.subagentWork")}
+        </span>
       </Button>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Subagent work</DialogTitle>
-          <DialogDescription>Read only. These subagents cannot take messages.</DialogDescription>
+          <DialogTitle>{t("chatSurface.subagentWork")}</DialogTitle>
+          <DialogDescription>{t("chatSurface.subagentWorkDetail")}</DialogDescription>
         </DialogHeader>
         {open ? <NativeChildWorkContent {...props} /> : null}
       </DialogPopup>
@@ -53,6 +57,7 @@ function NativeChildWorkContent(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
+  const { t } = useTranslation("chat");
   const query = useEnvironmentQuery<OrchestrationV2GetNativeChildWorkResult, unknown>(
     orchestrationEnvironment.nativeChildWork({
       environmentId: props.environmentId,
@@ -66,18 +71,16 @@ function NativeChildWorkContent(props: {
         {query.error !== null ? (
           <p className="text-sm text-destructive-foreground">{query.error}</p>
         ) : children === undefined ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <p className="text-sm text-muted-foreground">{t("chatSurface.loading")}</p>
         ) : children.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            The provider has no record of which subagents this call started.
-          </p>
+          <p className="text-sm text-muted-foreground">{t("chatSurface.noNativeChildren")}</p>
         ) : (
           children.map((child) => <NativeChild key={child.conversationId} child={child} />)
         )}
       </DialogPanel>
       <DialogFooter variant="bare">
         <Button size="sm" variant="outline" disabled={query.isPending} onClick={query.refresh}>
-          Refresh
+          {t("chatSurface.refresh")}
         </Button>
       </DialogFooter>
     </>

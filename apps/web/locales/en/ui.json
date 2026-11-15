@@ -1,0 +1,9 @@
+{
+  "close": "Close",
+  "dismissNotification": "Dismiss notification",
+  "loading": "Loading",
+  "setupProgress": "Setup progress",
+  "stepAria": "{{step}}, step {{index}}{{summary}}",
+  "saturationPlane": "{{label}} saturation and brightness",
+  "axisSlider": "{{label}} {{axis}}"
+}

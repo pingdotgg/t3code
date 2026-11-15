@@ -1,0 +1,103 @@
+{
+  "nav": {
+    "group": "Navigation",
+    "back": "Back",
+    "forward": "Forward",
+    "stop": "Stop",
+    "refresh": "Refresh",
+    "loading": "Loading…",
+    "openInSystemBrowser": "Open in system browser"
+  },
+  "address": {
+    "placeholder": "Search or enter URL"
+  },
+  "annotate": {
+    "start": "Annotate preview",
+    "cancel": "Cancel annotation",
+    "cancelHint": "Cancel annotation (Esc)",
+    "hint": "Annotate elements, regions, and drawings",
+    "pageNotLoaded": "Page didn't load. Pick is unavailable until the page renders"
+  },
+  "capture": {
+    "screenshot": "Capture screenshot",
+    "stopRecording": "Stop recording",
+    "screenshotHint": "Screenshot · Shift-click to record"
+  },
+  "pip": {
+    "close": "Close floating preview",
+    "float": "Float preview over chat"
+  },
+  "appearance": {
+    "system": "System",
+    "light": "Light",
+    "dark": "Dark"
+  },
+  "menu": {
+    "open": "Preview menu",
+    "more": "More",
+    "closePopup": "Close separate preview window",
+    "openPopup": "Open separate preview window",
+    "hideDeviceToolbar": "Hide device toolbar",
+    "showDeviceToolbar": "Show device toolbar",
+    "appearance": "Appearance",
+    "zoom": "Zoom",
+    "zoomOut": "Zoom out",
+    "zoomIn": "Zoom in",
+    "resetZoom": "Reset zoom",
+    "clearCookies": "Clear cookies",
+    "clearCache": "Clear cache"
+  },
+  "errors": {
+    "generic": "An error occurred.",
+    "openBrowser": "Unable to open browser",
+    "openAddress": "Could not open this address",
+    "enterHttpUrl": "Enter an http or https URL.",
+    "changeTab": "Unable to change the browser tab",
+    "moveTab": "Unable to move the browser tab",
+    "updatePopup": "Unable to update popped-out preview",
+    "copyRecordingPath": "Unable to copy recording path",
+    "clipboardUnavailable": "Clipboard API unavailable.",
+    "stopRecording": "Unable to stop recording",
+    "startRecording": "Unable to start recording",
+    "copyScreenshot": "Unable to copy screenshot",
+    "copyScreenshotPath": "Unable to copy screenshot path",
+    "captureScreenshot": "Unable to capture screenshot",
+    "capturePicked": "Could not capture the picked element",
+    "annotationKept": "The annotation was kept without the screenshot.",
+    "popOut": "Unable to pop out preview"
+  },
+  "recording": {
+    "saved": "Recording saved"
+  },
+  "screenshot": {
+    "saved": "Screenshot saved"
+  },
+  "copied": "Copied!",
+  "copyPath": "Copy path",
+  "copyImage": "Copy image",
+  "removedProfile": "Removed profile",
+  "openInEnvironmentBrowser": "Open in {{label}}'s browser",
+  "openOnThisComputer": "Open on this computer",
+  "empty": {
+    "title": "No preview yet"
+  },
+  "listening": "Listening",
+  "checkConnection": "Checking your connection",
+  "confirmDevServer": "Confirming the dev server is running",
+  "checkProxyFirewall": "Checking the proxy and the firewall",
+  "hideDetails": "Hide details",
+  "details": "Details",
+  "revealInFinder": "Reveal in Finder",
+  "revealInFileExplorer": "Reveal in File Explorer",
+  "revealInFiles": "Reveal in Files",
+  "mini": {
+    "floatingPreview": "Floating browser preview",
+    "closePoppedOut": "Close popped-out preview",
+    "popIntoWindow": "Pop preview into separate window",
+    "closeSeparateWindow": "Close separate window",
+    "popIntoSeparateWindow": "Pop into separate window"
+  },
+  "device": {
+    "hostFallback": "Device host"
+  }
+}

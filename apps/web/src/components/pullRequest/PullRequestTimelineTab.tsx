@@ -72,6 +72,11 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 interface ReactionSurface {
   revealAnchor?: string | null;
   readonly canReact: boolean;
@@ -200,14 +205,14 @@ function AddToChatButton({
             size="icon-xs"
             variant="ghost-muted"
             className="-mt-1 shrink-0"
-            aria-label="Add to chat"
+            aria-label={td("comments.addToChat")}
             onClick={() => onAddToChat(comment)}
           />
         }
       >
         <MessageSquarePlusIcon className="size-3" />
       </TooltipTrigger>
-      <TooltipPopup>Add to chat</TooltipPopup>
+      <TooltipPopup>{td("comments.addToChat")}</TooltipPopup>
     </Tooltip>
   );
 }
@@ -218,7 +223,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
       size="icon-xs"
       variant="ghost-muted"
       className="-mr-1 shrink-0"
-      aria-label="Open activity on host"
+      aria-label={td("timeline.openActivityOnHost")}
       onClick={() => onOpen(url)}
     >
       <ExternalLinkIcon className="size-3" />
@@ -259,7 +264,7 @@ function ConversationCard({
     });
     setSaving(false);
     if (result._tag === "Failure") {
-      toastManager.add({ type: "error", title: "Could not save the comment" });
+      toastManager.add({ type: "error", title: td("errors.saveComment") });
       return;
     }
     setEditing(false);
@@ -298,7 +303,10 @@ function ConversationCard({
             </PullRequestMetaLine>
           </div>
           {editable !== null && !editing ? (
-            <PullRequestEditButton aria-label="Edit comment" onClick={() => setEditing(true)} />
+            <PullRequestEditButton
+              aria-label={td("comments.editComment")}
+              onClick={() => setEditing(true)}
+            />
           ) : null}
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
@@ -325,7 +333,7 @@ function ConversationCard({
             environmentId={reactions.environmentId}
             completionScope={reactions.completionScope}
             threadRef={reactions.threadRef}
-            label="Edit comment"
+            label={td("comments.editComment")}
             saving={saving}
             onSave={(body) => void save(body)}
             onCancel={() => setEditing(false)}
@@ -553,7 +561,7 @@ function CommitEvent({
     <button
       type="button"
       className="group relative mb-5 block w-full cursor-pointer rounded-sm pl-12 text-left outline-none [contain-intrinsic-block-size:48px] [content-visibility:auto] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label={`View commit ${event.id}`}
+      aria-label={td("timeline.viewCommit", { id: event.id })}
       onClick={() => onOpen(event.id)}
     >
       <ActorTimelineMarker
@@ -563,7 +571,7 @@ function CommitEvent({
       <div className="flex min-w-0 items-center gap-2.5 py-1.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-xs font-semibold text-foreground transition-colors group-hover:text-primary">
-            {event.body ?? "Untitled commit"}
+            {event.body ?? td("timeline.untitledCommit")}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-3xs text-muted-foreground">
             <code className="font-mono">{event.id.slice(0, 7)}</code>
@@ -590,16 +598,16 @@ function LifecycleEvent({ event, term }: { event: PullRequestTimelineEvent; term
     event.kind === "opened"
       ? {
           icon: <PullRequestGlyph.pullRequest className="size-3.5" />,
-          label: `${title} opened`,
+          label: td("timeline.termOpened", { title }),
         }
       : event.kind === "merged"
         ? {
             icon: <PullRequestGlyph.merged className="size-3.5" />,
-            label: `${title} merged`,
+            label: td("timeline.termMerged", { title }),
           }
         : {
             icon: <PullRequestGlyph.closed className="size-3.5" />,
-            label: `${title} closed`,
+            label: td("timeline.termClosed", { title }),
           };
 
   return (

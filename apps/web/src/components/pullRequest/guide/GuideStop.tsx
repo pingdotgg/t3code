@@ -30,12 +30,17 @@ import { GuideNotes } from "./GuideNotes";
 import { GuideProse } from "./GuideProse";
 import { letterStopNotes } from "@t3tools/client-runtime/review-guide-tour";
 
+import { translateDynamic } from "../../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const ATTENTION_LABELS = {
-  tradeoff: "A tradeoff to weigh",
-  contract: "A contract to check",
-  product: "A product call",
-  risk: "A risk to judge",
-  accessibility: "An accessibility call",
+  tradeoff: "guide.attention.tradeoff",
+  contract: "guide.attention.contract",
+  product: "guide.attention.product",
+  risk: "guide.attention.risk",
+  accessibility: "guide.attention.accessibility",
 } as const satisfies Record<PullRequestReviewGuideAttention["kind"], string>;
 
 export function GuideStop({
@@ -101,7 +106,7 @@ export function GuideStop({
               <Button
                 size="icon-xs"
                 variant="outline"
-                aria-label="Previous stop"
+                aria-label={td("guide.previousStop")}
                 disabled={index === 0}
                 onClick={() => onStep(-1)}
               >
@@ -110,7 +115,7 @@ export function GuideStop({
               <Button
                 size="icon-xs"
                 variant="outline"
-                aria-label="Next stop"
+                aria-label={td("guide.nextStop")}
                 disabled={index === stopCount - 1}
                 onClick={() => onStep(1)}
               >
@@ -142,7 +147,7 @@ export function GuideStop({
         {stop.attention !== null ? (
           <Alert controlAlignment="first-line">
             <EyeIcon />
-            <AlertTitle>{ATTENTION_LABELS[stop.attention.kind]}</AlertTitle>
+            <AlertTitle>{td(ATTENTION_LABELS[stop.attention.kind])}</AlertTitle>
             <AlertDescription>
               <div>
                 <GuideProse text={stop.attention.note} />
@@ -174,7 +179,7 @@ export function GuideStop({
         {otherFiles.length > 0 ? (
           <section className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">
-              {stop.excerpts.length > 0 ? "Also in this stop" : "Files in this stop"}
+              {stop.excerpts.length > 0 ? td("guide.alsoInStop") : td("guide.filesInStop")}
             </h3>
             <DiffWorkerPoolProvider>
               <ul className="flex flex-col overflow-hidden rounded-lg border border-border/60">
@@ -214,9 +219,7 @@ export function GuideStop({
                             <GuideFileDiff file={diff} loadDiffFiles={loadDiffFiles} />
                           ) : (
                             <p className="px-3 py-2 text-xs text-muted-foreground">
-                              {diffLoading
-                                ? "Loading the diff..."
-                                : "This file is not in the loaded diff."}
+                              {diffLoading ? td("guide.loadingDiff") : td("guide.fileNotInDiff")}
                             </p>
                           )}
                         </CollapsiblePanel>

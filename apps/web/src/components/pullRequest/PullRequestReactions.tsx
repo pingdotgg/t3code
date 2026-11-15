@@ -23,6 +23,11 @@ import {
   pullRequestReactionsSignature,
 } from "@t3tools/client-runtime/pull-request-reactions";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const PILL_CLASS =
   "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border px-2 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
@@ -76,7 +81,7 @@ export function PullRequestReactionBar({
         next.delete(content);
         return { signature: current.signature, values: next };
       });
-      toastManager.add({ type: "error", title: "The reaction could not be saved" });
+      toastManager.add({ type: "error", title: td("errors.reactionNotSaved") });
       return;
     }
     onRefresh();
@@ -119,7 +124,7 @@ export function PullRequestReactionBar({
             render={
               <button
                 type="button"
-                aria-label="Add a reaction"
+                aria-label={td("reactions.add")}
                 className={cn(
                   PILL_CLASS,
                   "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",

@@ -1,10 +1,7 @@
 import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { holdLinkedNodeInView } from "./holdLinkedNodeInView";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type {
   EnvironmentId,
@@ -95,6 +92,11 @@ import {
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -198,7 +200,7 @@ function CommentBody({
         environmentId={editing.environmentId}
         completionScope={editing.completionScope}
         threadRef={editing.threadRef}
-        label="Edit comment"
+        label={td("comments.editComment")}
         saving={editing.saving}
         onSave={(body) => editing.onSave(comment, body)}
         onCancel={() => editing.onEdit(null)}
@@ -216,7 +218,10 @@ function CommentBody({
         threadRef={editing.threadRef}
       />
       {editing.canEdit(comment) ? (
-        <PullRequestEditButton aria-label="Edit comment" onClick={() => editing.onEdit(comment)} />
+        <PullRequestEditButton
+          aria-label={td("comments.editComment")}
+          onClick={() => editing.onEdit(comment)}
+        />
       ) : null}
     </div>
   );
@@ -244,7 +249,7 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
       {/* Wrapped like Fix's label so both sit on the header's baseline. */}
       <span className="inline-flex items-baseline gap-1">
         <MessageSquarePlusIcon className="size-3 self-center" />
-        <span>Add to chat</span>
+        <span>{td("comments.addToChat")}</span>
       </span>
     </Button>
   );
@@ -446,7 +451,7 @@ export function PullRequestSummaryTab({
   checksStale = false,
   activityError,
   pendingFinding,
-  fixFindingLabel = "Fix in a thread",
+  fixFindingLabel,
   fixCheckLabel = "Fix",
   onFixFinding,
   onAddToChat,
@@ -547,7 +552,7 @@ export function PullRequestSummaryTab({
   const openCheck = (url: string) => {
     void openLink(url).catch((error: unknown) => {
       console.error(error);
-      toastManager.add({ type: "error", title: "Unable to open check details" });
+      toastManager.add({ type: "error", title: td("errors.openCheckDetails") });
     });
   };
 
@@ -643,7 +648,7 @@ export function PullRequestSummaryTab({
     descriptionSavesRunning.current -= 1;
     const saved = result._tag === "Success";
     setDescriptionDraft((draft) => settleDescriptionSave(draft, key, saved));
-    if (!saved) toastManager.add({ type: "error", title: "Could not save the description" });
+    if (!saved) toastManager.add({ type: "error", title: td("errors.saveDescription") });
     if (descriptionSavesRunning.current === 0) onRefresh();
     return saved;
   };
@@ -676,7 +681,7 @@ export function PullRequestSummaryTab({
       });
       setCommentSaving(false);
       if (result._tag === "Failure") {
-        toastManager.add({ type: "error", title: "Could not save the comment" });
+        toastManager.add({ type: "error", title: td("errors.saveComment") });
         return;
       }
       setCommentScope(null);
@@ -741,7 +746,7 @@ export function PullRequestSummaryTab({
                 <HammerIcon className="size-3 self-center" />
                 <span>
                   {pendingFinding === pullRequestFindingKey(finding)
-                    ? "Preparing..."
+                    ? td("actions.preparing")
                     : fixFindingLabel}
                 </span>
               </span>
@@ -784,7 +789,7 @@ export function PullRequestSummaryTab({
           editing={commentEditing}
           detail={detail}
           thread={thread}
-          label={thread?.isResolved ? "Resolved" : "Review dismissed"}
+          label={thread?.isResolved ? td("thread.resolved") : td("reviewOutcome.dismissed")}
           body={visibleBody(comment.body)}
           replyCount={item.kind === "thread" ? item.replies.length + item.moreReplies : 0}
           replies={replies}
@@ -920,7 +925,7 @@ export function PullRequestSummaryTab({
 
       <Section
         key={`description:${detail.url}`}
-        title="Description"
+        title={td("meta.description")}
         keepMounted
         revealCount={descriptionReveals}
       >
@@ -933,8 +938,8 @@ export function PullRequestSummaryTab({
               environmentId={environmentId}
               completionScope={completionScope}
               threadRef={threadRef}
-              label={`${capitalizeTerm(terminology.singular)} description`}
-              placeholder={`Describe this ${terminology.singular}`}
+              label={td("summary.termDescription", { term: terminology.singular })}
+              placeholder={td("summary.describeTerm", { term: terminology.singular })}
               saving={descriptionSaving}
               onSave={(body) => void saveBody(body)}
               onCancel={() => setBodyScope(null)}
@@ -951,7 +956,7 @@ export function PullRequestSummaryTab({
               />
               {canEditDescription ? (
                 <PullRequestEditButton
-                  aria-label="Edit description"
+                  aria-label={td("summary.editDescription")}
                   onClick={() => setBodyScope({ url: detail.url, body: description })}
                 />
               ) : null}
@@ -962,13 +967,13 @@ export function PullRequestSummaryTab({
 
       <Section
         key={`checks:${detail.url}`}
-        title="Checks"
+        title={td("checks.title")}
         defaultOpen={false}
         revealCount={checksReveals}
       >
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>Check details are out of date.</span>
+            <span>{td("checks.outOfDate")}</span>
             <Button size="xs" variant="ghost" onClick={onRefreshChecks}>
               Refresh
             </Button>
@@ -1013,7 +1018,7 @@ export function PullRequestSummaryTab({
                       >
                         <HammerIcon className="size-3" />
                         {pendingFinding === pullRequestFindingKey(finding)
-                          ? "Preparing..."
+                          ? td("actions.preparing")
                           : fixCheckLabel}
                       </Button>
                     ) : null}
@@ -1025,20 +1030,22 @@ export function PullRequestSummaryTab({
       </Section>
 
       <Section
-        title={`Comments (${detail.commentCount})`}
+        title={td("comments.titleWithCount", { count: detail.commentCount })}
         actions={
           <div className="flex shrink-0 items-center gap-1">
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}
-                aria-label="Filter comments"
+                aria-label={td("comments.filter")}
               >
                 <ListFilterIcon aria-hidden className="size-3" />
-                {filteredOutCount > 0 ? `${filteredOutCount} hidden` : "Filter"}
+                {filteredOutCount > 0
+                  ? td("comments.hiddenCount", { count: filteredOutCount })
+                  : td("comments.filter")}
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuGroup>
-                  <MenuGroupLabel>Show</MenuGroupLabel>
+                  <MenuGroupLabel>{td("comments.show")}</MenuGroupLabel>
                   <MenuCheckboxItem
                     checked={commentFilter.bots}
                     closeOnClick={false}
@@ -1062,14 +1069,12 @@ export function PullRequestSummaryTab({
               size="xs"
               variant="ghost-muted"
               aria-label={
-                commentOrder === "newest"
-                  ? "Show oldest comments first"
-                  : "Show newest comments first"
+                commentOrder === "newest" ? td("comments.showOldest") : td("comments.showNewest")
               }
               onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
             >
               <ArrowDownUpIcon aria-hidden className="size-3" />
-              {commentOrder === "newest" ? "Newest first" : "Oldest first"}
+              {commentOrder === "newest" ? td("timeline.newestFirst") : td("timeline.oldestFirst")}
             </Button>
           </div>
         }
@@ -1096,8 +1101,8 @@ export function PullRequestSummaryTab({
             ) : filteredItems.length === 0 ? (
               <p className="py-2 text-xs text-muted-foreground">
                 {filteredOutCount === 1
-                  ? "The only comment is hidden by the filter."
-                  : `All ${filteredOutCount} comments are hidden by the filter.`}
+                  ? td("comments.onlyHidden")
+                  : td("comments.allHidden", { count: filteredOutCount })}
               </p>
             ) : (
               <div className="space-y-3">

@@ -12,6 +12,12 @@ import {
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`chat:${key}`, options);
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
@@ -61,15 +67,17 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
       ? snoozedUntil
       : resetAt;
   const resetDescription = displayAt
-    ? `${resumes ? "Resumes" : "Resets"} ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
-    : "Reset time unavailable; retry manually";
+    ? td(resumes ? "limitRecovery.resumes" : "limitRecovery.resets", {
+        time: formatUpcomingTimestamp(displayAt, timestampFormat),
+      })
+    : td("limitRecovery.resetUnavailable");
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
       variant: "warning",
       group: "environment",
       icon: <GaugeIcon />,
-      title: "Usage limit reached",
+      title: td("limitRecovery.limitReached"),
       description: resetDescription,
       actions: recoveryActions,
     };
@@ -80,16 +88,14 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     variant: "warning",
     group: "environment",
     icon: <OpenAI aria-hidden="true" />,
-    title: "ChatGPT usage limit reached",
-    description: workspaceLimit
-      ? "You've reached your workspace's limit for using your ChatGPT plan in other apps."
-      : resetDescription,
+    title: td("errors.chatgptLimitReached"),
+    description: workspaceLimit ? td("errors.workspaceLimitDetail") : resetDescription,
     actions: (
       <>
         {recoveryActions}
         {workspaceLimit ? (
           <Button size="xs" variant="ghost" onClick={copyAdminRequest}>
-            Copy request for admin
+            {td("errors.copyRequestForAdmin")}
           </Button>
         ) : (
           <ChatGptUsageButton size="xs" variant="ghost" />
@@ -100,6 +106,7 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
 }
 
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
+  const { t } = useTranslation("chat");
   const [pending, setPending] = useState(false);
 
   const scheduled =
@@ -114,8 +121,8 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     if (action === "snooze" && !snoozed && Date.parse(resetAt) <= Date.now()) {
       toastManager.add({
         type: "error",
-        title: "Could not snooze thread",
-        description: "The reset time has passed. Retry the thread manually.",
+        title: t("limitRecovery.snoozeFailed"),
+        description: t("limitRecovery.resetPassed"),
       });
       // The deadline timer can lag after a throttled tab or sleep; disable now.
       deadlineStore(Date.parse(resetAt)).refresh();
@@ -131,8 +138,11 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
     } catch (cause) {
       toastManager.add({
         type: "error",
-        title: action === "resume" ? "Could not change auto-resume" : "Could not snooze thread",
-        description: cause instanceof Error ? cause.message : "An error occurred.",
+        title:
+          action === "resume"
+            ? t("limitRecovery.autoResumeFailed")
+            : t("limitRecovery.snoozeFailed"),
+        description: cause instanceof Error ? cause.message : t("errors.generic"),
       });
     }
     setPending(false);
@@ -141,14 +151,22 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
       <InlineButton touchTarget="padded" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending
+          ? t("limitRecovery.saving")
+          : scheduled
+            ? t("limitRecovery.cancelAutoResume")
+            : t("limitRecovery.resumeAtReset")}
       </InlineButton>
       <InlineButton
         touchTarget="padded"
         disabled={pending || (!snoozed && resetPassed)}
         onClick={() => void toggle("snooze")}
       >
-        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+        {pending
+          ? t("limitRecovery.saving")
+          : snoozed
+            ? t("limitRecovery.wakeNow")
+            : t("limitRecovery.snoozeUntilReset")}
       </InlineButton>
     </span>
   );

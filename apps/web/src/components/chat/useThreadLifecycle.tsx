@@ -77,6 +77,11 @@ import { Atom } from "effect/reactivity";
 import { environmentThreadDetails } from "../../state/threads";
 import { openSideChatTab } from "../../lib/sideChatPane";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`chat:${key}`, options);
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
   Atom.withLabel("web-thread-run-stop:empty"),
@@ -249,7 +254,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to un-settle thread",
+          title: td("lifecycle.unsettleFailed"),
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -294,7 +299,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to wake thread",
+          title: td("lifecycle.wakeFailed"),
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -362,7 +367,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch checkout",
+            title: td("lifecycle.checkoutFailed"),
             description: chatActionErrorMessage(squashAtomCommandFailure(checkoutResult)),
           }),
         );
@@ -386,7 +391,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Checkout switched, but the thread could not be updated",
+              title: td("lifecycle.checkoutNotUpdated"),
               description: chatActionErrorMessage(squashAtomCommandFailure(updateResult)),
             }),
           );
@@ -452,7 +457,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : "Failed to stop background work.",
+          error instanceof Error ? error.message : td("lifecycle.stopBackgroundFailed"),
         );
       }
     }
@@ -487,7 +492,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     }
     const shell = readThreadShell(threadRef);
     if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
-      toastManager.add({ type: "info", title: "This thread is no longer available" });
+      toastManager.add({ type: "info", title: td("lifecycle.threadGone") });
       return;
     }
     if (activeThreadRef && openSideChatTab(activeThreadRef, shell)) return;
@@ -617,9 +622,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     limitRecoveryHoldsSnooze ? null : (
       <ThreadStatusLine
         icon={<AlarmClockIcon />}
-        label={snoozeWake && snoozeWake !== "now" ? `Snoozed, ${snoozeWake} left` : "Snoozed"}
+        label={
+          snoozeWake && snoozeWake !== "now"
+            ? td("lifecycle.snoozedWithTime", { time: snoozeWake })
+            : td("lifecycle.snoozed")
+        }
         clockMinute={nowMinute}
-        actionLabel={isUnsnoozing ? "Waking..." : "Wake now"}
+        actionLabel={isUnsnoozing ? td("lifecycle.waking") : td("lifecycle.wakeNow")}
         actionDisabled={!canOperateThread || isUnsnoozing}
         onAction={() => void handleUnsnoozeActiveThreadStable()}
       />
@@ -627,9 +636,13 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   ) : activeThreadSettled ? (
     <ThreadStatusLine
       icon={<CheckCircle2Icon />}
-      label={settledAt ? `Settled ${formatRelativeTimeLabel(settledAt)}` : "Settled"}
+      label={
+        settledAt
+          ? td("lifecycle.settledAt", { time: formatRelativeTimeLabel(settledAt) })
+          : td("lifecycle.settled")
+      }
       clockMinute={nowMinute}
-      actionLabel={isUnsettling ? "Un-settling..." : "Un-settle"}
+      actionLabel={isUnsettling ? td("lifecycle.unsettling") : td("lifecycle.unsettle")}
       actionDisabled={!canOperateThread || isUnsettling}
       onAction={() => void handleUnsettleActiveThreadStable()}
     />
@@ -637,7 +650,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     <ThreadStatusLine
       icon={<AlarmClockIcon />}
       label="Woke from snooze"
-      actionLabel="Dismiss"
+      actionLabel={td("lifecycle.dismiss")}
       onAction={acknowledgeActiveThreadWokeStable}
     />
   ) : null;
@@ -662,7 +675,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         return;
       }
       if (settleAndAdvance(activeThreadRef)) return;
-      void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+      void settleThread(activeThreadRef).then(
+        toastThreadActionFailure(td("lifecycle.settleFailed")),
+      );
     },
     "thread.pin": ({ event }) => {
       // An open project list pins its highlighted project with this key instead.
@@ -678,7 +693,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
       ).then(
         toastThreadActionFailure(
-          activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
+          activeThreadPinned ? td("lifecycle.unpinFailed") : td("lifecycle.pinFailed"),
         ),
       );
     },
@@ -689,7 +704,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       void updateThreadMetadata({
         environmentId: activeThreadRef.environmentId,
         input: { threadId: activeThreadRef.threadId, regenerateTitle: true },
-      }).then(toastThreadActionFailure("Failed to regenerate thread title"));
+      }).then(toastThreadActionFailure(td("lifecycle.regenerateTitleFailed")));
     },
   } satisfies ChatShortcutCommands;
   return {

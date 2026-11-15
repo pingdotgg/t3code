@@ -40,6 +40,11 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const CARD_CLASS =
   "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
 
@@ -98,12 +103,12 @@ export function PendingReviewCommentCard({
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         <MessageSquareIcon className="size-3.5" />
-        <span>Pending. Sent when you submit the review</span>
+        <span>{td("annotation.pendingNote")}</span>
         <Button
           size="icon-xs"
           variant="ghost"
           className="ml-auto"
-          aria-label="Discard this comment"
+          aria-label={td("annotation.discard")}
           onClick={onRemove}
         >
           <Trash2Icon className="size-3.5" />
@@ -125,7 +130,7 @@ export function ReviewThreadCard({
   completionScope,
   pending,
   fixPending,
-  fixLabel = "Fix in a thread",
+  fixLabel,
   onFix,
   onAddToChat,
   onReply,
@@ -250,7 +255,7 @@ export function ReviewThreadCard({
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
+          {thread.isResolved ? td("thread.resolved") : td("thread.open")} · {commentCount}{" "}
           {commentCount === 1 ? "comment" : "comments"}
         </button>
         {thread.isOutdated ? <span>outdated</span> : null}
@@ -263,7 +268,7 @@ export function ReviewThreadCard({
             onClick={onFix}
           >
             <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
+            {fixPending ? td("actions.preparing") : (fixLabel ?? td("code.fixInThread"))}
           </Button>
         ) : null}
         {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
@@ -285,7 +290,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved ? td("annotation.unresolve") : td("annotation.resolve")}
           </Button>
         ) : null}
       </div>
@@ -317,7 +322,7 @@ export function ReviewThreadCard({
                     cwd={workspaceRoot}
                     environmentId={environmentId}
                     completionScope={completionScope}
-                    label="Edit comment"
+                    label={td("comments.editComment")}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -332,7 +337,7 @@ export function ReviewThreadCard({
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton
-                        aria-label="Edit comment"
+                        aria-label={td("comments.editComment")}
                         onClick={() => setEditingId(comment.id)}
                       />
                     ) : null}
@@ -349,7 +354,7 @@ export function ReviewThreadCard({
                 disabled={loadingMore}
                 onClick={() => void loadMore()}
               >
-                {loadingMore ? "Loading..." : "Load more comments"}
+                {loadingMore ? td("annotation.loading") : td("annotation.loadMoreComments")}
               </Button>
             </div>
           ) : null}
@@ -374,8 +379,8 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
-                      placeholder="Reply"
-                      aria-label="Reply to this conversation"
+                      placeholder={td("annotation.reply")}
+                      aria-label={td("annotation.replyToConversation")}
                       onValueChange={setReply}
                       onKeyDown={submitKeys({
                         value: reply,

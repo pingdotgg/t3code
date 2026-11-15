@@ -4,6 +4,7 @@ import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/c
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 
@@ -74,6 +75,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const { t } = useTranslation("chat");
   const projects = useProjects();
   const threads = useVisibleThreadShells();
   const { environments } = useEnvironments();
@@ -165,7 +167,7 @@ export function DraftHeroHeadline({
   const pickerItems: readonly PickerItem[] = useOrderWhileOpen(
     [
       ...menuEntries.map(({ group }) => ({ value: group.projectKey, label: group.displayName })),
-      { value: ADD_PROJECT_VALUE, label: "Add project" },
+      { value: ADD_PROJECT_VALUE, label: t("draftHero.addProject") },
     ],
     (item) => item.value,
     pickerOpen,
@@ -301,7 +303,11 @@ export function DraftHeroHeadline({
           }
         >
           <DraftProjectName
-            value={isScratchDraft ? "No project" : (activeProjectTitle ?? "Choose a project")}
+            value={
+              isScratchDraft
+                ? t("draftHero.noProject")
+                : (activeProjectTitle ?? t("draftHero.chooseProject"))
+            }
             singleLine
           />
         </TooltipTrigger>
@@ -311,8 +317,8 @@ export function DraftHeroHeadline({
       </Tooltip>
       <ComboboxPopup align="center" className="w-72 overflow-hidden">
         <ComboboxSearchInput
-          aria-label="Search projects"
-          placeholder="Search projects..."
+          aria-label={t("draftHero.searchProjects")}
+          placeholder={t("draftHero.searchProjectsPlaceholder")}
           value={pickerQuery}
           onChange={(event) => setPickerQuery(event.target.value)}
           onKeyDown={(event) => {
@@ -370,7 +376,7 @@ export function DraftHeroHeadline({
       onClick={openAddProject}
       className="pointer-events-auto inline min-w-0 max-w-full cursor-pointer border-muted-foreground/35 border-b border-dotted text-muted-foreground/60 transition-colors hover:border-muted-foreground/60 hover:text-muted-foreground/80 focus-visible:rounded-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
     >
-      <DraftProjectName value={activeProjectTitle ?? "Add a project"} singleLine />
+      <DraftProjectName value={activeProjectTitle ?? t("draftHero.addAProject")} singleLine />
     </button>
   );
 
@@ -414,17 +420,17 @@ export function DraftHeroHeadline({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
       {hasResolvedProject && !isScratchDraft ? (
-        <DraftHeroProjectHeading projectName={activeProjectTitle ?? "Choose a project"}>
+        <DraftHeroProjectHeading projectName={activeProjectTitle ?? t("draftHero.chooseProject")}>
           {projectSelector}
         </DraftHeroProjectHeading>
       ) : (
         <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
           {isScratchDraft ? (
-            <>What should we work on?</>
+            <>{t("draftHero.whatNext")}</>
           ) : canChooseProject ? (
-            <>{projectSelector} to start</>
+            <>{t("draftHero.chooseToStart", { selector: projectSelector })}</>
           ) : (
-            <>Add a project to start</>
+            <>{t("draftHero.addProjectToStart")}</>
           )}
         </h1>
       )}

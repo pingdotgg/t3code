@@ -1,0 +1,64 @@
+{
+  "surface": {
+    "browser": "Browser",
+    "terminal": "Terminal",
+    "files": "Files",
+    "diff": "Diff",
+    "pullRequest": "Pull request",
+    "pullRequests": "Linked pull requests",
+    "device": "Device",
+    "deviceDescription": "Watch an iOS Simulator or Android Emulator.",
+    "sideChat": "Side chat",
+    "sideChatDescription": "Ask a side question while this thread keeps working."
+  },
+  "disabled": {
+    "browser": "Browser previews are only available in the T3 Code desktop app.",
+    "terminal": "Terminal surfaces are only available from a project thread.",
+    "files": "Files are only available when a project is open.",
+    "diff": "Diff is only available for server threads in Git repositories.",
+    "pullRequest": "This thread's branch has no pull request yet.",
+    "pullRequests": "No linked pull requests are available for this thread.",
+    "device": "Devices are only available from a thread.",
+    "sideChat": "Side chats start after the first message."
+  },
+  "hints": {
+    "browser": "Only available in the desktop app.",
+    "terminal": "Available when a project is open.",
+    "files": "Available when a project is open.",
+    "diff": "Available for Git repositories.",
+    "pullRequest": "No pull request on this branch yet.",
+    "pullRequests": "No linked pull requests available.",
+    "device": "Available from a thread.",
+    "sideChat": "Available after the first message."
+  },
+  "tab": {
+    "unmute": "Unmute tab",
+    "mute": "Mute tab",
+    "unmuteTitle": "Unmute {{title}}",
+    "muteTitle": "Mute {{title}}",
+    "rename": "Rename",
+    "copyPath": "Copy path",
+    "close": "Close",
+    "closeOthers": "Close others",
+    "closeToRight": "Close to the right",
+    "closeAll": "Close all",
+    "scrollPanel": "Scroll panel tabs",
+    "scrollLeft": "Scroll tabs left",
+    "scrollRight": "Scroll tabs right"
+  },
+  "launcher": {
+    "openSurface": "Open a surface"
+  },
+  "browser": {
+    "openInProfile": "Open browser in a profile"
+  },
+  "device": {
+    "hostFallback": "Device host",
+    "tabName": "Device tab name"
+  },
+  "panel": {
+    "workspacePanel": "Workspace panel",
+    "workspacePanelTitle": "Workspace panel: {{title}}",
+    "addSurface": "Add panel surface"
+  }
+}

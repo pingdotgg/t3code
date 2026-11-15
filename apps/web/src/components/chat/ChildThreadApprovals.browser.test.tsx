@@ -1,3 +1,4 @@
+import "../../i18nCore";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
 import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";

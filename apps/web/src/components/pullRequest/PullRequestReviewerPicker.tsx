@@ -22,15 +22,17 @@ import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => string> = {
   unsearchable: () =>
     "This repository has more people with access than are listed here. Ask for the rest on the host.",
-  searchable: () =>
-    "This repository has more people with access than are listed here. Search to find them.",
-  "search-failed": (error) =>
-    `Only the people already listed are matched: the host search failed. ${error ?? ""}`,
-  "search-truncated": () =>
-    "More people match than the host returned. Keep typing to narrow it down.",
+  searchable: () => td("picker.overflowHint"),
+  "search-failed": (error) => td("picker.searchFailed", { error: error ?? "" }),
+  "search-truncated": () => td("picker.tooManyMatches"),
 };
 
 export function PullRequestReviewerPicker({
@@ -88,8 +90,8 @@ export function PullRequestReviewerPicker({
       toastManager.add({
         type: "error",
         title: candidate.isRequested
-          ? `Could not take back the review request to ${candidate.login}`
-          : `Could not ask ${candidate.login} for a review`,
+          ? td("picker.couldNotTakeBack", { login: candidate.login })
+          : td("picker.couldNotAsk", { login: candidate.login }),
         description: readableFailure(
           squashAtomCommandFailure(result),
           "The host refused it. Check that you have write access on this repository, and that they still have access to it.",
@@ -103,7 +105,7 @@ export function PullRequestReviewerPicker({
     toastManager.add({
       type: "success",
       title: candidate.isRequested
-        ? `Review request to ${candidate.login} taken back`
+        ? td("picker.requestTakenBack", { login: candidate.login })
         : `Review requested from ${candidate.login}`,
     });
   };
@@ -111,14 +113,14 @@ export function PullRequestReviewerPicker({
   return (
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
-      label="Request a review"
+      label={td("picker.requestReview")}
       allowed={allowed}
-      disabledReason="Asking someone to review needs write access on this repository"
+      disabledReason={td("picker.needsWriteAccess")}
       open={open}
       onOpenChange={setOpen}
       query={query}
       onQueryChange={setQuery}
-      searchLabel="Search people with access"
+      searchLabel={td("picker.searchPeople")}
       isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
       error={
         candidatesQuery.data === null
@@ -128,9 +130,9 @@ export function PullRequestReviewerPicker({
             : null
       }
       candidates={candidates}
-      emptyLabel="Nobody else has access to this repository."
-      noMatchLabel="Nobody with access matches that."
-      errorLabel="The people with access could not be read."
+      emptyLabel={td("picker.nobodyElse")}
+      noMatchLabel={td("picker.noMatch")}
+      errorLabel={td("picker.readFailed")}
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}

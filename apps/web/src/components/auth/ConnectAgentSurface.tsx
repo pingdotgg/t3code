@@ -39,8 +39,8 @@ export const accessConfig: Record<
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
   "read-only": {
-    label: "Read only",
-    description: "Read projects and threads. Cannot start, message or change anything.",
+    label: "scopes.readOnly",
+    description: "scopes.readOnlyDetail",
     icon: EyeIcon,
   },
   ...runtimeModeConfig,
@@ -72,9 +72,9 @@ const ACCESS_I18N_KEYS: Record<AuthMcpClientAccess, string> = {
   "full-access": "access.fullAccess",
 };
 const accessLabel = (access: AuthMcpClientAccess): string =>
-  translateDynamic(`${ACCESS_I18N_KEYS[access]}.label`);
+  translateDynamic(`onboarding:${ACCESS_I18N_KEYS[access]}.label`);
 const accessDescription = (access: AuthMcpClientAccess): string =>
-  translateDynamic(`${ACCESS_I18N_KEYS[access]}.description`);
+  translateDynamic(`onboarding:${ACCESS_I18N_KEYS[access]}.description`);
 const isApprovalError = Schema.is(AuthMcpApprovalError);
 
 export type McpApprovalAnswer<A> =
@@ -281,6 +281,7 @@ export function McpConsent({
         description={
           <>
             <Trans
+              ns="onboarding"
               i18nKey={"connect.description" as never}
               values={{ host: environmentLabel ?? details.environmentHost }}
               components={[<span className="font-medium text-foreground" key="0" />]}
@@ -293,6 +294,7 @@ export function McpConsent({
         <dt className="text-muted-foreground">{t("connect.app")}</dt>
         <dd className="min-w-0 break-words">
           <Trans
+            ns="onboarding"
             i18nKey={"connect.nameSetByApp" as never}
             values={{ name: details.clientName }}
             components={[<span className="text-muted-foreground" key="0" />]}
@@ -338,7 +340,11 @@ export function McpConsent({
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              <Trans i18nKey={"connect.getCode" as never} components={[<code key="0" />]} />
+              <Trans
+                ns="onboarding"
+                i18nKey={"connect.getCode" as never}
+                components={[<code key="0" />]}
+              />
             </p>
           </div>
         ) : null}

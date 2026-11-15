@@ -49,11 +49,11 @@ import {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
-export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
-};
+import { translateDynamic } from "../../i18nCore";
+
+export function pullRequestMergeMethodLabel(method: PullRequestMergeMethod): string {
+  return translateDynamic(`pullRequest:mergeMethod.${method}`);
+}
 
 export function allowsSinglePullRequestMerge(input: {
   supportsStackActions: boolean;
@@ -250,14 +250,14 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: translateDynamic("pullRequest:handoff.fix"),
+        fixCheck: translateDynamic("pullRequest:handoff.fixCheckInThread"),
+        fixFindings: translateDynamic("pullRequest:handoff.fixFindingsInThread"),
       }
     : {
-        fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFinding: translateDynamic("pullRequest:code.fixInThread"),
+        fixCheck: translateDynamic("pullRequest:handoff.fix"),
+        fixFindings: translateDynamic("pullRequest:handoff.fixFindingsInThread"),
       };
 }
 

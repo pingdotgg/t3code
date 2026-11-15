@@ -1,4 +1,8 @@
 import { clientHostEnvironmentAtom } from "../state/clientHostEnvironment";
+import { translateDynamic } from "../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`chat:${key}`, options);
 import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "@t3tools/shared/fileLinks";
 import {
   isWindowsDrivePathHref,
@@ -343,31 +347,31 @@ const GITHUB_ALERT_PRESENTATIONS: Record<
   { label: string; Icon: typeof InfoIcon; borderClassName: string; titleClassName: string }
 > = {
   note: {
-    label: "Note",
+    label: "note",
     Icon: InfoIcon,
     borderClassName: "border-blue-500/70",
     titleClassName: "text-blue-600 dark:text-blue-400",
   },
   tip: {
-    label: "Tip",
+    label: "tip",
     Icon: LightbulbIcon,
     borderClassName: "border-emerald-500/70",
     titleClassName: "text-emerald-600 dark:text-emerald-400",
   },
   important: {
-    label: "Important",
+    label: "important",
     Icon: MessageSquareWarningIcon,
     borderClassName: "border-purple-500/70",
     titleClassName: "text-purple-600 dark:text-purple-400",
   },
   warning: {
-    label: "Warning",
+    label: "warning",
     Icon: TriangleAlertIcon,
     borderClassName: "border-amber-500/70",
     titleClassName: "text-amber-600 dark:text-amber-500",
   },
   caution: {
-    label: "Caution",
+    label: "caution",
     Icon: OctagonAlertIcon,
     borderClassName: "border-red-500/70",
     titleClassName: "text-red-600 dark:text-red-400",
@@ -592,10 +596,7 @@ function useChatMarkdownState({
       },
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
-        let description =
-          error instanceof Error
-            ? error.message
-            : "The file could not be loaded. It may have been moved or deleted.";
+        let description = error instanceof Error ? error.message : td("markdown.mediaLoadFailed");
         if (
           isAssetNotFoundError(error) &&
           error.resource._tag === "media-file" &&
@@ -612,13 +613,16 @@ function useChatMarkdownState({
               isDesktopRenderer: window.desktopBridge !== undefined,
             }).mode !== "local-exec"
           ) {
-            description = `The file was not found on ${target.label} at ${error.checkedPath ?? error.resource.path}.`;
+            description = td("markdown.fileNotFoundOn", {
+              target: target.label,
+              path: error.checkedPath ?? error.resource.path,
+            });
           }
         }
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Media unavailable",
+            title: td("markdown.mediaUnavailable"),
             description,
           }),
         );
@@ -645,9 +649,7 @@ function useChatMarkdownState({
     }
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       return Promise.resolve(
-        AsyncResult.failure<void, Error>(
-          Cause.fail(new Error("This connection cannot reveal files on this environment.")),
-        ),
+        AsyncResult.failure<void, Error>(Cause.fail(new Error(td("markdown.cannotRevealFiles")))),
       );
     }
     return openInEditor({
@@ -711,7 +713,7 @@ function useChatMarkdownState({
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
             new BrowserPreviewUnavailableError({
-              message: "Preview access is unavailable for this client.",
+              message: td("markdown.previewUnavailable"),
             }),
           ),
         ),
@@ -725,7 +727,7 @@ function useChatMarkdownState({
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: "Unable to open link in browser",
+              title: td("markdown.openLinkFailed"),
               description: error.message,
             }),
           );
@@ -741,7 +743,7 @@ function useChatMarkdownState({
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
             new BrowserPreviewUnavailableError({
-              message: "Environment is not connected.",
+              message: td("markdown.environmentNotConnected"),
             }),
           ),
         ),
@@ -881,7 +883,7 @@ function useChatMarkdownState({
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)
             : undefined
         }
-        openInEditorMenuLabel={canOpenApp ? "Open app" : preferredEditorMenuLabel}
+        openInEditorMenuLabel={canOpenApp ? td("markdown.openApp") : preferredEditorMenuLabel}
         onReveal={
           canUseShellActions && revealInFileManagerLabel !== undefined
             ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
@@ -1015,7 +1017,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           className={cn("flex items-center gap-1.5 font-medium", alert.titleClassName)}
         >
           <alert.Icon aria-hidden className="size-3.5 shrink-0" />
-          {alert.label}
+          {td(`markdown.alerts.${alert.label}`)}
         </p>
         {children}
       </div>
@@ -1060,7 +1062,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         {...props}
         type="checkbox"
         name="markdown-task"
-        aria-label="Toggle task"
+        aria-label={td("markdown.toggleTask")}
         checked={checked === true}
         onChange={(event) => {
           const listItemStart = Number(event.currentTarget.closest("li")?.dataset.listItemOffset);
@@ -1105,7 +1107,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return environmentId ? (
         <MarkdownThreadLink environmentId={environmentId} link={threadLink} label={label} />
       ) : (
-        <span>{label ?? "Thread"}</span>
+        <span>{label ?? td("markdown.thread")}</span>
       );
     }
     const contextReference = href ? parseComposerContextHref(href) : null;
@@ -1274,9 +1276,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
                       type: "error",
                       title:
                         operation === "link-pull-request-to-thread"
-                          ? "Unable to link pull request"
-                          : "Unable to unlink pull request",
-                      description: cause instanceof Error ? cause.message : "The request failed.",
+                          ? td("markdown.linkFailed")
+                          : td("markdown.unlinkFailed"),
+                      description:
+                        cause instanceof Error ? cause.message : td("markdown.requestFailed"),
                     }),
                   );
                 }

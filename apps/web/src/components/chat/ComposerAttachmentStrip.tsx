@@ -544,6 +544,7 @@ export function ComposerFilePreviewDialog({
   readonly onRemove: (fileId: string) => void;
   readonly onPreviewFileIdChange: (fileId: string | null) => void;
 }) {
+  const { t } = useTranslation("chat");
   const onClose = () => onPreviewFileIdChange(null);
   return (
     <Dialog
@@ -564,7 +565,7 @@ export function ComposerFilePreviewDialog({
           mimeType={file.mimeType}
           sizeBytes={file.sizeBytes}
           file={file.file}
-          origin="Draft"
+          origin={t("attachments.draft")}
           {...(file.uploadedAttachmentId && file.uploadEnvironmentId
             ? {
                 asset: {

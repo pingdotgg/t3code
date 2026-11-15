@@ -1,0 +1,131 @@
+{
+  "tools": "工具",
+  "closeTools": "关闭工具",
+  "section": {
+    "hostDiagnostics": "主机诊断",
+    "app": "应用",
+    "simulator": "模拟器",
+    "emulator": "仿真器",
+    "accessibility": "辅助功能",
+    "pushNotification": "推送通知",
+    "location": "位置",
+    "permissions": "权限"
+  },
+  "row": {
+    "foreground": "前台",
+    "appearance": "外观",
+    "textSize": "文字大小",
+    "liquidGlass": "液态玻璃",
+    "colorFilter": "色彩滤镜",
+    "orientation": "方向",
+    "network": "网络"
+  },
+  "textSize": {
+    "small": "小",
+    "default": "默认",
+    "large": "大",
+    "extraLarge": "特大"
+  },
+  "colorFilter": {
+    "grayscale": "灰度",
+    "redGreen": "红/绿（红色盲）",
+    "greenRed": "绿/红（绿色盲）",
+    "blueYellow": "蓝/黄（蓝黄色盲）"
+  },
+  "orientation": {
+    "portrait": "竖屏",
+    "landscapeLeft": "横屏（左）",
+    "upsideDown": "倒置",
+    "landscapeRight": "横屏（右）"
+  },
+  "permission": {
+    "camera": "相机",
+    "microphone": "麦克风",
+    "photos": "照片",
+    "contacts": "通讯录",
+    "calendar": "日历",
+    "reminders": "提醒事项",
+    "location": "定位",
+    "notifications": "通知",
+    "motion": "运动",
+    "mediaLibrary": "媒体资料库",
+    "faceId": "面容 ID",
+    "physicalActivity": "体能活动",
+    "one": "权限"
+  },
+  "appearance": {
+    "light": "浅色",
+    "dark": "深色"
+  },
+  "liquidGlass": {
+    "clear": "透明",
+    "tinted": "着色"
+  },
+  "a11y": {
+    "reduceMotion": "减弱动态效果",
+    "increaseContrast": "增强对比度",
+    "reduceTransparency": "降低透明度",
+    "showBorders": "显示边框",
+    "voiceOver": "VoiceOver",
+    "overlayFrames": "叠加显示元素边框"
+  },
+  "appUrlPlaceholder": "https://… 或 myapp://",
+  "bundleIdPlaceholder": "要启动的 Bundle ID",
+  "packageNamePlaceholder": "要启动的包名",
+  "launch": "启动",
+  "rotateTo": "旋转到…",
+  "alertTextPlaceholder": "提醒文字",
+  "openAppFirst": "请先打开一个应用。",
+  "unknown": "未知",
+  "latitude": "纬度",
+  "longitude": "经度",
+  "locationPreset": "位置预设",
+  "presetEllipsis": "预设…",
+  "appIdPlaceholder": "App ID",
+  "noEvents": "还没有事件。",
+  "rail": {
+    "controls": "设备控制",
+    "home": "主屏幕",
+    "back": "返回",
+    "recents": "最近任务",
+    "rotate": "旋转设备",
+    "textSize": "设备文字大小",
+    "tools": "设备工具",
+    "capturingScreenshot": "正在截屏",
+    "saveScreenshot": "保存截屏",
+    "moreActions": "更多设备操作",
+    "returnToPool": "把设备归还到资源池",
+    "powerOff": "关闭设备电源",
+    "view3d": "3D 视图",
+    "viewFlat": "平面视图",
+    "detachKeyboard": "分离妙控键盘",
+    "attachKeyboard": "连接妙控键盘",
+    "restore3d": "恢复 3D 视图"
+  },
+  "toolbar": {
+    "title": "浏览器设备工具栏",
+    "preset": "浏览器设备预设",
+    "responsive": "响应式",
+    "standard": "标准",
+    "dimensions": "视口尺寸",
+    "width": "视口宽度",
+    "height": "视口高度",
+    "lockAspectRatio": "锁定视口宽高比",
+    "unlockAspectRatio": "解锁视口宽高比",
+    "rotateViewport": "旋转视口",
+    "close": "关闭设备工具栏"
+  },
+  "page": {
+    "title": "浏览器页面",
+    "copiedText": "页面复制了文字",
+    "sendFilesFailed": "无法把文件发送到页面",
+    "releaseControl": "释放控制",
+    "takeControl": "取得控制",
+    "pdfDocument": "PDF 文档",
+    "leaveHint": "按 Shift+Escape 离开浏览器页面。",
+    "chooseFiles": "为页面选择文件",
+    "dialog": "浏览器对话框",
+    "dialogResponse": "对话框回复",
+    "takeControlToRespond": "取得控制后才能回复。"
+  }
+}

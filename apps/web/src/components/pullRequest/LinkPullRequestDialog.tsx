@@ -23,6 +23,11 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 // Host in chat to survive command palette dismissal.
 const linkPullRequestDialogThreadAtom = Atom.make<ScopedThreadRef | null>(null).pipe(
   Atom.keepAlive,
@@ -103,7 +108,7 @@ function LinkPullRequestDialog({
     setPending(false);
     if (result._tag === "Failure") {
       const error = squashAtomCommandFailure(result);
-      setSubmitError(error instanceof Error ? error.message : "Could not link the pull request.");
+      setSubmitError(error instanceof Error ? error.message : td("link.couldNotLink"));
       return;
     }
     onOpenChange(false);
@@ -112,9 +117,9 @@ function LinkPullRequestDialog({
   const validation = !dirty
     ? null
     : reference.trim().length === 0
-      ? "Paste a pull request URL or enter 123 / #123."
+      ? td("link.pasteHint")
       : resolved === null
-        ? "Use a pull request URL, 123, or #123."
+        ? td("link.invalidHint")
         : "error" in resolved
           ? resolved.error
           : null;
@@ -123,7 +128,7 @@ function LinkPullRequestDialog({
     <Dialog open={open} onOpenChange={(next) => (pending ? undefined : onOpenChange(next))}>
       <DialogPopup className="max-w-xl" initialFocus={inputRef}>
         <DialogHeader>
-          <DialogTitle>Link pull request</DialogTitle>
+          <DialogTitle>{td("link.title")}</DialogTitle>
           <DialogDescription>
             Attach a pull request to this thread by its URL, or by its number for this thread's
             repository.
@@ -132,7 +137,7 @@ function LinkPullRequestDialog({
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder="Pull request URL or #42"
+            placeholder={td("link.placeholder")}
             value={reference}
             onChange={(event) => {
               setDirty(true);
@@ -169,7 +174,7 @@ function LinkPullRequestDialog({
             onClick={() => void submit()}
             disabled={pending || resolved === null || "error" in resolved}
           >
-            {pending ? "Linking..." : "Link"}
+            {pending ? td("link.linking") : td("link.link")}
           </Button>
         </DialogFooter>
       </DialogPopup>

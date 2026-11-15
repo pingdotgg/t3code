@@ -16,7 +16,6 @@ import type {
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -45,6 +44,11 @@ import {
   readableFailure,
 } from "./pullRequestDetail.logic";
 import { pullRequestEntryKey, type EnvironmentPullRequestEntry } from "./pullRequestList.logic";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 
 export function usePullRequestDefaultMergeMethodResolver(
   environmentId: EnvironmentId,
@@ -77,51 +81,45 @@ export function usePullRequestDefaultMergeMethodResolver(
 }
 
 const actionSuccessLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: "Merge requested",
-  ready: "Marked ready for review",
-  draft: "Converted to draft",
-  close: `${capitalizeTerm(term)} closed`,
-  reopen: `${capitalizeTerm(term)} reopened`,
-  "update-branch": "Branch updated with the base branch",
-  "enable-auto-merge": "Auto-merge enabled",
-  "disable-auto-merge": "Auto-merge disabled",
-  revert: `Revert ${term} opened`,
-  "delete-branch": "Branch deleted",
-  "approve-workflows": "Workflows approved",
+  merge: td("quickToast.mergeRequested"),
+  ready: td("quickToast.markedReady"),
+  draft: td("quickToast.convertedToDraft"),
+  close: td("quickToast.termClosed", { term }),
+  reopen: td("quickToast.termReopened", { term }),
+  "update-branch": td("quickToast.branchUpdated"),
+  "enable-auto-merge": td("quickToast.autoMergeEnabled"),
+  "disable-auto-merge": td("quickToast.autoMergeDisabled"),
+  revert: td("toasts.revertOpened", { term }),
+  "delete-branch": td("toasts.branchDeleted"),
+  "approve-workflows": td("quickToast.workflowsApproved"),
 });
 
 const actionFailureLabels = (term: string): Record<PullRequestAction, string> => ({
-  merge: `Could not merge this ${term}`,
-  ready: "Could not mark this ready for review",
-  draft: "Could not convert this to a draft",
-  close: `Could not close this ${term}`,
-  reopen: `Could not reopen this ${term}`,
-  "update-branch": "Could not update this branch",
-  "enable-auto-merge": "Could not enable auto-merge",
-  "disable-auto-merge": "Could not disable auto-merge",
-  revert: `Could not open a revert ${term}`,
-  "delete-branch": "Could not delete this branch",
-  "approve-workflows": "Could not approve workflows",
+  merge: td("actionFailure.merge", { term }),
+  ready: td("actionFailure.ready"),
+  draft: td("actionFailure.draft"),
+  close: td("actionFailure.close", { term }),
+  reopen: td("actionFailure.reopen", { term }),
+  "update-branch": td("actionFailure.updateBranch"),
+  "enable-auto-merge": td("quickToast.couldNotEnableAutoMerge"),
+  "disable-auto-merge": td("actionFailure.disableAutoMerge"),
+  revert: td("actionFailure.revert", { term }),
+  "delete-branch": td("actionFailure.deleteBranch"),
+  "approve-workflows": td("actionFailure.approveWorkflows"),
 });
 
 const actionFailureHints = (term: string): Record<PullRequestAction, string> => ({
-  merge:
-    "The host refused the merge. Check that you have write access, that the checks it requires have passed, and that the branch is not conflicting.",
-  ready: "The host refused it. Check that you have write access to this repository.",
-  draft: "The host refused it. Check that you have write access to this repository.",
-  close: "The host refused it. Check that you have write access, or that you opened it.",
-  reopen:
-    "The host refused it. Check that you have write access, and that the branch still exists.",
-  "update-branch":
-    "The host refused it. Check that you have write access, and that the base branch has not diverged in a way the host cannot merge.",
-  "enable-auto-merge":
-    "The host refused it. Check that auto-merge is enabled for this repository and that you have write access.",
-  "disable-auto-merge": "The host refused it. Check that you have write access to this repository.",
-  revert: `The host refused it. Check that you have write access and that this ${term} was merged on the host.`,
-  "delete-branch":
-    "The host refused it. Check that you have write access to the source repository and that the branch has not moved since this page loaded.",
-  "approve-workflows":
-    "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
+  merge: td("actionFailureHint.merge"),
+  ready: td("actionFailureHint.ready"),
+  draft: td("actionFailureHint.ready"),
+  close: td("actionFailureHint.close"),
+  reopen: td("actionFailureHint.reopen"),
+  "update-branch": td("quickToast.updateBranchHint"),
+  "enable-auto-merge": td("quickToast.enableAutoMergeHint"),
+  "disable-auto-merge": td("actionFailureHint.disableAutoMerge"),
+  revert: td("actionFailureHint.revert", { term }),
+  "delete-branch": td("actionFailureHint.deleteBranch"),
+  "approve-workflows": td("actionFailureHint.approveWorkflows"),
 });
 
 export function usePullRequestActionRunner({
@@ -310,17 +308,17 @@ export function usePullRequestHandoffs({
     if (opened === null) {
       toastManager.add({
         type: "error",
-        title: "Could not open a thread",
+        title: td("errors.openThread"),
         description: "Try again from the project, or open a thread first.",
       });
       return;
     }
     toastManager.add({
       type: "success",
-      title: "Asked in a thread",
+      title: td("toasts.askedInThread"),
       description:
         task.prompt.length > 0
-          ? "The question is in the composer. Read it over, then send."
+          ? td("toasts.composerQuestion")
           : `The ${terminology.singular} is in the composer. Type your question, then send.`,
     });
   };
@@ -347,7 +345,7 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Could not open a thread for the checkout",
+        title: td("errors.openThreadForCheckout"),
         description: "Try again from the project, or open a thread first.",
       });
       return;
@@ -380,7 +378,7 @@ export function usePullRequestHandoffs({
       setHandoff(null);
       toastManager.update(toastId, {
         type: "error",
-        title: "Checked out, but the thread stayed where it was",
+        title: td("toasts.checkedOutThreadStuck"),
         description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
       });
       return;
@@ -392,7 +390,7 @@ export function usePullRequestHandoffs({
         prepared.value.isOnPullRequestHead
           ? {
               type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
+              title: mode === "local" ? td("toasts.checkedOutHere") : td("toasts.checkedOut"),
               description:
                 mode === "local"
                   ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
@@ -408,8 +406,8 @@ export function usePullRequestHandoffs({
       prepared.value.isOnPullRequestHead
         ? {
             type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
+            title: td("toasts.checkoutReady"),
+            description: td("toasts.composerTask"),
           }
         : offHeadPullRequestCheckoutToast(terminology),
     );

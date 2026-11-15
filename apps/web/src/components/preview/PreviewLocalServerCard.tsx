@@ -4,6 +4,11 @@ import { DiscoveryListRow } from "../ui/discovery-list";
 import { PreviewFaviconIcon } from "./PreviewFaviconIcon";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`preview:${key}`, options);
+
 interface Props {
   threadRef: ScopedThreadRef;
   server: PreviewableServer;
@@ -24,5 +29,5 @@ export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
 
 function describeServer(server: PreviewableServer): string {
   if (server.processName) return server.processName;
-  return "Listening";
+  return td("listening");
 }

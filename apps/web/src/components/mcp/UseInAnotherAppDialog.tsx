@@ -56,6 +56,11 @@ import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } fro
 import { afterFailedCheck, resolveMcpGate } from "./mcpGate";
 import { MCP_APPS, type McpApp, mcpHandoffAction, OTHER_MCP_APP_STEPS } from "./mcpApps";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`shell:${key}`, options);
+
 const requestAtom = Atom.make<{ readonly environmentId: EnvironmentId | null } | null>(null).pipe(
   Atom.keepAlive,
   Atom.withLabel("mcp:use-in-another-app"),
@@ -89,7 +94,7 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
               <GateMessage
                 title={
                   environment === null
-                    ? "Connect to an environment first."
+                    ? td("connectEnvironmentFirst")
                     : "T3 Connect is not available in this build."
                 }
               />
@@ -101,8 +106,8 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
   );
 }
 
-const STEPS = ["App", "Access", "Connect"] as const;
-const HOSTED_APPROVAL_STEPS = ["App", "Connect"] as const;
+const STEPS = ["steps.app", "steps.access", "steps.connect"] as const;
+const HOSTED_APPROVAL_STEPS = ["steps.app", "steps.connect"] as const;
 type Step = 0 | 1 | 2;
 type Choice = McpApp | "other";
 
@@ -158,9 +163,7 @@ function Wizard({
                   access={level}
                   selected={level === access}
                   disabledReason={levels.get(level)}
-                  description={
-                    level === "full-access" ? "Runs commands and edits files without asking" : null
-                  }
+                  description={level === "full-access" ? td("fullAccessDetail") : null}
                 />
               ))}
             </RadioGroup>
@@ -184,7 +187,7 @@ function Wizard({
             </Button>
           ) : null}
           {step === 2 ? (
-            <Button onClick={close}>Done</Button>
+            <Button onClick={close}>{td("done")}</Button>
           ) : (
             <Button disabled={step === 0 ? choice === null : access === null} onClick={next}>
               Next
@@ -217,10 +220,10 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
       const reason =
         remoteDenial ??
         (!canMint
-          ? `This device needs the Manage access permission on ${environment.label}.`
+          ? td("needsManagePermission", { label: environment.label })
           : session === null ||
               !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
-            ? `This device cannot grant this on ${environment.label}.`
+            ? td("cannotGrantOnEnvironment", { label: environment.label })
             : level === "read-only"
               ? undefined
               : managedRuntimeModeDenial(policy, level));
@@ -379,7 +382,7 @@ function GateScreen({
     case "sign-in":
       return (
         <GateMessage
-          title="Sign in to T3 Connect"
+          title={td("signInTitle")}
           lines={[
             `Apps like Poke and Claude run in the cloud. They need a public address to reach ${name}.`,
             `T3 Connect gives ${name} that address. Each app still needs your approval.`,
@@ -445,13 +448,13 @@ function GateScreen({
           title={`Turn on T3 Connect for ${name}`}
           lines={[
             `${name} gets a public https address, with no router setup.`,
-            "Only apps you approve can use it. You can turn it off in Settings.",
+            td("onlyApprovedApps"),
           ]}
         >
           {turnOnHere.kind === "here" ? (
             <div className="space-y-2">
               <Button disabled={connecting} onClick={() => void turnOn()}>
-                {connecting ? "Connecting…" : "Turn on"}
+                {connecting ? td("connecting") : td("turnOn")}
               </Button>
               {operationError ? (
                 <p className="text-xs text-destructive-foreground">{operationError}</p>
@@ -461,7 +464,7 @@ function GateScreen({
                   <p className="text-sm text-destructive-foreground">
                     Your T3 Connect account is out of tunnels.
                   </p>
-                  <ManageAccessButton environment={environment} label="Manage tunnels" />
+                  <ManageAccessButton environment={environment} label={td("manageTunnels")} />
                 </>
               ) : null}
             </div>
@@ -515,7 +518,7 @@ function AppStep({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-medium">Which app?</h3>
+      <h3 className="text-sm font-medium">{td("whichApp")}</h3>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         {MCP_APPS.filter((app) => !app.hidden).map((app) => (
           <button
@@ -580,24 +583,24 @@ function ConnectStep({
     const message = app?.handoff.kind === "copy-message" ? app.handoff.message(mcpUrl) : null;
     return (
       <section className="space-y-4">
-        <CopyRow label="URL" value={mcpUrl} />
-        {message ? <CopyRow label="Message" value={message} /> : null}
+        <CopyRow label={td("url")} value={mcpUrl} />
+        {message ? <CopyRow label={td("message")} value={message} /> : null}
         <ol className="list-decimal space-y-1 ps-5 text-sm">
           {(app?.steps ?? OTHER_MCP_APP_STEPS).map((step) => (
-            <li key={step}>{step}</li>
+            <li key={step}>{td(step)}</li>
           ))}
         </ol>
         {app === null ? (
-          <p className="text-xs text-muted-foreground">
-            Apps that require their own client ID cannot connect.
-          </p>
+          <p className="text-xs text-muted-foreground">{td("ownClientIdNote")}</p>
         ) : app.docs ? (
-          <TextButton onClick={() => openLink(app.docs ?? "")}>{app.name} help</TextButton>
+          <TextButton onClick={() => openLink(app.docs ?? "")}>
+            {td("appHelp", { app: app.name })}
+          </TextButton>
         ) : null}
         {code}
         {app === null ? null : (
           <TextButton onClick={() => setAnotherWay(false)}>
-            {app.handoff.kind === "commands" ? "Back to commands" : "Back to one click"}
+            {app.handoff.kind === "commands" ? td("backToCommands") : td("backToOneClick")}
           </TextButton>
         )}
         <LinkedLine environment={environment} access={access} />
@@ -607,9 +610,9 @@ function ConnectStep({
   return (
     <section className="space-y-4">
       <PrimaryAction app={app} mcpUrl={mcpUrl} />
-      <CopyRow label="URL" value={mcpUrl} />
+      <CopyRow label={td("url")} value={mcpUrl} />
       {code}
-      <TextButton onClick={() => setAnotherWay(true)}>Set up another way</TextButton>
+      <TextButton onClick={() => setAnotherWay(true)}>{td("setUpAnotherWay")}</TextButton>
       <LinkedLine environment={environment} access={access} />
     </section>
   );
@@ -639,7 +642,7 @@ function openLink(url: string) {
     .catch((error: unknown) =>
       toastManager.add({
         type: "error",
-        title: "Could not open the link",
+        title: td("couldNotOpenLink"),
         description: error instanceof Error ? error.message : url,
       }),
     );
@@ -678,8 +681,8 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       if (!copied) {
         toastManager.add({
           type: "error",
-          title: "Could not copy",
-          description: "Use Set up another way.",
+          title: td("couldNotCopy"),
+          description: td("useAnotherWay"),
         });
         return;
       }
@@ -747,24 +750,24 @@ function ApprovalCode({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm">
-          Code to approve <span className="font-medium">{accessConfig[access].label}</span>
+          Code to approve <span className="font-medium">{td(accessConfig[access].label)}</span>
         </span>
         {live ? null : (
           <Button size="sm" variant="outline" disabled={pending} onClick={() => void mint()}>
-            {pending ? "Getting code…" : code === null ? "Get code" : "New code"}
+            {pending ? td("gettingCode") : code === null ? td("getCode") : td("newCode")}
           </Button>
         )}
       </div>
       {code !== null ? (
         live ? (
           <>
-            <CopyRow label="Code" value={code.credential} />
+            <CopyRow label={td("code")} value={code.credential} />
             <p className="text-xs text-muted-foreground">
               Expires {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} · one use
             </p>
           </>
         ) : (
-          <p className="text-xs text-muted-foreground">The code expired.</p>
+          <p className="text-xs text-muted-foreground">{td("codeExpired")}</p>
         )
       ) : null}
       {error ? <p className="text-xs text-destructive-foreground">{error}</p> : null}
@@ -816,7 +819,7 @@ function LinkedLine({
     // A forwarded call keeps the lower of the app's level and the link's own.
     const level =
       access === null || levelRank(link.access) < levelRank(access) ? link.access : access;
-    return `${name} · ${link.status === "expired" ? "Expired" : accessConfig[level].label}`;
+    return `${name} · ${link.status === "expired" ? td("expired") : td(accessConfig[level].label)}`;
   });
   return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;
 }
@@ -824,7 +827,7 @@ function LinkedLine({
 /** Opens Sharing & access on this environment, where its clients and T3 Connect tunnels live. */
 function ManageAccessButton({
   environment,
-  label = "Manage access",
+  label,
 }: {
   readonly environment: EnvironmentPresentation;
   readonly label?: string;

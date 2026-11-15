@@ -1,0 +1,9 @@
+{
+  "close": "关闭",
+  "dismissNotification": "关闭通知",
+  "loading": "加载中",
+  "setupProgress": "设置进度",
+  "stepAria": "{{step}}，第 {{index}} 步{{summary}}",
+  "saturationPlane": "{{label}} 饱和度和亮度",
+  "axisSlider": "{{label}} {{axis}}"
+}

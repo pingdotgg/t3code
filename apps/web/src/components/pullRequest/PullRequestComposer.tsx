@@ -1,7 +1,4 @@
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
 import { MessageSquareIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -17,6 +14,11 @@ import {
   usePullRequestReviewStore,
 } from "./pullRequestReviewStore";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
+
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
 
 export function PullRequestComposer({
   environmentId,
@@ -81,10 +83,15 @@ export function PullRequestComposer({
         render={<Button size="icon" variant="glass" />}
         aria-label={
           pendingComments.length > 0
-            ? `Review ${term}, ${pendingComments.length} ${pendingComments.length === 1 ? "comment" : "comments"} pending`
+            ? td(
+                pendingComments.length === 1
+                  ? "composer.reviewPending_one"
+                  : "composer.reviewPending_other",
+                { term, count: pendingComments.length },
+              )
             : reviewStarted || !canComment
-              ? `Review ${term}`
-              : `Comment on ${term}`
+              ? td("composer.reviewTerm", { term })
+              : td("composer.commentOnTerm", { term })
         }
       >
         <MessageSquareIcon className="size-4" />
@@ -104,12 +111,12 @@ export function PullRequestComposer({
         sideOffset={8}
         width="lg"
         initialFocus={mode === "review" ? reviewRef : commentRef}
-        aria-label={`${capitalizeTerm(term)} composer`}
+        aria-label={td("composer.termComposer", { term })}
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           {canComment && verdicts.length > 0 ? (
             <ToggleGroup
-              aria-label="Composer mode"
+              aria-label={td("composer.mode")}
               variant="segmented"
               value={[mode]}
               onValueChange={(next) => {
@@ -117,14 +124,18 @@ export function PullRequestComposer({
                 if (value === "comment" || value === "review") setRequestedMode(value);
               }}
             >
-              <Toggle value="comment">Comment</Toggle>
+              <Toggle value="comment">{td("commentForm.comment")}</Toggle>
               <Toggle value="review">
-                {pendingComments.length > 0 ? `Review (${pendingComments.length})` : "Review"}
+                {pendingComments.length > 0
+                  ? td("composer.reviewWithCount", { count: pendingComments.length })
+                  : td("composer.review")}
               </Toggle>
             </ToggleGroup>
           ) : (
             <PopoverTitle>
-              {mode === "review" ? `Review ${term}` : `Comment on ${term}`}
+              {mode === "review"
+                ? td("composer.reviewTerm", { term })
+                : td("composer.commentOnTerm", { term })}
             </PopoverTitle>
           )}
           <div className="flex items-center gap-1">
@@ -132,8 +143,8 @@ export function PullRequestComposer({
               <Button
                 size="icon-xs"
                 variant="ghost"
-                aria-label="Discard pending line comments"
-                title="Discard pending line comments"
+                aria-label={td("composer.discardPending")}
+                title={td("composer.discardPending")}
                 disabled={reviewPending}
                 onClick={() => clearComments(reviewKey)}
               >
@@ -142,7 +153,7 @@ export function PullRequestComposer({
             ) : null}
             <PopoverClose
               render={<Button size="icon-xs" variant="ghost" />}
-              aria-label="Close composer"
+              aria-label={td("composer.close")}
             >
               <XIcon className="size-3.5" />
             </PopoverClose>

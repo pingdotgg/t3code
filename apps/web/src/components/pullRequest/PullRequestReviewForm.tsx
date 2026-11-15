@@ -1,5 +1,4 @@
 import { useAtomCommand } from "~/state/use-atom-command";
-import { capitalizeTerm } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentId, PullRequestRef, PullRequestReviewVerdict } from "@t3tools/contracts";
 import { CheckIcon, MessageSquareIcon, XCircleIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
@@ -23,6 +22,11 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`pullRequest:${key}`, options);
+
 const VERDICTS: ReadonlyArray<{
   readonly value: PullRequestReviewVerdict;
   readonly label: string;
@@ -31,20 +35,20 @@ const VERDICTS: ReadonlyArray<{
 }> = [
   {
     value: "comment",
-    label: "Comment",
-    sent: () => "Review submitted",
+    label: "reviewForm.comment",
+    sent: () => td("reviewForm.reviewSubmitted"),
     icon: <MessageSquareIcon className="size-3" />,
   },
   {
     value: "approve",
-    label: "Approve",
-    sent: (term) => `${capitalizeTerm(term)} approved`,
+    label: "reviewForm.approve",
+    sent: (term) => td("reviewForm.termApproved", { term }),
     icon: <CheckIcon className="size-3" />,
   },
   {
     value: "request-changes",
-    label: "Request changes",
-    sent: () => "Changes requested",
+    label: "reviewForm.requestChanges",
+    sent: () => td("reviewOutcome.changesRequested"),
     icon: <XCircleIcon className="size-3" />,
   },
 ];
@@ -123,11 +127,8 @@ export function PullRequestReviewForm({
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
-        title: "The review could not be submitted",
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          "The host refused the review. Your draft is still here to try again.",
-        ),
+        title: td("errors.reviewNotSubmitted"),
+        description: readableFailure(squashAtomCommandFailure(result), td("errors.reviewRefused")),
       });
       return;
     }
@@ -148,10 +149,10 @@ export function PullRequestReviewForm({
       : verdict === "approve" || summary.trim().length > 0 || commentCount > 0;
   const placeholder =
     selectedVerdict === undefined || canSubmit(selectedVerdict.value, "", comments.length)
-      ? "Summarize your review (optional)"
+      ? td("reviewForm.summaryOptional")
       : selectedVerdict.value === "request-changes" && requestChangesSummaryRequired
-        ? "Summarize your review (required to request changes)"
-        : "Summarize your review or add line comments";
+        ? td("reviewForm.summaryRequired")
+        : td("reviewForm.summaryOrLineComments");
 
   return (
     <>
@@ -162,7 +163,7 @@ export function PullRequestReviewForm({
         readOnly={speech.freezesEditor}
         value={body}
         placeholder={placeholder}
-        aria-label="Review summary"
+        aria-label={td("reviewForm.summaryLabel")}
         onValueChange={(next) => setSummary(reviewKey, next)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229 || event.repeat) return;
@@ -191,7 +192,7 @@ export function PullRequestReviewForm({
             <SelectTrigger size="xs" className="w-auto min-w-0" aria-label="Review verdict">
               <span className="flex items-center gap-1.5">
                 {selectedVerdict?.icon}
-                {selectedVerdict?.label}
+                {selectedVerdict ? translateDynamic(`pullRequest:${selectedVerdict.label}`) : null}
               </span>
             </SelectTrigger>
             <SelectPopup side="top" alignItemWithTrigger={false}>
@@ -199,7 +200,7 @@ export function PullRequestReviewForm({
                 <SelectItem key={verdict.value} value={verdict.value}>
                   <span className="flex items-center gap-1.5">
                     {verdict.icon}
-                    {verdict.label}
+                    {translateDynamic(`pullRequest:${verdict.label}`)}
                   </span>
                 </SelectItem>
               ))}
@@ -219,7 +220,7 @@ export function PullRequestReviewForm({
               speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
           }}
         >
-          {pending ? "Submitting..." : "Submit review"}
+          {pending ? td("reviewForm.submitting") : td("reviewForm.submit")}
         </Button>
       </div>
     </>
