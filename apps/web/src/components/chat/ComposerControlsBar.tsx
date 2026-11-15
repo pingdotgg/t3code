@@ -1,4 +1,5 @@
 import type { ChatComposerProps } from "./ChatComposer";
+import { ComposerUsageBar } from "./ComposerUsageBar";
 import { AgentEyesPickerControl } from "../agentEyes/AgentEyesPickerControl";
 import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -270,6 +271,12 @@ export function ComposerControlsBar(props: {
   ) : (
     <>
       {composerModelPicker}
+      <ComposerUsageBar
+        provider={
+          providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId)
+            ?.snapshot ?? null
+        }
+      />
 
       <>
         {restingBlockDefs.map((def, index) => {

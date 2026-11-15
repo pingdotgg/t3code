@@ -1,0 +1,18 @@
+#!/bin/sh
+# contin: opens the Continuum IDE desktop app from Terminal (installed by Homebrew).
+# It asks macOS for the app by bundle id, so it works from any folder, with spaces in
+# the app's path, after updates, and brings an already running Continuum to the front.
+set -eu
+bundle_id="io.github.swashxdev.continuumide"
+if open -b "$bundle_id" 2>/dev/null; then
+  exit 0
+fi
+# Fallback for a copy LaunchServices has not registered yet.
+for app in "/Applications/Continuum IDE.app" "$HOME/Applications/Continuum IDE.app"; do
+  if [ -d "$app" ]; then
+    exec open "$app"
+  fi
+done
+echo "contin: Continuum IDE is not installed. Install it with:" >&2
+echo "  brew install --cask SwashX-dev/tap/continuum-ide" >&2
+exit 1
