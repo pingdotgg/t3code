@@ -964,7 +964,10 @@ function ThreadRouteContent(
   // Shown in the header subtitle so the composer's status slot doesn't jump while history syncs.
   const threadSyncLabel = useDelayedStatus(
     selectedThread === null ? "" : scopedThreadKey(selectedThread.environmentId, selectedThread.id),
-    threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind),
+    // A thread this client is creating has nothing older to sync.
+    creationState === null
+      ? threadSyncStatusLabel(selectedThreadDetailState.status, contentPresentation.kind)
+      : null,
   );
   const inspectorHeader = props.inspectorPresentation ? (
     <ThreadInspectorHeader
