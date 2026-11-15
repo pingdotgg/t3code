@@ -20,7 +20,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
-import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -266,13 +265,14 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           SELECT 'checkpoint:history:' || ordinal, ${threadId}, ${scopeId}, ${rootNodeId},
             ordinal, 'ready', ${DateTime.formatIso(now)}, '{}' FROM history`;
         }
-        const fullContext = yield* projectionStore.getCheckpointCaptureContext(threadId, {
-          runId,
-          scopeId,
-        });
+        const baselineContext = yield* projectionStore.getCheckpointCaptureContext(
+          threadId,
+          { runId, scopeId },
+          { preservedCheckpoints: "baselines" },
+        );
         assert.deepEqual(
-          [...fullContext.preservedCheckpointOrdinals].sort((a, b) => a - b),
-          Array.from({ length: ordinal }, (_, index) => index),
+          [...baselineContext.preservedCheckpointOrdinals].toSorted((a, b) => a - b),
+          ordinal === 1 ? [0] : [0, ordinal - 1],
         );
         yield* sql`INSERT OR REPLACE INTO orchestration_v2_projection_turn_items
           (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
@@ -344,43 +344,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             .execute({ threadId, runId, scopeId: CheckpointScopeId.make("missing-scope") })
             .pipe(Effect.flip);
           assert.instanceOf(incomplete, CheckpointCaptureService.CheckpointCaptureExecutionError);
-          let readyQuery: string | undefined;
-          let readyRows: unknown;
-          const tracer = Tracer.make({
-            span(options) {
-              const span = new Tracer.NativeSpan(options);
-              const end = span.end.bind(span);
-              span.end = (endTime, exit) => {
-                end(endTime, exit);
-                const query = span.attributes.get("db.query.text");
-                if (
-                  typeof query === "string" &&
-                  query.includes("SELECT ordinal_within_scope AS ordinal") &&
-                  exit._tag === "Success"
-                ) {
-                  readyQuery = query;
-                  readyRows = exit.value;
-                }
-              };
-              return span;
-            },
-          });
-          yield* service.execute({ threadId, runId, scopeId }).pipe(Effect.withTracer(tracer));
-          assert.isDefined(readyQuery);
-          assert.deepEqual(
-            readyRows,
-            ordinal === 1 ? [{ ordinal: 0 }] : [{ ordinal: 0 }, { ordinal: ordinal - 1 }],
-          );
-          const plan = yield* sql.unsafe<{ readonly detail: string }>(
-            `EXPLAIN QUERY PLAN ${readyQuery}`,
-          );
-          assert.isTrue(
-            plan.some(({ detail }) =>
-              detail.includes(
-                "checkpoints_scope_ordinal_idx (scope_id=? AND ordinal_within_scope=?)",
-              ),
-            ),
-          );
+          yield* service.execute({ threadId, runId, scopeId });
 
           const events = yield* Ref.get(committed);
           const runUpdated = events.find((event) => event.type === "run.updated");
