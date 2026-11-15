@@ -40,7 +40,7 @@ const trimNonEmpty = (value: string | undefined): string | null => {
 
 const EarlyDesktopSettingsJson = fromLenientJson(
   Schema.Struct({
-    disableGpuAcceleration: Schema.optionalKey(Schema.Boolean),
+    disableGpuAcceleration: Schema.optionalKey(Schema.Unknown),
     linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   }),
 );

@@ -12,19 +12,22 @@ import {
 describe("DesktopEarlyElectronStartup", () => {
   const joinPath = NodePath.posix.join;
 
-  it("reads the persisted linux password-store preference before Electron is ready", () => {
-    const preference = resolveEarlyLinuxPasswordStorePreference({
-      env: { T3CODE_HOME: "/home/user/.t3-test" },
-      homeDirectory: "/home/user",
-      joinPath,
-      readFileString: (path) => {
-        assert.equal(path, "/home/user/.t3-test/userdata/desktop-settings.json");
-        return JSON.stringify({ linuxPasswordStore: "kwallet6" });
-      },
-    });
+  it.each([undefined, false, true, null, "false"])(
+    "reads the persisted linux password-store preference with GPU setting %j",
+    (disableGpuAcceleration) => {
+      const preference = resolveEarlyLinuxPasswordStorePreference({
+        env: { T3CODE_HOME: "/home/user/.t3-test" },
+        homeDirectory: "/home/user",
+        joinPath,
+        readFileString: (path) => {
+          assert.equal(path, "/home/user/.t3-test/userdata/desktop-settings.json");
+          return JSON.stringify({ linuxPasswordStore: "kwallet6", disableGpuAcceleration });
+        },
+      });
 
-    assert.equal(preference, "kwallet6");
-  });
+      assert.equal(preference, "kwallet6");
+    },
+  );
 
   it("accepts JSONC in the early desktop settings file", () => {
     const preference = resolveEarlyLinuxPasswordStorePreference({
