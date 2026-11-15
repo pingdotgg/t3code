@@ -12436,12 +12436,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
       const roster = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
         .pendingBackgroundTasks;
+      const monitorItem = harness.events.find(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "toolu_monitor_0",
+      );
+      assert.equal(monitorItem?.type, "turn_item.updated");
+      if (monitorItem?.type !== "turn_item.updated") return;
       assert.deepEqual(roster, [
         {
           taskId: longRunning.taskId,
           kind: "monitor",
           description: "Monitor 0",
           nativeItemId: "toolu_monitor_0",
+          command: "sleep 8 && echo MONITOR_DONE",
+          itemId: monitorItem.turnItem.id,
+          sourceThreadId: harness.threadId,
         },
       ]);
     }).pipe(
