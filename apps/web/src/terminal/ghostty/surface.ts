@@ -358,13 +358,17 @@ export function applyTerminalCopyEvent(
 function isTerminalPasteShortcut(
   event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
+  superChord = false,
 ) {
   const keys = resolveEventKeys(event);
   if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
   if (!keys.has("v")) return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  if (isMacPlatform(platform)) return event.metaKey;
+  if (!event.ctrlKey) return false;
+  // Omarchy's Super+V sends Ctrl+V with Super still down, without its modifier or a Control press.
+  return event.shiftKey || (superChord && !event.metaKey && !event.altKey);
 }
 
 // X11/Wayland expects middle-click paste; macOS and Windows use it for autoscroll.
@@ -624,6 +628,8 @@ export class GhosttyTerminalSurface {
   // Chromium can deliver native paste after the clipboard read resolves.
   // Suppress its duplicate only for the current shortcut gesture.
   private pasteShortcutGesture: { code: string; readText: string } | null = null;
+  private superHeld = false;
+  private controlHeld = false;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -1090,7 +1096,13 @@ export class GhosttyTerminalSurface {
     }
   }
 
+  private trackHeldModifier(event: KeyboardEvent, down: boolean): void {
+    if (event.key === "Meta" || event.key === "OS") this.superHeld = down;
+    else if (event.key === "Control") this.controlHeld = down;
+  }
+
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    this.trackHeldModifier(event, true);
     // A consumed repeat still owes the original encoded press a release.
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
     if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
@@ -1173,7 +1185,7 @@ export class GhosttyTerminalSurface {
       }
       return;
     }
-    if (isTerminalPasteShortcut(event)) {
+    if (isTerminalPasteShortcut(event, navigator.platform, this.superHeld && !this.controlHeld)) {
       const gesture = { code: event.code, readText: "" };
       this.pasteShortcutGesture = gesture;
       const clipboard = navigator.clipboard;
@@ -1204,6 +1216,7 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
+    this.trackHeldModifier(event, false);
     // macOS can omit V keyup while Command is held.
     if (
       event.code === this.pasteShortcutGesture?.code ||
@@ -1244,6 +1257,8 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.setFocused(false);
+    this.superHeld = false;
+    this.controlHeld = false;
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;

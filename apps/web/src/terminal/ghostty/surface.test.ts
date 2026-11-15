@@ -514,6 +514,42 @@ describe("GhosttyTerminalSurface visibility", () => {
     },
   );
 
+  it("pastes the Ctrl+V a compositor sends for a held Super key and leaves a typed one to the shell", async () => {
+    const harness = createHarness();
+    const read = Promise.resolve("echo hi");
+    vi.stubGlobal("navigator", {
+      platform: "Linux x86_64",
+      clipboard: { readText: () => read },
+    });
+    const surface = await harness.create({ beforeKey: () => true });
+
+    key(surface, "Control", "ControlLeft", { ctrlKey: true });
+    key(surface, "v", "KeyV", { ctrlKey: true });
+    key(surface, "v", "KeyV", { ctrlKey: true }, "keyup");
+    key(surface, "Control", "ControlLeft", {}, "keyup");
+    await read;
+    expect(harness.onData.mock.calls).toEqual([["\u0016"]]);
+
+    key(surface, "Meta", "MetaLeft");
+    key(surface, "v", "KeyV", { ctrlKey: true });
+    key(surface, "v", "KeyV", { ctrlKey: true }, "keyup");
+    key(surface, "Meta", "MetaLeft", {}, "keyup");
+    await read;
+    expect(harness.onData.mock.calls).toEqual([["\u0016"], ["echo hi"]]);
+    harness.onData.mockClear();
+
+    // Super released, Super lost to a blur, and Control typed while Super is down.
+    key(surface, "v", "KeyV", { ctrlKey: true });
+    key(surface, "Meta", "MetaLeft");
+    surface.input.dispatchEvent(new Event("blur"));
+    key(surface, "v", "KeyV", { ctrlKey: true });
+    key(surface, "Meta", "MetaLeft");
+    key(surface, "Control", "ControlLeft", { ctrlKey: true });
+    key(surface, "v", "KeyV", { ctrlKey: true });
+    await read;
+    expect(harness.onData.mock.calls).toEqual([["\u0016"], ["\u0016"], ["\u0016"]]);
+  });
+
   it("keeps a selection through redraws until the selected text changes", async () => {
     const harness = createHarness();
     const surface = await harness.create();
