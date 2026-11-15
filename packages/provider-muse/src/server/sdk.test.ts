@@ -309,6 +309,12 @@ describe("Muse launch", () => {
         )).command,
       ).toBe("E:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
       expect(yield* onWindows(undefined)).toEqual({ command: "muse", args: [] });
+      expect(
+        yield* museLaunch("C:\\Muse\\muse.cmd", { ComSpec: CMD, PATHEXT: ".EXE" }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, () => undefined),
+        ),
+      ).toEqual({ command: CMD, args: ["/d", "/c", "C:\\Muse\\muse.cmd"] });
       const missing = "C:\\Muse\\missing.ps1";
       expect(
         yield* museLaunch(missing).pipe(

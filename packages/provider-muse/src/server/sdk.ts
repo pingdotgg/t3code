@@ -117,15 +117,16 @@ export const museLaunch = Effect.fn("museLaunch")(function* (
   if ((yield* HostProcess.Platform) !== "win32") return { command: binaryPath, args: [] };
   const env = environment ?? (yield* HostProcess.Environment);
   const resolveExecutable = yield* SpawnExecutableResolution;
-  const resolved = yield* Effect.promise(async () =>
+  const resolvedExecutable = yield* Effect.promise(async () =>
     resolveExecutable(
       binaryPath,
       "win32",
       /\.ps1$/i.test(binaryPath) ? { ...env, PATHEXT: ".PS1" } : env,
     ),
   );
-  if (resolved === undefined) return { command: binaryPath, args: [] };
+  const resolved = resolvedExecutable ?? binaryPath;
   if (/\.ps1$/i.test(resolved)) {
+    if (resolvedExecutable === undefined) return { command: binaryPath, args: [] };
     const systemRoot =
       windowsEnvironmentValue(env, "SystemRoot") ??
       windowsEnvironmentValue(yield* HostProcess.Environment, "SystemRoot");
