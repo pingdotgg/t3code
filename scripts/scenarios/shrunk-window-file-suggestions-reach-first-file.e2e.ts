@@ -10,7 +10,7 @@ import {
 import { test, WEB } from "./t3.ts";
 
 test(
-  "After the window shrinks, file suggestions wheel up to a first file the pointer can pick",
+  "After the window shrinks, file suggestions wheel up to a first suggestion the pointer can pick",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await browser.setViewport({ width: 375, height: 500 });
