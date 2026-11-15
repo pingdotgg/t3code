@@ -4,7 +4,6 @@ import {
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
   shouldDockDraftHeroForSubmission,
-  clearSentComposer,
   buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   boundAttachmentIds,
@@ -1172,14 +1171,12 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    clearSentComposer({
-      routeIsCurrent: currentRouteThreadKeyRef.current === routeThreadKey,
-      clearDraft: () => clearComposerDraftContent(composerDraftTarget),
-      clearComposerRefs: () => {
-        promptRef.current = "";
-      },
-      resetCursor: () => composerRef.current?.resetCursorState(),
-    });
+    clearComposerDraftContent(composerDraftTarget);
+    // The prompt ref and cursor belong to the thread on screen, which may no longer be this one.
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState();
+    }
 
     const title = deriveThreadTitleSeed({
       text: messageTextForSend,
