@@ -74,4 +74,27 @@ jobs:
                 await github.rest.issues.addLabels({ owner, repo, issue_number: issue.number, labels: [next] });
                 core.info(`Issue #${issue.number} (${issue.user.login}): ${status} -> ${next}`);
               }
+
+              // Only a newly opened issue is closed. One filed before its author was denounced
+              // may already have a fix on the way, so the sweep leaves those to maintainers.
+              // Someone else reopening it is a maintainer keeping it open.
+              const reopenedByOther =
+                context.payload.action === "reopened" &&
+                context.payload.sender.login.toLowerCase() !== issue.user.login.toLowerCase();
+              if (status === "denounced" && context.eventName === "issues" && !reopenedByOther) {
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: `Closing: ${issue.user.login} is banned from contributing here, so this issue will not be triaged. See [bans](https://github.com/${owner}/${repo}/blob/main/CONTRIBUTING.md#bans).`,
+                });
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  state: "closed",
+                  state_reason: "not_planned",
+                });
+                core.info(`Issue #${issue.number}: closed, ${issue.user.login} is denounced.`);
+              }
             }
