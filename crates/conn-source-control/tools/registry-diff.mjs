@@ -12,6 +12,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import { importSource, inMonorepo } from "../../../tools/monorepo.mjs";
+import { sealedEnvTemp } from "../../../tools/sealed-env.mjs";
 
 const [binary] = process.argv.slice(2);
 if (!binary) throw new Error("usage: registry-diff.mjs <examples/registry_cases binary>");
@@ -288,6 +289,7 @@ const ours = JSON.parse(
     input: JSON.stringify(cases),
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
+    env: sealedEnvTemp(),
   }),
 ).map(canonical);
 

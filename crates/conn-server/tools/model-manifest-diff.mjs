@@ -9,6 +9,7 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 
 import { importSource, inMonorepo, packageImporter } from "../../../tools/monorepo.mjs";
+import { sealedEnvTemp } from "../../../tools/sealed-env.mjs";
 
 const example = process.argv[2];
 if (example === undefined || !NodeFS.existsSync(example)) {
@@ -26,6 +27,7 @@ for (const fetchedAtMs of [0, 1790000000123]) {
   const t3 = Effect.runSync(encodeManifestCache({ fetchedAtMs, manifest: BUNDLED_MODEL_MANIFEST }));
   const ours = NodeChildProcess.execFileSync(example, [bundledFile, String(fetchedAtMs)], {
     encoding: "utf8",
+    env: sealedEnvTemp(),
   });
   if (t3 === ours) {
     console.log(`ok   fetchedAtMs ${fetchedAtMs}: ${ours.length} bytes, the same`);

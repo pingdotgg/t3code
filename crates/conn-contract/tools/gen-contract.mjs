@@ -9,6 +9,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
+import { gitEnv } from "../../../tools/sealed-env.mjs";
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -1266,7 +1267,7 @@ const commit = (() => {
         "packages/contracts",
         "packages/provider-core/src/server/ProviderAdapter.ts",
       ],
-      { encoding: "utf8", cwd: repoDir },
+      { encoding: "utf8", cwd: repoDir, env: gitEnv() },
     ).trim();
   } catch {
     return "0".repeat(40);

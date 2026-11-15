@@ -50,7 +50,7 @@ settings; about 140 MiB for the `claude` program alone).
 
 ## What exists
 
-`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with provider instance settings passes 37 (`instances-flow` added).
+`main` is in a working state. `tools/check.sh` passes 39 checks with `CONN_MONOREPO` set (Conn `b12470dcad`, 2026-11-14). The branch with the container checks passes 41: `idle-diff` and the canary added. The branch with provider instance settings passes 37 (`instances-flow` added).
 
 | Part | State |
 | --- | --- |
@@ -194,6 +194,73 @@ send, unknown thread, model and provider, usage errors, no server, and `t3_copy_
 ticket, `/ws`, `getThreadProjection`, `run.interrupt` and revoke. `model-manifest-diff`: our
 file text equals T3's `encodeManifestCache`, byte for byte. `orbit-flow` runs the path in
 Orbit's order on the fake provider. Not proven: Linux, a real container, a live model.
+
+## Timers after a clock jump (2026-11-14)
+
+Orbit freezes and wakes containers. On wake the wall clock has jumped. On Linux with the cgroup
+freezer, `CLOCK_MONOTONIC` (tokio's and `std`'s `Instant`) runs on through the freeze, so every
+monotonic deadline that passed fires once at the thaw. On a sleeping Mac or after a checkpoint
+restore, the monotonic clock stands still. Every test below acts out the wake with a jump of
+10 minutes, 2 hours and 3 days. T3 references are in `$CONN_MONOREPO/apps/server/src` at the
+pin; Effect's clock reads `Date.now()` and sleeps on `setTimeout` (monotonic).
+
+| Timer | Clock here | After a jump of 10 min / 2 h / 3 d | T3 server | Test |
+| --- | --- | --- | --- | --- |
+| Scheduled task timer (`conn-features/src/scheduled/mod.rs:1323`) | sleeps monotonic, at most 10 min (`MAX_SLEEP`, :71); reads the wall clock on each wake | Monotonic ran on: wakes at the thaw; an overdue interval runs once and plans from the wake; a fixed time runs if at most 10 min late, else is recorded missed once and moves to the next slot. No burst. Monotonic still: wakes within the rest of its sleep (≤ 10 min) | polls every 5 s (`scheduling/Scheduler.ts:57`); same rules (`ScheduledTaskService.ts:1242-1290`, `Schedule.ts:73-81`) | `scheduled::tests::clock_jumps` (3) |
+| Idle provider session release (`conn-engine/src/engine.rs:303`, `runner.rs:99`) | reaper sleeps monotonic, 15 min; idle time by the engine's wall clock | 10 min: kept until 30 min; 2 h, 3 d: released at the next reaper wait | `Effect.sleep(idleTimeoutMs)`, monotonic (`ProviderSessionManager.ts:1487`, `:1840`) | `an_idle_session_after_a_wall_clock_jump` |
+| Background hold, 4 h (`runner.rs:99`) | wall, from the first idle check | 2 h: hold starts; 3 d after it: released | `pinnedSinceMs`, wall (`ProviderSessionManager.ts:1393-1418`) | `background_work_holds_through_a_jump_until_the_wall_clock_passes_the_hold` |
+| Claude query idle end (`conn-provider-claude/src/session.rs:467`) | monotonic | counts awake time only; the engine release above closes it first | the session manager's release | none of its own (engine test) |
+| Provider status interval, 5 min, recheck 30 s (`conn-server/src/methods/provider.rs:298`) | monotonic sleep loop | one probe at the thaw, then every 5 min; only while a lease asks | same (`packages/provider-core/src/server/managedProvider.ts:410-430`) | `the_probe_interval_fires_once_after_a_long_freeze` |
+| Client activity leases, ≤ 120 s (`provider.rs:111`) | **fixed**: both clocks, the larger elapsed wins | ended after every jump; a wall clock stepped back does not extend one | wall (`background/BackgroundPolicy.ts:61-62`, `:218-220`) | `a_lease_ends_after_a_jump_on_either_clock` |
+| Pairing codes 5 min / 24 h, sessions 30 d, WebSocket ticket 5 min (`auth.rs:71-76`) | wall | 10 min: codes and tickets gone, session alive; 3 d: 24 h code gone, session alive | wall (`auth/PairingGrantStore.ts:326`, `:476`; `auth/SessionStore.ts:454-455`, `:590`) | `auth::tests::expiries_follow_the_wall_clock_after_a_freeze` |
+| Socket revocation check, 30 s (`http.rs:673`); desktop parent watch, 2 s (`serve.rs:324`) | **fixed**: monotonic interval that no longer catches up | one check at the thaw; before the fix 8,640 (30 s) and 129,600 (2 s) back to back after 3 d | no such loop | `a_check_fires_once_after_a_long_freeze` (fails with the old `Burst`) |
+| `/mcp` credential liveness, 24 h (`conn-mcp/src/credentials.rs:73`) | **fixed**: both clocks | 10 min, 2 h: alive; 3 d: expired until the thread's next run touches it | both clocks (`mcp/McpSessionRegistry.ts:82`, `:174`) | `a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze` |
+| `/mcp` `Mcp-Session-Id`, 24 h (`conn-mcp/src/sessions.rs:12`) | monotonic | lives on if the monotonic clock stood still; the agent's next call re-initializes either way | not checked | none |
+| Webhook rate and log windows, 1 min (`webhook/mod.rs:153`, `:178`, `:193`) | wall | a full window is free after any jump | wall (`ScheduledTaskService.ts:1942`, `:2304`) | `rate_and_log_windows_clear_after_a_wall_clock_jump` |
+| Webhook replay keys, 7 d (`webhook/store.rs:18`, `:281`) | wall | held after 10 min, 2 h, 3 d; gone at 7 d | wall (`scheduledTasks/webhookDedupe.ts:29`, `:40-42`) | `replay_keys_hold_through_wall_clock_jumps` |
+| Text generator model cache (`text_generation/mod.rs:228`) | none | never expires by time; `refresh` or a config change | the same (`textGeneration/TextGenerators.ts:146-153`) | none: no clock to move |
+| Login environment refresh, 10 s (`methods/source_control.rs:288`) | monotonic | monotonic still: one refresh within 10 s of the wake may be skipped | wall (`sourceControl/SourceControlDiscovery.ts:85`, Effect `cachedWithTTL`) | none: `std::time::Instant`, no seam; the difference lasts at most 10 s, and a wall TTL would block refreshes after a wall clock stepped back |
+| SDK host stop-when-idle (`conn-provider-support/src/sdk_host.rs:305`) | no timer: stops when the last query closes | follows the engine release above | T3 keeps the SDK in process | covered by the engine test and the existing host tests |
+| WebSocket idle close, 60 s (`session.rs:163`, `:188`) | monotonic | monotonic ran on: the idle timer and buffered client pings are ready together; `select!` may close a live socket; the client reconnects | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts:1231`) | none |
+| Short monotonic waits: flushes, debounces, request and stop timeouts, VCS and terminal polls, the run follower (24 h), title retries | monotonic, one-shot | each fires once at the thaw; none catches up | the same, on `setTimeout` | none |
+
+Fixed: the lease, `/mcp` credential and interval rows (above). Not fixed, for Nick:
+
+- **The scheduled task timer with a still monotonic clock.** A fixed time due shortly before the
+  wake can be recorded missed where T3 runs it (the timer slept on for up to 10 minutes; the
+  test shows it). In Orbit's freezer the monotonic clock runs on, so the case does not arise
+  there. Options: a 5 s poll as T3 (exact, about 12 wakes a minute while a task is enabled), a
+  shorter cap, or leave it.
+- **The idle release counts frozen wall time as idle.** After a 2-hour freeze with a still
+  monotonic clock, the provider session closes at the next reaper wait (≤ 15 min); T3 waits 30
+  minutes of awake time. In Orbit both close at the thaw.
+
+### A turn and its CLI across a freeze
+
+The server and the provider CLI are in one container, so both freeze and thaw together. Neither
+server reads the CLI's network state; both wait for the CLI to report.
+
+- **A running turn** stays `running` through the freeze. At the thaw the CLI reads its API
+  stream again. If the stream died during the freeze, the CLI's own retry logic decides: it
+  retries and goes on, or it reports an error, which ends the run `failed` (Claude's result,
+  Codex's `turn/completed` with an error). This server sets no turn deadline; T3 has none either.
+  Stop works as always.
+- **The CLI exits** (it gave up): the session's event stream ends. The engine ends a run that is
+  still open as `failed`, "The provider session ended during the turn."
+  (`conn-engine/src/runner.rs:997`). If the SDK host itself exits, every open query ends with
+  "The SDK host exited" (`conn-provider-support/src/sdk_host.rs:466-476`). T3: `ClaudeAdapterV2.ts:249-251`
+  (a query that ended before the turn), `CodexAdapterV2.ts:2694` (a Codex app-server exit ends the
+  session). The exact T3 line that fails a Claude turn whose query ends mid-turn is not traced.
+- **The CLI hangs** (its socket never errors): the turn stays `running` until a Stop, here and in
+  T3. The idle release does not close a session with an active turn.
+- **Requests in flight at the freeze** (a Codex request, an SDK host call, an ACP `initialize`):
+  with the monotonic clock run on, their timeout and their answer can be ready together at the
+  thaw. tokio's `timeout` polls the answer first; T3's Node event loop runs expired timers before
+  it reads input, so T3 is likelier to fail such a request.
+
+Not proven: a real Orbit freeze and wake (all of this is on test clocks); that Orbit's freezer
+keeps `CLOCK_MONOTONIC` running (Linux's documented behaviour, not measured in a container); how
+the Claude and Codex CLIs behave when their API stream died during a freeze.
 
 ## Engine, part 3: buffered delivery (2026-11-14)
 
@@ -975,6 +1042,111 @@ Not proven: a live turn on a configured instance; the instances on Linux and in 
 Orbit container; a change while a session is open beyond reading T3's code (the flow changes
 the settings between sessions).
 
+## Orbit's idle answer (2026-11-14)
+
+`crates/conn-server/tools/idle-diff.mjs` (in `tools/check.sh`, about 30 s) brings the T3 server
+and this server into the same states on the Codex stub and compares what Orbit reads from
+`GET /api/orchestration/shell`. The fields and the states are in `docs/orbit-profile.md`
+("The idle check, proven against T3"). The answers are the same in all states but one. Fixed
+on the way:
+- `thread_shell` showed `running` where T3 shows `queued` behind a running turn
+  (`conn-engine/src/shell.rs`, after T3's `latestUnheldRun`);
+- a SIGTERM stored a running Codex turn as interrupted, where T3 continues it on the next
+  start. That was a wrong "idle" after a restart (`conn-engine/src/runner.rs`, `pump`).
+
+**Known difference:** after a Codex subagent ends, T3 wakes the agent with a new turn;
+`conn-provider-codex` does not, so Orbit reads idle there where T3 reads active. It is a
+provider feature, listed in the check's `KNOWN` list. **Reported, not counted:** a missing
+protocol header answers 400 with JSON here and with an empty body in T3; Orbit always sends
+`2`. Not proven: Claude and Grok through these states, a message typed by a person,
+`blockedOnThreadWait`, a non-blocking question, archived threads, and a crash (SIGKILL).
+
+## The canary: no check reads the home or the shell's secrets (2026-11-14)
+
+`tools/canary.mjs` holds the rule in `AGENTS.md` ("never read provider, `gh` or `git`
+settings or credentials in a check"). `tools/check.sh` sets it up before the first check, so
+every check runs with:
+
+- a decoy HOME: marker files where `~/.claude/settings.json`, `~/.claude.json`,
+  `~/.codex/config.toml`, `~/.grok/settings.json`, `~/.config/gh/config.yml`, `~/.t3/…/settings.json`,
+  the shell profiles and `~/.gitconfig` would be (readable, access time set to 2000), and
+  credential stand-ins (`.claude/.credentials.json`, `.codex/auth.json`,
+  `.grok/user-settings.json`, `.config/gh/hosts.yml`, glab, `.netrc`, `.t3/…/secrets`) at mode
+  000. The `.gitconfig` carries a marker identity and a credential helper that is a tripwire;
+- marker values in `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+  `CLAUDE_CODE_OAUTH_TOKEN`, `OPENAI_API_KEY`, `CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`,
+  `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and `CONN_CANARY`;
+- a stand-in `SHELL` (runs the `-c` script with `/bin/sh`, reads no profile, keeps no history),
+  and a `TMPDIR` inside the canary's folder, which a watcher scans every 0.5 s.
+- **real CLIs:** marker executables named `claude`, `codex`, `grok`, `gh`, `glab`, `fj`, `tea`,
+  `az` and `cafe` first on `PATH`; each run is logged and fails;
+- **outside network:** every Node process loads a hook (`NODE_OPTIONS=--import`) that refuses
+  and logs a socket or DNS lookup outside loopback (`fetch`, `http`, `https`, `tls`, `net`);
+  our server refuses and logs one when `CONN_NETWORK_LOG` is set (`conn_source_control::http`,
+  the one place it dials outside; unset in use). This works without root on macOS and Linux,
+  unlike `sandbox-exec`. Cargo and cargo-deny reach crates.io and the RustSec database on
+  purpose and are not covered; nor is any other program (git, a CLI a tool puts on its own
+  `PATH`) that opens a socket itself;
+- after each check, `mark` names that check beside every read, CLI run and outside call.
+
+The last check (`canary`) first runs a self-test (each kind of breach, a marker CLI run and an
+outside `fetch` and socket from Node must fail `verify`, a loopback socket must not, and each
+lint rule must fire on a sample), then fails when: a marker CLI ran; a Node process or our
+server tried a host outside loopback; a readable decoy file's access time
+moved; the decoy home differs from its listing (type, mode, size, SHA-256); the tripwire ran;
+a marker appears in any check's output or in a file under TMPDIR or the check's scratch folder;
+or the lint finds `os.userInfo().homedir`, `getpwuid`, a `home_dir` lookup, `env -i` without
+`HOME=`, or `HOME: os.homedir()` passed on (a line marked `canary: allow` is exempt: the live
+recorder and `parity.mjs --model`).
+
+**What it cannot see:** a `stat` or an existence check of a decoy path; an open of a mode-000
+file whose error is swallowed and not printed (a readable sibling in the same tool's folder,
+such as `config.toml` next to `auth.json`, is what usually reveals the tool); a marker in a file
+that lived less than 0.5 s; writes outside TMPDIR, the scratch folder and the decoy home; a read
+on a `noatime` file system (the setup's self-test then fails the run rather than pass it); a
+passwd lookup in a program we do not own (T3's `hydratePosixHome`, `os-jank.ts:99-108`, uses
+`os.userInfo().homedir` only when `HOME` is empty; every sealed environment sets `HOME`).
+
+**How each check finds a home, and what it caught** (first run: 36 checks green, canary 1,875
+findings; after the marker CLIs and the network hook: 385 more; now 0 with 40 checks):
+
+| Check | How it finds a home | Sealed before | Found and done |
+| --- | --- | --- | --- |
+| fmt, clippy, release build, cargo deny | cargo: `CARGO_HOME`, and `~/.gitconfig` through `HOME` (its own proxy lookup) | no | read `~/.gitconfig`; check.sh now runs cargo with `GIT_CONFIG_GLOBAL=/dev/null` |
+| cargo test, decode check | the code under test: `HOME` (`std::env::var_os`), `$SHELL`; `git` reads `~/.gitconfig` | no | `interrupt_tests` opened `ClaudeConfig::default()` and read the real `~/.claude/settings.json` on every run (now a home that does not exist); git tests in `conn-vcs`, `conn-files`, `conn-engine`, `conn-server` read the git config (cargo sealed as above); `conn-terminal` tests started an interactive `/bin/sh` that wrote `~/.bash_history` (now `HISTFILE=/dev/null`); the decode check ran cargo past the seal |
+| gen-contract, gen-tools, gen-keybindings, gen-upstream, gen-graphql, check-copies, limits-diff, instructions checks | in-process T3 code (`os.homedir()` → `HOME`); `git rev-parse` in `monorepo.mjs` | no | every run read `~/.gitconfig`; `gitEnv()` |
+| effect-client, replay | our server: `sealedEnv` (a denylist that let `OPENAI_API_KEY`, `CODEX_HOME`, `T3CODE_HOME` through); `git` with the shell's environment | partly | `sealedEnv` is now an allowlist with a stand-in shell; `gitEnv()` |
+| client-check | `cargo run` of `export_turn` (fake provider) | no (check.sh's decoy only) | nothing read |
+| settings-diff, served (decode coverage) | our server with the whole environment, the real `HOME` | no | `sealedEnv` |
+| secrets-interop, textgen-diff, registry-diff, webhook-diff | our server or examples, inherited environment | no | `sealedEnv` / `sealedEnvTemp` |
+| parity | T3 server: `HOME: os.homedir()` (real), `~/.local/bin` and Homebrew on `PATH`, so its provider probes could run this machine's `claude` and `codex` with their logins; our server: the whole environment | no | without `--model`: a throwaway HOME, `/usr/bin:/bin` beside node; our server `sealedEnv` |
+| codex conformance | `vp` (T3) and `cargo run` (ours) with the whole environment | no | the stub recorded every token variable and HOME into `env.json` and `stub.ndjson` (80 files); `sealedNodeEnv` / `sealedCargoEnv` |
+| acp conformance, grok probe conformance | the same | no | the same leak (34 and 22 stub logs, the parent-env files); sealed the same way |
+| claude catalog, claude conformance, claude t3-replay | `env -i` with a throwaway `HOME` | yes | cargo builds read `~/.gitconfig`; sealed |
+| claude probe conformance, t3 fixture replay | `sealedNodeEnv`, a known base environment | yes | cargo build read `~/.gitconfig`; `gitEnv()` |
+| orbit-flow (fake provider) | our server with the whole environment | no | `sealedEnv` without a model; the live Haiku run keeps the shell's environment |
+| replay, effect-client (found once the marker CLIs were in) | our server's source control discovery runs each host CLI found on `PATH` | HOME sealed, `PATH` not | the server ran `gh --version`, `gh auth status --json hosts`, `gh auth token --hostname github.com`, `glab`, `az account show`, `fj`, `tea`, `cafe`: the real ones from Homebrew, with the sealed HOME (no login found). `sealedEnv` now gives a `PATH` without provider, host and VCS CLIs (`sealedPath`: a folder holding one becomes links to the rest) |
+| cargo test (marker CLIs, network) | `StubDir::path_env` puts the inherited `PATH` after the stubs | no | `github_reads_and_creates_repositories_over_rest` ran this machine's `gh auth token` (now a stub); the link-local tests stay refused before any dial |
+| thread-cli-diff, model-manifest-diff (from `main`) | own sealed env; git and the example inherited | partly | git read `~/.gitconfig`; sealed |
+| parity, again | T3 server `PATH` | done above | it now fails when a provider or host CLI is on that `PATH` without `--model` |
+| Not in check.sh: capture-ts-events (Codex, ACP), memory-flow, test-contract-change, bump-report, churn | the same patterns | no | sealed the same way; `fixtures/recorder/record.mjs` keeps the real HOME (live turns, marked `canary: allow`) |
+
+Cargo reads `~/.gitconfig` through `HOME` and ignores `GIT_CONFIG_GLOBAL`, so `check.sh` runs
+cargo with a throwaway HOME and a target runner hands the decoy HOME back to the test and
+example binaries. The `ignore` crate behind `conn-files`' walk parsed `~/.gitconfig` itself
+in every listing and search; the walk now skips it when `GIT_CONFIG_GLOBAL` is set, as git
+does (`conn-files/src/entries.rs`).
+
+Our Rust code finds a home only through `HOME` (`home.rs`, the providers' `expand_home`,
+`conn-files`, `conn-terminal`); it has no passwd lookup, and the lint keeps it so. Children
+started with `env_clear()` (`conn-provider-support::probe`, the ACP probe, the terminal) get an
+environment built from the server's, which holds `HOME`.
+
+**Not proven:** `cargo test` run by hand, outside `tools/check.sh`, still uses the shell's
+`HOME`, `SHELL` and git configuration: the git tests read `~/.gitconfig`, and a test that
+reaches the login PATH refresh (`methods/source_control.rs:254`) runs the real `$SHELL -ilc`. A `[env]` table in
+`.cargo/config.toml` would seal it, but it would also change `cargo run` of the server by hand.
+That is a decision for Nick.
 ## Stop during a turn start, as the T3 server does it (2026-11-14)
 
 A Stop that arrives before the provider accepted the turn now ends the run at once, for every

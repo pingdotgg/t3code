@@ -27,6 +27,11 @@ node_bin="$(dirname "$(command -v node)")"
 OUT="${CONFORMANCE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/conn-claude-conformance.XXXXXX")}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd -P)"
+# Cargo reads ~/.gitconfig through HOME: it builds with a throwaway HOME of its own.
+cargo_home="$OUT/cargo-home"
+mkdir -p "$cargo_home"
+cargo_env=(HOME="$cargo_home" CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1)
 mkdir -p "$OUT/workspace" "$OUT/attachments" "$OUT/claude-home" "$OUT/home"
 # The instance_launch_args scenario appends this file (one trailing newline is trimmed).
 printf 'From the append file.\n\n' > "$OUT/home/append.txt"
@@ -97,6 +102,11 @@ base_env=(
   "CONFORMANCE_MARKER=1"
   "SHELL=$OUT/login-shell"
 )
+# Under the canary (tools/check.sh), its Node hook and logs reach both sides alike.
+if [ -n "${CONN_CANARY_ROOT:-}" ]; then
+  base_env+=("NODE_OPTIONS=${NODE_OPTIONS:-}" "CONN_CANARY_ROOT=$CONN_CANARY_ROOT"
+    "CONN_NETWORK_LOG=${CONN_NETWORK_LOG:-}" "CONN_CANARY_NODE_NETWORK_LOG=${CONN_CANARY_NODE_NETWORK_LOG:-}")
+fi
 if [ -n "${CONFORMANCE_BASE_JAVA_HOME:-}" ]; then
   base_env+=("JAVA_HOME=$CONFORMANCE_BASE_JAVA_HOME")
 fi
@@ -104,7 +114,7 @@ printf '%s\n' "${base_env[@]}" > "$OUT/base.env"
 
 if [ "${CONFORMANCE_SKIP_RUST:-}" != "1" ]; then
   echo "== Conn Server (helper)"
-  (cd "$workspace_root" && cargo build -q -p conn-provider-claude --example conformance)
+  (cd "$workspace_root" && env "${cargo_env[@]}" cargo build -q -p conn-provider-claude --example conformance)
   # The same working directory as the T3 side below: the spawn script's `cd -P` gives the CLI
   # OLDPWD, which is the spawning server's own working directory on both sides.
   (

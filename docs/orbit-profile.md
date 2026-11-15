@@ -167,6 +167,32 @@ Codex"].
 | `401 invalid_mcp_credential` | Correct for T3: `M/apps/server/src/mcp/McpHttpServer.ts:132,288`. Orbit's docs only say "refused". |
 | Everything else (gate file, `model.env`, state path, label, ports, hourly renewal, two users, the AI router, the cloned files) | Confirmed in code. |
 
+**A container that freezes and wakes** [tests, `docs/status.md` "Timers after a clock
+jump"]. Every timer was tried on jumps of 10 minutes, 2 hours and 3 days. Under Orbit's cgroup
+freezer the monotonic clock runs on, so each deadline fires once at the thaw. Fixed: two
+periodic checks (the socket revocation check, the desktop parent watch) caught up with
+thousands of ticks at once; client activity leases and `/mcp` credential liveness counted only
+monotonic time. A turn that was running stays running at the thaw; whether it ends is the
+CLI's choice, as in T3.
+
+**The checks touch nothing of the host** [check, `R/tools/canary.mjs`, the last check of
+`tools/check.sh`]: no read of a provider, `gh` or `git` setting or credential, no real provider
+or host CLI, no connection outside loopback. See `docs/status.md`, "The canary".
+
+**The idle check, proven against T3** [check, `R/crates/conn-server/tools/idle-diff.mjs`, in
+`tools/check.sh`]. Orbit's idle sleep reads `status`, `activityRunStatus`,
+`blockedOnThreadWait`, `pendingBackgroundTasks`, `pendingRuntimeRequest` (`createdAt`,
+`blocking`), `latestUserAuthoredMessageAt` or `latestUserMessageAt` and `latestRunCompletedAt`
+from `threads` and `archivedThreads` (`ConnAgentActivity.php:52-118`). The thread index also
+reads `id` and `title` (`ConnThreadIndex.php:187-216`), and a refusal's `reason`
+(`HttpT3ServerClient.php:132-135`). The check brings the T3 server and the Conn Server into
+the same 14 states on the Codex stub and compares those fields, Orbit's verdicts, the HTTP
+status and content type. The same in all but one state. Fixed on the way: the shell showed
+`running` where T3 shows `queued` while a message waits, and a SIGTERM ended a running turn
+where T3 continues it on the next start. **Known difference:** T3 wakes the agent with a new
+turn when a Codex subagent ends after its turn; we do not, so Orbit reads idle where T3 reads
+active (conn-provider-codex has no such wake).
+
 ### 1c. The agent itself, through `/mcp`
 
 Agents in a thread call `/mcp` with a token per provider session. They use the 34 tools we

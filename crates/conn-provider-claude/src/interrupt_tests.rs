@@ -105,12 +105,21 @@ fn fake_host_with_delay(
     )
 }
 
+/// A Claude home that does not exist: a session reads `settings.json` from its home, and the
+/// default is `~/.claude`, the real one of whoever runs the tests.
+fn no_home_config() -> ClaudeConfig {
+    ClaudeConfig {
+        home_path: Some(std::env::temp_dir().join("conn-claude-interrupt-tests-no-home")),
+        ..ClaudeConfig::default()
+    }
+}
+
 fn session(helper: &Helper) -> (ClaudeSession, mpsc::Receiver<conn_provider::ProviderEvent>) {
     let (tx, events) = mpsc::channel(crate::session::EVENT_CAPACITY);
     let session = ClaudeSession::open(
         "provider-session-interrupt".into(),
         "claudeAgent",
-        ClaudeConfig::default(),
+        no_home_config(),
         helper.clone(),
         tx,
         vec![],
@@ -367,7 +376,7 @@ async fn an_abandoned_start_aborts_the_booting_query() {
     let session = ClaudeSession::open(
         "provider-session-abandon".into(),
         "claudeAgent",
-        ClaudeConfig::default(),
+        no_home_config(),
         helper.clone(),
         tx,
         vec![conn_provider::McpServer {

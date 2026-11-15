@@ -29,6 +29,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../tools/monorepo.mjs";
+import { sealedCargoEnv, sealedNodeEnv } from "../../../tools/sealed-env.mjs";
 import { readScenarios, scenarioTestSource } from "./scenarios.mjs";
 import { GUARD_IMPORT } from "../../../tools/no-outside-fetch.mjs";
 
@@ -250,6 +251,8 @@ try {
   NodeChildProcess.execFileSync("vp", ["test", "run", NodePath.relative(server, testFile)], {
     cwd: server,
     stdio: ["ignore", "ignore", "inherit"],
+    // Sealed: T3's code and the stub it starts get a throwaway HOME and only what node needs.
+    env: sealedNodeEnv(NodePath.join(work, "ts-env")),
   });
 } catch {
   // T3 cases that fail are reported per scenario below.
@@ -265,7 +268,8 @@ NodeFS.writeFileSync(planFile, JSON.stringify({ scenarios: plan, parentEnv: rust
 NodeChildProcess.execFileSync(
   "cargo",
   ["run", "--quiet", "-p", "conn-provider-acp", "--example", "conformance", "--", planFile],
-  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"] },
+  // Sealed: the example and the stub it starts get a throwaway HOME; cargo keeps its folders.
+  { cwd: repoRoot, stdio: ["ignore", "inherit", "inherit"], env: sealedCargoEnv(NodePath.join(work, "rust-env")) },
 );
 
 // ---- compare ------------------------------------------------------------------------------

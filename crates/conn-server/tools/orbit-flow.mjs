@@ -12,6 +12,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 const here = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const { McpSession } = await import(
@@ -39,7 +40,16 @@ const home = NodePath.join(root, ".t3");
 const workspace = NodePath.join(root, "workspace");
 const origin = `http://127.0.0.1:${port}`;
 // CONN_CLAUDE_STATUS_PROBE=off: the server never runs this machine's `claude` for its status.
-const env = { ...process.env, T3CODE_HOME: home, DISABLE_AUTOUPDATER: "1", CONN_CLAUDE_STATUS_PROBE: "off" };
+// With `replay_server` (no model), a sealed environment: a throwaway HOME, a stand-in shell and
+// no variable of the shell beyond what a process needs. The live Haiku turn with `conn-server`
+// needs the real `claude` and its login, so it keeps the shell's environment.
+const live = !NodePath.basename(binary).startsWith("replay_server");
+const env = {
+  ...(live ? process.env : sealedEnv(root)),
+  T3CODE_HOME: home,
+  DISABLE_AUTOUPDATER: "1",
+  CONN_CLAUDE_STATUS_PROBE: "off",
+};
 delete env.T3CODE_PORT;
 delete env.T3CODE_HOST;
 
@@ -136,9 +146,9 @@ NodeFS.writeFileSync(
   JSON.stringify({ linkedEnvironmentsEnabled: true }),
 );
 NodeFS.mkdirSync(workspace);
-NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: workspace });
+NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: workspace, env: gitEnv() });
 NodeFS.writeFileSync(NodePath.join(workspace, "README.md"), "# workspace\n");
-NodeChildProcess.execFileSync("git", ["add", "."], { cwd: workspace });
+NodeChildProcess.execFileSync("git", ["add", "."], { cwd: workspace, env: gitEnv() });
 NodeChildProcess.execFileSync(
   "git",
   [
@@ -152,7 +162,7 @@ NodeChildProcess.execFileSync(
     "-qm",
     "init",
   ],
-  { cwd: workspace },
+  { cwd: workspace, env: gitEnv() },
 );
 
 step(`start: ${NodePath.basename(binary)} serve --host=${host} --port=${port} --no-browser`);

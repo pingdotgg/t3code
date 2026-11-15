@@ -10,7 +10,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { importSource, packageImporter } from "../../../tools/monorepo.mjs";
-import { sealedEnv } from "../../../tools/sealed-env.mjs";
+import { gitEnv, sealedEnv } from "../../../tools/sealed-env.mjs";
 
 // Packages resolve as packages/contracts sees them, so the sources share one `effect`.
 const load = packageImporter("packages/contracts");
@@ -58,7 +58,7 @@ async function start() {
   const tmp = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-replay-"));
   const project = NodePath.join(tmp, "project");
   NodeFS.mkdirSync(project);
-  NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project });
+  NodeChildProcess.execFileSync("git", ["init", "-q", "-b", "main"], { cwd: project, env: gitEnv() });
   const server = NodeChildProcess.spawn(
     binary,
     // Its own free port: the default port is taken when another check runs beside this one.

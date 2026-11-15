@@ -28,7 +28,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
 import { monorepo, repoRoot } from "../../../../tools/monorepo.mjs";
-import { sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
+import { canaryEnv, cargoBuildEnv, sealedNodeEnv } from "../../../../tools/sealed-env.mjs";
 import { GUARD_IMPORT } from "../../../../tools/no-outside-fetch.mjs";
 
 const MONOREPO = monorepo();
@@ -170,7 +170,7 @@ const SCENARIOS = [
 const work = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "conn-claude-probe-")));
 const home = NodePath.join(work, "home");
 NodeFS.mkdirSync(home, { recursive: true });
-const BASE_ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: NodeOS.tmpdir() };
+const BASE_ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: NodeOS.tmpdir(), ...canaryEnv() };
 
 const binaryFor = (scenario, side) => {
   const dir = NodePath.join(work, scenario.name, side);
@@ -331,6 +331,7 @@ NodeFS.writeFileSync(
 const build = NodeChildProcess.spawnSync("cargo", ["build", "--quiet", "-p", "conn-provider-claude", "--example", "claude_probe"], {
   cwd: repoRoot,
   stdio: ["ignore", "inherit", "inherit"],
+  env: cargoBuildEnv(),
 });
 if (build.status !== 0) {
   console.error("probe-conformance: claude_probe did not build");
