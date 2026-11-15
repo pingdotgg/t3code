@@ -5268,6 +5268,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("reports no branch while a clone has not checked out HEAD yet", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+        // `git clone` points HEAD here until checkout; status then prints `branch.head (unknown)`.
+        yield* (yield* FileSystem.FileSystem).writeFileString(
+          NodePath.join(cwd, ".git", "HEAD"),
+          "ref: refs/heads/.invalid\n",
+        );
+
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).branch, null);
+      }),
+    );
+
     it.effect("records no failed span reading status of a repository without a remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -7262,6 +7277,41 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "removes a worktree whose .git file git-annex replaced with a symlink, keeping the symlink when refused",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "annexed");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/annexed",
+          });
+          const gitFile = pathService.join(worktreePath, ".git");
+          const adminDir = (yield* git(worktreePath, ["rev-parse", "--absolute-git-dir"])).trim();
+          NodeFS.rmSync(gitFile);
+          NodeFS.symlinkSync(adminDir, gitFile);
+          yield* writeTextFile(worktreePath, "notes.txt", "draft\n");
+
+          const refused = yield* Effect.result(driver.removeWorktree({ cwd, path: worktreePath }));
+
+          assert.isTrue(Result.isFailure(refused));
+          assert.isTrue(NodeFS.lstatSync(gitFile).isSymbolicLink());
+          assert.equal(NodeFS.realpathSync(gitFile), NodeFS.realpathSync(adminDir));
+          NodeFS.rmSync(pathService.join(worktreePath, "notes.txt"));
+
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
+
+          assert.isFalse(NodeFS.existsSync(worktreePath));
+          assert.isFalse(NodeFS.existsSync(adminDir));
+        }),
+    );
+
     it.effect("leaves a folder alone that only shares the worktree's short name", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -8335,6 +8385,53 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? selected1.txt");
+      }),
+    );
+
+    it.effect("keeps other files conflicted through a selected-file commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // git stash pop leaves README.md conflicted with no merge in progress.
+        yield* writeTextFile(cwd, "README.md", "stashed version\n");
+        yield* git(cwd, ["stash"]);
+        yield* writeTextFile(cwd, "README.md", "committed version\n");
+        yield* git(cwd, ["commit", "-am", "Change README"]);
+        const pop = yield* driver.execute({
+          operation: "test.stashPop",
+          cwd,
+          args: ["stash", "pop"],
+          allowNonZeroExit: true,
+        });
+        assert.equal(pop.exitCode, 1);
+        yield* writeTextFile(cwd, "other.txt", "other\n");
+        const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+        const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const nested = path.join(cwd, "nested");
+        yield* fs.makeDirectory(nested);
+        // A formatting hook stages its edit into the temporary index that --only commits from.
+        yield* writeTextFile(
+          cwd,
+          ".git/hooks/pre-commit",
+          "#!/bin/sh\necho formatted >> other.txt\ngit add other.txt\n",
+        );
+        yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
+
+        yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
+
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD~1"]), head);
+        assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+        assert.equal(yield* git(cwd, ["show", "HEAD:other.txt"]), "other\nformatted");
+        assert.equal(yield* git(cwd, ["show", ":other.txt"]), "other\nformatted");
+        assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
+        const all = yield* driver.prepareCommitContext(nested).pipe(Effect.flip);
+        assert.equal(
+          all.detail,
+          "Cannot commit with unresolved merge conflicts in README.md. Resolve them, then commit.",
+        );
       }),
     );
 

@@ -100,8 +100,8 @@ function WorkspaceRootContent() {
     layout.variant === "medium" && state.selectedTab === "usage"
       ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
       : isDuoDevice(deviceType)
-        ? // The column's safe area already holds the Duo's search toolbar and keyboard.
-          Math.max(insets.bottom, keyboardHeight) + 16
+        ? // The column's safe area holds the Duo's search toolbar, but not the sidebar's own tab bar.
+          Math.max(insets.bottom + (sidebarPicker ? 64 : 0), keyboardHeight) + 16
         : compactTabs || deviceType === "pad"
           ? workspaceDockBottomClearance({ bottomInset: insets.bottom, keyboardHeight })
           : Math.max(insets.bottom, keyboardHeight) +
