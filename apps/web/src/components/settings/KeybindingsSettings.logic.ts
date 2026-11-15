@@ -105,11 +105,11 @@ export function whenAstToExpression(node: KeybindingWhenNode | undefined): strin
 }
 
 export function whenNodeRemoveLabel(node: KeybindingWhenNode, depth: number): string {
-  if (depth === 0) return "Clear all conditions";
+  if (depth === 0) return translateDynamic("keybindingPanel.clearAllConditions");
   if (node.type === "identifier" || (node.type === "not" && node.node.type === "identifier")) {
-    return "Remove condition";
+    return translateDynamic("keybindingPanel.removeCondition");
   }
-  return "Remove group and its conditions";
+  return translateDynamic("keybindingPanel.removeGroup");
 }
 
 function wrapWhenExpression(node: KeybindingWhenNode): string {
@@ -127,7 +127,7 @@ export function parseWhenExpressionDraft(
   if (!ast) {
     return {
       ok: false,
-      message: "Use variables with !, &&, ||, and parentheses.",
+      message: translateDynamic("keybindingPanel.whenSyntaxError"),
     };
   }
 
