@@ -2293,25 +2293,42 @@ const make = Effect.gen(function* () {
     return started;
   };
 
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
+  // A stalled viewer must not hold the capture lock past the request, or later snapshots and
+  // recording stall behind it.
+  const withScreencastsPaused = <A>(
+    tab: ServerTab,
+    deadlineMs: number,
+    capture: () => Promise<A>,
+  ): Promise<A> =>
     withCaptureLock(tab, async () => {
+      const remainingMs = () => Math.max(1, Math.floor(deadlineMs - performance.now()));
       tab.capturing += 1;
       const recording = tab.recording;
       try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
+        await ServerBrowserPage.withinTimeout(
+          Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.pause()),
+            recording?.session.send("Page.stopScreencast").catch(constVoid),
+          ]),
+          remainingMs(),
+          "Pausing the tab's viewers",
+        );
+        return await ServerBrowserPage.withinTimeout(capture(), remainingMs(), "The snapshot");
       } finally {
         tab.capturing -= 1;
 
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
+        await ServerBrowserPage.withinTimeout(
+          Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.resume()),
+            recording && tab.recording === recording
+              ? recording.session
+                  .send("Page.startScreencast", RECORDING_SCREENCAST)
+                  .catch(constVoid)
+              : undefined,
+          ]),
+          remainingMs(),
+          "Resuming the tab's viewers",
+        ).catch(constVoid);
       }
     });
 
@@ -2582,7 +2599,9 @@ const make = Effect.gen(function* () {
           found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
             ? found
             : undefined;
-        const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
+        // Time spent queued behind other work on this tab counts against the request.
+        const navigationTimeout = () =>
+          Math.max(1, Math.floor(Math.min(deadlineMs - performance.now(), NAVIGATION_TIMEOUT_MS)));
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
         if (!existing) closeIdleAgentTabs();
         const tab =
@@ -2616,14 +2635,14 @@ const make = Effect.gen(function* () {
                 reason: "dialogPending",
               });
             if (existing) {
-              if (url) await navigate(tab, url, "load", navigationTimeout);
+              if (url) await navigate(tab, url, "load", navigationTimeout());
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
                   if (url) {
                     await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout })
+                      .waitForLoadState("load", { timeout: navigationTimeout() })
                       .catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);
@@ -2770,6 +2789,15 @@ const make = Effect.gen(function* () {
     deadlineMs: number,
   ) => {
     const input = request.input;
+    // Time spent queued behind other work on this tab counts against the broker's deadline.
+    const remainingMs = (inputTimeoutMs = Infinity) =>
+      Math.max(1, Math.floor(Math.min(inputTimeoutMs, deadlineMs - performance.now())));
+    const withRemaining = <I extends { readonly timeoutMs?: number | undefined }>(
+      actionInput: I,
+    ): I => ({
+      ...actionInput,
+      timeoutMs: remainingMs(actionInput.timeoutMs),
+    });
     switch (request.operation) {
       case "navigate": {
         const navigateInput = input as PreviewAutomationNavigateInput;
@@ -2778,7 +2806,7 @@ const make = Effect.gen(function* () {
             tab,
             resolveNavigationUrl(navigateInput),
             navigateInput.readiness ?? "load",
-            navigateInput.timeoutMs ?? request.timeoutMs,
+            remainingMs(navigateInput.timeoutMs),
           ),
         );
         return statusWithTitle(tab, request.agentSessionId);
@@ -2800,7 +2828,6 @@ const make = Effect.gen(function* () {
           };
         }
         const changed = from?.width !== to?.width || from?.height !== to?.height;
-        const remainingMs = () => Math.max(0, deadlineMs - performance.now());
         const within = <A>(promise: Promise<A>, ms: number) =>
           runPromise(
             Effect.promise(() => promise).pipe(
@@ -2836,7 +2863,7 @@ const make = Effect.gen(function* () {
           renderScale: tab.desktop ? "display" : RENDER_SCALE,
           fullScreenshot: snapshotInput?.fullScreenshot,
         } as const;
-        const snapshot = await withScreencastsPaused(tab, () =>
+        const snapshot = await withScreencastsPaused(tab, deadlineMs, () =>
           snapshotInput?.pixelsRequired === false
             ? ServerBrowserPage.snapshotMetadata(rendering)
             : ServerBrowserPage.snapshot(rendering),
@@ -2845,11 +2872,7 @@ const make = Effect.gen(function* () {
         return loadError ? { ...snapshot, url: loadError.url, loadError } : snapshot;
       }
       case "click": {
-        // Time spent queued behind other work on this tab counts against the broker's deadline.
-        const clickInput = {
-          ...(input as PreviewAutomationClickInput),
-          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
-        };
+        const clickInput = withRemaining(input as PreviewAutomationClickInput);
         await recordAction(tab, "click", () =>
           ServerBrowserPage.click(tab.page, clickInput, pointerFor(tab)),
         );
@@ -2857,40 +2880,51 @@ const make = Effect.gen(function* () {
       }
       case "hover":
         return recordAction(tab, "hover", () =>
-          ServerBrowserPage.hover(tab.page, input as PreviewAutomationHoverInput, pointerFor(tab)),
+          ServerBrowserPage.hover(
+            tab.page,
+            withRemaining(input as PreviewAutomationHoverInput),
+            pointerFor(tab),
+          ),
         );
       case "select":
         return recordAction(tab, "select", () =>
-          ServerBrowserPage.select(tab.page, input as PreviewAutomationSelectInput),
+          ServerBrowserPage.select(tab.page, withRemaining(input as PreviewAutomationSelectInput)),
         );
       case "drag":
         return recordAction(tab, "drag", () =>
-          ServerBrowserPage.drag(tab.page, input as PreviewAutomationDragInput, pointerFor(tab)),
+          ServerBrowserPage.drag(
+            tab.page,
+            withRemaining(input as PreviewAutomationDragInput),
+            pointerFor(tab),
+          ),
         );
       case "upload":
         return recordAction(tab, "upload", () =>
-          uploadFiles(tab, input as PreviewAutomationUploadInput),
+          uploadFiles(tab, withRemaining(input as PreviewAutomationUploadInput)),
         );
       case "type":
         return recordAction(tab, "type", () =>
-          ServerBrowserPage.type(tab.page, input as PreviewAutomationTypeInput),
+          ServerBrowserPage.type(tab.page, withRemaining(input as PreviewAutomationTypeInput)),
         );
       case "press":
         return recordAction(tab, "press", () =>
-          ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
+          ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput, remainingMs()),
         );
       case "scroll":
         return recordAction(tab, "scroll", () =>
-          ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput),
+          ServerBrowserPage.scroll(tab.page, input as PreviewAutomationScrollInput, remainingMs()),
         );
       case "evaluate":
         return ServerBrowserPage.evaluate(
           tab.cdp,
           input as PreviewAutomationEvaluateInput,
-          request.timeoutMs,
+          remainingMs(),
         );
       case "waitFor":
-        return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
+        return ServerBrowserPage.waitFor(
+          tab.page,
+          withRemaining(input as PreviewAutomationWaitForInput),
+        );
       case "recordingStart": {
         const recording = await startRecording(tab);
         return { tabId: tab.tabId, recording: true, startedAt: recording.startedAt };

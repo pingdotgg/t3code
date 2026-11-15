@@ -99,6 +99,26 @@ const withActionabilityReason = (message: string, cause: Error) => {
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** Bounds a step that takes no timeout of its own; the step itself is abandoned, not stopped. */
+export const withinTimeout = <A>(promise: Promise<A>, timeoutMs: number, step: string) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationTimeoutError",
+            message: `${step} did not finish within ${timeoutMs}ms.`,
+            detail: { timeoutMs },
+          }),
+        ),
+      timeoutMs,
+    );
+  });
+  void promise.catch(constVoid);
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+};
 const TARGET_COUNT_MS = 250;
 const MAX_TARGET_CHARS = 200;
 
@@ -897,16 +917,18 @@ const clickTarget = async (
 };
 
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
+    await locator.fill(input.text, { timeout: remaining() });
     return;
   }
   // A shadow host also matches :focus; use its innermost focused descendant.
   const target = locator ?? page.locator("*:focus").last();
   const focused =
-    (locator !== null || (await target.count()) > 0) &&
+    (locator !== null ||
+      (await withinTimeout(target.count(), remaining(), "Finding the focused element")) > 0) &&
     (await target.evaluate(
       (element) => {
         // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
@@ -941,7 +963,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
         return active != null && (active === element || element.contains(active));
       },
       undefined,
-      { timeout },
+      { timeout: remaining() },
     ));
   if (focused !== true) {
     throw new ServerBrowserOperationError({
@@ -950,10 +972,10 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     });
   }
   if (input.clear) {
-    await page.keyboard.press("ControlOrMeta+A");
-    await page.keyboard.press("Delete");
+    await withinTimeout(page.keyboard.press("ControlOrMeta+A"), remaining(), "Selecting the text");
+    await withinTimeout(page.keyboard.press("Delete"), remaining(), "Clearing the text");
   }
-  await page.keyboard.insertText(input.text);
+  await withinTimeout(page.keyboard.insertText(input.text), remaining(), "Typing the text");
 };
 
 export const hover = async (
@@ -977,7 +999,8 @@ export const select = async (
   input: PreviewAutomationSelectInput,
 ): Promise<PreviewAutomationSelectResult> => {
   const locator = targetLocator(page, input)!;
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const options = await locator.evaluate(
     (element) =>
       element.tagName === "SELECT"
@@ -988,7 +1011,7 @@ export const select = async (
           )
         : null,
     undefined,
-    { timeout },
+    { timeout: remaining() },
   );
   const values =
     options &&
@@ -1004,7 +1027,7 @@ export const select = async (
       tag: "PreviewAutomationTargetNotEditableError",
       message: "This element is not a <select>. Click a custom dropdown, then click its option.",
     });
-  return { selected: await locator.selectOption(values, { timeout }) };
+  return { selected: await locator.selectOption(values, { timeout: remaining() }) };
 };
 
 export const drag = async (
@@ -1036,19 +1059,33 @@ export const setInputFiles = async (page: Page, input: PreviewAutomationUploadIn
   return true;
 };
 
-export const press = async (page: Page, input: PreviewAutomationPressInput) => {
-  await page.keyboard.press([...(input.modifiers ?? []), input.key].join("+"));
+export const press = async (
+  page: Page,
+  input: PreviewAutomationPressInput,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) => {
+  await withinTimeout(
+    page.keyboard.press([...(input.modifiers ?? []), input.key].join("+")),
+    timeoutMs,
+    "The key press",
+  );
 };
 
-export const scroll = async (page: Page, input: PreviewAutomationScrollInput) => {
+export const scroll = async (
+  page: Page,
+  input: PreviewAutomationScrollInput,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) => {
   const delta = [input.deltaX ?? 0, input.deltaY ?? 0] as const;
   const locator = targetLocator(page, input);
-  if (locator === null) {
-    // Page-side code is passed as source: the server compiles without DOM types.
-    await page.evaluate(`scrollBy(${delta[0]}, ${delta[1]})`);
-    return;
-  }
-  await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
+  // Page-side code is passed as source: the server compiles without DOM types.
+  const scrolled =
+    locator === null
+      ? page.evaluate(`scrollBy(${delta[0]}, ${delta[1]})`)
+      : locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta, {
+          timeout: timeoutMs,
+        });
+  await withinTimeout(scrolled, timeoutMs, "The scroll");
 };
 
 const UNRESPONSIVE_SCRIPT_PROBE_MS = 1_000;

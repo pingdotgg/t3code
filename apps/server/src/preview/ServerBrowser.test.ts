@@ -1557,6 +1557,42 @@ it.effect("a first still that never returns does not stall the tab's later captu
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a snapshot fails at its request's timeout when a viewer never pauses", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      const pausing = Promise.withResolvers<void>();
+      const stuck = Promise.withResolvers<Record<string, unknown>>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => stuck.resolve({})));
+      cdp.send.mockImplementation((method, input) => {
+        if (method !== "Page.stopScreencast") return send(method, input);
+        pausing.resolve();
+        return stuck.promise;
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+
+      const snapshotting = yield* broker
+        .invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+          timeoutMs: 2_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => pausing.promise);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(4_000));
+      expect(yield* Fiber.join(snapshotting)).toMatchObject({
+        _tag: "PreviewAutomationTimeoutError",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("keeps a tab's zoom when its viewer resizes", () =>
   Effect.scoped(
     Effect.gen(function* () {
