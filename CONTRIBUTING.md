@@ -1,3 +1,17 @@
+<!-- fork:start (Cujuju/t3code). Upstream's guide follows unchanged below fork:end. -->
+
+> **About this fork.** This is a fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). Cujuju
+> uses it to develop T3 Code's CLIProxyAPI usage-hub integration (hub-supplied account limits, hub account
+> names, waking limited threads) and to send those changes upstream, such as pingdotgg/t3code#27901.
+>
+> - Changes that aren't specific to this fork belong upstream. Follow the guide below and open them at
+>   [pingdotgg/t3code](https://github.com/pingdotgg/t3code).
+> - PRs here target `main`. The maintainer picks the merge method.
+> - Upstream syncs come in as PRs that merge upstream `main`. They must be merged with a merge commit,
+>   never squashed or rebased, so later syncs stay clean.
+
+<!-- fork:end -->
+
 # Contributing
 
 ## Developer setup
