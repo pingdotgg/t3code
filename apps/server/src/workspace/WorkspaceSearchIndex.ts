@@ -148,7 +148,7 @@ export class WorkspaceSearchIndex extends Context.Service<
       input: Omit<ProjectSearchContentsInput, "cwd">,
     ) => Effect.Effect<
       ProjectSearchContentsResult,
-      WorkspaceSearchIndexSearchFailed | WorkspaceSearchIndexScanTimedOut
+      WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
     >;
     readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
