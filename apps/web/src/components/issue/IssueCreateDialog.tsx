@@ -1,6 +1,7 @@
+import type { IssueCreateScope } from "@t3tools/client-runtime/issue-list";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, IssueCreateResult, IssueScopeRef } from "@t3tools/contracts";
+import type { IssueCreateResult } from "@t3tools/contracts";
 import { useState } from "react";
 
 import { issueEnvironment } from "~/state/issues";
@@ -23,13 +24,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
-
-export interface IssueCreateScope {
-  readonly environmentId: EnvironmentId;
-  readonly projectTitle: string;
-  readonly scope: IssueScopeRef;
-  readonly templates: boolean;
-}
 
 const BLANK = "__blank__";
 
