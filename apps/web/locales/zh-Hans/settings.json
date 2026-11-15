@@ -230,6 +230,7 @@
     "composerContextDescription": "线程开始后，在输入区下方保留分支和工作树控件。",
     "contrast": "对比度",
     "contrastDescription": "调整整个界面中颜色和边框的对比度。",
+    "durationMs": "{{value}} 毫秒",
     "effortBars": "进度条",
     "effortDisplay": "推理力度显示",
     "effortDisplayDescription": "在输入区以名称（如 High）或进度条显示推理力度。",
@@ -552,6 +553,7 @@
     "backup": "备份：{{path}}",
     "changeKeysHint": "如有需要可以修改按键。",
     "changesAria": "快捷键改动",
+    "changeShortcut": "更换快捷键",
     "chooseDifferentFile": "选择其他文件…",
     "connecting": "正在连接你的桌面…",
     "copied": "已复制",
@@ -597,6 +599,7 @@
     "removeConnection": "移除连接",
     "useDifferentAccount": "使用其他账户",
     "welcomeDescription": "T3 Code 中的符合条件的用量会使用你的 ChatGPT 套餐。共享用量和额度设置请在 ChatGPT 中管理。",
+    "welcomeOnEnvironment": "{{provider}}（{{environment}}）",
     "welcomeTitle": "你的 ChatGPT 套餐已连接"
   },
   "chatPanel": {
@@ -768,7 +771,8 @@
     "done": "完成",
     "mixed": "混合",
     "remove": "移除",
-    "save": "保存"
+    "save": "保存",
+    "test": "测试"
   },
   "connDiagnosis": {
     "addDirectRoute": "添加直连路由",
@@ -1249,6 +1253,8 @@
     "viaRoute": "经 {{route}}"
   },
   "expandable": {
+    "overriddenBy": "被覆盖于",
+    "sameOnAllMachines": "所有机器上相同",
     "showFullError": "显示完整错误",
     "showLess": "收起"
   },
@@ -1269,7 +1275,8 @@
     "noFonts": "未找到字体。",
     "notMonospace": "「{{font}}」不是等宽字体",
     "notMonospaceDescription": "代码和终端需要等宽字体，因此保留了当前字体。",
-    "searchPlaceholder": "搜索字体…"
+    "searchPlaceholder": "搜索字体…",
+    "terminalPreviewAria": "终端字体预览"
   },
   "general": {
     "archiveAria": "确认归档线程",
@@ -1872,6 +1879,7 @@
     "removeThreadsNote": "这些会话和任何已归档会话会从 T3 Code 中删除。提供方会话会保留。",
     "renameFailed": "重命名项目失败",
     "sharedNeedPermission": "共享设置需要有权限更改此分组中的每个检出。",
+    "showAllEnvironments": "显示所有环境",
     "titleEmpty": "项目名称不能为空",
     "unarchive": "取消归档",
     "unarchiveFailed": "取消归档失败",
@@ -1944,6 +1952,15 @@
     "workspaceDescDefault": "新线程的启动位置。项目及其 t3.json 可以覆盖它。",
     "workspaceDescProject": "本项目新线程的启动位置。",
     "workspaceTitle": "工作区"
+  },
+  "projectIcon": {
+    "color": "颜色",
+    "iconColor": "图标颜色",
+    "letters": "字母",
+    "monogramHint": "一到两个字母或数字。",
+    "noIcons": "未找到图标。",
+    "pasteEmoji": "或粘贴任意 emoji",
+    "saveIcon": "保存图标"
   },
   "providerAdvisory": {
     "compatBroken": "已知损坏版本",
@@ -2395,6 +2412,7 @@
     "routes": "路由",
     "runLinkCli": "在宿主机上运行 `t3 connect link`，然后在那里重启 T3 Code。",
     "serverLabel": "{{name}} 上的服务器",
+    "signIn": "登录",
     "signInToLink": "登录后，此环境即可通过 T3 Connect 供你的其他设备使用。",
     "signInToPublish": "登录后即可把动态发送到移动通知和实时活动。",
     "statusConnected": "已连接",
@@ -2886,6 +2904,27 @@
     "notSet": "未设置",
     "storedPlaceholder": "已存储密钥，输入新值即可替换"
   },
+  "secrets": {
+    "accountHint": "即 op account list 显示的账号简称、不含 https:// 的登录地址或 ID。",
+    "addProvider": "添加提供商",
+    "connectToManage": "连接一个环境，以管理它的提供商变量读取密钥的来源。",
+    "edit": "编辑",
+    "environmentWide": "环境级设置。选择一个环境即可更改。",
+    "name": "名称",
+    "removeProvider": "移除提供商",
+    "updateServer": "把 {{environment}} 上的 T3 Code 更新到新版本，以管理它的密钥提供商。"
+  },
+  "simlock": {
+    "checking": "检查中…",
+    "clearAgentToken": "清除代理令牌",
+    "gatewayUrl": "网关 URL",
+    "leaseEnds": "租约会在租约分钟数到期后结束，即使仍在使用中。",
+    "leaseEndsRestart": "租约会在租约分钟数到期后结束，即使仍在使用中。保存会重启此主机并释放其设备。",
+    "name": "名称",
+    "perEnvironment": "（每个环境一个）",
+    "saveHost": "保存主机",
+    "tokenHint": "租用、驱动并串流设备。请用 <code>simlock --gateway token create --role agent</code> 创建令牌{{perEnvironment}}，也可以先留空稍后再添加。留空的令牌会在 <code>AGENT_DEVICE_DAEMON_BASE_URL</code> 指向此网关时使用机器的 <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code>。"
+  },
   "snapShotSetup": {
     "accessibilityIncludedDescription": "包含被捕获应用中的文本和控件。",
     "accessibilityOptionalDescription": "可选。包含被捕获应用中的文本和控件。",
@@ -2958,6 +2997,8 @@
     "shortcutPortalDescription": "选择按键，然后在收到授权提示时批准。",
     "shortcutShiftDescription": "同时使用两个 Shift 键，或录制一个不同的快捷键。",
     "shortcutTitle": "选择你的快捷键",
+    "soundClick": "咔哒",
+    "soundOff": "关闭",
     "stepAccess": "访问权限",
     "stepError": "无法完成此步骤。重试或在「高级」中查看帮助。",
     "stepShortcut": "快捷键",
@@ -2965,6 +3006,7 @@
     "tryAgain": "重试",
     "updateExtension": "更新扩展",
     "updateHelper": "更新助手",
+    "whooshDefault": "嗖（默认）",
     "wizardTitle": "设置快照",
     "wizardTitleFor": "为 {{desktop}} 设置快照",
     "working": "处理中…"
@@ -3131,26 +3173,47 @@
     "worktrees": "工作树",
     "worktreesDirectoryDescription": "新建工作树的存放文件夹，可在任意盘符，如 D:\\worktrees 或 ~/worktrees。已有的工作树保持原位。留空则使用 T3 主目录。"
   },
+  "telemetry": {
+    "description": "通过 OTLP HTTP 接收器发送追踪、指标和日志。重启服务器后生效。环境变量会覆盖这些设置。",
+    "disabled": "已停用",
+    "discard": "放弃",
+    "endpointLabel": "{{signal}} 端点",
+    "lacksPermission": "此连接没有更改 {{environment}} 设置的权限。",
+    "running": "运行中：{{value}}",
+    "runningFrom": "运行中：{{value}}，来自 {{variable}}",
+    "saving": "正在保存…",
+    "selectedEnvironment": "所选环境"
+  },
   "textGenerators": {
+    "add": "添加生成器",
     "addDescription": "撰写线程标题、提交信息等短文本，无需启动编码代理。你的 API 密钥保存在此环境中。",
     "addGenerator": "添加文本生成器",
+    "answeredItWorks": "{{model}} 已回复，可用。",
     "apiKey": "API 密钥",
     "apiKeyOptional": "API 密钥（可选）",
+    "back": "上一步",
+    "baseUrl": "基础 URL",
     "connect": "连接",
+    "connectedLists_other": "{{name}} 已连接，并列出 {{count}} 个模型。可以把这些切换到它，也可以保持现状。",
     "connecting": "连接中",
     "custom": "自定义",
     "editGenerator": "编辑 {{name}}",
     "emptyDescription": "添加一个模型 API，用它撰写线程标题、提交信息等短文本，无需启动编码代理。",
     "emptyTitle": "还没有文本生成器",
+    "followsTextModel": "跟随文本生成模型",
     "modelListFailed": "模型列表加载失败。",
     "modelListLoading": "正在加载模型列表。",
     "models": "模型",
+    "nameOptional": "名称（可选）",
+    "noModelsMatch": "没有匹配的模型。",
     "purposeCommits": "提交信息、拉取请求和分支名称",
     "purposeThreadTitles": "线程标题及其他生成文本",
     "purposeVoice": "语音转写清理",
+    "refresh": "刷新",
     "saveAndContinue": "保存并继续",
     "searchModels": "搜索模型",
     "service": "服务",
+    "test": "测试",
     "useIt": "开始使用"
   },
   "theme": {
@@ -3219,6 +3282,7 @@
     "cancel": "取消",
     "cancelInspectingAria": "取消取色",
     "cancelInspectingTooltip": "取消并清除所选元素",
+    "chooseAColor": "选择颜色",
     "chooseColor": "选择{{label}}颜色",
     "closeAria": "关闭主题编辑器",
     "CodeSurface": "代码表面",
@@ -3236,6 +3300,7 @@
     "expandAria": "展开主题编辑器",
     "filterColors": "筛选颜色",
     "Foundation": "基础",
+    "hexLabel": "HEX",
     "hexValue": "{{label}} 十六进制值",
     "hideUsage": "隐藏 {{label}} 使用处",
     "HighlightSurface": "高亮表面",
@@ -3260,6 +3325,7 @@
     "pickerHexValue": "{{label}} 取色器十六进制值",
     "pickerRgbValue": "{{label}} 取色器 RGB 值",
     "RaisedSurface": "凸起表面",
+    "rgbLabel": "RGB",
     "role": {
       "accent": "强调色",
       "accentForeground": "强调色文字",
@@ -3363,6 +3429,17 @@
     "storageUnavailable": "浏览器存储不可用，更改未保留。",
     "updated": "{{label}} 已更新"
   },
+  "themeImport": {
+    "addTheme": "添加主题",
+    "alreadyInstalled": "已安装",
+    "back": "上一步",
+    "fileLabel": "主题文件",
+    "jsonAria": "主题 JSON",
+    "jsonLabel": "主题 JSON",
+    "keepBoth": "两者都保留",
+    "orImportFile": "或导入文件",
+    "updateExisting": "更新现有"
+  },
   "themeSearch": {
     "actionAria": "{{action}} {{name}}",
     "addFailed": "无法添加该主题。",
@@ -3441,7 +3518,8 @@
     "textGenDescription": "用于线程标题和其他生成文本。源代码管理有自己的设置。提供商的文本生成器也会出现在这里。",
     "textGenNoneAvailable": "没有可用的文本生成提供商。",
     "textGenReset": "文本生成模型",
-    "textGenToastTitle": "文本生成模型未保存"
+    "textGenToastTitle": "文本生成模型未保存",
+    "threadTitleInstructions": "线程标题指令"
   },
   "uiLocale": {
     "change": "切换界面语言",
@@ -3539,6 +3617,7 @@
     "download": "下载",
     "downloadedPercent": "已下载 {{percent}}%",
     "downloadProgress": "正在下载 {{name}}",
+    "errorPercent": "{{percent}}% 错误",
     "languages_one": "{{count}} 种语言",
     "languages_other": "{{count}} 种语言",
     "livePreview": "实时预览",
@@ -3546,6 +3625,7 @@
     "recommended": "推荐",
     "recommendedTooltip": "适合作为其支持语言的默认选择。",
     "selected": "已选中",
+    "speed": "速度：",
     "stopUsingFile": "停止使用 {{name}} 文件；文件仍会保留在磁盘上",
     "translate": "翻译",
     "translateTooltip": "可将其他语言的语音转写为英文。开启“翻译为英文”即可使用。",

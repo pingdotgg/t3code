@@ -1,6 +1,7 @@
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import type { EnvironmentPresentation } from "../../state/environments";
@@ -35,6 +36,7 @@ const SECRET_PROVIDER_KINDS: Readonly<
 };
 
 export function SecretsSettingsPanel() {
+  const { t } = useTranslation("settings");
   const { scope, environment } = useSettingsScope();
   const connected = environment?.connection.phase === "connected";
   return (
@@ -44,7 +46,7 @@ export function SecretsSettingsPanel() {
       environment.serverConfig.secretProviderSettings !== true ? (
         <SettingsSection {...searchableSetting("secret-providers")}>
           <p className="px-4 py-3 text-sm text-muted-foreground">
-            Update T3 Code on {environment.label} to manage its secret providers.
+            {t("secrets.updateServer", { environment: environment.label })}
           </p>
         </SettingsSection>
       ) : connected ? (
@@ -55,9 +57,7 @@ export function SecretsSettingsPanel() {
         />
       ) : (
         <SettingsSection {...searchableSetting("secret-providers")}>
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to manage the secret providers its provider variables read from.
-          </p>
+          <p className="px-4 py-3 text-sm text-muted-foreground">{t("secrets.connectToManage")}</p>
         </SettingsSection>
       )}
     </SettingsPageContainer>
@@ -71,6 +71,7 @@ function EnvironmentSecretProviders({
   readonly environment: EnvironmentPresentation;
   readonly projectScoped: boolean;
 }) {
+  const { t } = useTranslation("settings");
   const environmentId = environment.environmentId;
   const sessionState = useEnvironmentSessionState(environmentId);
   // The server requires the same grant for secret providers as for provider settings.
@@ -103,15 +104,13 @@ function EnvironmentSecretProviders({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setDialog({ mode: "add" })}>
               <PlusIcon className="size-3" aria-hidden />
-              Add provider
+              {t("secrets.addProvider")}
             </Button>
           ) : null
         }
       >
         {projectScoped ? (
-          <p className="px-4 pt-3 text-xs text-muted-foreground">
-            Environment-wide setting. Select an environment to change it.
-          </p>
+          <p className="px-4 pt-3 text-xs text-muted-foreground">{t("secrets.environmentWide")}</p>
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow
@@ -161,7 +160,7 @@ function EnvironmentSecretProviders({
                           variant="ghost"
                           onClick={() => setDialog({ mode: "edit", id })}
                         >
-                          Edit
+                          {t("secrets.edit")}
                         </Button>
                       ) : null}
                       <RemoveSecretProviderButton
@@ -202,11 +201,12 @@ function RemoveSecretProviderButton({
   readonly label: string;
   readonly onConfirm: () => void;
 }) {
+  const { t } = useTranslation("settings");
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button size="xs" variant="ghost" onClick={() => setOpen(true)}>
-        Remove
+        {t("common.remove")}
       </Button>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogPopup>
@@ -223,7 +223,7 @@ function RemoveSecretProviderButton({
                 onConfirm();
               }}
             >
-              Remove provider
+              {t("secrets.removeProvider")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

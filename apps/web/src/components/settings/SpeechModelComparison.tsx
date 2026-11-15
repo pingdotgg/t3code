@@ -1,5 +1,6 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "../../lib/utils";
 import { languageLabel } from "./SpeechLanguageSelect";
@@ -82,6 +83,7 @@ export function ModelBenchmarks({
   /** Plain facts, such as language count and size, shown after the scores. */
   facts: readonly string[];
 }) {
+  const { t } = useTranslation("settings");
   const data = model.benchmark;
   const seconds = data?.secondsPer30s[tier];
   const visible = !data
@@ -101,7 +103,7 @@ export function ModelBenchmarks({
             {score ? (
               <>
                 <strong className="font-medium text-foreground">{score.grade}</strong> (
-                {score.errorPercent}% error)
+                {t("voiceModel.errorPercent", { percent: score.errorPercent })})
               </>
             ) : (
               "not benchmarked"
@@ -110,7 +112,7 @@ export function ModelBenchmarks({
         );
       })}
       <span>
-        Speed:{" "}
+        {t("voiceModel.speed")}{" "}
         {tier === "cpu" && data && data.secondsPer30s.cpu === undefined ? (
           "update server"
         ) : seconds == null ? (

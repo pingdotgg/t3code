@@ -10,6 +10,7 @@ import { PlayIcon } from "lucide-react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useContext, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
@@ -79,6 +80,7 @@ type ShortcutCheck =
     };
 
 export function SnapShotSettings() {
+  const { t } = useTranslation("settings");
   const settings = useClientSettings((current) => ({
     snapShotAnimations: current.snapShotAnimations,
     snapShotEnabled: current.snapShotEnabled,
@@ -147,7 +149,11 @@ export function SnapShotSettings() {
     shortcutChanged && candidateConflict === null && shortcutCheck.availability?.available === true;
   const soundSelection = settings.snapShotPlaySound ? settings.snapShotSound : "off";
   const soundLabel =
-    soundSelection === "off" ? "Off" : soundSelection === "soft-pop" ? "Whoosh (Default)" : "Click";
+    soundSelection === "off"
+      ? t("snapShotSetup.soundOff")
+      : soundSelection === "soft-pop"
+        ? t("snapShotSetup.whooshDefault")
+        : t("snapShotSetup.soundClick");
 
   const setup = async (action: DesktopSnapShotSetupAction) => {
     if (!bridge || setupBusy) return;
@@ -426,7 +432,7 @@ export function SnapShotSettings() {
                       disabled={setupBusy}
                       onClick={() => void openSetup("shortcut")}
                     >
-                      Change shortcut
+                      {t("captureShortcut.changeShortcut")}
                     </Button>
                   ) : (
                     <>
@@ -451,7 +457,7 @@ export function SnapShotSettings() {
                               setShortcutCheck({ status: "idle", availability: null });
                             }}
                           >
-                            Cancel
+                            {t("common.cancel")}
                           </Button>
                         </>
                       ) : state?.mode === "portal" &&
@@ -463,7 +469,7 @@ export function SnapShotSettings() {
                           disabled={setupBusy || state.shortcutPending}
                           onClick={() => void setup("retry-shortcut")}
                         >
-                          Shortcut permissions
+                          {t("snapShotSetup.shortcutPermissions")}
                         </Button>
                       ) : null}
                     </>
@@ -484,9 +490,7 @@ export function SnapShotSettings() {
                       {soundSelection === "off" ? (
                         "Off"
                       ) : soundSelection === "soft-pop" ? (
-                        <>
-                          Whoosh <span className="text-muted-foreground">(Default)</span>
-                        </>
+                        <>{t("snapShotSetup.whooshDefault")}</>
                       ) : (
                         "Click"
                       )}
@@ -503,7 +507,7 @@ export function SnapShotSettings() {
                         </MenuRadioItem>
                         <div className={soundOptionRowClassName}>
                           <MenuRadioItem closeOnClick value="soft-pop">
-                            Whoosh <span className="text-muted-foreground">(Default)</span>
+                            {t("snapShotSetup.whooshDefault")}
                           </MenuRadioItem>
                           <MenuItem
                             aria-label="Play Whoosh"

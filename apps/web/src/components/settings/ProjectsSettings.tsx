@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { LayersIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "../ui/button";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
@@ -9,6 +10,7 @@ import { SettingsPageContainer } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
+  const { t } = useTranslation("settings");
   const { search: value, scope, selectScope } = useSettingsScope();
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -22,7 +24,7 @@ export function ProjectsSettings() {
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >
               <LayersIcon />
-              Show all environments
+              {t("project.showAllEnvironments")}
             </Button>
           ) : null}
         </div>

@@ -69,7 +69,10 @@ export function ChatGptWelcomeCoordinator() {
           <DialogTitle>{t("chatGpt.welcomeTitle")}</DialogTitle>
           <DialogDescription>{t("chatGpt.welcomeDescription")}</DialogDescription>
           <p className="text-xs text-muted-foreground">
-            {next?.providerName} on {next?.environmentLabel}
+            {t("chatGpt.welcomeOnEnvironment", {
+              provider: next?.providerName ?? "",
+              environment: next?.environmentLabel ?? "",
+            })}
           </p>
         </DialogHeader>
         <DialogFooter>

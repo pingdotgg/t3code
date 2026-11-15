@@ -393,7 +393,7 @@ export function AppearanceSettingsPanel() {
                     className="min-w-16 rounded-md bg-muted px-2 py-1 text-center font-mono text-xs font-medium tabular-nums text-foreground"
                     htmlFor="panel-animation-duration"
                   >
-                    {settings.panelAnimationDurationMs} ms
+                    {t("appearance.durationMs", { value: settings.panelAnimationDurationMs })}
                   </output>
                   <input
                     aria-label={t("appearance.panelAnimationDuration")}

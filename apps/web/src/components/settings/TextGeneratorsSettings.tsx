@@ -99,7 +99,7 @@ export function TextGeneratorsSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
               <PlusIcon className="size-3" aria-hidden />
-              Add generator
+              {t("textGenerators.add")}
             </Button>
           ) : null
         }
@@ -221,7 +221,7 @@ export function TextGeneratorsSettings({
                 setRemoving(null);
               }}
             >
-              Remove
+              {t("common.remove")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -399,7 +399,7 @@ function TextGeneratorWizard({
                 ) : null}
                 {showBaseUrl ? (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="text-generator-url">Base URL</Label>
+                    <Label htmlFor="text-generator-url">{t("textGenerators.baseUrl")}</Label>
                     <Input
                       id="text-generator-url"
                       placeholder="http://localhost:11434/v1"
@@ -433,7 +433,7 @@ function TextGeneratorWizard({
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="text-generator-label">Name (optional)</Label>
+                  <Label htmlFor="text-generator-label">{t("textGenerators.nameOptional")}</Label>
                   <Input
                     id="text-generator-label"
                     placeholder={
@@ -457,8 +457,7 @@ function TextGeneratorWizard({
           ) : (
             <div className="grid gap-4">
               <p className="text-sm text-muted-foreground">
-                {name} is connected and lists {modelCount} {modelCount === 1 ? "model" : "models"}.
-                Switch any of these to it, or keep what they use now.
+                {t("textGenerators.connectedLists", { name, count: modelCount })}
               </p>
               {/* One grid for all rows, so pickers and Test buttons line up in columns. */}
               <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-4">
@@ -479,7 +478,7 @@ function TextGeneratorWizard({
           leading={
             step > 0 ? (
               <Button variant="ghost" onClick={() => setStep(0)}>
-                Back
+                {t("textGenerators.back")}
               </Button>
             ) : null
           }
@@ -487,7 +486,7 @@ function TextGeneratorWizard({
           {step === 0 ? (
             <>
               <Button variant="outline" onClick={onClose}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button onClick={() => void connect()} disabled={!canConnect || checking}>
                 {checking ? <Spinner /> : null}
@@ -501,7 +500,7 @@ function TextGeneratorWizard({
           ) : (
             // Connect's button unmounts here; without this, focus lands on the step list.
             <Button autoFocus onClick={onClose}>
-              Done
+              {t("common.done")}
             </Button>
           )}
         </WizardFooter>
@@ -522,6 +521,7 @@ function TextGenerationTaskPicker({
   readonly settingKey: (typeof TASKS)[number]["key"];
   readonly label: string;
 }) {
+  const { t } = useTranslation("settings");
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const own = settings[settingKey];
@@ -563,10 +563,12 @@ function TextGenerationTaskPicker({
           </span>
         ) : shown ? (
           <span role="status" className="text-xs text-muted-foreground">
-            {selection.model} answered. It works.
+            {t("textGenerators.answeredItWorks", { model: selection.model })}
           </span>
         ) : own === null ? (
-          <span className="text-xs text-muted-foreground">Follows the text generation model</span>
+          <span className="text-xs text-muted-foreground">
+            {t("textGenerators.followsTextModel")}
+          </span>
         ) : null}
       </div>
       <div className="justify-self-end">
@@ -599,7 +601,7 @@ function TextGenerationTaskPicker({
           >
             {/* Keeps the label's width while testing, so the row never reflows. */}
             <span className="relative">
-              <span className={testing ? "invisible" : undefined}>Test</span>
+              <span className={testing ? "invisible" : undefined}>{t("textGenerators.test")}</span>
               {testing ? (
                 <span className="absolute inset-0 flex items-center justify-center">
                   <Spinner />
@@ -646,7 +648,9 @@ function TextGeneratorModelList({
       ) : null}
       <div className="max-h-80 overflow-y-auto rounded-lg border divide-y divide-border/60">
         {shown.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-muted-foreground">No models match.</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">
+            {t("textGenerators.noModelsMatch")}
+          </p>
         ) : (
           <ul role={onSelect ? "listbox" : "list"} aria-label={t("textGenerators.models")}>
             {shown.map((model) => {
@@ -756,9 +760,9 @@ function TextGeneratorModelsDialog({
             onClick={() => void refresh()}
           >
             <RefreshIcon refreshing={refreshing} />
-            Refresh
+            {t("textGenerators.refresh")}
           </Button>
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={onClose}>{t("common.done")}</Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

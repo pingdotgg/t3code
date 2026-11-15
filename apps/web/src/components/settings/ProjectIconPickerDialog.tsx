@@ -7,6 +7,7 @@ import {
   type ProjectIconOverride,
 } from "@t3tools/contracts";
 import { createElement, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -58,6 +59,7 @@ export function ProjectIconPickerDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
+  const { t } = useTranslation("settings");
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="w-full sm:w-[32rem]">
@@ -84,6 +86,7 @@ function ProjectIconPickerBody({
   readonly onClose: () => void;
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
+  const { t } = useTranslation("settings");
   const automatic = deriveProjectIdentity(projectName);
   const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
   const [iconName, setIconName] = useState<string>(
@@ -138,8 +141,14 @@ function ProjectIconPickerBody({
 
         {mode !== "emoji" ? (
           <div>
-            <div className="mb-2 text-xs font-medium text-muted-foreground">Color</div>
-            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Icon color">
+            <div className="mb-2 text-xs font-medium text-muted-foreground">
+              {t("projectIcon.color")}
+            </div>
+            <div
+              className="flex flex-wrap gap-1.5"
+              role="group"
+              aria-label={t("projectIcon.iconColor")}
+            >
               {PROJECT_ICON_COLORS.map((option) => (
                 <button
                   key={option.value}
@@ -189,7 +198,9 @@ function ProjectIconPickerBody({
               </div>
             </ScrollArea>
             {icons.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">No icons found.</p>
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                {t("projectIcon.noIcons")}
+              </p>
             ) : null}
           </>
         ) : mode === "monogram" ? (
@@ -201,7 +212,7 @@ function ProjectIconPickerBody({
             />
             <div className="flex-1 space-y-2">
               <label htmlFor="project-monogram" className="text-sm font-medium">
-                Letters
+                {t("projectIcon.letters")}
               </label>
               <Input
                 id="project-monogram"
@@ -212,7 +223,7 @@ function ProjectIconPickerBody({
                 autoComplete="off"
               />
               <p id="project-monogram-hint" className="text-xs text-muted-foreground">
-                One or two letters or numbers.
+                {t("projectIcon.monogramHint")}
               </p>
             </div>
           </div>
@@ -239,7 +250,7 @@ function ProjectIconPickerBody({
             </ScrollArea>
             <div>
               <div className="mb-2 text-xs font-medium text-muted-foreground">
-                Or paste any emoji
+                {t("projectIcon.pasteEmoji")}
               </div>
               <Input
                 value={customEmoji}
@@ -258,10 +269,10 @@ function ProjectIconPickerBody({
       </DialogPanel>
       <DialogFooter>
         <Button variant="outline" onClick={onClose}>
-          Cancel
+          {t("common.cancel")}
         </Button>
         <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
-          Save icon
+          {t("projectIcon.saveIcon")}
         </Button>
       </DialogFooter>
     </>

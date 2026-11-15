@@ -232,6 +232,7 @@
     "composerContextDescription": "Keep branch and worktree controls below the composer after a thread starts.",
     "contrast": "Contrast",
     "contrastDescription": "Adjust the contrast of colors and borders across the interface.",
+    "durationMs": "{{value}} ms",
     "effortBars": "Bars",
     "effortDisplay": "Effort display",
     "effortDisplayDescription": "Show reasoning effort in the composer as its name, such as High, or as bars.",
@@ -559,6 +560,7 @@
     "backup": "Backup: {{path}}",
     "changeKeysHint": "Change the keys if needed.",
     "changesAria": "Shortcut changes",
+    "changeShortcut": "Change shortcut",
     "chooseDifferentFile": "Choose a different file…",
     "connecting": "Connecting to your desktop…",
     "copied": "Copied",
@@ -604,6 +606,7 @@
     "removeConnection": "Remove connection",
     "useDifferentAccount": "Use a different account",
     "welcomeDescription": "Eligible usage in T3 Code uses your ChatGPT plan. Manage your shared usage and any credit settings in ChatGPT.",
+    "welcomeOnEnvironment": "{{provider}} on {{environment}}",
     "welcomeTitle": "Your ChatGPT plan is connected"
   },
   "chatPanel": {
@@ -775,7 +778,8 @@
     "done": "Done",
     "mixed": "Mixed",
     "remove": "Remove",
-    "save": "Save"
+    "save": "Save",
+    "test": "Test"
   },
   "connDiagnosis": {
     "addDirectRoute": "Add direct route",
@@ -1262,6 +1266,8 @@
     "viaRoute": "via {{route}}"
   },
   "expandable": {
+    "overriddenBy": "Overridden by",
+    "sameOnAllMachines": "Same on all machines",
     "showFullError": "Show full error",
     "showLess": "Show less"
   },
@@ -1282,7 +1288,8 @@
     "noFonts": "No fonts found.",
     "notMonospace": "\"{{font}}\" isn't monospace",
     "notMonospaceDescription": "Code and terminal need a fixed-width font, so the current font was kept.",
-    "searchPlaceholder": "Search fonts…"
+    "searchPlaceholder": "Search fonts…",
+    "terminalPreviewAria": "Terminal font preview"
   },
   "general": {
     "archiveAria": "Confirm thread archiving",
@@ -1890,6 +1897,7 @@
     "removeThreadsNote": "Those threads and any archived threads are deleted from T3 Code. Provider sessions are kept.",
     "renameFailed": "Failed to rename project",
     "sharedNeedPermission": "Shared settings require permission to change every checkout in this group.",
+    "showAllEnvironments": "Show all environments",
     "titleEmpty": "Project title cannot be empty",
     "unarchive": "Unarchive",
     "unarchiveFailed": "Failed to unarchive project",
@@ -1962,6 +1970,15 @@
     "workspaceDescDefault": "Where new threads start. Projects and their t3.json can override it.",
     "workspaceDescProject": "Where new threads in this project start.",
     "workspaceTitle": "Workspace"
+  },
+  "projectIcon": {
+    "color": "Color",
+    "iconColor": "Icon color",
+    "letters": "Letters",
+    "monogramHint": "One or two letters or numbers.",
+    "noIcons": "No icons found.",
+    "pasteEmoji": "Or paste any emoji",
+    "saveIcon": "Save icon"
   },
   "providerAdvisory": {
     "compatBroken": "Known broken version",
@@ -2416,6 +2433,7 @@
     "routes": "Routes",
     "runLinkCli": "Run `t3 connect link` on the host, then restart T3 Code there.",
     "serverLabel": "{{name}} server",
+    "signIn": "Sign in",
     "signInToLink": "Sign in to make this environment available to your other devices through T3 Connect.",
     "signInToPublish": "Sign in to send activity to mobile notifications and Live Activities.",
     "statusConnected": "Connected",
@@ -2913,6 +2931,27 @@
     "notSet": "Not set",
     "storedPlaceholder": "Stored secret, enter a new value to replace"
   },
+  "secrets": {
+    "accountHint": "The account shorthand, sign-in address without https://, or ID that op account list shows.",
+    "addProvider": "Add provider",
+    "connectToManage": "Connect an environment to manage the secret providers its provider variables read from.",
+    "edit": "Edit",
+    "environmentWide": "Environment-wide setting. Select an environment to change it.",
+    "name": "Name",
+    "removeProvider": "Remove provider",
+    "updateServer": "Update T3 Code on {{environment}} to manage its secret providers."
+  },
+  "simlock": {
+    "checking": "Checking…",
+    "clearAgentToken": "Clear agent token",
+    "gatewayUrl": "Gateway URL",
+    "leaseEnds": "A lease ends after the lease minutes even while in use.",
+    "leaseEndsRestart": "A lease ends after the lease minutes even while in use. Saving restarts this host, which releases its devices.",
+    "name": "Name",
+    "perEnvironment": " per environment",
+    "saveHost": "Save host",
+    "tokenHint": "Leases, drives, and streams devices. Create one{{perEnvironment}} with <code>simlock --gateway token create --role agent</code>, or leave it blank to add it later. A blank token uses the machine's <code>AGENT_DEVICE_DAEMON_AUTH_TOKEN</code> when its <code>AGENT_DEVICE_DAEMON_BASE_URL</code> is this gateway."
+  },
   "snapShotSetup": {
     "accessibilityIncludedDescription": "Include text and controls from the captured app.",
     "accessibilityOptionalDescription": "Optional. Include text and controls from the captured app.",
@@ -2985,6 +3024,8 @@
     "shortcutPortalDescription": "Choose your keys, then approve the permission prompt if asked.",
     "shortcutShiftDescription": "Use both Shift keys, or record a different shortcut.",
     "shortcutTitle": "Choose your shortcut",
+    "soundClick": "Click",
+    "soundOff": "Off",
     "stepAccess": "Access",
     "stepError": "Couldn’t finish this step. Try again or check Advanced for help.",
     "stepShortcut": "Shortcut",
@@ -2992,6 +3033,7 @@
     "tryAgain": "Try again",
     "updateExtension": "Update extension",
     "updateHelper": "Update helper",
+    "whooshDefault": "Whoosh (Default)",
     "wizardTitle": "Set up snapshots",
     "wizardTitleFor": "Set up snapshots for {{desktop}}",
     "working": "Working…"
@@ -3159,26 +3201,50 @@
     "worktrees": "Worktrees",
     "worktreesDirectoryDescription": "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
   },
+  "telemetry": {
+    "description": "Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply. Environment variables override these settings.",
+    "disabled": "Disabled",
+    "discard": "Discard",
+    "endpointLabel": "{{signal}} endpoint",
+    "lacksPermission": "This connection lacks permission to change settings on {{environment}}.",
+    "running": "Running: {{value}}",
+    "runningFrom": "Running: {{value}} from {{variable}}",
+    "saving": "Saving…",
+    "selectedEnvironment": "the selected environment"
+  },
   "textGenerators": {
+    "add": "Add generator",
     "addDescription": "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
     "addGenerator": "Add a text generator",
+    "answeredItWorks": "{{model}} answered. It works.",
     "apiKey": "API key",
     "apiKeyOptional": "API key (optional)",
+    "back": "Back",
+    "baseUrl": "Base URL",
     "connect": "Connect",
+    "connectedLists_one": "{{name}} is connected and lists {{count}} model. Switch any of these to it, or keep what they use now.",
+    "connectedLists_other": "{{name}} is connected and lists {{count}} models. Switch any of these to it, or keep what they use now.",
+    "connectedLists_one": "textGenerators.connectedLists",
+    "connectedLists_other": "textGenerators.connectedLists",
     "connecting": "Connecting",
     "custom": "Custom",
     "editGenerator": "Edit {{name}}",
     "emptyDescription": "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
     "emptyTitle": "No text generators yet",
+    "followsTextModel": "Follows the text generation model",
     "modelListFailed": "The model list couldn't load.",
     "modelListLoading": "Loading the model list.",
     "models": "Models",
+    "nameOptional": "Name (optional)",
+    "noModelsMatch": "No models match.",
     "purposeCommits": "Commit messages, pull requests, and branch names",
     "purposeThreadTitles": "Thread titles and other generated text",
     "purposeVoice": "Voice transcript cleanup",
+    "refresh": "Refresh",
     "saveAndContinue": "Save and continue",
     "searchModels": "Search models",
     "service": "Service",
+    "test": "Test",
     "useIt": "Use it"
   },
   "theme": {
@@ -3249,6 +3315,7 @@
     "cancel": "Cancel",
     "cancelInspectingAria": "Cancel inspecting app colors",
     "cancelInspectingTooltip": "Cancel and clear the selection",
+    "chooseAColor": "Choose a color",
     "chooseColor": "Choose {{label}} color",
     "closeAria": "Close the theme editor",
     "CodeSurface": "Code surface",
@@ -3266,6 +3333,7 @@
     "expandAria": "Expand the theme editor",
     "filterColors": "Filter colors",
     "Foundation": "Foundation",
+    "hexLabel": "HEX",
     "hexValue": "{{label}} hex value",
     "hideUsage": "Hide {{label}} usage",
     "HighlightSurface": "Highlight surface",
@@ -3290,6 +3358,7 @@
     "pickerHexValue": "{{label}} picker hex value",
     "pickerRgbValue": "{{label}} picker RGB value",
     "RaisedSurface": "Raised surface",
+    "rgbLabel": "RGB",
     "role": {
       "accent": "Accent",
       "accentForeground": "Accent Foreground",
@@ -3394,6 +3463,17 @@
     "storageUnavailable": "Browser storage is unavailable, so the change was not kept.",
     "updated": "{{label}} updated"
   },
+  "themeImport": {
+    "addTheme": "Add theme",
+    "alreadyInstalled": "Already installed",
+    "back": "Back",
+    "fileLabel": "Theme file",
+    "jsonAria": "Theme JSON",
+    "jsonLabel": "Theme JSON",
+    "keepBoth": "Keep both",
+    "orImportFile": "or import a file",
+    "updateExisting": "Update existing"
+  },
   "themeSearch": {
     "actionAria": "{{action}} {{name}}",
     "addFailed": "That theme could not be added.",
@@ -3473,7 +3553,8 @@
     "textGenDescription": "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
     "textGenNoneAvailable": "No text generation providers available.",
     "textGenReset": "text generation model",
-    "textGenToastTitle": "Text generation model not saved"
+    "textGenToastTitle": "Text generation model not saved",
+    "threadTitleInstructions": "Thread title instructions"
   },
   "uiLocale": {
     "change": "Change interface language",
@@ -3571,6 +3652,7 @@
     "download": "Download",
     "downloadedPercent": "{{percent}}% downloaded",
     "downloadProgress": "{{name}} download progress",
+    "errorPercent": "{{percent}}% error",
     "languages_one": "{{count}} language",
     "languages_other": "{{count}} languages",
     "livePreview": "Live preview",
@@ -3578,6 +3660,7 @@
     "recommended": "Recommended",
     "recommendedTooltip": "A good default pick for the languages it covers.",
     "selected": "Selected",
+    "speed": "Speed:",
     "stopUsingFile": "Stop using your {{name}} file; the file stays on disk",
     "translate": "Translate",
     "translateTooltip": "Can write English text from speech in another language. Turn on Translate to English to use it.",

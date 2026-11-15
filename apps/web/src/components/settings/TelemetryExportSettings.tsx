@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { OtlpEndpointCheckResult, OtlpSignal, ServerObservability } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -72,6 +73,7 @@ function endpointStatus(url: string, check: EndpointCheck | undefined) {
 }
 
 export function TelemetryExportSettings() {
+  const { t } = useTranslation("settings");
   const { environment, scope } = useSettingsScope();
   if (scope.kind !== "environment" || !environment) {
     return (
@@ -86,6 +88,7 @@ export function TelemetryExportSettings() {
 }
 
 function TelemetryExportForm() {
+  const { t } = useTranslation("settings");
   const { environment } = useSettingsScope();
   const saved = useScopedSettings((settings) => settings.observability);
   const [draft, setDraft] = useState<Partial<typeof saved>>({});
@@ -168,14 +171,12 @@ function TelemetryExportForm() {
           }
         }}
       >
-        <p className="text-xs text-muted-foreground">
-          Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply.
-          Environment variables override these settings.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("telemetry.description")}</p>
         {!canEdit && (
           <p className="text-xs text-muted-foreground">
-            This connection lacks permission to change settings on{" "}
-            {environment?.label ?? "the selected environment"}.
+            {t("telemetry.lacksPermission", {
+              environment: environment?.label ?? t("telemetry.selectedEnvironment"),
+            })}
           </p>
         )}
         {SIGNALS.map((descriptor) => {
@@ -194,7 +195,7 @@ function TelemetryExportForm() {
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5">
                   {status && <ConnectionStatusDot dotClassName={status.dot} />}
-                  <Label htmlFor={key}>{label} endpoint</Label>
+                  <Label htmlFor={key}>{t("telemetry.endpointLabel", { signal: label })}</Label>
                 </div>
                 {status && <span className="text-xs text-muted-foreground">{status.label}</span>}
               </div>
@@ -227,19 +228,18 @@ function TelemetryExportForm() {
                     disabled={!isHttpUrl(url) || checks[key]?.result === null}
                     onClick={() => void checkEndpoint(key, signal, url)}
                   >
-                    Test
+                    {t("common.test")}
                   </Button>
                 )}
               </div>
               {(saved[key] !== (running?.[key] ?? "") || override?.variable) && (
                 <p className="break-all text-xs text-muted-foreground">
-                  Running: {running?.[key] || "Disabled"}
-                  {override?.variable && (
-                    <>
-                      {" "}
-                      from <code className="font-mono">{override.variable}</code>
-                    </>
-                  )}
+                  {override?.variable
+                    ? t("telemetry.runningFrom", {
+                        value: running?.[key] || t("telemetry.disabled"),
+                        variable: override.variable,
+                      })
+                    : t("telemetry.running", { value: running?.[key] || t("telemetry.disabled") })}
                 </p>
               )}
             </div>
@@ -266,10 +266,10 @@ function TelemetryExportForm() {
                 }
               }}
             >
-              Discard
+              {t("telemetry.discard")}
             </Button>
             <Button type="submit" size="xs" disabled={!changed || saving || !canEdit}>
-              {saving ? "Saving…" : "Save"}
+              {saving ? t("telemetry.saving") : t("common.save")}
             </Button>
           </div>
         </div>
