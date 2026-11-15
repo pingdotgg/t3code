@@ -3114,54 +3114,65 @@ it.effect("status reconnects the agent's tab after the desktop lets it go", () =
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a loaded tab the desktop does not take back reopens on its page", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const broker = yield* Broker.PreviewAutomationBroker;
-      yield* ServerBrowser.ServerBrowser;
-      yield* Effect.yieldNow;
-      desktopRendersNext = true;
-      const opened = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "open",
-        input: { url: "https://example.com/?t=1", reuseExistingTab: false, show: false },
-      });
-      const tabId = PreviewTabId.make(opened.tabId!);
-      yield* (yield* Manager.PreviewManager).reportStatus({
-        threadId: scope.thread.threadId,
-        tabId,
-        serverControlled: true,
-        navStatus: { _tag: "Success", url: "https://example.com/?t=1", title: "Example" },
-        canGoBack: false,
-        canGoForward: false,
-      });
-      // Opening DevTools on a desktop tab releases it until DevTools closes.
-      yield* Effect.promise(() => desktopDetachReady.promise);
-      desktopAttachesLate = true;
-      desktopTabs.delete(tabId);
-      desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
-      yield* Effect.promise(() => desktopReleased.promise);
-      const reloading = Promise.withResolvers<void>();
-      const reloaded = Promise.withResolvers<void>();
-      initialNavigation = () => {
-        reloading.resolve();
-        return reloaded.promise;
-      };
-      const pending = yield* broker
-        .invoke<PreviewAutomationStatus>({ scope, operation: "status", input: {} })
-        .pipe(Effect.forkScoped);
-      yield* Effect.promise(() => desktopAttachWaiting.promise);
-      yield* TestClock.adjust("10 seconds");
-      yield* Effect.promise(() => reloading.promise);
-      reloaded.resolve();
+it.effect.each(["status", "evaluate"] as const)(
+  "%s on a loaded tab the desktop does not take back waits for its page",
+  (operation) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const broker = yield* Broker.PreviewAutomationBroker;
+        yield* ServerBrowser.ServerBrowser;
+        yield* Effect.yieldNow;
+        desktopRendersNext = true;
+        const opened = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          operation: "open",
+          input: { url: "https://example.com/?t=1", reuseExistingTab: false, show: false },
+        });
+        const tabId = PreviewTabId.make(opened.tabId!);
+        yield* (yield* Manager.PreviewManager).reportStatus({
+          threadId: scope.thread.threadId,
+          tabId,
+          serverControlled: true,
+          navStatus: { _tag: "Success", url: "https://example.com/?t=1", title: "Example" },
+          canGoBack: false,
+          canGoForward: false,
+        });
+        // Opening DevTools on a desktop tab releases it until DevTools closes.
+        yield* Effect.promise(() => desktopDetachReady.promise);
+        desktopAttachesLate = true;
+        desktopTabs.delete(tabId);
+        desktopDetaches.emit("detach", { threadId: scope.thread.threadId, tabId });
+        yield* Effect.promise(() => desktopReleased.promise);
+        const reloading = Promise.withResolvers<void>();
+        const reloaded = Promise.withResolvers<void>();
+        initialNavigation = () => {
+          reloading.resolve();
+          return reloaded.promise;
+        };
+        let reloadDone = false;
+        let answeredAfterReload = false;
+        const pending = yield* broker
+          .invoke<unknown>({
+            scope,
+            operation,
+            input: operation === "status" ? {} : { expression: "document.title" },
+          })
+          .pipe(
+            Effect.tap(() => Effect.sync(() => (answeredAfterReload = reloadDone))),
+            Effect.forkScoped,
+          );
+        yield* Effect.promise(() => desktopAttachWaiting.promise);
+        yield* TestClock.adjust("10 seconds");
+        yield* Effect.promise(() => reloading.promise);
+        reloadDone = true;
+        reloaded.resolve();
+        const result = yield* Fiber.join(pending);
 
-      expect(yield* Fiber.join(pending)).toMatchObject({
-        available: true,
-        tabId,
-        url: "https://example.com/?t=1",
-      });
-    }),
-  ).pipe(Effect.provide(layer)),
+        expect(answeredAfterReload).toBe(true);
+        if (operation === "status")
+          expect(result).toMatchObject({ available: true, tabId, url: "https://example.com/?t=1" });
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect("the tab the desktop shows is visible and picked for agents without a tab", () =>

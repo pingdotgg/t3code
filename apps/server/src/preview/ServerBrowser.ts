@@ -2449,6 +2449,8 @@ const make = Effect.gen(function* () {
         message: "No server preview tab is open for this thread. Call preview_open first.",
       });
     }
+    // Reads skip the control queue, so a recovered tab must finish reloading its page first.
+    await tab.initialNavigation?.catch(constVoid);
     if (!READ_OPERATIONS.has(request.operation) && !tab.control.agentMayAct(request.agentSessionId))
       throw new BrowserControlInterrupted({
         message:
