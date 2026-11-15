@@ -665,7 +665,7 @@ function PullRequestCodeTab({
   withheldPaths.forEach((path, index) => {
     const result = withheldResults[index];
     if (result === undefined) return;
-    // A failed refetch still carries the last patch; show the failure, not that patch.
+    // A failed refresh still carries the earlier patch; show the failure instead of stale code.
     const data = result._tag === "Failure" ? null : AsyncResult.getOrElse(result, () => null);
     if (data === null) {
       withheldStatuses.set(path, result._tag === "Failure" ? "error" : "loading");
