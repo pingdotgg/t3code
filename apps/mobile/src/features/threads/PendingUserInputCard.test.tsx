@@ -28,7 +28,9 @@ vi.mock("react-native-reanimated", () => {
     Easing: { out: () => () => 0, cubic: () => 0 },
     FadeInUp: animation,
     FadeOutDown: animation,
+    useAnimatedRef: () => ({ current: null }),
     useAnimatedStyle: () => ({}),
+    useScrollOffset: () => ({ get: () => 0 }),
     useSharedValue: (value: number) => ({ value, set: () => {} }),
   };
 });
