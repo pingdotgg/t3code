@@ -681,7 +681,7 @@ export const ServerEventLoopStall = Schema.Struct({
    * Share of all cores' time spent running work over the sample that saw the
    * stall, with disk wait counted as idle. Load counts tasks blocked on I/O
    * too, so on Linux this tells CPU from I/O. Absent elsewhere, and absent when
-   * every core is not available to this process.
+   * this process cannot use every core.
    */
   cpuBusy: Schema.optionalKey(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 }))),
   cpuCount: PositiveInt,
