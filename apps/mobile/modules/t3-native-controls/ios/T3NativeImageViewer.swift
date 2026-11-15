@@ -137,11 +137,11 @@ final class T3NativeImageViewer: NSObject {
         if !settled, !finished, isNearCurrent(index), !decoded.contains(index) { decode(index) }
       }
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
-      let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
-      guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
-      // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
+      // ImageIO reads SVG poorly or not at all; the thumbnail is vector, so redraw it at full-screen size.
       let isSVG = file.pathExtension.lowercased() == "svg"
-      if image == nil, isSVG {
+      let image = isSVG ? nil : await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
+      guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
+      if isSVG {
         // The open transition hides the thumbnail, which would draw blank until it is back.
         await controller?.untilRevealed()
         guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
@@ -853,7 +853,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     // Original bytes keep the format and metadata; an SVG only has its rendered image. The copy
     // belongs to this save, since closing the viewer deletes its files before Photos may read them.
     let original = fileForPage(currentIndex).flatMap { file -> URL? in
-      guard let source = CGImageSourceCreateWithURL(file as CFURL, nil), CGImageSourceGetCount(source) > 0 else { return nil }
+      guard file.pathExtension.lowercased() != "svg", let source = CGImageSourceCreateWithURL(file as CFURL, nil), CGImageSourceGetCount(source) > 0 else { return nil }
       let copy = FileManager.default.temporaryDirectory.appendingPathComponent("t3-save-\(UUID().uuidString)")
         .appendingPathComponent(file.lastPathComponent)
       do {
