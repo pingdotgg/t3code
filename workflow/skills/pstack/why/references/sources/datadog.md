@@ -4,7 +4,7 @@
 
 Datadog holds the runtime record, what actually happened in production, as opposed to what was planned or discussed.
 
-- **Metrics.** Counters, gauges, histograms instrumented by the team. A metric's _presence_ is itself evidence that someone thought the number worth watching.
+- **Metrics.** Counters, gauges, histograms instrumented by the team. A metric's *presence* is itself evidence that someone thought the number worth watching.
 - **Monitors & alerts.** Conditions the team decided warranted waking someone up. A monitor firing on `rate_limit_hit > 10/min` is direct evidence the team worried about that threshold.
 - **Dashboards.** Curated views of what the team considers important for a subsystem.
 - **APM traces & spans.** Request-level runtime data, for "why is this slow" / "why is there a timeout here" questions.
@@ -84,12 +84,11 @@ Use the Datadog MCP. Start broad, then narrow.
 - **Overfitting to the chart you found.** A chart reflects its maker's framing. A chart named "retry success rate" is evidence the team cared about retry success, not that it's why a specific line of code exists.
 - **Vanished telemetry.** Metrics can be renamed, deleted, or have short retention. If you can't find data from the relevant window, that's a gap, not a null result.
 - **Noise at scale.** Narrow log searches by service, tag, and time window aggressively. Use `analyze_datadog_logs` to aggregate rather than dumping raw logs.
-- **Instrumented != caused.** A metric shows someone cared enough to measure something, not that the code was added _because_ of it. Cross-reference with commit/PR dates.
+- **Instrumented != caused.** A metric shows someone cared enough to measure something, not that the code was added *because* of it. Cross-reference with commit/PR dates.
 
 ## What to return
 
 For each relevant item:
-
 - Type (dashboard / monitor / metric / log pattern / trace / incident / notebook)
 - Title or name
 - Link or identifier (dashboard ID, monitor ID, metric name, incident ID)

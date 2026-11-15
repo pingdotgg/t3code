@@ -23,10 +23,10 @@ That covers the legacy flat (`<id>.jsonl`), current nested (`<id>/<id>.jsonl`), 
 
 One message, three `Agent` calls, `subagent_type: general-purpose`, explicit `model:` on each. Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the history), so do not use a read-only agent type here. The prompt forbids file writes; the parent applies edits.
 
-| Lens      | `model` | Prompt template                    |
-| --------- | ------- | ---------------------------------- |
-| Judgment  | `opus`  | `references/judgment-reviewer.md`  |
-| Tooling   | `opus`  | `references/tooling-reviewer.md`   |
+| Lens | `model` | Prompt template |
+|---|---|---|
+| Judgment | `opus` | `references/judgment-reviewer.md` |
+| Tooling | `opus` | `references/tooling-reviewer.md` |
 | Divergent | `fable` | `references/divergent-reviewer.md` |
 
 Pass each template verbatim, substituting the transcript path or digest where marked. Reviewers return findings in the `Agent` response body.

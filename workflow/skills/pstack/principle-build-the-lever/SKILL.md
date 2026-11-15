@@ -2,7 +2,6 @@
 name: principle-build-the-lever
 description: "Apply to any non-trivial work, not just bulk work: edits, migrations, analyses, checks. Build the tool that does it or proves it (codemod, script, generator, or a skill your subagents follow) instead of working by hand. The tool is the artifact a reviewer can rerun."
 ---
-
 # Build the Lever
 
 When the work isn't trivial, build the tool that does it instead of doing it by hand.

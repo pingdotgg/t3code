@@ -1,6 +1,6 @@
 ---
 name: automate-me
-description: 'Use for "automate me", "create/update/refresh my -mode skill", "turn/capture my preferences or working style into a skill", or wanting agents to follow how the user works. Drafts or revises a personal -mode skill, optionally pulling fresh evidence from recent chat history.'
+description: "Use for \"automate me\", \"create/update/refresh my -mode skill\", \"turn/capture my preferences or working style into a skill\", or wanting agents to follow how the user works. Drafts or revises a personal -mode skill, optionally pulling fresh evidence from recent chat history."
 ---
 
 # Automate me
@@ -19,7 +19,6 @@ Look recursively for `.claude/skills/**/*-mode/SKILL.md` and `~/.claude/skills/*
 - Start fresh (rare, ask why before doing it)
 
 Update mode changes the rest of the flow:
-
 - Step 1 mines only history since the skill was last edited (`git log -1 --format=%cI <path>`).
 - Step 2 asks what's changed or missing, not what to capture from zero.
 - Step 4 edits the existing file in place. Preserve sections the user hasn't contradicted. Revise ones with new evidence. Add new sections only for genuinely new rules.

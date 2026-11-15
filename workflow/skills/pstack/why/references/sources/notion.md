@@ -48,7 +48,6 @@ Use the Notion MCP.
 ## What to return
 
 For each relevant doc:
-
 - Title and URL
 - Authors and last-updated date
 - The motivation text (verbatim quote), with page/section location

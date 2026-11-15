@@ -180,6 +180,9 @@ export default defineConfig({
     ignorePatterns: [
       ".repos/**",
       "infra/task-cache/vendor/**",
+      // Vendored skills stay byte-identical to upstream so syncs diff cleanly.
+      "workflow/skills/mattpocock/**",
+      "workflow/skills/pstack/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
       ".alchemy",

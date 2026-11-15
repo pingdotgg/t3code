@@ -139,7 +139,6 @@ That check ran against the raw cell, so a value with a leading space (`" =1+1"`)
 while a spreadsheet still parsed it as a formula. The check now ignores leading blanks.
 
 Any further script coming across from upstream gets the same treatment before it lands.
-
 - `create-verification-skill` and `maintain-verification-skill` had their em dashes removed, the
   one rule from `unslop` that upstream does not apply to itself everywhere. No wording beyond the
   punctuation changed.

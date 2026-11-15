@@ -41,7 +41,6 @@ Use the Linear MCP.
 ## What to return
 
 For each relevant ticket:
-
 - Ticket ID and title
 - The problem/motivation quoted from the description or comments (not paraphrased. The synthesizer needs the exact text to cite)
 - Labels, parent issue, project

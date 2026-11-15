@@ -7,6 +7,7 @@ Turn something the user can't answer alone into a **questionnaire**: a Markdown 
 
 **Grill the send, not the subject.** Interview the user only about the _send_, which they can always answer: who it goes to, and what they need back. The questions in the document then target the **gap** between what the recipient knows and what the user needs.
 
+
 1. **Who is it going to?** Ask, in one exchange, the recipient's role, expertise, and relationship to the user. This fixes the questionnaire's tone and how much context it must carry. Done when you know who the recipient is and what they know that the user doesn't.
 
 2. **What do you need back?** Ask, in one exchange, the specific decisions or facts the user can't resolve alone and needs from this person. Done when you have a concrete list of what the user must walk away able to do or decide.
@@ -43,7 +44,6 @@ One `##` section per theme. Under each, its questions, most-important-first. Eve
 _Why this matters: it decides whether we provision for burst traffic now or defer it._
 
 >
-
 </question-example>
 
 ## Anything else?

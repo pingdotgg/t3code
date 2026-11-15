@@ -14,7 +14,6 @@ Design operations so they converge to the correct state regardless of how many t
 Anything a run leaves behind, such as a lock, a temporary file, a half-written record, or a claimed job, must be recognizable as stale by the next run. Judge staleness by evidence that stays true wherever the previous run could have stopped, not only in the common case. A marker that the next run cannot judge turns every crash into manual cleanup. For example, write to a temporary path and rename it into place, or compare artifacts by content instead of by creation order.
 
 **The test:**
-
 1. What happens if this runs twice in a row?
 2. What happens if the previous run crashed at every possible point?
 3. Does re-execution converge to the same end state?
