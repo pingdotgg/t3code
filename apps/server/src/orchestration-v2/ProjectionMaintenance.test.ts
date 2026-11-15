@@ -392,6 +392,7 @@ const countContent = (threadId: ThreadId) =>
     (sql) => sql<{
       readonly items: number;
       readonly positions: number;
+      readonly counts: number;
       readonly messages: number;
       readonly found: number;
       readonly threads: number;
@@ -399,6 +400,7 @@ const countContent = (threadId: ThreadId) =>
       SELECT
         (SELECT COUNT(*) FROM orchestration_v2_projection_turn_items WHERE thread_id = ${threadId}) AS items,
         (SELECT COUNT(*) FROM orchestration_v2_turn_item_positions WHERE thread_id = ${threadId}) AS positions,
+        (SELECT COUNT(*) FROM orchestration_v2_projection_turn_item_counts WHERE thread_id = ${threadId}) AS counts,
         (SELECT COUNT(*) FROM orchestration_v2_projection_messages WHERE thread_id = ${threadId}) AS messages,
         (SELECT COUNT(*) FROM orchestration_v2_message_search WHERE orchestration_v2_message_search MATCH ${`purgeable${threadId.replace(/\W/g, "")}`}) AS found,
         (SELECT COUNT(*) FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}) AS threads
@@ -486,12 +488,20 @@ it.effect("purges content of threads deleted beyond the retained history", () =>
     const beforeOld = yield* countContent(old.id);
     assert.isAbove(beforeOld?.items ?? 0, 0);
     assert.isAbove(beforeOld?.positions ?? 0, 0);
+    assert.isAbove(beforeOld?.counts ?? 0, 0);
     assert.equal(beforeOld?.found, 1);
 
     const first = yield* maintenance.pruneEventStore();
     assert.isAbove(first.purgedProjectionRowCount, 0);
     const afterOld = yield* countContent(old.id);
-    assert.deepEqual(afterOld, { items: 0, positions: 0, messages: 0, found: 0, threads: 1 });
+    assert.deepEqual(afterOld, {
+      items: 0,
+      positions: 0,
+      counts: 0,
+      messages: 0,
+      found: 0,
+      threads: 1,
+    });
     assert.equal((yield* countContent(recent.id))?.items, 1);
     assert.equal((yield* countContent(recent.id))?.found, 1);
     assert.deepEqual(yield* projections.getThreadProjection(live.id), liveBefore);
@@ -517,6 +527,8 @@ it.effect("lists every thread-scoped projection table or names why it is kept", 
       "orchestration_v2_projection_threads",
       "orchestration_v2_projection_provider_sessions",
       "orchestration_v2_projection_provider_session_bindings",
+      // Kept exact by triggers on projection_turn_items.
+      "orchestration_v2_projection_turn_item_counts",
     ];
     assert.deepEqual(
       scoped
