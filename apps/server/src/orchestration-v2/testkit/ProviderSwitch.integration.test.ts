@@ -58,6 +58,7 @@ import * as EffectOutbox from "../EffectOutbox.ts";
 import * as ProjectionReplay from "./ProjectionReplay.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
   CLAUDE_MODEL_SELECTION,
@@ -132,6 +133,8 @@ function makeTestAdapter(input: {
   readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  /** Like ACP: opening resumes the initial native id, and forcing a new thread restarts the runtime. */
+  readonly runtimeStarts?: Ref.Ref<ReadonlyArray<string>>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   return {
     instanceId: input.instanceId,
@@ -141,6 +144,12 @@ function makeTestAdapter(input: {
     openSession: (sessionInput) =>
       Effect.gen(function* () {
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        if (input.runtimeStarts !== undefined) {
+          yield* Ref.update(input.runtimeStarts, (starts) => [
+            ...starts,
+            sessionInput.initialNativeThreadId ?? "new",
+          ]);
+        }
         if (input.closedSessions !== undefined) {
           const closedSessions = input.closedSessions;
           yield* Effect.addFinalizer(() =>
@@ -194,6 +203,9 @@ function makeTestAdapter(input: {
               }),
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
+              if (threadInput.forceNewNativeThread && input.runtimeStarts !== undefined) {
+                yield* Ref.update(input.runtimeStarts, (starts) => [...starts, "replacement"]);
+              }
               const createdAt = yield* DateTime.now;
               const generation =
                 input.nativeThreadGeneration === undefined
@@ -3324,16 +3336,19 @@ describe("orchestration v2 provider switching", () => {
     "immediately",
     "behind a running turn",
     "and recovers it after it breaks",
+    "and recovers it after it breaks and the server restarts",
   ] as const)(
     "starts a fresh provider session %s and never hands earlier runs to a later provider",
     (variant) =>
       Effect.gen(function* () {
         const queued = variant === "behind a running turn";
-        const broken = variant === "and recovers it after it breaks";
-        const key = queued ? "queued" : broken ? "broken" : "immediate";
+        const restarted = variant === "and recovers it after it breaks and the server restarts";
+        const broken = restarted || variant === "and recovers it after it breaks";
+        const key = queued ? "queued" : restarted ? "restarted" : broken ? "broken" : "immediate";
         const cwd = yield* checkpointWorkspace(`fresh-context-${key}`);
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+        const runtimeStarts = yield* Ref.make<ReadonlyArray<string>>([]);
         // A queued start has nobody to refuse, so a busy session must stay up.
         const backgroundWork = yield* Ref.make(queued);
         const started = yield* Deferred.make<void>();
@@ -3347,6 +3362,7 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             closedSessions,
+            runtimeStarts,
             backgroundWork,
             nativeThreadGeneration: yield* Ref.make(0),
             ...(queued
@@ -3451,7 +3467,18 @@ describe("orchestration v2 provider switching", () => {
           // Claude hosts one native thread per session, so an idle old one is closed.
           assert.deepEqual(yield* Ref.get(closedSessions), queued ? [] : [firstSession.id]);
           yield* Ref.set(backgroundWork, false);
+          let startsBeforeRecovery = 0;
           if (broken) {
+            if (restarted) {
+              const brokenProjection = yield* orchestrator.getThreadProjection(freshThreadId);
+              const brokenThread = brokenProjection.providerThreads.find(
+                (thread) => thread.id === brokenProjection.thread.activeProviderThreadId,
+              )!;
+              assert.equal(brokenThread.status, "error");
+              const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+              yield* sessions.close(brokenThread.providerSessionId!);
+            }
+            startsBeforeRecovery = (yield* Ref.get(runtimeStarts)).length;
             yield* send("epsilon", CLAUDE_MODEL_SELECTION);
             yield* worker.drain();
             yield* waitForIdle(freshThreadId);
@@ -3491,6 +3518,11 @@ describe("orchestration v2 provider switching", () => {
             assert.include(recovered.text, "Prompt beta");
             assert.notInclude(recovered.text, "Prompt alpha");
             assert.notInclude(recovered.text, "Prompt zero");
+            // The broken native id is never reopened; a reopened session starts fresh only once.
+            assert.deepEqual(
+              (yield* Ref.get(runtimeStarts)).slice(startsBeforeRecovery),
+              restarted ? ["new"] : ["replacement"],
+            );
             const recoveredRun = projection.runs.find(
               (run) => run.userMessageId === `message:fresh-context:${key}:epsilon`,
             )!;
