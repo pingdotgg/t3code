@@ -1,0 +1,40 @@
+diff --git a/android/src/main/java/com/horcrux/svg/MarkerView.java b/android/src/main/java/com/horcrux/svg/MarkerView.java
+index 8c796236f9f4b58717ac3fbab65e33d11ba032f2..d886e13d2cd1390a396716ecf4a379205e6a8aeb 100644
+--- a/android/src/main/java/com/horcrux/svg/MarkerView.java
++++ b/android/src/main/java/com/horcrux/svg/MarkerView.java
+@@ -114,6 +114,17 @@ class MarkerView extends GroupView {
+     }
+   }
+ 
++  private static double parseOrientAngle(String orient) {
++    if (orient == null) {
++      return 0;
++    }
++    try {
++      return Double.parseDouble(orient);
++    } catch (NumberFormatException e) {
++      return 0;
++    }
++  }
++
+   void renderMarker(
+       Canvas canvas, Paint paint, float opacity, RNSVGMarkerPosition position, float strokeWidth) {
+     int count = saveAndSetupCanvas(canvas, mCTM);
+@@ -122,8 +133,15 @@ class MarkerView extends GroupView {
+     Point origin = position.origin;
+     markerTransform.setTranslate((float) origin.x, (float) origin.y);
+ 
+-    double markerAngle = "auto".equals(mOrient) ? -1 : Double.parseDouble(mOrient);
+-    float degrees = 180 + (float) (markerAngle == -1 ? position.angle : markerAngle);
++    double markerAngle = position.angle;
++    if ("auto-start-reverse".equals(mOrient)) {
++      if (position.type == RNSVGMarkerType.kStartMarker) {
++        markerAngle += 180;
++      }
++    } else if (!"auto".equals(mOrient)) {
++      markerAngle = parseOrientAngle(mOrient);
++    }
++    float degrees = 180 + (float) markerAngle;
+     markerTransform.preRotate(degrees);
+ 
+     boolean useStrokeWidth = "strokeWidth".equals(mMarkerUnits);
