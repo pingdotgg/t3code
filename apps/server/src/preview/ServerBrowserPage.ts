@@ -1116,9 +1116,10 @@ const pressChord = async (page: Page, chord: string, deadline: number) => {
       await withinDeadline(deadline, () => page.keyboard.down(key));
     }
   } finally {
-    const released = (async () => {
-      for (const key of held.reverse()) await page.keyboard.up(key).catch(constVoid);
-    })();
+    // Sent together, in order: a key whose release stalls must not keep a modifier held.
+    const released = Promise.all(
+      held.reverse().map((key) => page.keyboard.up(key).catch(constVoid)),
+    );
     await withinDeadline(deadline, () => released);
   }
 };
