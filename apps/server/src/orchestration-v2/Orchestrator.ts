@@ -1760,7 +1760,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const busyProviderThreadIds = Effect.fn("Orchestrator.busyProviderThreadIds")(function* (
     providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
   ) {
-    const busy = new Set<ProviderThreadId>();
+    const busy = new Set<OrchestrationV2ProviderThread["id"]>();
     for (const owner of providerThreads) {
       if (owner.providerSessionId === null) continue;
       const runtime = yield* providerSessions
@@ -13197,7 +13197,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const busyOwners =
       command.holdQueue === true
         ? yield* busyProviderThreadIds(projection.providerThreads)
-        : new Set<ProviderThreadId>();
+        : new Set<OrchestrationV2ProviderThread["id"]>();
     const hasBackgroundWork =
       busyOwners.size > 0 ||
       (run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
