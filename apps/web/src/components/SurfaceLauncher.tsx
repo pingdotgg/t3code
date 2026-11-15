@@ -313,18 +313,20 @@ function launcherHasFocus(launcher: HTMLElement | null): boolean {
   return !!launcher && !!active && (launcher.contains(active) || active.contains(launcher));
 }
 
-function launcherRows(launcher: HTMLElement): HTMLButtonElement[] {
+function launcherRows(launcher: HTMLElement): HTMLElement[] {
   return Array.from(
-    launcher.querySelectorAll<HTMLButtonElement>('[role="listitem"] > button:not(:disabled)'),
+    launcher.querySelectorAll<HTMLElement>(
+      '[role="listitem"] > button:not(:disabled), [role="listitem"] a[href]',
+    ),
   );
 }
 
 function verticalLauncherNeighbor(
-  rows: readonly HTMLButtonElement[],
+  rows: readonly HTMLElement[],
   index: number,
   forward: boolean,
-): HTMLButtonElement | undefined {
-  const rectOf = (row: HTMLButtonElement) => (row.parentElement ?? row).getBoundingClientRect();
+): HTMLElement | undefined {
+  const rectOf = (row: HTMLElement) => (row.parentElement ?? row).getBoundingClientRect();
   const from = rectOf(rows[index]!);
   const column = rows.flatMap((row, candidate) => {
     if (candidate === index) return [];

@@ -366,7 +366,7 @@ function LauncherThreadLabel({
   const thread = useThreadShell(threadRef);
   return (
     <div
-      role="presentation"
+      role="listitem"
       className="flex min-w-0 items-baseline gap-1 px-2.5 pt-2 pb-1 text-caption text-dim-foreground"
     >
       <span className="shrink-0">Open for</span>
@@ -374,7 +374,6 @@ function LauncherThreadLabel({
         <ThreadContextChip
           record={{ ...threadRef, title: thread?.title ?? "New thread" }}
           projectId={projectId}
-          link={false}
         />
       </span>
     </div>
