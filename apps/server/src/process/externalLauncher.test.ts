@@ -117,7 +117,11 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
     const spawned: ChildProcess.StandardCommand[] = [];
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
+      for (const cwd of [
+        "~/Applications/My App.app",
+        "/Applications/My App.app",
+        "file:///tmp/a%3A12#L5",
+      ]) {
         yield* launcher.launchEditor({ editor: "file-manager", cwd });
       }
       yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
@@ -141,6 +145,7 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
       [
         ["/Users/server/Applications/My App.app"],
         ["/Applications/My App.app"],
+        ["/tmp/a:12"],
         ["--goto", "/Users/server/notes/todo.md:3"],
         ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
       ],
@@ -203,12 +208,20 @@ it.effect.skipIf(windowsHost)(
       const path = yield* Path.Path;
       const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
       const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
-      const codePath = path.join(binDir, "code");
-      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(codePath, 0o755);
+      for (const name of ["code", "zeditor", "idea"]) {
+        const executable = path.join(binDir, name);
+        yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+        yield* fileSystem.chmod(executable, 0o755);
+      }
       const colonProject = path.join(project, "build:2026");
       yield* fileSystem.makeDirectory(colonProject);
       const file = `${path.join(project, "file.ts")}:3:7`;
+      const exactFile = path.join(project, "a:12");
+      yield* fileSystem.writeFileString(exactFile, "exact");
+      yield* fileSystem.makeDirectory(`${exactFile}:1:1`);
+      const positionedFile = path.join(project, "position.txt");
+      yield* fileSystem.writeFileString(positionedFile, "position");
+      yield* fileSystem.writeFileString(`${positionedFile}:7`, "collision");
 
       const spawned: ChildProcess.StandardCommand[] = [];
       yield* Effect.gen(function* () {
@@ -216,7 +229,18 @@ it.effect.skipIf(windowsHost)(
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
         yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
-        yield* launcher.launchEditor({ editor: "vscode", cwd: `${colonProject}:1:1` });
+        for (const suffix of ["", "#L5"]) {
+          yield* launcher.launchEditor({ editor: "vscode", cwd: `file://${exactFile}${suffix}` });
+        }
+
+        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${exactFile}` });
+        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${positionedFile}#L5C3` });
+        yield* launcher.launchEditor({ editor: "zed", cwd: `file://${positionedFile}#L7` });
+        yield* launcher.launchEditor({
+          editor: "vscode",
+          cwd: `file://${project}/exponent:1e3#L5`,
+        });
+        yield* launcher.launchEditor({ editor: "idea", cwd: `file://${exactFile}#L5C3` });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -234,7 +258,13 @@ it.effect.skipIf(windowsHost)(
           ["--new-window", project],
           ["--goto", file],
           ["--new-window", colonProject],
-          ["--new-window", colonProject],
+          [exactFile],
+          [exactFile],
+          [exactFile],
+          [`${positionedFile}:5:3`],
+          [positionedFile],
+          [`${project}/exponent:1e3`],
+          ["--line", "5", "--column", "2", exactFile],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

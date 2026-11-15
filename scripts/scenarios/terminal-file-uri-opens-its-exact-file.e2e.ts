@@ -24,8 +24,7 @@ const removeEditorArgs = () =>
     Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(EDITOR_ARGS, { force: true })),
   );
 
-// GNU ls, made hostless, for filenames that end like a position. `report.txt` sits beside
-// them, so a link that drops the suffix opens the wrong file instead of nothing.
+// GNU ls, made hostless, for filenames that end like a position.
 const listed = (name: string) =>
   `command ls -d --hyperlink=always --color=never -1 --quoting-style=literal -- '${name}' | sed -E 's@file://[^/]+/@file:///@'`;
 // An opaque label, so only the URI can name the file.
@@ -33,8 +32,10 @@ const hashed = (uriPath: string) =>
   `printf '\\033]8;;file://%s\\033\\\\CLICKME\\033]8;;\\033\\\\\\n' "$PWD/${uriPath}"`;
 
 const LINKS = [
-  { print: listed("report.txt:12-64"), opens: ["--goto", "report.txt:12-64:1:1"] },
-  { print: hashed("report.txt%3A12#L5"), opens: ["--goto", "report.txt:12:5:1"] },
+  { print: listed("report.txt:12-64"), opens: ["report.txt:12-64"] },
+  { print: listed("zero.txt:0"), opens: ["zero.txt:0"] },
+  { print: hashed("numeric.txt%3A12#L5"), opens: ["numeric.txt:12"] },
+  { print: hashed("position.txt#L5C3"), opens: ["--goto", "position.txt:5:3"] },
   { print: listed("build:2026"), opens: ["--new-window", "build:2026"] },
 ];
 
@@ -43,8 +44,11 @@ test(
   WEB,
   async ({ t3, app, browser, screen }) => {
     await removeEditorArgs();
-    const files: Record<string, string> = { "build:2026/keep.txt": "keep\n" };
-    for (const name of ["report.txt", "report.txt:12", "report.txt:12-64"]) {
+    const files: Record<string, string> = {
+      "build:2026/keep.txt": "keep\n",
+      "numeric.txt:12:1:1/keep.txt": "decoy\n",
+    };
+    for (const name of ["report.txt:12-64", "zero.txt:0", "numeric.txt:12", "position.txt"]) {
       files[name] = `${name}\n`;
     }
     // Enough rows to scroll, so every row is the link. Scripts keep the typed commands short.

@@ -1,4 +1,4 @@
-import { resolvePathLinkTarget, splitFilePathPosition } from "@t3tools/shared/fileLinks";
+import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -351,25 +351,18 @@ describe("resolvePathLinkTarget", () => {
   // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
   it("does not resolve an OSC 8 file URI target against the cwd", () => {
     expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
-      "/var/tmp/report.txt",
+      "file:///var/tmp/report.txt",
     );
     expect(
       resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
     ).not.toMatch(/^\/workspace\/project\//);
-    // The URI path is the exact filename, even one ending like a position, as consumers read it.
+    for (const name of ["report.txt:12-64", "report.txt:0", "report.txt:12"]) {
+      const uri = `file:///var/tmp/${encodeURIComponent(name)}`;
+      expect(resolveTerminalLinkTarget(uri, "/workspace/project")).toBe(uri);
+    }
     expect(
-      splitFilePathPosition(
-        resolveTerminalLinkTarget(
-          `file:///var/tmp/${encodeURIComponent("report.txt:12-64")}`,
-          "/workspace/project",
-        ),
-      ),
-    ).toEqual({ path: "/var/tmp/report.txt:12-64", line: 1, column: 1 });
-    expect(
-      splitFilePathPosition(
-        resolveTerminalLinkTarget("file:///var/tmp/report.txt:12#L5", "/workspace/project"),
-      ),
-    ).toEqual({ path: "/var/tmp/report.txt:12", line: 5, column: 1 });
+      resolveTerminalLinkTarget("file:///var/tmp/report.txt:12#L5", "/workspace/project"),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
     expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
       "/workspace/project/file:notes.md",
     );

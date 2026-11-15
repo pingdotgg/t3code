@@ -1,11 +1,4 @@
-import {
-  formatFilePathPosition,
-  parseFileUrlHref,
-  resolvePathLinkTarget,
-  splitFilePathPosition,
-} from "@t3tools/shared/fileLinks";
-import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -170,12 +163,10 @@ export function isTerminalUrl(value: string): boolean {
 export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
   const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
-  const path = stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path));
-  const position = splitFilePathPosition("", fileUrl.hash);
-  // Consumers strip a trailing `:line:column`, so a filename ending like one gets a full one appended.
-  if (splitFilePathPosition(path).path !== path)
-    return `${path}:${position.line ?? 1}:${position.column ?? 1}`;
-  return formatFilePathPosition({ ...position, path });
+  // Keep URI identity until consumers decode the filename, separately from its position.
+  const uri = new URL(text);
+  if (!fileUrl.path.startsWith("\\")) uri.hostname = "";
+  return uri.href;
 }
 
 export function collectWrappedTerminalLinkLine(
