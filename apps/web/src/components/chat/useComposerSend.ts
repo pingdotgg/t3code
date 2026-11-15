@@ -45,7 +45,6 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { createModelSelection } from "@t3tools/shared/model";
 import { type SetStateAction, useLayoutEffect, useRef } from "react";
-import { flushSync } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import {
   isAtomCommandInterrupted,
@@ -221,7 +220,7 @@ interface ComposerSendInput {
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadRequests["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadRequests["respondingRequestIds"];
-  readonly activePendingProgress: PendingThreadRequests["activePendingProgress"];
+  readonly activePendingUserInput: PendingThreadRequests["activePendingUserInput"];
   readonly onAdvanceActivePendingUserInput: PendingThreadRequests["onAdvanceActivePendingUserInput"];
   readonly onRespondToApproval: PendingThreadRequests["onRespondToApproval"];
   readonly beginLocalDispatch: LocalDispatchState["beginLocalDispatch"];
@@ -317,7 +316,7 @@ export function useComposerSend(input: ComposerSendInput) {
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
-    activePendingProgress,
+    activePendingUserInput,
     onAdvanceActivePendingUserInput,
     onRespondToApproval: onRespondToApprovalStable,
     beginLocalDispatch,
@@ -411,7 +410,7 @@ export function useComposerSend(input: ComposerSendInput) {
         ? parseSideChatCommand(promptAtSend)
         : null;
     const answeringQuestion =
-      Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
+      Boolean(activePendingUserInput) && sendCtx?.answeringPendingUserInput !== false;
     const startsSideChat =
       onSideChat !== undefined && sideChatCommand !== null && sideChatDisabledReason === null;
     // An answer responds to the open request rather than starting a turn, so the new-message
@@ -905,25 +904,18 @@ export function useComposerSend(input: ComposerSendInput) {
       shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
       activeThreadKey
     ) {
-      let resolveDockStarted: (() => void) | undefined;
-      const dockStarted = new Promise<void>((resolve) => {
-        resolveDockStarted = resolve;
-      });
-      const dockTransition = runMobileComposerTransition(
+      const docking = runMobileComposerTransition(
         () => {
-          flushSync(() => {
-            captureDraftHeroComposerRect();
-            setDockedDraftHeroThreadKey(activeThreadKey);
-          });
-          resolveDockStarted?.();
+          captureDraftHeroComposerRect();
+          setDockedDraftHeroThreadKey(activeThreadKey);
         },
         {
           active: panelAnimationsActive,
           durationMs: panelAnimationDurationMs,
         },
       );
-      void dockTransition.catch(() => resolveDockStarted?.());
-      await dockStarted;
+      // Awaiting only a real transition keeps an inline dock in the same render as the send.
+      if (docking) await docking;
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
@@ -1179,9 +1171,12 @@ export function useComposerSend(input: ComposerSendInput) {
       : null;
     // Keep new-thread flows from reusing this draft while attachments and worktree setup settle.
     if (sentDraftThreadRef) markPromotedDraftThreadByRef(sentDraftThreadRef);
-    promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    // The prompt ref and cursor belong to the thread on screen, which may no longer be this one.
+    if (currentRouteThreadKeyRef.current === routeThreadKey) {
+      promptRef.current = "";
+      composerRef.current?.resetCursorState();
+    }
 
     const title = deriveThreadTitleSeed({
       text: messageTextForSend,
