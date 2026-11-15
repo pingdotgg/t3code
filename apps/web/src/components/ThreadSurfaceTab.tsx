@@ -427,16 +427,13 @@ function useTerminalIdAllocator(threadRef: ScopedThreadRef): () => string {
   };
 }
 
-/** The terminal keys' labels for its tooltips (split, new, close), as a focused terminal hears them. */
+/** The terminal keys' labels for its tooltips (new, close), as a focused terminal hears them. */
 function useTerminalShortcutLabels() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const options = { context: { terminalFocus: true, terminalOpen: true } };
-  const label = (
-    command: "terminal.split" | "terminal.splitVertical" | "terminal.new" | "terminal.close",
-  ) => shortcutLabelForCommand(keybindings, command, options) ?? undefined;
+  const label = (command: "terminal.new" | "terminal.close") =>
+    shortcutLabelForCommand(keybindings, command, options) ?? undefined;
   return {
-    splitShortcutLabel: label("terminal.split"),
-    splitVerticalShortcutLabel: label("terminal.splitVertical"),
     newShortcutLabel: label("terminal.new"),
     closeShortcutLabel: label("terminal.close"),
   };
