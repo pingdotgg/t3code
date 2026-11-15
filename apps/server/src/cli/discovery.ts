@@ -153,15 +153,14 @@ export type ThreadTools = ReturnType<typeof makeThreadTools>;
  * outside agent does, and revokes that session when the command ends.
  */
 export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function* <A, E, R>(
-  flags: { readonly baseDir: Option.Option<string> },
+  flags: { readonly baseDir: Option.Option<string>; readonly json?: boolean },
   run: (tools: ThreadTools) => Effect.Effect<A, E, R>,
   options?: { readonly access?: AuthMcpClientAccess; readonly quietLogs?: boolean },
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
-  const config = yield* resolveCliAuthConfig(flags, logLevel, {
-    quietLogs: options?.quietLogs === true,
-  });
-  const minimumLogLevel = options?.quietLogs === true ? "Error" : config.logLevel;
+  const quietLogs = options?.quietLogs ?? flags.json ?? false;
+  const config = yield* resolveCliAuthConfig(flags, logLevel, { quietLogs });
+  const minimumLogLevel = quietLogs ? "Error" : config.logLevel;
   return yield* Effect.gen(function* () {
     const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
     if (Option.isNone(runtimeState)) {
@@ -195,7 +194,7 @@ export const withThreadTools = Effect.fn("cli.thread.withThreadTools")(function*
     Effect.provideService(References.MinimumLogLevel, minimumLogLevel),
     Effect.provide(
       EnvironmentAuth.layerRuntime.pipe(
-        Layer.provide(ServerConfig.layer(config)),
+        Layer.provideMerge(ServerConfig.layer(config)),
         Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
       ),
     ),
