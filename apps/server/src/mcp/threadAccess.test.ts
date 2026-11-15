@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
-import { readThread } from "./threadAccess.ts";
+import { assertTargetWithinLimits, readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const claudeCode: McpInvocationContext.McpClientCaller = {
@@ -34,11 +34,12 @@ const linksHint =
 const readBare = (
   existing: ReadonlyArray<OrchestrationV2ThreadShell | ThreadId>,
   scope: McpInvocationContext.McpInvocationScope = client,
+  threadId: ThreadId = bareId,
 ) => {
   const shells = existing.map((shell) =>
     typeof shell === "string" ? liveThreadShell(shell) : shell,
   );
-  return readThread(bareId).pipe(
+  return readThread(threadId).pipe(
     Effect.flip,
     Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     Effect.provide(
@@ -99,5 +100,41 @@ it.effect("tells a caller with linked environments that the thread may be on one
       },
     );
     expect(fenced.message).toBe("The thread was not found.");
+  }),
+);
+
+it.effect("points an unencoded delegated-task id at the encoded thread it belongs to", () =>
+  Effect.gen(function* () {
+    const commandId = `command:mcp:${bareId}:delegate-task:0e7d2c41-6b9a-4f3e-8d15-a2c4b6e8f019`;
+    const encoded = ThreadId.make(`thread:delegated-task:${encodeURIComponent(commandId)}`);
+    const error = yield* readBare(
+      [encoded],
+      client,
+      ThreadId.make(`thread:delegated-task:${commandId}`),
+    );
+
+    expect(error.code).toBe("thread_not_found");
+    expect(error.message).toContain(`\`${encoded}\``);
+  }),
+);
+
+it.effect("identifies the target and effective caller ceiling when a thread write is refused", () =>
+  Effect.gen(function* () {
+    for (const [runtimeMode, interactionMode, code] of [
+      ["approval-required", "default", "runtime_mode_escalation_denied"],
+      ["full-access", "plan", "interaction_mode_escalation_denied"],
+      ["approval-required", "plan", "runtime_mode_escalation_denied"],
+    ] as const) {
+      const target = liveThreadShell(bareId, { runtimeMode: "full-access" });
+      const error = yield* assertTargetWithinLimits({ runtimeMode, interactionMode }, target).pipe(
+        Effect.flip,
+      );
+
+      expect(error.code).toBe(code);
+      expect(error.message).toContain(bareId);
+      expect(error.message).toContain("full-access/default");
+      expect(error.message).toContain(`${runtimeMode}/${interactionMode}`);
+      expect(error.message).not.toMatch(/child|parent mode/i);
+    }
   }),
 );
