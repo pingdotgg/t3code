@@ -36,6 +36,10 @@ import enScripts from "../locales/en/scripts.json";
 import zhHansScripts from "../locales/zh-Hans/scripts.json";
 import enUi from "../locales/en/ui.json";
 import zhHansUi from "../locales/zh-Hans/ui.json";
+import enCloud from "../locales/en/cloud.json";
+import zhHansCloud from "../locales/zh-Hans/cloud.json";
+import enClerk from "../locales/en/clerk.json";
+import zhHansClerk from "../locales/zh-Hans/clerk.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -66,6 +70,8 @@ declare module "i18next" {
       git: typeof enGit;
       scripts: typeof enScripts;
       ui: typeof enUi;
+      cloud: typeof enCloud;
+      clerk: typeof enClerk;
     };
   }
 }
@@ -108,6 +114,8 @@ if (!i18next.isInitialized) {
       "git",
       "scripts",
       "ui",
+      "cloud",
+      "clerk",
     ],
     resources: {
       en: {
@@ -130,6 +138,8 @@ if (!i18next.isInitialized) {
         git: enGit,
         scripts: enScripts,
         ui: enUi,
+        cloud: enCloud,
+        clerk: enClerk,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -151,6 +161,8 @@ if (!i18next.isInitialized) {
         git: zhHansGit,
         scripts: zhHansScripts,
         ui: zhHansUi,
+        cloud: zhHansCloud,
+        clerk: zhHansClerk,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.

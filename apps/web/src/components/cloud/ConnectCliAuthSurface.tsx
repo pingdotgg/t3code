@@ -11,6 +11,11 @@ import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 import { resolveClerkSignInProps } from "../clerk/authRedirect";
 import { Button } from "../ui/button";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`cloud:${key}`, options);
+
 const invalidLinkMessage = {
   context: "Authorization request",
   title: "This connect link is incomplete",
@@ -80,7 +85,7 @@ export function ConnectCliAuthorizeSurface() {
       {isLoaded && !isSignedIn ? (
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>
-            Sign in
+            {td("signIn")}
           </Button>
         </div>
       ) : null}

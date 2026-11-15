@@ -15,6 +15,11 @@ import {
 import { Button, InlineButton } from "../ui/button";
 import { useT3ConnectAccountPage } from "./T3ConnectAccountPages";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`clerk:${key}`, options);
+
 export function RemoveT3ConnectEnvironmentDialog({
   environmentLabel,
   environmentId,
@@ -85,7 +90,7 @@ export function RemoveT3ConnectEnvironmentDialog({
           <AlertDialogFooter>
             <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
             <Button variant="destructive" onClick={onConfirm}>
-              Remove from this device
+              {td("removeFromDevice")}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
