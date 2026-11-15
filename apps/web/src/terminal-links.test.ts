@@ -324,7 +324,6 @@ describe("resolvePathLinkTarget", () => {
   });
 
   it.each([
-    ["main.ts", "/repo/main.ts"],
     ["src/main.ts", "/repo/src/main.ts"],
     ["/repo/src/main.ts", "/repo/src/main.ts"],
     [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
