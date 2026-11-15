@@ -452,11 +452,11 @@ describe("readEnvironmentFromWindowsShell", () => {
       Effect.gen(function* () {
         const name = "T3CODE_TEST_NON_ASCII_PATH";
         const value = "C:\\Users\\Jürgen\\Grüße";
-        process.env[name] = value;
+        vi.stubEnv(name, value);
         try {
           expect(yield* readEnvironmentFromWindowsShell([name])).toEqual({ [name]: value });
         } finally {
-          delete process.env[name];
+          vi.unstubAllEnvs();
         }
       }),
   );

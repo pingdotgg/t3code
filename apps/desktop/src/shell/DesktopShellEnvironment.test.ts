@@ -918,7 +918,7 @@ describe("DesktopShellEnvironment", () => {
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
-          scripts.push(command.args.at(-1) ?? "");
+          scripts.push(String(command.args.at(-1)));
           return envOutput({ PATH: "C:\\Working" });
         },
       });
