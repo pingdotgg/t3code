@@ -412,14 +412,23 @@ export function createOlderSettledThreadAtoms<R, ER, E>(
       EnvironmentId,
       OrchestrationV2SearchThreadsInput,
     ];
-    return Atom.make((get) => {
-      const generation = get(searchGenerationAtom(environmentId));
-      // Nothing is read before this session's first snapshot, which would drop the rows. It shows
-      // as loading only while that snapshot is on its way, so an offline environment never spins.
-      return typeof generation === "number"
-        ? get(searchReadAtom({ environmentId, input: { generation, search } }))
-        : AsyncResult.initial(generation === "waiting");
-    }).pipe(Atom.withLabel(`environment-older-settled-search:${key}`));
+    // Refreshing re-sends the search it last read, so a failed search can retry.
+    let read: ReturnType<typeof searchReadAtom> | null = null;
+    return Atom.readable(
+      (get) => {
+        const generation = get(searchGenerationAtom(environmentId));
+        // Nothing is read before this session's first snapshot, which would drop the rows. It shows
+        // as loading only while that snapshot is on its way, so an offline environment never spins.
+        read =
+          typeof generation === "number"
+            ? searchReadAtom({ environmentId, input: { generation, search } })
+            : null;
+        return read === null ? AsyncResult.initial(generation === "waiting") : get(read);
+      },
+      (refresh) => {
+        if (read !== null) refresh(read);
+      },
+    ).pipe(Atom.withLabel(`environment-older-settled-search:${key}`));
   });
 
   // One read for a shelf that spans environments: each one's cut, counts and pages.

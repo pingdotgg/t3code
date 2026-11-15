@@ -33,6 +33,7 @@ import {
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { Button } from "../../components/ui/Button";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -681,9 +682,23 @@ export function CommandPalette(props: {
                 recycleItems
                 contentContainerStyle={{ paddingBottom: 8 }}
                 ListEmptyComponent={
-                  <Text className="p-5 text-center text-foreground-muted">
-                    {search.isPending ? "Searching…" : "No results"}
-                  </Text>
+                  !search.isPending && search.failed ? (
+                    <View className="items-center gap-3 p-5">
+                      <Text className="text-center text-foreground-muted">
+                        Couldn't reach the server to search messages
+                      </Text>
+                      <Button
+                        tone="secondary"
+                        size="compact"
+                        label="Try again"
+                        onPress={search.retry}
+                      />
+                    </View>
+                  ) : (
+                    <Text className="p-5 text-center text-foreground-muted">
+                      {search.isPending ? "Searching…" : "No results"}
+                    </Text>
+                  )
                 }
                 // Message results from slower environments may still arrive below.
                 ListFooterComponent={

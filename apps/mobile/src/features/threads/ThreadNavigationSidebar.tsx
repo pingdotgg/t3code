@@ -577,11 +577,22 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             : props.searchQuery.trim().length > 0
               ? threadSearch.isPending
                 ? "Searching thread messages…"
-                : "No matching threads"
+                : threadSearch.failed
+                  ? "Couldn't reach the server to search messages"
+                  : "No matching threads"
               : selectedProjectScope !== null
                 ? `No threads in ${selectedProjectScope.title}`
                 : "No threads yet"}
       </Text>
+      {!catalogState.isLoadingConnections &&
+      !showAddEnvironment &&
+      props.searchQuery.trim().length > 0 &&
+      !threadSearch.isPending &&
+      threadSearch.failed ? (
+        <View className={Platform.OS === "android" ? "self-center" : "px-2"}>
+          <Button tone="secondary" size="compact" label="Try again" onPress={threadSearch.retry} />
+        </View>
+      ) : null}
       {showAddEnvironment ? (
         <View className={Platform.OS === "android" ? "self-center" : "px-2"}>
           <Button

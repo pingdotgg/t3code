@@ -526,7 +526,20 @@ describe("createOlderSettledThreadAtoms", () => {
         search,
         (result) => AsyncResult.getOrElse(result, () => null)?.snapshotSequence === 8,
       );
-      expect(requests).toEqual([input, input]);
+      // A failed search reads again when refreshed, as a retry does.
+      setShell({ snapshot, status: "live", generation: 3 });
+      yield* Queue.offer(
+        replies,
+        Effect.fail(new OrchestrationV2GetShellSnapshotError({ message: "search failed" })),
+      );
+      yield* until(search, AsyncResult.isFailure);
+      registry.refresh(search);
+      yield* Queue.offer(replies, Effect.succeed({ ...found, snapshotSequence: 9 }));
+      yield* until(
+        search,
+        (result) => AsyncResult.getOrElse(result, () => null)?.snapshotSequence === 9,
+      );
+      expect(requests).toEqual([input, input, input, input]);
     }),
   );
 
