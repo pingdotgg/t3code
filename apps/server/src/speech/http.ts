@@ -106,6 +106,27 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "installSynthesisRuntime",
+        Effect.fn("environment.voice.installSynthesisRuntime")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.installRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "cancelSynthesisRuntime",
+        Effect.fn("environment.voice.cancelSynthesisRuntime")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.cancelRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
+        "removeSynthesisRuntime",
+        Effect.fn("environment.voice.removeSynthesisRuntime")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return yield* synthesis.removeRuntime.pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
         "downloadSynthesisVoice",
         Effect.fn("environment.voice.downloadSynthesisVoice")(function* (args) {
           yield* guard(args.endpoint.name, AuthSettingsWriteScope);

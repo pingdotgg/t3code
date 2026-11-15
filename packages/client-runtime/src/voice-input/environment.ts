@@ -385,3 +385,33 @@ export const removeEnvironmentSpeechVoice = (prepared: PreparedConnection, voice
     path: (urls) => urls.removeSynthesisVoice(),
     run: ({ client, headers }) => client.removeSynthesisVoice({ headers, payload: { voiceId } }),
   });
+
+export const installEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.installSynthesisRuntime(),
+    run: ({ client, headers }) => client.installSynthesisRuntime({ headers }),
+  });
+
+export const cancelEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.cancelSynthesisRuntime(),
+    run: ({ client, headers }) => client.cancelSynthesisRuntime({ headers }),
+  });
+
+export const removeEnvironmentSpeechRuntime = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    path: (urls) => urls.removeSynthesisRuntime(),
+    run: ({ client, headers }) => client.removeSynthesisRuntime({ headers }),
+  });

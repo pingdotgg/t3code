@@ -1,3 +1,4 @@
+import { useSpeechOutputDestination } from "./useSpeechOutputDestination";
 import { synthesizeEnvironmentSpeech } from "@t3tools/client-runtime/voice-input";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import { PauseIcon, PlayIcon, SquareIcon, Volume2Icon } from "lucide-react";
@@ -13,13 +14,16 @@ import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { isVoiceRecordingActive, voiceOutput } from "./voiceOutput";
 
 export function ResponseSpeechScope({ owner, children }: { owner: string; children: ReactNode }) {
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends this thread's playback when navigation removes its timeline
-  useEffect(
-    () => () => {
+  const { destination } = useSpeechOutputDestination();
+  const destinationKey = destination ? `${destination.environmentId}:${destination.engine}` : "off";
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- stops the external player when this thread closes or its playback destination changes
+  useEffect(() => {
+    const stop = () => {
       if (voiceOutput.getSnapshot().owner?.startsWith(`${owner}:`)) voiceOutput.stop();
-    },
-    [owner],
-  );
+    };
+    if (destinationKey === "off") stop();
+    return stop;
+  }, [owner, destinationKey]);
   return children;
 }
 
@@ -28,10 +32,12 @@ export function ResponseSpeechButton(props: {
   owner: string;
   text: string;
 }) {
-  const prepared = Option.getOrNull(usePreparedConnection(props.environmentId));
-  const settings = useEnvironmentSettings(props.environmentId);
-  const environment = useEnvironment(props.environmentId);
-  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const { destination } = useSpeechOutputDestination();
+  const targetId = destination?.environmentId ?? null;
+  const prepared = Option.getOrNull(usePreparedConnection(targetId));
+  const settings = useEnvironmentSettings(targetId ?? props.environmentId);
+  const environment = useEnvironment(targetId ?? props.environmentId);
+  const canOperate = useEnvironmentScope(targetId, AuthOrchestrationOperateScope);
   const phase = useSyncExternalStore(voiceOutput.subscribe, () => {
     const state = voiceOutput.getSnapshot();
     return state.owner === props.owner ? state.phase : "idle";
@@ -39,7 +45,8 @@ export function ResponseSpeechButton(props: {
   const active = phase !== "idle" && phase !== "error";
   if (
     !active &&
-    (!environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
+    (!destination ||
+      !environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
       !prepared ||
       !canOperate ||
       !settings?.speechOutput ||
@@ -53,7 +60,7 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : settings?.speechOutput.engine === "openai"
+          : destination?.engine === "openai"
             ? "Read aloud using OpenAI"
             : "Read aloud locally";
   const Icon =
@@ -73,12 +80,12 @@ export function ResponseSpeechButton(props: {
       await voiceOutput.togglePause();
       return;
     }
-    if (!prepared || !canOperate || !settings?.speechOutput) return;
+    if (!destination || !prepared || !canOperate || !settings?.speechOutput) return;
     if (isVoiceRecordingActive()) {
       toastManager.add({ type: "warning", title: "Finish dictation before playing a response" });
       return;
     }
-    const engine = settings.speechOutput.engine;
+    const engine = destination.engine;
     await voiceOutput.start(props.owner, props.text, (text, signal) =>
       runEnvironmentSpeech(synthesizeEnvironmentSpeech(prepared, { text, engine }), { signal }),
     );

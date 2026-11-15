@@ -7,6 +7,9 @@ import { useEnvironmentScope } from "../state/session";
 import { ResponseSpeechButton } from "./ResponseSpeechButton";
 import { voiceOutput } from "./voiceOutput";
 
+vi.mock("./useSpeechOutputDestination", () => ({
+  useSpeechOutputDestination: () => ({ destination: null }),
+}));
 vi.mock("../state/session", () => ({
   usePreparedConnection: () => Option.none(),
   useEnvironmentScope: vi.fn(),

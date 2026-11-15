@@ -1,5 +1,8 @@
 import {
   getEnvironmentSpeechVoices,
+  installEnvironmentSpeechRuntime,
+  cancelEnvironmentSpeechRuntime,
+  removeEnvironmentSpeechRuntime,
   downloadEnvironmentSpeechVoice,
   selectEnvironmentSpeechVoice,
   removeEnvironmentSpeechVoice,
@@ -65,7 +68,9 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
       setPending(null);
     };
   }, [refresh]);
-  const downloading = Boolean(transfer || action?.download);
+  const downloading = Boolean(
+    transfer || action?.download || data?.runtime?.state === "installing",
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the environment only while a voice download is active
   useEffect(() => {
     if (!prepared || !downloading) return;
@@ -81,13 +86,30 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
       clearTimeout(timer);
     };
   }, [prepared, downloading, refresh]);
-  const run = async (voiceId: string, operation: "download" | "select" | "remove" | "cancel") => {
+  const run = async (
+    voiceId: string,
+    operation:
+      | "download"
+      | "select"
+      | "remove"
+      | "cancel"
+      | "installRuntime"
+      | "cancelRuntime"
+      | "removeRuntime",
+  ) => {
     if (!prepared || !canManage) return;
     const current = epoch.current;
-    if (operation !== "cancel")
-      setPending({ prepared, voiceId, download: operation === "download" });
+    if (operation !== "cancel" && operation !== "cancelRuntime")
+      setPending({
+        prepared,
+        voiceId,
+        download: operation === "download" || operation === "installRuntime",
+      });
     await runSpeech(
       {
+        installRuntime: installEnvironmentSpeechRuntime,
+        cancelRuntime: cancelEnvironmentSpeechRuntime,
+        removeRuntime: removeEnvironmentSpeechRuntime,
         download: downloadEnvironmentSpeechVoice,
         select: selectEnvironmentSpeechVoice,
         remove: removeEnvironmentSpeechVoice,
@@ -113,13 +135,17 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
           if (current === epoch.current)
             setResult((previous) => ({
               ...previous,
-              error: "Could not update this voice. Check the connection and try again.",
+              error: operation.endsWith("Runtime")
+                ? "Could not update Piper. Check the connection and try again."
+                : "Could not update this voice. Check the connection and try again.",
             }));
         },
       );
-    if (current === epoch.current && operation !== "cancel") setPending(null);
+    if (current === epoch.current && operation !== "cancel" && operation !== "cancelRuntime")
+      setPending(null);
   };
   return {
+    runtime: data?.runtime ?? null,
     voices: data?.voices ?? [],
     error,
     connected: prepared !== null,

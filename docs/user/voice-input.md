@@ -164,17 +164,16 @@ Use the same action to pause or resume, or choose Stop to end playback. Starting
 another response or dictating stops the current reading. Code blocks and images
 are omitted; link labels and inline code are read.
 
-Configure **Settings → Voice → Response playback** on the environment that owns
-the thread. **Local · Piper** is the default. Install the Piper engine on that
-machine, for example:
+Configure **Settings → Voice → Response playback → Read aloud with**. Playback
+starts **Off** on each device. Choose an environment for local playback, or
+**OpenAI** under **Cloud via** an environment. The destination can differ from
+the environment that owns the thread.
 
-```sh
-python3 -m venv ~/.local/share/t3-piper
-~/.local/share/t3-piper/bin/pip install piper-tts
-```
-
-Set **Piper executable** to the full path of that installation's `bin/piper`,
-or leave it as `piper` when the executable is on the environment's PATH.
+When you choose an environment, T3 Code checks its platform. Choose **Download
+Piper** to install the verified runtime there; no manual Python installation, command-line setup, or
+executable path is needed. Unsupported platforms explain why local playback is
+unavailable. You can cancel installation, remove Piper, or reinstall it without
+removing your voices.
 
 Under **Local voices**, choose a language and voice, then **Download & use voice**.
 T3 Code downloads and verifies the model, configuration, and license together.
@@ -188,7 +187,8 @@ When connected remotely, synthesis runs on that environment and audio plays on
 the device where you selected the response. The mobile app does not need a Piper
 installation of its own.
 
-To use a service instead, explicitly select **OpenAI** and choose a voice. It
+To use a service instead, explicitly select **OpenAI** under **Cloud via** the
+environment whose API key you want to use, then choose a voice. It
 uses the OpenAI API key saved under Cloud providers in Voice settings, sends the
 response text to OpenAI, and incurs API charges. A local synthesis failure never
 switches to OpenAI automatically.

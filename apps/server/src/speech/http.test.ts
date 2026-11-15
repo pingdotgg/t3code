@@ -425,6 +425,9 @@ effectIt.effect.each([false, true])(
           Layer.provide(
             Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
               voices: Effect.succeed(voices),
+              installRuntime: Effect.suspend(mutation),
+              cancelRuntime: Effect.suspend(mutation),
+              removeRuntime: Effect.suspend(mutation),
               downloadVoice: mutation,
               selectVoice: mutation,
               removeVoice: mutation,
@@ -451,6 +454,17 @@ effectIt.effect.each([false, true])(
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ voiceId: "pt_BR-faber-medium" }),
+            }),
+            context,
+          ),
+        );
+        expect(response.status).toBe(write ? 200 : 403);
+      }
+      for (const action of ["install", "cancel", "remove"]) {
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/synthesis/runtime/${action}`, {
+              method: "POST",
             }),
             context,
           ),

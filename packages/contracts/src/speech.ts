@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
   Schema.isMaxLength(4096),
@@ -357,8 +357,6 @@ export const SpeechStreamEvent = Schema.Union([
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
 
 export const SpeechOutputSettings = Schema.Struct({
-  engine: Schema.Literals(["piper", "openai"]),
-  piperExecutable: Schema.String.check(Schema.isMaxLength(4096)),
   piperVoiceId: Schema.String.check(Schema.isMaxLength(128)).pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ),
@@ -366,17 +364,28 @@ export const SpeechOutputSettings = Schema.Struct({
 });
 export type SpeechOutputSettings = typeof SpeechOutputSettings.Type;
 export const DEFAULT_SPEECH_OUTPUT_SETTINGS: SpeechOutputSettings = {
-  engine: "piper",
-  piperExecutable: "piper",
   piperVoiceId: "",
   voice: "coral",
 };
 
 export const SpeechSynthesisRequest = Schema.Struct({
   text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
-  engine: SpeechOutputSettings.fields.engine,
+  engine: Schema.Literals(["piper", "openai"]),
 });
 export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
+
+export const SpeechOutputDestination = Schema.Struct({
+  environmentId: EnvironmentId,
+  engine: SpeechSynthesisRequest.fields.engine,
+});
+export type SpeechOutputDestination = typeof SpeechOutputDestination.Type;
+
+export const PiperRuntimeStatus = Schema.Struct({
+  state: Schema.Literals(["unsupported", "not-installed", "installing", "ready"]),
+  platform: Schema.String,
+  reason: Schema.optionalKey(Schema.String),
+});
+export type PiperRuntimeStatus = typeof PiperRuntimeStatus.Type;
 
 export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisError>()(
   "SpeechSynthesisError",
@@ -398,7 +407,7 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
       case "not-configured":
         return "Configure response playback in Settings → Voice on this environment first.";
       case "configuration-changed":
-        return "The speech output engine changed. Start playback again.";
+        return "The speech configuration changed. Start playback again.";
       case "invalid-text":
         return "This response has no readable text or exceeds the speech limit.";
       case "invalid-audio":
@@ -428,7 +437,10 @@ export const SpeechSynthesisVoice = Schema.Struct({
   downloaded: Schema.optionalKey(Schema.Number),
 });
 export type SpeechSynthesisVoice = typeof SpeechSynthesisVoice.Type;
-export const SpeechSynthesisVoices = Schema.Struct({ voices: Schema.Array(SpeechSynthesisVoice) });
+export const SpeechSynthesisVoices = Schema.Struct({
+  voices: Schema.Array(SpeechSynthesisVoice),
+  runtime: Schema.optionalKey(PiperRuntimeStatus),
+});
 export type SpeechSynthesisVoices = typeof SpeechSynthesisVoices.Type;
 export const SpeechSynthesisVoiceRequest = Schema.Struct({
   voiceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),

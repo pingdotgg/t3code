@@ -22,10 +22,19 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
+import * as PiperRuntime from "./PiperRuntime.ts";
 import { SPEECH_VOICES } from "./voices.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
+
+const PIPER_PROGRAM = `import sys, wave
+from pathlib import Path
+from piper import PiperVoice
+voice = PiperVoice.load(sys.argv[1], download_dir=Path(sys.argv[1]).parent)
+with wave.open(sys.argv[2], "wb") as output:
+    voice.synthesize_wav(sys.stdin.read(), output)
+`;
 
 const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
 const sameCredential = Schema.toEquivalence(SettingsSecretValue);
@@ -46,6 +55,15 @@ export class SpeechSynthesisOperationError extends Schema.TaggedError<SpeechSynt
 export class SpeechSynthesisService extends Context.Service<
   SpeechSynthesisService,
   {
+    readonly installRuntime: Effect.Effect<
+      SpeechSynthesisVoices,
+      SpeechSynthesisError | SpeechSynthesisOperationError
+    >;
+    readonly cancelRuntime: Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
+    readonly removeRuntime: Effect.Effect<
+      SpeechSynthesisVoices,
+      SpeechSynthesisError | SpeechSynthesisOperationError
+    >;
     readonly voices: Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
     readonly downloadVoice: (
       voiceId: string,
@@ -74,6 +92,7 @@ const make = Effect.gen(function* () {
   const resolver = yield* SecretResolver.SecretResolver;
   const synthesis = yield* Semaphore.make(1);
   const store = yield* SpeechModelStore.SpeechModelStore;
+  const runtime = yield* PiperRuntime.PiperRuntime;
   const scope = yield* Effect.scope;
   let downloading:
     | {
@@ -103,6 +122,7 @@ const make = Effect.gen(function* () {
       Effect.mapError(SpeechSynthesisOperationError.fromCause),
     );
     return {
+      runtime: yield* runtime.status,
       voices: yield* Effect.forEach(
         SPEECH_VOICES,
         (voice) =>
@@ -205,11 +225,8 @@ const make = Effect.gen(function* () {
     if (downloading?.voiceId === voiceId)
       return yield* new SpeechSynthesisError({ reason: "busy" });
     yield* installedVoicePath(voiceId);
-    const snapshot = yield* settings.getSettings.pipe(
-      Effect.mapError(SpeechSynthesisOperationError.fromCause),
-    );
     yield* settings
-      .updateSettings({ speechOutput: { ...snapshot.speechOutput, piperVoiceId: voiceId } })
+      .updateSettings({ speechOutput: { piperVoiceId: voiceId } })
       .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
     return yield* voices;
   }, synthesis.withPermits(1));
@@ -224,7 +241,7 @@ const make = Effect.gen(function* () {
     );
     if (snapshot.speechOutput.piperVoiceId === voiceId)
       yield* settings
-        .updateSettings({ speechOutput: { ...snapshot.speechOutput, piperVoiceId: "" } })
+        .updateSettings({ speechOutput: { piperVoiceId: "" } })
         .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
     return yield* voices;
   }, synthesis.withPermits(1));
@@ -238,11 +255,9 @@ const make = Effect.gen(function* () {
         Effect.mapError(SpeechSynthesisOperationError.fromCause),
       );
       const config = snapshot.speechOutput;
-      if (input.engine !== config.engine)
-        return yield* new SpeechSynthesisError({ reason: "configuration-changed" });
       let audio: Uint8Array;
-      if (config.engine === "piper") {
-        if (!config.piperExecutable.trim() || !config.piperVoiceId)
+      if (input.engine === "piper") {
+        if (!config.piperVoiceId)
           return yield* new SpeechSynthesisError({ reason: "not-configured" });
         const modelPath = yield* installedVoicePath(config.piperVoiceId);
         const directory = yield* fs
@@ -251,8 +266,8 @@ const make = Effect.gen(function* () {
         const output = path.join(directory, "speech.wav");
         const result = yield* process
           .run({
-            command: config.piperExecutable,
-            args: ["--model", modelPath, "--output_file", output],
+            command: yield* runtime.executable,
+            args: ["-I", "-X", "utf8", "-c", PIPER_PROGRAM, modelPath, output],
             stdin: `${text}\n`,
             timeout: "2 minutes",
             maxOutputBytes: 64 * 1024,
@@ -277,10 +292,7 @@ const make = Effect.gen(function* () {
         const current = yield* settings.getSettings.pipe(
           Effect.mapError(SpeechSynthesisOperationError.fromCause),
         );
-        if (
-          current.speechOutput.engine !== config.engine ||
-          !sameCredential(current.cloudSpeechCredentials.openai, source)
-        )
+        if (!sameCredential(current.cloudSpeechCredentials.openai, source))
           return yield* new SpeechSynthesisError({ reason: "configuration-changed" });
         const response = yield* http
           .execute(
@@ -326,6 +338,9 @@ const make = Effect.gen(function* () {
     synthesis.withPermits(1),
   );
   return SpeechSynthesisService.of({
+    installRuntime: runtime.install.pipe(Effect.andThen(voices)),
+    cancelRuntime: runtime.cancel.pipe(Effect.andThen(voices)),
+    removeRuntime: runtime.remove.pipe(Effect.andThen(voices), synthesis.withPermits(1)),
     synthesize,
     voices,
     downloadVoice,

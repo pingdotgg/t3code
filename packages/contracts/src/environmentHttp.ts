@@ -856,6 +856,36 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("installSynthesisRuntime", "/api/voice/synthesis/runtime/install", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("cancelSynthesisRuntime", "/api/voice/synthesis/runtime/cancel", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("removeSynthesisRuntime", "/api/voice/synthesis/runtime/remove", {
+      headers: OptionalBearerHeaders,
+      success: SpeechSynthesisVoices,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("downloadSynthesisVoice", "/api/voice/synthesis/voices/download", {
       headers: OptionalBearerHeaders,
       payload: SpeechSynthesisVoiceRequest,

@@ -10,9 +10,12 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { runSpeech } from "../voice-input/voiceDestination";
+import { useSpeechOutputDestination } from "./useSpeechOutputDestination";
 import { voiceOutput } from "./voiceOutput";
 
 export function useResponseSpeechScope(owner: string) {
+  const { destination } = useSpeechOutputDestination();
+  const destinationKey = destination ? `${destination.environmentId}:${destination.engine}` : "off";
   const active = useSyncExternalStore(voiceOutput.subscribe, () => {
     const snapshot = voiceOutput.getSnapshot();
     return Boolean(
@@ -22,12 +25,13 @@ export function useResponseSpeechScope(owner: string) {
   });
   useMediaAudioSessionHold(active);
   useFocusEffect(
-    useCallback(
-      () => () => {
+    useCallback(() => {
+      const stop = () => {
         if (voiceOutput.getSnapshot().owner?.startsWith(`${owner}:`)) voiceOutput.stop();
-      },
-      [owner],
-    ),
+      };
+      if (destinationKey === "off") stop();
+      return stop;
+    }, [owner, destinationKey]),
   );
 }
 
@@ -39,10 +43,12 @@ export function ResponseSpeechButton(props: {
   buttonSize: number;
   iconSize: number;
 }) {
-  const prepared = Option.getOrNull(usePreparedConnection(props.environmentId));
-  const { presentation: environment } = useEnvironmentPresentation(props.environmentId);
+  const { destination } = useSpeechOutputDestination();
+  const targetId = destination?.environmentId ?? null;
+  const prepared = Option.getOrNull(usePreparedConnection(targetId));
+  const { presentation: environment } = useEnvironmentPresentation(targetId);
   const settings = environment?.serverConfig?.settings.speechOutput;
-  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const canOperate = useEnvironmentScope(targetId, AuthOrchestrationOperateScope);
   const phase = useSyncExternalStore(voiceOutput.subscribe, () => {
     const state = voiceOutput.getSnapshot();
     return state.owner === props.owner ? state.phase : "idle";
@@ -50,7 +56,8 @@ export function ResponseSpeechButton(props: {
   const active = phase !== "idle" && phase !== "error";
   if (
     !active &&
-    (!environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
+    (!destination ||
+      !environment?.serverConfig?.environment.capabilities.voiceSynthesis ||
       !prepared ||
       !canOperate ||
       !settings ||
@@ -64,7 +71,7 @@ export function ResponseSpeechButton(props: {
         ? "Pause response audio"
         : phase === "paused"
           ? "Resume response audio"
-          : settings?.engine === "openai"
+          : destination?.engine === "openai"
             ? "Read aloud using OpenAI"
             : "Read aloud locally";
   const click = async () => {
@@ -76,9 +83,12 @@ export function ResponseSpeechButton(props: {
       await voiceOutput.togglePause();
       return;
     }
-    if (!prepared || !canOperate || !settings) return;
+    if (!destination || !prepared || !canOperate || !settings) return;
     await voiceOutput.start(props.owner, props.text, (text, signal) =>
-      runSpeech(synthesizeEnvironmentSpeech(prepared, { text, engine: settings.engine }), signal),
+      runSpeech(
+        synthesizeEnvironmentSpeech(prepared, { text, engine: destination.engine }),
+        signal,
+      ),
     );
     const state = voiceOutput.getSnapshot();
     if (state.owner === props.owner && state.error)

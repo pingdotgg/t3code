@@ -552,9 +552,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Response playback",
     to: "/settings/voice",
     searchTerms: [
-      "tts text to speech read aloud speaker listen piper local output OpenAI voice model",
+      "tts text to speech read aloud speaker listen piper local output OpenAI voice model destination environment off download install",
     ],
-    environmentOnly: true,
   },
   {
     id: "voice-microphone",

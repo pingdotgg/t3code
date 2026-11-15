@@ -2,19 +2,16 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
-import { useSpeechVoiceCatalog } from "../../speech/useSpeechVoiceCatalog";
+import type { useSpeechVoiceCatalog } from "../../speech/useSpeechVoiceCatalog";
 import { SettingsRow } from "./settingsLayout";
 
 export function LocalSpeechVoices({
-  environments,
+  environment,
+  catalog,
 }: {
-  environments: ReadonlyArray<{ environmentId: EnvironmentId; label: string }>;
+  environment: { environmentId: EnvironmentId; label: string };
+  catalog: ReturnType<typeof useSpeechVoiceCatalog>;
 }) {
-  const [chosenEnvironment, setChosenEnvironment] = useState<EnvironmentId | null>(null);
-  const environment =
-    environments.find((environment) => environment.environmentId === chosenEnvironment) ??
-    environments[0];
-  const catalog = useSpeechVoiceCatalog(environment?.environmentId ?? null);
   const [choice, setChoice] = useState<{
     environmentId: EnvironmentId;
     language: string;
@@ -24,7 +21,7 @@ export function LocalSpeechVoices({
     ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
   ].sort((a, b) => a[1].localeCompare(b[1]));
   const active = catalog.voices.find((voice) => voice.active);
-  const localChoice = choice?.environmentId === environment?.environmentId ? choice : null;
+  const localChoice = choice?.environmentId === environment.environmentId ? choice : null;
   const language =
     localChoice?.language ??
     active?.language ??
@@ -42,34 +39,6 @@ export function LocalSpeechVoices({
     : 0;
   return (
     <>
-      {environments.length > 1 ? (
-        <SettingsRow
-          title="Voice environment"
-          description="Where local voices are downloaded and stored."
-          control={
-            <Select
-              value={environment?.environmentId ?? ""}
-              onValueChange={(id) =>
-                setChosenEnvironment(
-                  environments.find((environment) => environment.environmentId === id)
-                    ?.environmentId ?? null,
-                )
-              }
-            >
-              <SelectTrigger size="sm" aria-label="Voice installation environment">
-                <SelectValue>{environment?.label}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {environments.map((environment) => (
-                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
-                    {environment.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-      ) : null}
       {catalog.error ? (
         <SettingsRow
           title="Local voices unavailable"
@@ -91,7 +60,7 @@ export function LocalSpeechVoices({
           }
         />
       ) : null}
-      {selected && environment ? (
+      {selected ? (
         <>
           <SettingsRow
             title="Voice language"

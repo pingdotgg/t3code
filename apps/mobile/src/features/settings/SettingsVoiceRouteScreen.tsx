@@ -277,9 +277,7 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {environments.map((environment) => (
-          <SpeechOutputSettings key={environment.environmentId} environment={environment} />
-        ))}
+        <SpeechOutputSettings environments={environments} />
         <SettingsSection title="Transcribe on">
           <ListChoiceRow
             label="This device"

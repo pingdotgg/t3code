@@ -2,30 +2,33 @@ import {
   PrimaryConnectionTarget,
   type PreparedConnection,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId, type SpeechSynthesisVoices } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  type PiperRuntimeStatus,
+  type SpeechSynthesisVoices,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
+import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
+import { useEnvironments, type EnvironmentPresentation } from "../state/environments";
+import { SpeechOutputSettings } from "../components/settings/SpeechOutputSettings";
 import { render } from "../../test/render";
-import { usePreparedConnection } from "../state/session";
+import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import {
+  installEnvironmentSpeechRuntime,
   downloadEnvironmentSpeechVoice,
   getEnvironmentSpeechVoices,
   selectEnvironmentSpeechVoice,
 } from "@t3tools/client-runtime/voice-input";
 import { useSpeechVoiceCatalog } from "./useSpeechVoiceCatalog";
 
-vi.mock("../state/session", () => ({
-  usePreparedConnection: vi.fn(),
-  useEnvironmentScope: () => true,
-}));
-vi.mock("@t3tools/client-runtime/voice-input", () => ({
-  getEnvironmentSpeechVoices: vi.fn(),
-  downloadEnvironmentSpeechVoice: vi.fn(),
-  selectEnvironmentSpeechVoice: vi.fn(),
-  cancelEnvironmentSpeechVoiceDownload: vi.fn(),
-  removeEnvironmentSpeechVoice: vi.fn(),
-}));
+vi.mock(import("../state/environments"), { spy: true });
+vi.mock(import("../state/session"), { spy: true });
+vi.mock(import("@t3tools/client-runtime/voice-input"), { spy: true });
 vi.mock("./runEnvironmentSpeech", () => ({ runEnvironmentSpeech: Effect.runPromise }));
 
 function deferred<T>() {
@@ -47,6 +50,7 @@ function connection(id: string): PreparedConnection {
 }
 
 it("clears pending downloads when switching environments before returning", async () => {
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
   const a = connection("a");
   const b = connection("b");
   const empty: SpeechSynthesisVoices = { voices: [] };
@@ -85,4 +89,53 @@ it("clears pending downloads when switching environments before returning", asyn
   await completed.promise;
   await screen.rerender(<Catalog environmentId={a.environmentId} />);
   await expect.element(screen.getByRole("status")).toHaveTextContent("Ready");
+});
+
+it("starts off, checks the selected environment, and offers managed Piper installation", async () => {
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  const prepared = connection("speech-server");
+  const environment = {
+    environmentId: prepared.environmentId,
+    label: "Speech server",
+    connection: { phase: "connected" },
+    serverConfig: {
+      settings: DEFAULT_SERVER_SETTINGS,
+      environment: { capabilities: { voiceSynthesis: true } },
+    },
+  } as unknown as EnvironmentPresentation;
+  vi.mocked(useEnvironments).mockReturnValue({
+    environments: [environment],
+    isReady: true,
+    networkStatus: "online",
+    presentationById: new Map(),
+  } as ReturnType<typeof useEnvironments>);
+  vi.mocked(usePreparedConnection).mockReturnValue(Option.some(prepared));
+  let runtime: PiperRuntimeStatus = { state: "not-installed", platform: "linux-x64" };
+  vi.mocked(getEnvironmentSpeechVoices).mockImplementation(() =>
+    Effect.succeed({ voices: [], runtime }),
+  );
+  vi.mocked(installEnvironmentSpeechRuntime).mockImplementation(() =>
+    Effect.sync(() => {
+      runtime = { state: "ready", platform: "linux-x64" };
+      return { voices: [], runtime };
+    }),
+  );
+  await using screen = await render(<SpeechOutputSettings />);
+  expect(getClientSettings().speechOutputDestination).toBeNull();
+  await expect
+    .element(screen.getByRole("button", { name: "Download Piper" }))
+    .not.toBeInTheDocument();
+  await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+  await page.getByRole("option", { name: "Speech server", exact: true }).click();
+  await expect.element(screen.getByRole("button", { name: "Download Piper" })).toBeVisible();
+  expect(getClientSettings().speechOutputDestination).toEqual({
+    environmentId: prepared.environmentId,
+    engine: "piper",
+  });
+  await screen.getByRole("button", { name: "Download Piper" }).click();
+  await expect.element(screen.getByRole("button", { name: "Remove Piper" })).toBeVisible();
+  await screen.getByRole("combobox", { name: "Read aloud with" }).click();
+  await page.getByRole("option", { name: "Off", exact: true }).click();
+  expect(getClientSettings().speechOutputDestination).toBeNull();
 });

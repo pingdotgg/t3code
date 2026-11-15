@@ -150,20 +150,19 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
-  it("changes speech engines without replacing each environment's local voice configuration", () => {
+  it("changes cloud voices without replacing each environment's local voice configuration", () => {
     const targets = ["Laptop", "Server"].map((id) =>
       environment(id, {
         settings: {
           speechOutput: {
             ...DEFAULT_SERVER_SETTINGS.speechOutput,
-            piperExecutable: `/${id}/piper`,
             piperVoiceId: `${id}-voice`,
           },
         },
       }),
     );
     const patch = decodeServerSettingsPatch({
-      speechOutput: { engine: "openai" },
+      speechOutput: { voice: "nova" },
     });
     const plan = planScopedSettingsPatch(all, targets, patch);
     expect(plan.serverWrites).toHaveLength(2);
@@ -171,7 +170,7 @@ describe("scoped settings writes", () => {
       const original = targets[index]!.serverConfig!.settings;
       expect(applyServerSettingsPatch(original, write.patch).speechOutput).toEqual({
         ...original.speechOutput,
-        engine: "openai",
+        voice: "nova",
       });
     }
   });

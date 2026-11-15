@@ -1,4 +1,9 @@
 export {
+  installEnvironmentSpeechRuntime,
+  cancelEnvironmentSpeechRuntime,
+  removeEnvironmentSpeechRuntime,
+} from "./environment.ts";
+export {
   VoiceInputController,
   VOICE_RECORDING_LIMIT_SECONDS,
   MICROPHONE_PERMISSION_ERROR,

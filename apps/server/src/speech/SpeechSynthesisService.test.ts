@@ -13,6 +13,7 @@ import { FetchHttpClient, HttpClientError, HttpClientRequest } from "effect/http
 import { expect, vi } from "vite-plus/test";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as PiperRuntime from "./PiperRuntime.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import { SPEECH_VOICES } from "./voices.ts";
 import * as SpeechSynthesisService from "./SpeechSynthesisService.ts";
@@ -24,6 +25,10 @@ const wave = () => {
   return audio;
 };
 const dependencies = Layer.mergeAll(
+  Layer.mock(PiperRuntime.PiperRuntime)({
+    executable: Effect.succeed("/managed/piper"),
+    status: Effect.succeed({ state: "ready", platform: "linux-x64" }),
+  }),
   Layer.mock(SpeechModelStore.SpeechModelStore)({
     isReady: () => Effect.succeed(false),
     installedPath: () => Effect.undefined,
@@ -43,7 +48,7 @@ const success = {
   stderrInvalidUtf8: false,
 } as const;
 
-it.effect("keeps local failures local and rejects changed engines before sending text", () =>
+it.effect("keeps local failures local and rejects invalid text before sending text", () =>
   Effect.gen(function* () {
     const run = vi.fn(() => Effect.succeed(success));
     const upstream = vi.fn<typeof fetch>(async () => new Response(wave()));
@@ -66,13 +71,6 @@ it.effect("keeps local failures local and rejects changed engines before sending
           .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
       ),
     ).toMatchObject({ reason: "not-configured" });
-    expect(
-      yield* Effect.flip(
-        service
-          .synthesize({ text: "Olá", engine: "openai" })
-          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
-      ),
-    ).toMatchObject({ reason: "configuration-changed" });
     expect(
       yield* Effect.flip(
         service
@@ -150,7 +148,6 @@ it.effect("uses only the explicitly selected external engine and returns bounded
         SpeechSynthesisService.layer.pipe(
           Layer.provide(
             ServerSettings.layerTest({
-              speechOutput: { ...DEFAULT_SPEECH_OUTPUT_SETTINGS, engine: "openai" },
               cloudSpeechCredentials: { openai: "fixture" },
             }),
           ),

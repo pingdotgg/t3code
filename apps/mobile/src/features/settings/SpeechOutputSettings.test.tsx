@@ -1,41 +1,67 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
-  type ServerSettingsPatch,
+  type SpeechOutputDestination,
 } from "@t3tools/contracts";
-import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import { AsyncResult } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { SpeechOutputSettings } from "./SpeechOutputSettings";
 
-const mocks = vi.hoisted(() => ({ update: vi.fn() }));
-vi.mock("react-native", () => ({
-  View: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  TextInput: (props: {
-    accessibilityLabel: string;
-    defaultValue: string;
-    onEndEditing: (event: { nativeEvent: { text: string } }) => void;
-  }) => (
-    <input
-      aria-label={props.accessibilityLabel}
-      defaultValue={props.defaultValue}
-      onBlur={(event) => props.onEndEditing({ nativeEvent: { text: event.target.value } })}
-    />
-  ),
+const mocks = vi.hoisted(() => ({
+  preferences: {} as { speechOutputDestination?: SpeechOutputDestination | null },
+  save: vi.fn(),
+  update: vi.fn(),
 }));
-vi.mock("../../components/ui/AppText", () => ({
-  AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: () => AsyncResult.success(mocks.preferences),
+  useAtomSet: () => mocks.save,
+}));
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+vi.mock("../voice-output/voiceOutput", () => ({ voiceOutput: { stop: () => {} } }));
+vi.mock("../voice-output/useSpeechVoiceCatalog", () => ({
+  useSpeechVoiceCatalog: () => ({
+    runtime: { state: "not-installed", platform: "linux-x64" },
+    canManage: true,
+    run: () => {},
+    voices: [],
+  }),
+}));
+vi.mock("react-native", () => ({
+  ScrollView: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../components/ui/ListChoiceRow", () => ({
   ListChoiceRow: ({ label, onPress }: { label: string; onPress: () => void }) => (
     <button onClick={onPress}>{label}</button>
   ),
 }));
-vi.mock("../../components/ui/ListActionRow", () => ({ ListActionRow: () => null }));
-vi.mock("../../components/ui/ListSection", () => ({ ListSection: () => null }));
-vi.mock("../../components/ui/Sheet", () => ({ Sheet: () => null }));
+vi.mock("../../components/ui/ListActionRow", () => ({
+  ListActionRow: ({
+    label,
+    detail,
+    onPress,
+  }: {
+    label: string;
+    detail?: string;
+    onPress: () => void;
+  }) => (
+    <button onClick={onPress}>
+      {label}
+      {detail ? `: ${detail}` : ""}
+    </button>
+  ),
+}));
+vi.mock("../../components/ui/ListSection", () => ({
+  ListSection: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
+vi.mock("../../components/ui/Sheet", () => ({
+  Sheet: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+}));
 vi.mock("./LocalSpeechVoices", () => ({ LocalSpeechVoices: () => null }));
 vi.mock("./components/SettingsSection", () => ({
   SettingsSection: ({ children }: { children?: ReactNode }) => <section>{children}</section>,
@@ -44,41 +70,51 @@ vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
 
-it("preserves an executable save when the engine changes before settings refresh", () => {
+it("defaults off and changes the playback destination on this device without changing server settings", () => {
+  mocks.preferences = {};
   mocks.update.mockReset();
-  let saved = DEFAULT_SERVER_SETTINGS;
-  mocks.update.mockImplementation(({ input }: { input: { patch: ServerSettingsPatch } }) => {
-    saved = applyServerSettingsPatch(saved, input.patch);
+  mocks.save.mockReset();
+  mocks.save.mockImplementation((patch: typeof mocks.preferences) => {
+    mocks.preferences = { ...mocks.preferences, ...patch };
+    return Promise.resolve();
   });
+  const environmentId = EnvironmentId.make("remote-speech");
   const environment = {
-    environmentId: EnvironmentId.make("mobile-speech"),
-    label: "Local",
-    serverConfig: { settings: DEFAULT_SERVER_SETTINGS },
+    environmentId,
+    label: "Server",
+    serverConfig: {
+      settings: DEFAULT_SERVER_SETTINGS,
+      environment: { capabilities: { voiceSynthesis: true } },
+    },
   } as unknown as EnvironmentPresentation;
   const container = document.createElement("div");
   const root = createRoot(container);
   const reactEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
-  const previousActEnvironment = reactEnvironment.IS_REACT_ACT_ENVIRONMENT;
+  const previous = reactEnvironment.IS_REACT_ACT_ENVIRONMENT;
   reactEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
-  try {
-    act(() => root.render(<SpeechOutputSettings environment={environment} />));
-    const executable = container.querySelector("input")!;
-    const openai = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent === "OpenAI",
-    )!;
+  const click = (label: string) =>
     act(() => {
-      executable.value = "/custom/piper";
-      executable.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
-      openai.click();
+      const button = [...container.querySelectorAll("button")].find(
+        (button) => button.textContent === label,
+      );
+      if (!button) throw new Error(`Missing ${label}`);
+      button.click();
     });
-    expect(mocks.update).toHaveBeenCalledTimes(2);
-    expect(saved.speechOutput).toEqual({
-      ...DEFAULT_SERVER_SETTINGS.speechOutput,
-      piperExecutable: "/custom/piper",
-      engine: "openai",
-    });
+  try {
+    act(() => root.render(<SpeechOutputSettings environments={[environment]} />));
+    click("Read aloud with: Off");
+    click("Server");
+    expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "piper" });
+    expect(container.textContent).toContain("Download Piper");
+    click("Read aloud with: Server");
+    click("OpenAI");
+    expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "openai" });
+    click("Read aloud with: OpenAI via Server");
+    click("Off");
+    expect(mocks.preferences.speechOutputDestination).toBeNull();
+    expect(mocks.update).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount());
-    reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
   }
 });

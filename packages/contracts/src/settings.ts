@@ -63,6 +63,7 @@ import {
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
   SpeechOutputSettings,
+  SpeechOutputDestination,
   DEFAULT_SPEECH_OUTPUT_SETTINGS,
 } from "./speech.ts";
 
@@ -405,6 +406,9 @@ export const VoiceTranscriptionDestination = Schema.Union([
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
 export const ClientSettingsSchema = Schema.Struct({
+  speechOutputDestination: Schema.NullOr(SpeechOutputDestination).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1861,8 +1865,6 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   speechOutput: Schema.optionalKey(
     Schema.Struct({
-      engine: Schema.optionalKey(SpeechOutputSettings.fields.engine),
-      piperExecutable: Schema.optionalKey(SpeechOutputSettings.fields.piperExecutable),
       piperVoiceId: Schema.optionalKey(Schema.toType(SpeechOutputSettings.fields.piperVoiceId)),
       voice: Schema.optionalKey(SpeechOutputSettings.fields.voice),
     }),
@@ -2112,6 +2114,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  speechOutputDestination: Schema.optionalKey(Schema.NullOr(SpeechOutputDestination)),
   voiceMicrophone: Schema.optionalKey(Schema.String),
   voiceMicrophones: Schema.optionalKey(Schema.Array(VoiceMicrophoneEntry)),
   voiceShortcutMode: Schema.optionalKey(VoiceShortcutMode),
