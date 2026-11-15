@@ -2606,7 +2606,8 @@ const make = Effect.gen(function* () {
           found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
             ? found
             : undefined;
-        // Time spent queued behind other work on this tab counts against the request.
+        // Time spent queued behind other work on this tab counts against the request. A stalled
+        // subresource can hold `load` for the whole budget, so open returns once the document parses.
         const navigationTimeout = () =>
           Math.max(1, Math.floor(Math.min(deadlineMs - performance.now(), NAVIGATION_TIMEOUT_MS)));
         const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
@@ -2642,14 +2643,14 @@ const make = Effect.gen(function* () {
                 reason: "dialogPending",
               });
             if (existing) {
-              if (url) await navigate(tab, url, "load", navigationTimeout());
+              if (url) await navigate(tab, url, "domContentLoaded", navigationTimeout());
             } else {
               // A failed open returns no tabId; a leftover hidden tab would block later reuse.
               await Promise.resolve(tab.initialNavigation)
                 .then(async () => {
                   if (url) {
                     await tab.page
-                      .waitForLoadState("load", { timeout: navigationTimeout() })
+                      .waitForLoadState("domcontentloaded", { timeout: navigationTimeout() })
                       .catch(constVoid);
                   }
                   assertNavigationSucceeded(tab);

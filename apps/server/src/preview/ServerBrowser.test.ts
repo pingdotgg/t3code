@@ -230,7 +230,9 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
     goForward: vi.fn(async () => {}),
     reload: vi.fn(async () => {}),
     emulateMedia: vi.fn(async () => {}),
-    waitForLoadState: vi.fn(async (_state?: string, _options?: { timeout?: number }) => {}),
+    waitForLoadState: vi.fn(async (state?: string, _options?: { timeout?: number }) => {
+      if (loadHeld && (state === undefined || state === "load")) await new Promise(() => {});
+    }),
     evaluate: vi.fn(async () => ({
       url,
       title: "test page",
@@ -396,6 +398,7 @@ let decodeGate: PromiseWithResolvers<void> | null = null;
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let heldStill: (() => Promise<void>) | null = null;
+let loadHeld = false;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -585,6 +588,7 @@ beforeEach(() => {
   contextRequests.length = 0;
   contextGate = null;
   heldStill = null;
+  loadHeld = false;
   contextFailure = null;
   pageSetupFailure = null;
   initialNavigation = null;
@@ -905,6 +909,28 @@ it.live("navigate fails when the page never commits within its timeout", () =>
       expect(error).toMatchObject({ _tag: "PreviewAutomationTimeoutError", timeoutMs: 4_000 });
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.effect.each([true, false])(
+  "open returns once the document parses while a subresource holds load (reuse: %s)",
+  (reuse) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        loadHeld = true;
+        const url = "http://localhost:5173/stalled-image";
+
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          ...(reuse ? { tabId } : {}),
+          operation: "open",
+          input: { url, reuseExistingTab: reuse, show: false },
+        });
+
+        expect(status).toMatchObject({ url });
+        expect(status.tabId === tabId).toBe(reuse);
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.effect.each(["desktop" as const, undefined])(
