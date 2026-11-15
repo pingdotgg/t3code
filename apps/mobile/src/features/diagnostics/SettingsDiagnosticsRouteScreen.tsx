@@ -185,6 +185,9 @@ function CrashReportsSetting() {
           disabled={!ready || saving}
           value={enabled}
           onValueChange={change}
+          resetVisible={ready}
+          resetDisabled={enabled}
+          onReset={() => change(true)}
         />
       </SettingsSection>
       <Text className="px-2 text-sm leading-normal text-foreground-muted">

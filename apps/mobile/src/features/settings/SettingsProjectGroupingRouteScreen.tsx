@@ -2,6 +2,7 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -12,6 +13,7 @@ import {
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { RestoreDeviceDefaultsSection } from "./RestoreDeviceDefaultsSection";
 import { NewThreadSettingsSection, WorkingSectionSettings } from "./ThreadSettingsSections";
 
 const GROUPING_OPTIONS: ReadonlyArray<{
@@ -64,11 +66,16 @@ export function SettingsProjectGroupingRouteScreen() {
               separated={index > 0}
               disabled={!preferencesReady}
               onPress={() => savePreferences(mobileProjectGroupingModePatch(option.mode))}
+              resetVisible={index === 0}
+              resetLabel="project grouping"
+              resetDisabled={selectedMode === "repository"}
+              onReset={() => savePreferences(mobileProjectGroupingModePatch("repository"))}
             />
           ))}
         </SettingsSection>
         <WorkingSectionSettings />
         <NewThreadSettingsSection />
+        {Platform.OS === "android" ? <RestoreDeviceDefaultsSection /> : null}
       </ScrollView>
     </SettingsScreen>
   );

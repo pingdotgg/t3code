@@ -8,6 +8,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { DEFAULT_FOLLOW_UP_BEHAVIOR, type FollowUpBehavior } from "../../lib/followUpBehavior";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
+import { RestoreDeviceDefaultsInlineRow } from "./RestoreDeviceDefaultsSection";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 
@@ -55,6 +56,10 @@ export function SettingsFollowUpRouteScreen() {
             separated={index > 0}
             disabled={!preferencesReady}
             onPress={() => savePreferences({ followUpBehavior: option.behavior })}
+            resetVisible={index === 0}
+            resetLabel="follow-up behavior"
+            resetDisabled={selectedBehavior === DEFAULT_FOLLOW_UP_BEHAVIOR}
+            onReset={() => savePreferences({ followUpBehavior: DEFAULT_FOLLOW_UP_BEHAVIOR })}
           />
         ))}
       </SettingsSection>
@@ -65,5 +70,12 @@ export function SettingsFollowUpRouteScreen() {
     </ScrollView>
   );
 
-  return <SettingsScreen title="Chat">{content}</SettingsScreen>;
+  return (
+    <SettingsScreen
+      title="Chat"
+      trailing={Platform.OS === "android" ? <RestoreDeviceDefaultsInlineRow /> : undefined}
+    >
+      {content}
+    </SettingsScreen>
+  );
 }

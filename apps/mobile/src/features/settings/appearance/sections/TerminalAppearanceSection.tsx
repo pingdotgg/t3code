@@ -30,6 +30,9 @@ export function TerminalAppearanceSection() {
         label="Custom font size"
         onValueChange={handleToggleCustom}
         value={custom}
+        resetVisible
+        resetDisabled={!custom}
+        onReset={() => setTerminalFontSize(null)}
       />
       {custom ? (
         <FontSizeSliderRow

@@ -26,8 +26,13 @@ export function ListRowLayout({
   meta,
   disabled,
   accessory,
+  trailing,
   tone = "default",
-}: ListRowContentProps & { readonly accessory?: ReactNode; readonly tone?: "default" | "danger" }) {
+}: ListRowContentProps & {
+  readonly accessory?: ReactNode;
+  readonly trailing?: ReactNode;
+  readonly tone?: "default" | "danger";
+}) {
   const { fontScale } = useWindowDimensions();
   const stackDetail = fontScale >= 1.5;
   return (
@@ -81,6 +86,7 @@ export function ListRowLayout({
         </AppText>
       ) : null}
       {accessory}
+      {trailing}
     </View>
   );
 }

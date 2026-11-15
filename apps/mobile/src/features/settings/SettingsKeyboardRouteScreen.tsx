@@ -61,6 +61,11 @@ export function SettingsKeyboardRouteScreen() {
               separated={index > 0}
               disabled={!preferencesReady}
               onPress={() => savePreferences({ composerEnterBehavior: option.behavior })}
+              resetVisible={index === 0}
+              resetDisabled={selectedBehavior === DEFAULT_COMPOSER_ENTER_BEHAVIOR}
+              onReset={() =>
+                savePreferences({ composerEnterBehavior: DEFAULT_COMPOSER_ENTER_BEHAVIOR })
+              }
             />
           ))}
         </SettingsSection>

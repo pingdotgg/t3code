@@ -3,11 +3,12 @@ import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { getRecordingPermissionsAsync, requestRecordingPermissionsAsync } from "expo-audio";
 import { useState } from "react";
-import { Linking, Platform, useWindowDimensions, View } from "react-native";
+import { Linking, Platform, Pressable, useWindowDimensions, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { cn } from "../../lib/cn";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
@@ -266,6 +267,16 @@ export function SettingsVoiceRouteScreen() {
   const dragFrom =
     drag === null ? -1 : entries.findIndex((entry) => microphoneEntryKey(entry) === drag.key);
   const dragTo = drag === null ? -1 : dragFrom + dropSteps(dragFrom, drag.translation);
+  const isDefaultOrder = AsyncResult.isSuccess(preferencesResult)
+    ? (() => {
+        const current = entries.map(microphoneEntryKey);
+        const defaults = deviceMicrophoneOrder([]).map(microphoneEntryKey);
+        return (
+          current.length === defaults.length &&
+          current.every((key, index) => key === defaults[index])
+        );
+      })()
+    : true;
 
   return (
     <SettingsScreen title="Voice">
@@ -341,7 +352,28 @@ export function SettingsVoiceRouteScreen() {
             </Text>
           </>
         ) : null}
-        <SettingsSection title="Preferred order">
+        <SettingsSection
+          title="Preferred order"
+          trailing={
+            ready && !isDefaultOrder ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Reset microphone order to default"
+                onPress={() => savePreferences({ microphones: [] })}
+                className="px-2 py-2 active:opacity-60"
+                hitSlop={8}
+              >
+                <SymbolView
+                  name="arrow.uturn.backward"
+                  size={18}
+                  tintColorClassName="accent-icon-muted"
+                  type="monochrome"
+                  weight="regular"
+                />
+              </Pressable>
+            ) : null
+          }
+        >
           {entries.map((entry, index) => {
             const key = microphoneEntryKey(entry);
             const shift =

@@ -1,5 +1,6 @@
 import {
   BASE_FONT_SIZE_STEP,
+  DEFAULT_BASE_FONT_SIZE,
   MAX_BASE_FONT_SIZE,
   MIN_BASE_FONT_SIZE,
 } from "../../../../lib/appearancePreferences";
@@ -30,6 +31,9 @@ export function TextAppearanceSection() {
         step={BASE_FONT_SIZE_STEP}
         value={appearance.baseFontSize}
         valueLabel={`${appearance.baseFontSize} pt`}
+        resetVisible
+        resetDisabled={appearance.baseFontSize === DEFAULT_BASE_FONT_SIZE}
+        onReset={() => setBaseFontSize(DEFAULT_BASE_FONT_SIZE)}
       />
       <SettingsSwitchRow
         disabled={!isReady}
@@ -37,6 +41,9 @@ export function TextAppearanceSection() {
         label="Render math"
         value={mathRenderingEnabled}
         onValueChange={setMathRenderingEnabled}
+        resetVisible
+        resetDisabled={!mathRenderingEnabled}
+        onReset={() => setMathRenderingEnabled(false)}
       />
     </SettingsSection>
   );
