@@ -772,14 +772,6 @@ export default function GitActionsControl({
           data: successToastData,
         }),
       );
-    } else {
-      resultToastId = toastManager.add({
-        type: "success",
-        title: actionResult.toast.title,
-        description: actionResult.toast.description,
-        timeout: successToastTiming.timeout,
-        data: successToastData,
-      });
     }
     return true;
   }
@@ -829,27 +821,11 @@ export default function GitActionsControl({
         pullResult.status === "pulled"
           ? `Updated ${pullResult.refName} from ${pullResult.upstreamRef ?? "upstream"}`
           : `${pullResult.refName} is already synchronized.`;
-      if (isPanel) {
-        setInlineSuccess({
-          title,
-          description,
-          scopeKey: successScopeKey,
-          expiresAtMs: inlineSuccessExpiresAt(),
-        });
-        return;
-      }
-      const successToastTiming = resolveGitActionResultToastTiming("success");
-      toastManager.add({
-        type: "success",
+      setInlineSuccess({
         title,
         description,
-        timeout: successToastTiming.timeout,
-        data: {
-          ...threadToastData,
-          ...(successToastTiming.dismissAfterVisibleMs !== null
-            ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
-            : {}),
-        },
+        scopeKey: successScopeKey,
+        expiresAtMs: inlineSuccessExpiresAt(),
       });
     })();
   };

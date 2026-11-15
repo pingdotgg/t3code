@@ -222,15 +222,11 @@ export function AssistantSelectionToolbar({
         return false;
       }
     })();
-    const done = () => {
-      toastManager.add({ type: "success", title: "Copied to clipboard" });
-      dismiss();
-    };
     if (copied) {
-      done();
+      dismiss();
       return;
     }
-    void writeTextToClipboard(text, "selection").then(done, (error: unknown) => {
+    void writeTextToClipboard(text, "selection").then(dismiss, (error: unknown) => {
       toastManager.add({
         type: "error",
         title: "Could not copy selection",

@@ -688,11 +688,8 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
     case "layout:copy-link": {
       const link = threadLinkFor(location.tab);
       if (!link) return;
-      void writeTextToClipboard(link, "thread link").then(
-        (copied) => {
-          if (copied) toastManager.add({ type: "success", title: "Link copied" });
-        },
-        () => toastManager.add({ type: "error", title: "Could not copy the link" }),
+      void writeTextToClipboard(link, "thread link").catch(() =>
+        toastManager.add({ type: "error", title: "Could not copy the link" }),
       );
       return;
     }
