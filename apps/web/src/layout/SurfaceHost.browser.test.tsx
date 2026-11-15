@@ -128,24 +128,31 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   expect(strip.isConnected).toBe(true);
 });
 
-it("shows an unfocused pane's active tab as a pill, and black chrome keeps the notch", async () => {
-  using tabs = setup();
+it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps the notch", async () => {
+  using _tabs = setup();
   await using _screen = await renderHost({ insetSidebar: true });
   const notch = inSecondPane('[data-pane-notch=""]');
   expect(notch.hasAttribute("data-pane-notch-unfocused")).toBe(true);
   // The bar runs the pane's whole width; the notch ends at its tabs.
   expect(getComputedStyle(notch, "::before").right).not.toBe("0px");
   const join = inSecondPane("[data-pane-join]");
-  // Focus moving between panes cross-fades the joined tab and the pill.
+  const position = join.style.getPropertyValue("--jx");
+  const width = join.style.getPropertyValue("--jw");
   await vi.waitFor(() => {
-    expect(getComputedStyle(join.querySelector("[data-jp]")!).opacity).toBe("1");
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("0");
+    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1");
+    expect(getComputedStyle(join.querySelector("[data-jr]")!).opacity).toBe("0.45");
+    expect(getComputedStyle(join.querySelector("[data-jm]")!, "::after").opacity).toBe("0.45");
   });
 
-  useLayoutStore.getState().focusTab(tabs.second.id);
+  useLayoutStore
+    .getState()
+    .focusPane(notch.closest<HTMLElement>("[data-layout-pane-id]")!.dataset.layoutPaneId!);
   await vi.waitFor(() =>
-    expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1"),
+    expect(getComputedStyle(join.querySelector("[data-jr]")!).opacity).toBe("1"),
   );
+  expect(getComputedStyle(join.querySelector("[data-jb]")!).opacity).toBe("1");
+  expect(join.style.getPropertyValue("--jx")).toBe(position);
+  expect(join.style.getPropertyValue("--jw")).toBe(width);
 
   document.documentElement.classList.add("black-chrome");
   try {
