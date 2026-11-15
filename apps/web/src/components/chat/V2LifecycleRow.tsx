@@ -423,11 +423,11 @@ function SubagentTimelineLink(props: {
   const remoteEnvironment = useEnvironment(remote?.environmentId ?? null);
   const navigate = useNavigate();
   const threadId = props.threadId;
-  // A task in a linked environment opens there, if this client is connected to it.
+  // A task in a linked environment opens there, if it is enabled in this client.
   const open =
     threadId !== null
       ? () => props.onOpenThread(threadId)
-      : remote !== undefined && remoteEnvironment !== null
+      : remote !== undefined && remoteEnvironment?.entry.enabled === true
         ? () =>
             void navigate({
               to: "/$environmentId/$threadId",
