@@ -1,3 +1,4 @@
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
@@ -392,6 +393,7 @@ it.each([
 function makeLocalCommandHarness(input: {
   readonly text: string;
   readonly memoryContext?: string;
+  readonly narration?: "brief" | "detailed";
   readonly manualContinuation?: boolean;
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
@@ -1319,6 +1321,15 @@ function makeLocalCommandHarness(input: {
         Layer.mock(RuntimePolicy.RuntimePolicyV2)({
           resolve: resolveRuntimePolicy,
         }),
+        // Last, so it replaces the default settings the worktree layer brings.
+        input.narration === undefined
+          ? Layer.empty
+          : Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: Effect.succeed({
+                ...DEFAULT_SERVER_SETTINGS,
+                agentEyesNarration: input.narration,
+              }),
+            }),
       ),
     ),
   );
@@ -2113,6 +2124,20 @@ effectIt.effect("adds the thread's memory vault notes to an ordinary turn", () =
     const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
     expect(text.includes("VAULT_NOTES")).toBe(true);
     expect(text.endsWith("What is the release code word?")).toBe(true);
+  }),
+);
+
+effectIt.effect("asks the agent to narrate its steps when Agent Eyes narration is on", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Fix the build",
+      narration: "brief",
+      sideChat: { contextRun: "delivered" },
+    });
+    yield* harness.start;
+    const text = harness.startTurn.mock.calls[0]?.[0].message.text ?? "";
+    expect(text.includes("The user is watching your work live")).toBe(true);
+    expect(text.endsWith("Fix the build")).toBe(true);
   }),
 );
 

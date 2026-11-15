@@ -160,6 +160,16 @@ export interface ProviderTurnStartServiceV2Shape {
   }) => Effect.Effect<void, ProviderTurnStartError | ProviderTurnStartRunStateMissingError>;
 }
 
+/** Agent Eyes narration: the agent says what it is about to do, which costs extra output. */
+function agentEyesNarrationContext(narration: "off" | "brief" | "detailed"): string {
+  if (narration === "off") return "";
+  const length =
+    narration === "brief"
+      ? "one short sentence (under 20 words)"
+      : "two or three sentences, including what you expect to happen";
+  return `The user is watching your work live. Before each significant action (editing a file, running a command, opening a page, or using a tool), first write ${length} saying what you are about to do and why. Do not narrate trivial reads.`;
+}
+
 export class ProviderTurnStartServiceV2 extends Context.Service<
   ProviderTurnStartServiceV2,
   ProviderTurnStartServiceV2Shape
@@ -195,6 +205,7 @@ export const layer: Layer.Layer<
     const projects = yield* ProjectService.ProjectService;
     // Optional so hosts and tests without vaults build this service unchanged.
     const memoryVaults = yield* Effect.serviceOption(MemoryVaultService.MemoryVaultService);
+    const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -870,6 +881,14 @@ export const layer: Layer.Layer<
         restartCancelledWork.length === 0
           ? ""
           : restartCancelledBackgroundWorkNote(restartCancelledWork);
+      const narration = goalCommand
+        ? "off"
+        : Option.isNone(serverSettings)
+          ? "off"
+          : yield* serverSettings.value.getSettings.pipe(
+              Effect.map((settings) => settings.agentEyesNarration),
+              Effect.orElseSucceed(() => "off" as const),
+            );
       // The thread's memory vault is chosen apart from its project and never changes it.
       const memoryContext =
         goalCommand || Option.isNone(memoryVaults)
@@ -1752,6 +1771,7 @@ export const layer: Layer.Layer<
             sideChatContext,
             restartNote,
             compact || turnInput.resume ? "" : memoryContext,
+            compact || turnInput.resume ? "" : agentEyesNarrationContext(narration),
           ]
             .filter((part) => part !== "")
             .join("\n\n");
@@ -1832,6 +1852,7 @@ export const layer: Layer.Layer<
         sideChatHandoff === undefined &&
         restartNote === "" &&
         memoryContext === "" &&
+        narration === "off" &&
         !noteContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);

@@ -582,6 +582,10 @@
     "./ollamaCatalog": {
       "types": "./src/ollamaCatalog.ts",
       "import": "./src/ollamaCatalog.ts"
+    },
+    "./secretRedaction": {
+      "types": "./src/secretRedaction.ts",
+      "import": "./src/secretRedaction.ts"
     }
   },
   "scripts": {

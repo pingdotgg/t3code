@@ -76,6 +76,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "tabs.previous",
   "tabs.close",
   "tabs.reopenClosed",
+  "agentEyes.toggle",
   "pullRequest.copyNumber",
   "diff.toggle",
   "preview.toggle",

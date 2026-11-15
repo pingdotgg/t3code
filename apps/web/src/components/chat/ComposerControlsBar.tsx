@@ -1,4 +1,5 @@
 import type { ChatComposerProps } from "./ChatComposer";
+import { AgentEyesPickerControl } from "../agentEyes/AgentEyesPickerControl";
 import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
@@ -228,6 +229,12 @@ export function ComposerControlsBar(props: {
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           onRuntimeModeChange={handleRuntimeModeChange}
+          extra={
+            <AgentEyesPickerControl
+              environmentId={environmentId}
+              threadRef={routeKind === "server" ? routeThreadRef : null}
+            />
+          }
         />
       }
       terminalOpen={terminalOpen}

@@ -1,8 +1,8 @@
+import { redactSecrets } from "@t3tools/shared/secretRedaction";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   asksForWholeVault,
-  redactSecrets,
   renderVaultContext,
   selectVaultSections,
   slugifyVaultName,

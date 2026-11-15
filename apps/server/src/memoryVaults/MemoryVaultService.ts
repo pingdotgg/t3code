@@ -23,12 +23,13 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 
+import { redactSecrets } from "@t3tools/shared/secretRedaction";
+
 import * as ServerConfig from "../config.ts";
 import {
   DEFAULT_VAULT_FILES,
   asksForWholeVault,
   rankSections,
-  redactSecrets,
   renderVaultContext,
   selectVaultSections,
   slugifyVaultName,

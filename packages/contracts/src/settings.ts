@@ -170,6 +170,16 @@ export const VideoSurfaceOpacity = Schema.Int.check(
 );
 export const DEFAULT_VIDEO_SURFACE_OPACITY = 65;
 
+/** How much of an action Agent Eyes shows on its stage. */
+export const AgentEyesDetail = Schema.Literals(["summary", "standard", "full"]);
+export type AgentEyesDetail = typeof AgentEyesDetail.Type;
+/**
+ * Asks agents to say what they are about to do before each significant step, so Agent Eyes can
+ * show it. Not free: the extra sentences are model output.
+ */
+export const AgentEyesNarration = Schema.Literals(["off", "brief", "detailed"]);
+export type AgentEyesNarration = typeof AgentEyesNarration.Type;
+
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -513,6 +523,9 @@ export const ClientSettingsSchema = Schema.Struct({
   videoBackgroundFile: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   videoSurfaceOpacity: VideoSurfaceOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_VIDEO_SURFACE_OPACITY)),
+  ),
+  agentEyesDetail: AgentEyesDetail.pipe(
+    Schema.withDecodingDefault(Effect.succeed("standard" as const)),
   ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
@@ -1485,6 +1498,9 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
+  agentEyesNarration: AgentEyesNarration.pipe(
+    Schema.withDecodingDefault(Effect.succeed("off" as const)),
+  ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snoozePresets: SnoozePresetSettings.pipe(
@@ -1931,6 +1947,7 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
+  agentEyesNarration: Schema.optionalKey(AgentEyesNarration),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
@@ -2101,6 +2118,7 @@ export const ClientSettingsPatch = Schema.Struct({
   videoBackgroundFolder: Schema.optionalKey(Schema.String),
   videoBackgroundFile: Schema.optionalKey(Schema.String),
   videoSurfaceOpacity: Schema.optionalKey(VideoSurfaceOpacity),
+  agentEyesDetail: Schema.optionalKey(AgentEyesDetail),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

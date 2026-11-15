@@ -320,6 +320,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       if (!event.repeat) closeRightPanelSurface(activeRightPanelSurface);
     },
     "diff.toggle": () => onToggleDiff(),
+    "agentEyes.toggle": () => {
+      if (isServerThread && activeThreadRef) {
+        useRightPanelStore.getState().toggle(activeThreadRef, "agent-eyes");
+      }
+    },
   } satisfies ChatShortcutCommands;
 
   return {

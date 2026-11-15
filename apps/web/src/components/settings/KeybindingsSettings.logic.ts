@@ -384,6 +384,7 @@ export function commandLabel(command: KeybindingCommand): string {
   if (usagePeriod) return `Usage: Period: ${usagePeriod.label}`;
   if (command === "view.reopenClosed") return "Reopen Closed Tab";
   if (command === "tabs.next") return "Tabs: Next Thread Tab";
+  if (command === "agentEyes.toggle") return "Agent Eyes: Show or Hide";
   if (command === "tabs.previous") return "Tabs: Previous Thread Tab";
   if (command === "tabs.close") return "Tabs: Close Thread Tab";
   if (command === "tabs.reopenClosed") return "Tabs: Reopen Closed Thread Tab";
