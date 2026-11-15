@@ -32,12 +32,9 @@ import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
-// The brand follows the fixed toggle and back/forward buttons, one control gap
-// after them, as main's brand follows its toggle.
-const SIDEBAR_BRAND_OFFSET =
-  "ml-[calc(var(--workspace-controls-left)+var(--workspace-titlebar-control-size)*3+var(--workspace-titlebar-control-gap))]";
+const SIDEBAR_BRAND_OFFSET = "ml-[var(--workspace-titlebar-content-left)]";
 
-// Keeps the sidebar's minimum width wide enough for the brand and the controls before it.
+// The pill yields first; the minimum always reserves both history buttons.
 export function SidebarBrandWidthProbe({
   onWidthChange,
 }: {
@@ -54,8 +51,9 @@ export function SidebarBrandWidthProbe({
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
     >
-      <div className={cn(SIDEBAR_BRAND_OFFSET, "flex")}>
+      <div className={cn(SIDEBAR_BRAND_OFFSET, "flex gap-2")}>
         <SidebarBrandMark onBackdrop={false} />
+        <div className="w-[calc(var(--workspace-titlebar-control-size)*2)]" />
       </div>
     </div>
   );
@@ -66,8 +64,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="T3 Code home"
       className={cn(
-        "relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 focus-visible:ring-inset md:flex",
-        SIDEBAR_BRAND_OFFSET,
+        "pointer-events-auto relative z-10 hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring [-webkit-app-region:no-drag] focus-visible:ring-2 focus-visible:ring-inset md:flex",
         onBackdrop ? "text-white light:text-foreground" : "text-foreground",
       )}
       to="/"
@@ -98,19 +95,12 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
-  const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const backdropVariant = useSidebarStageBackdropVariant(environmentIdentificationMode);
-  const pillLabel =
-    environmentIdentificationMode === "pill"
-      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
-      : null;
 
   return (
     // The sidebar's share of the window chrome row, not a padded SidebarHeader.
-    // On desktop the fixed toggle (and later back/forward) sit over it. In the
-    // inset sidebar it spans the edge padding, and the content below starts
-    // 4px under the row (pen s8qVFu), so it overlaps the first group's inset.
+    // Fixed controls sit over it; the inset content starts 4px under the row (pen s8qVFu).
     <div
       className={cn(
         "@container/sidebar-header relative flex h-(--workspace-chrome-row-height) shrink-0 flex-row items-center gap-2 pr-3 md:px-0",
@@ -127,20 +117,37 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
           aria-label="Toggle main sidebar"
         />
       </div>
-      {/* As on main, a pill that does not fit beside the brand wraps out of view. */}
-      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5">
-        <SidebarBrand onBackdrop={backdropVariant !== null} />
-        {pillLabel ? (
-          <div className="ml-1 hidden h-7 items-center @[15rem]/sidebar-header:flex">
-            <Badge data-environment-identification="pill" size="sm" variant="secondary">
-              {pillLabel}
-            </Badge>
-          </div>
-        ) : null}
+      <div className="relative z-10 flex h-8 min-w-0 flex-1 flex-wrap content-start items-center gap-x-2 overflow-hidden py-0.5 md:hidden">
+        <SidebarStagePill className="ml-1 hidden @[15rem]/sidebar-header:flex" />
       </div>
     </div>
   );
 });
+
+export function SidebarChromeBrand({ onBackdrop }: { onBackdrop: boolean }) {
+  return (
+    <div className="-ml-px flex h-7 flex-wrap content-start items-center gap-x-2 overflow-hidden pl-(--workspace-titlebar-control-gap) pr-2">
+      <SidebarBrand onBackdrop={onBackdrop} />
+      <SidebarStagePill />
+    </div>
+  );
+}
+
+function SidebarStagePill({ className }: { className?: string }) {
+  const stageLabel = useEnvironmentStageLabel();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const pillLabel =
+    environmentIdentificationMode === "pill"
+      ? resolveEnvironmentIdentificationPillLabel(stageLabel)
+      : null;
+  return pillLabel ? (
+    <div className={cn("flex h-7 shrink-0 items-center", className)}>
+      <Badge data-environment-identification="pill" size="sm" variant="secondary">
+        {pillLabel}
+      </Badge>
+    </div>
+  ) : null;
+}
 
 // The footer uses 32px icon-only controls with 16px glyphs (pen C0J52w).
 function SidebarUtilityItem({
