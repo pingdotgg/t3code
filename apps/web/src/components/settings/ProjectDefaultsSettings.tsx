@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
@@ -48,7 +49,13 @@ function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
-export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+export function ProjectDefaultsSettings({
+  category,
+  headerAction,
+}: {
+  category: ProjectSettingsCategory;
+  headerAction?: ReactNode;
+}) {
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
@@ -328,6 +335,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
       title={category === "source-control" ? "Repositories" : "New threads"}
+      headerAction={headerAction}
     >
       {category === "project" ? (
         <>

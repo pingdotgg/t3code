@@ -65,6 +65,8 @@ interface SettingsScopeMenuProps {
   readonly environments: readonly EnvironmentPresentation[];
   readonly singleEnvironment: boolean;
   readonly onChange: (next: SettingsScopeSearch) => void;
+  /** Right-aligned pickers open their popups toward the page. */
+  readonly popupAlign?: "start" | "end";
 }
 
 export function SettingsScopeSentence() {
@@ -79,6 +81,12 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  if (pathname === "/settings/projects") {
+    // A project's page switches projects in the breadcrumb and narrows scope beside the
+    // per-checkout sections; only a stale selection needs the recovery line up here.
+    if (scope.search.project && scope.scope.kind !== "unavailable") return null;
+    return <ProjectsPageScope {...props} />;
+  }
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
       <span className="flex min-w-0 items-center gap-1.5">
@@ -89,6 +97,62 @@ export function SettingsScopeSentence() {
         <span className="shrink-0">
           {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}
         </span>
+        <EnvironmentScopeMenu {...props} />
+      </span>
+      <CheckoutScopeMenu {...props} />
+    </p>
+  );
+}
+
+const SENTENCE_CLASSNAME =
+  "flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4";
+
+function useScopeMenuProps(): SettingsScopeMenuProps | null {
+  const scope = useOptionalSettingsScope();
+  const { environments } = useEnvironments();
+  if (scope === null) return null;
+  return {
+    value: scope.search,
+    singleEnvironment: scope.singleEnvironment,
+    groups: scope.groups,
+    environments,
+    onChange: scope.selectScope,
+  };
+}
+
+/** Narrows a project section whose settings live per environment or per checkout. */
+export function ProjectCheckoutScope() {
+  const props = useScopeMenuProps();
+  if (!props) return null;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-sm text-muted-foreground">
+      <EnvironmentScopeMenu {...props} popupAlign="end" />
+      <CheckoutScopeMenu {...props} popupAlign="end" />
+    </div>
+  );
+}
+
+/** Switches the open project from the settings breadcrumb, keeping the environment filter. */
+export function SettingsProjectSwitcher() {
+  const props = useScopeMenuProps();
+  return props ? <ProjectScopeMenu {...props} triggerVariant="ghost" includeAll={false} /> : null;
+}
+
+function ProjectsPageScope(props: SettingsScopeMenuProps) {
+  const { value } = props;
+  const sentence = SENTENCE_CLASSNAME;
+  if (!value.project) {
+    return (
+      <p className={sentence}>
+        <span className="shrink-0">Showing projects on</span>
+        <EnvironmentScopeMenu {...props} />
+      </p>
+    );
+  }
+  return (
+    <p className={sentence}>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0">Applies to</span>
         <EnvironmentScopeMenu {...props} />
       </span>
       <CheckoutScopeMenu {...props} />
@@ -130,7 +194,11 @@ function ScopeMenu({
   allOption,
   searchLabel,
   onChange,
+  triggerVariant = "outline",
+  popupAlign = "start",
 }: {
+  triggerVariant?: "outline" | "ghost";
+  popupAlign?: "start" | "end" | undefined;
   ariaLabel: string;
   icon: ReactNode;
   label: string;
@@ -145,7 +213,7 @@ function ScopeMenu({
   const trigger = (
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
-      render={<Button variant="outline" size="sm" />}
+      render={<Button variant={triggerVariant} size="sm" />}
       className="min-w-0 max-w-72"
     >
       {icon}
@@ -180,7 +248,7 @@ function ScopeMenu({
         }}
       >
         {trigger}
-        <ComboboxPopup align="start" className="w-80">
+        <ComboboxPopup align={popupAlign} className="w-80">
           <ComboboxSearchInput
             aria-label={searchLabel}
             placeholder={searchLabel}
@@ -205,7 +273,7 @@ function ScopeMenu({
   return (
     <Menu>
       {trigger}
-      <MenuPopup align="start">
+      <MenuPopup align={popupAlign}>
         <div className="w-72 max-w-full">
           <MenuRadioGroup
             value={value}
@@ -237,6 +305,7 @@ function EnvironmentScopeMenu({
   environments,
   onChange,
   singleEnvironment,
+  popupAlign,
 }: SettingsScopeMenuProps) {
   const resolved = resolveSettingsScope(value, groups, environments);
   const environmentValue = environmentAxisValue(
@@ -277,6 +346,7 @@ function EnvironmentScopeMenu({
       value={environmentValue}
       onChange={(next) => onChange(selectEnvironmentAxis(value, next))}
       searchLabel="Search environments"
+      popupAlign={popupAlign}
       allOption={
         singleEnvironment
           ? null
@@ -309,7 +379,7 @@ function EnvironmentScopeMenu({
   );
 }
 
-function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+function CheckoutScopeMenu({ value, groups, onChange, popupAlign }: SettingsScopeMenuProps) {
   const group = groups.find((candidate) => candidate.projectKey === value.project);
   const checkouts = group ? settingsScopeCheckoutChoices(group, value) : [];
   if (checkouts.length === 0) return null;
@@ -337,6 +407,7 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
           )
         }
         searchLabel="Search checkouts"
+        popupAlign={popupAlign}
         allOption={{ value: ALL_CHECKOUTS_VALUE, label: "All checkouts" }}
         options={checkouts.map((member) => ({
           value: member.physicalProjectKey,
@@ -348,7 +419,14 @@ function CheckoutScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) 
   );
 }
 
-function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
+function ProjectScopeMenu({
+  value,
+  groups,
+  environments,
+  onChange,
+  triggerVariant,
+  includeAll = true,
+}: SettingsScopeMenuProps & { triggerVariant?: "outline" | "ghost"; includeAll?: boolean }) {
   const selected = groups.find((group) => group.projectKey === value.project);
   const projects = projectScopeMenuGroups(groups, value).map((group) => ({
     group,
@@ -357,12 +435,13 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
   return (
     <ScopeMenu
       ariaLabel="Project scope"
+      {...(triggerVariant ? { triggerVariant } : {})}
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
       label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
       value={projectAxisValue(value)}
       onChange={(next) => onChange(selectProjectAxis(value, next))}
       searchLabel="Search projects"
-      allOption={{ value: ALL_PROJECTS_VALUE, label: "All projects" }}
+      allOption={includeAll ? { value: ALL_PROJECTS_VALUE, label: "All projects" } : null}
       options={projects.map(({ group, machines }) => {
         const sameName = projects.filter(
           (other) =>

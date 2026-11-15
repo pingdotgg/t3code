@@ -24,6 +24,7 @@ import {
 } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -117,10 +118,12 @@ vi.mock(import("../ui/toast"), async (original) => {
   const actual = await original();
   return { ...actual, toastManager: { ...actual.toastManager, add: state.toast } };
 });
-// These sections have separate data sources and their own tests.
+// These sections have separate data sources and their own tests; the scope picker in
+// the New threads header stays so scope navigation remains reachable.
 vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
   ...(await original()),
-  ProjectDefaultsSettings: (() => null) as never,
+  ProjectDefaultsSettings: (({ headerAction }: { headerAction?: ReactNode }) =>
+    headerAction ?? null) as never,
 }));
 vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
@@ -139,6 +142,7 @@ import { assetEnvironment } from "../../state/assets";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
+import { SettingsBreadcrumb } from "./SettingsBreadcrumb";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
@@ -282,6 +286,7 @@ async function mountSettings(search: SettingsScopeSearch) {
         search={route.useSearch()}
         onChange={(next) => void router.navigate({ to: "/settings/projects", search: () => next })}
       >
+        <SettingsBreadcrumb pathname="/settings/projects" />
         <ProjectsSettings />
       </SettingsScopeProvider>
     ),
@@ -336,6 +341,42 @@ async function expectProjectAccessDeniedToast(title: string) {
 }
 
 describe("project organization", () => {
+  it("renames the project on every machine while one machine is picked", async () => {
+    setup();
+    await using screen = await mountPanel({ machine: primaryId });
+    await rename(screen, "Renamed repo");
+    await vi.waitFor(() => expect(state.update).toHaveBeenCalledTimes(2));
+    expect(
+      state.update.mock.calls.map(([request]) => [request.environmentId, request.input.title]),
+    ).toEqual([
+      [primaryId, "Renamed repo"],
+      [remoteId, "Renamed repo"],
+    ]);
+  });
+
+  it.each([
+    [false, null],
+    [true, "Unarchive"],
+  ])(
+    "offers No project (archived: %s) no removal and only a way out of archive",
+    async (archived, action) => {
+      setup();
+      state.projects = [
+        {
+          ...state.projects[0]!,
+          title: "No project",
+          isScratch: true,
+          archivedAt: archived ? "2026-01-02T00:00:00.000Z" : null,
+        },
+      ];
+      await using _screen = await mountPanel();
+      expect(page.getByRole("button", { name: /^Remove/ }).query()).toBeNull();
+      expect(page.getByRole("button", { name: /archive$/i }).query()?.textContent ?? null).toBe(
+        action,
+      );
+    },
+  );
+
   it("archives the checkout on every machine while one machine is picked", async () => {
     setup();
     await using _screen = await mountPanel({ machine: primaryId });
@@ -658,7 +699,7 @@ describe("project settings scope", () => {
     await expect.element(remoteOption()).toBeVisible();
   });
 
-  it("lists only the selected environment's projects and keeps it when one is opened", async () => {
+  it("lists only the selected environment's projects and keeps it through the project and back", async () => {
     setup();
     const [primaryProject, remoteProject] = state.projects;
     state.projects = [
@@ -683,6 +724,22 @@ describe("project settings scope", () => {
         machine: primaryId,
       }),
     );
+
+    await userEvent.click(page.getByRole("button", { name: "Projects", exact: true }));
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({ machine: primaryId }),
+    );
+  });
+
+  it("removes only the filtered environment's checkout from a list row", async () => {
+    setup();
+    await using _screen = await mountSettings({ machine: primaryId });
+
+    await userEvent.click(page.getByRole("button", { name: "More actions for Shared repo" }));
+    await userEvent.click(page.getByRole("menuitem", { name: /^Remove from primary/ }));
+
+    await vi.waitFor(() => expect(state.delete).toHaveBeenCalledOnce());
+    expect(state.delete.mock.calls[0]![0].environmentId).toBe(primaryId);
   });
 
   it("offers only the selected project's checkout environments", async () => {
@@ -760,7 +817,6 @@ describe("project settings scope", () => {
     });
 
     await expect.element(page.getByText(message, { exact: true })).toBeVisible();
-    await expect.element(page.getByRole("button", { name: /^Project scope:/ })).toBeVisible();
     await expect
       .element(page.getByRole("button", { name: "Environment scope: remote" }))
       .toBeVisible();
