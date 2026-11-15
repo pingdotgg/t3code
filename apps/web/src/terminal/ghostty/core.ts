@@ -175,7 +175,10 @@ function encoderAxis(
   pixelReports: boolean,
 ) {
   const wholeCell = Math.max(1, Math.round(cell));
-  const scale = pixelReports ? 1 : wholeCell / cell;
+  if (pixelReports) {
+    return { position, screen, cell: wholeCell, paddingStart, paddingEnd };
+  }
+  const scale = wholeCell / cell;
   const start = Math.round(paddingStart);
   const end = Math.round(paddingEnd);
   return {

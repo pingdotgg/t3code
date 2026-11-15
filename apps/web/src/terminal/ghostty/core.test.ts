@@ -525,6 +525,8 @@ describe("GhosttyTerminalCore mouse encoding", () => {
       expect(press(218.5, 140, 4)).toBe("\x1b[<0;28;8M");
       expect(press(4 + 53.5 * cellWidth, 140, 4)).toBe("\x1b[<0;54;8M");
       expect(press(10, 4.5 + cellHeight + 0.2, 4.5)).toBe("\x1b[<0;1;2M");
+      core.write("\x1b[?1016h");
+      expect(press(218.5, 22, 4.5)).toBe("\x1b[<0;215;17M");
     } finally {
       core.dispose();
     }
