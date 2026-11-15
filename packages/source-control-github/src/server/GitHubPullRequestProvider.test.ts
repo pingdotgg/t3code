@@ -511,8 +511,18 @@ it.effect("adds unstarted same-repository workflow runs as pending, not as appro
         // Run 201 is represented by its running job; run 202 is queued before any job exists.
         listUnfinishedWorkflowRuns: () =>
           Effect.succeed([
-            { pullRequestNumbers: [], id: 201, name: "Lint", url: "https://github.com/acme/web/actions/runs/201" },
-            { pullRequestNumbers: [], id: 202, name: "CI", url: "https://github.com/acme/web/actions/runs/202" },
+            {
+              pullRequestNumbers: [],
+              id: 201,
+              name: "Lint",
+              url: "https://github.com/acme/web/actions/runs/201",
+            },
+            {
+              pullRequestNumbers: [],
+              id: 202,
+              name: "CI",
+              url: "https://github.com/acme/web/actions/runs/202",
+            },
           ]),
         listWorkflowRunsRequiringApproval: () => Effect.succeed([]),
         getViewerAccess: () =>
