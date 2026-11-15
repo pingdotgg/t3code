@@ -576,7 +576,7 @@ it.effect.each([
         assert.isTrue(spawnedArgs.some((args) => args.includes("--git-common-dir")));
         const siblingRefs = yield* driver.listRefs({ cwd: siblingPath });
         const createdRef = siblingRefs.refs.find((ref) => ref.name === "feature/cache-created");
-        if (hookExitCode === 0) {
+        if (hookExitCode === 0 || commonDirFailure !== "none") {
           assert.isDefined(createdRef?.worktreePath);
           assert.equal(
             NodeFS.realpathSync.native(createdRef!.worktreePath!),
