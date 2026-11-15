@@ -107,6 +107,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     threadId: Schema.optional(ThreadId),
     providerTurn: OrchestrationV2ProviderTurn,
+    /** Questions the adapter keeps open after this turn ends; the rest of the turn's are dismissed. */
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
     type: Schema.Literal("node.updated"),
@@ -184,6 +186,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     failure: Schema.Null,
     reason: Schema.optional(Schema.String),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
@@ -199,6 +202,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     threadDisposition: Schema.Literals(["reusable", "broken"]),
     /** Child turns outlive root failure and report their own terminals; otherwise open children settle. */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
