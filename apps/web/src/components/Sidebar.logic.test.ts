@@ -15,7 +15,6 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   isSidebarThreadWoke,
-  resolveSidebarTopStatus,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
@@ -336,30 +335,6 @@ describe("resolveSidebarThreadStatus", () => {
     for (const [thread, title] of cases) {
       expect(resolveWindowTitleThreadStatus(thread)).toBe(title);
     }
-  });
-
-  it.each([
-    [{ status: "working", goalActive: true }, "Goal"],
-    [{ status: "preparing", goalActive: true }, "Setting up"],
-    [{ status: "failed", isWoke: true }, "Failed"],
-    [{ status: "ready", isWoke: true, isUnread: true }, "Woke"],
-    [{ status: "ready", isUnread: true }, "Done"],
-  ] as const)("labels %o as %s", (input, label) => {
-    expect(
-      resolveSidebarTopStatus({ goalActive: false, isWoke: false, isUnread: false, ...input })
-        ?.label,
-    ).toBe(label);
-  });
-
-  it("has no top status for a seen, settled-down thread", () => {
-    expect(
-      resolveSidebarTopStatus({
-        status: "ready",
-        goalActive: false,
-        isWoke: false,
-        isUnread: false,
-      }),
-    ).toBeNull();
   });
 
   it.each([
