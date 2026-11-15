@@ -2337,7 +2337,7 @@ const make = Effect.gen(function* () {
       } finally {
         tab.capturing -= 1;
         stage = "resuming the live view";
-        // A viewer that did pause is still asked to resume once the budget is spent.
+        // Every viewer is asked to resume even with no time left; only the wait for them is bounded.
         await within(
           Promise.all([
             ...[...tab.viewers].map((viewer) => viewer.resume()),
@@ -2347,7 +2347,7 @@ const make = Effect.gen(function* () {
                   .catch(constVoid)
               : undefined,
           ]),
-          SCREENCAST_SWITCH_TIMEOUT_MS,
+          Math.min(SCREENCAST_SWITCH_TIMEOUT_MS, remaining()),
         );
       }
     });

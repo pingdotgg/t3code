@@ -4276,3 +4276,42 @@ it.effect("a viewer whose screencast never pauses does not hold the tab's snapsh
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.effect("a viewer whose screencast never resumes frees the tab's captures at the deadline", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      yield* browser.attachViewer(viewerInput(tabId, true));
+      const viewerSession = contexts[0]!.sessions.at(-1)!;
+      const send = viewerSession.send.getMockImplementation()!;
+      viewerSession.send.mockImplementation((method: string, input?: unknown) =>
+        method === "Page.startScreencast" ? new Promise(() => {}) : send(method, input),
+      );
+      const snapshot = () =>
+        broker
+          .invoke<PreviewAutomationSnapshot>({
+            scope,
+            tabId,
+            operation: "snapshot",
+            input: {},
+            timeoutMs: 500,
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
+      const first = yield* snapshot();
+      for (let step = 0; step < 10; step++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(100));
+      }
+      expect(first.pollUnsafe()).toBeDefined();
+      const second = yield* snapshot();
+      for (let step = 0; step < 10; step++) {
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(100));
+      }
+      // The second snapshot got the capture lock: it failed on the viewer, not on the first one.
+      expect(yield* Fiber.join(second)).toMatchObject({
+        reason: expect.stringContaining("pausing the live view"),
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
