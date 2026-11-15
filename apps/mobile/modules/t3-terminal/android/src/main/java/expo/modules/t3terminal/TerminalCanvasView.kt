@@ -329,8 +329,8 @@ internal class TerminalCanvasView(context: Context) : View(context) {
         canvas.drawRect(left, top, right, bottom, paint)
         val index = currentFrame.cursorY * currentFrame.cols + currentFrame.cursorX
         val text = currentFrame.cellText[index]
-        if (text.isNotEmpty()) {
-          val flags = currentFrame.cellFlags[index]
+        val flags = currentFrame.cellFlags[index]
+        if (text.isNotEmpty() && flags and FLAG_INVISIBLE == 0) {
           configureTextPaint(flags, currentFrame.background)
           canvas.drawText(text, left, top + baselineOffsetPx, paint)
           drawOverline(canvas, flags, left, top, right)

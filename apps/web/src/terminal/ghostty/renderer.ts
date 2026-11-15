@@ -361,15 +361,14 @@ export function renderGhosttySnapshot(options: {
 
     for (let column = 0; column < row.cells.length; column += 1) {
       const cell = row.cells[column];
+      if (!cell || cell.invisible) continue;
       const hoveredLink =
         hoveredLinkRange !== null &&
         rowIndex >= hoveredLinkRange.start.y &&
         rowIndex <= hoveredLinkRange.end.y &&
         (rowIndex > hoveredLinkRange.start.y || column >= hoveredLinkRange.start.x) &&
         (rowIndex < hoveredLinkRange.end.y || column <= hoveredLinkRange.end.x);
-      if (!cell || (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink)) {
-        continue;
-      }
+      if (!cell.underline && !cell.strikethrough && !cell.overline && !hoveredLink) continue;
       context.fillStyle = cssColor(cell.foreground);
       const left = padding + column * metrics.width;
       fillCellDecorations(
@@ -403,7 +402,7 @@ export function renderGhosttySnapshot(options: {
       const cell = cells[snapshot.cursorX];
       context.fillRect(left, top, width, height);
       context.fillStyle = cssColor(snapshot.background);
-      if (cell?.text) {
+      if (cell?.text && !cell.invisible) {
         if (isSolidPowerlineSeparator(cell.text)) {
           fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height, 0);
         } else {
