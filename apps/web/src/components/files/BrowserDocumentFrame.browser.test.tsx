@@ -163,6 +163,8 @@ describe("BrowserDocumentFrame", () => {
     await using screen = await render(frame("1", first));
     const frames = () => Array.from(screen.container.querySelectorAll("iframe"));
     await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([first]));
+    const opened = frames()[0];
+    using paint = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(0);
 
     // The moment the next revision's frame is inserted, its page cannot have loaded yet. The
     // current page must still be there and visible, or the panel shows a blank white frame.
@@ -179,8 +181,12 @@ describe("BrowserDocumentFrame", () => {
       observer.observe(screen.container, { childList: true, subtree: true });
     });
     await screen.rerender(frame("2", second));
-    expect(await atInsertion).toEqual({ srcs: [first, second], visible: [first] });
+    expect(await atInsertion).toEqual({ srcs: [second, first], visible: [first] });
 
+    await screen.rerender(frame("1", first));
+    expect(frames()).toEqual([opened]);
+    paint.mockRestore();
+    await screen.rerender(frame("2", second));
     await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([second]));
     expect(frames()[0]!.inert).toBe(false);
     expect(getComputedStyle(frames()[0]!).visibility).toBe("visible");

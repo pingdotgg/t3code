@@ -201,10 +201,11 @@ function FileDocument(props: {
     // Keep only the page on screen above the incoming one: the newest loaded revision, or
     // the current one when a revision arrives before anything has loaded.
     const shown = revisions.findLast((revision) => revision.loaded) ?? revisions[0];
-    setRevisions([
-      ...(shown ? [shown] : []),
-      { key: props.documentKey, src: props.src, loaded: false },
-    ]);
+    setRevisions(
+      shown?.key === props.documentKey
+        ? [shown]
+        : [...(shown ? [shown] : []), { key: props.documentKey, src: props.src, loaded: false }],
+    );
   }
   const pendingKey = revisions.length > 1 ? revisions.at(-1)?.key : undefined;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event is slow to arrive
@@ -220,7 +221,7 @@ function FileDocument(props: {
   const visibleKey = revisions.findLast((revision) => revision.loaded)?.key ?? revisions[0]?.key;
   return (
     <div className="relative min-h-0 flex-1">
-      {revisions.map((revision) => (
+      {revisions.toReversed().map((revision) => (
         <iframe
           key={revision.key}
           src={revision.src}
