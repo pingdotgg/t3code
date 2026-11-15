@@ -1,9 +1,11 @@
+import { resolveEventKeys } from "@t3tools/shared/keybindingMatching";
 import { isMacPlatform } from "../../lib/utils";
 import { SELECTION_MULTI_CLICK_INTERVAL_MS } from "../../lib/selectionActions";
 import { collectWrappedTerminalLinkLine, extractTerminalLinks } from "../../terminal-links";
 import {
   GHOSTTY_CELL_WIDE,
   GhosttyTerminalCore,
+  ghosttyColorsEqual,
   type GhosttyCell,
   type GhosttyScrollbar,
   type GhosttySnapshot,
@@ -313,14 +315,14 @@ export function terminalLinkAtPositionWithRange(
 }
 
 export function isTerminalCopyShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.ctrlKey && !event.shiftKey && !event.metaKey;
   }
-  if (key !== "c") return false;
+  if (!keys.has("c")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
@@ -355,14 +357,14 @@ export function applyTerminalCopyEvent(
 }
 
 function isTerminalPasteShortcut(
-  event: Pick<KeyboardEvent, "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "altKey" | "code" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
   platform = navigator.platform,
 ) {
-  const key = event.key.toLowerCase();
-  if (key === "insert" && !isMacPlatform(platform)) {
+  const keys = resolveEventKeys(event);
+  if (keys.has("insert") && !isMacPlatform(platform)) {
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
-  if (key !== "v") return false;
+  if (!keys.has("v")) return false;
   return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
 }
 
@@ -671,6 +673,8 @@ export class GhosttyTerminalSurface {
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
     this.installEvents();
+    // The input is mounted before the core loads, so focus can land before the listeners.
+    this.focused = document.activeElement === input;
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
@@ -1029,26 +1033,6 @@ export class GhosttyTerminalSurface {
     return before ? { start, end } : { start: end, end: start };
   }
 
-  getSelectionEndClientRect(): { readonly right: number; readonly bottom: number } | null {
-    const position = this.getSelectionPosition();
-    if (!position) return null;
-    const viewportEnd = this.core.screenPointToViewport(position.end.x, position.end.y);
-    if (
-      !viewportEnd ||
-      viewportEnd.x < 0 ||
-      viewportEnd.x >= this.cols ||
-      viewportEnd.y < 0 ||
-      viewportEnd.y >= this.rows
-    ) {
-      return null;
-    }
-    const bounds = this.canvas.getBoundingClientRect();
-    return {
-      right: bounds.left + CONTENT_PADDING + (viewportEnd.x + 1) * this.metrics.width,
-      bottom: bounds.top + this.originY + (viewportEnd.y + 1) * this.metrics.height,
-    };
-  }
-
   clearSelection({ source = "user" }: { source?: "user" | "output" } = {}): void {
     if (source === "user") this.linkActivationRequestId += 1;
     this.clearPrimedCopy();
@@ -1119,7 +1103,7 @@ export class GhosttyTerminalSurface {
     const mac = isMacPlatform(navigator.platform);
     const primaryModifier = mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
     const selectAllShortcut =
-      event.key.toLowerCase() === "a" &&
+      resolveEventKeys(event).has("a") &&
       primaryModifier &&
       !event.altKey &&
       (mac ? !event.shiftKey : event.shiftKey);
@@ -1254,18 +1238,26 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onFocus = () => {
-    this.focused = true;
+    this.setFocused(true);
     this.cursorOn = true;
     this.requestRender();
   };
 
   private readonly onBlur = () => {
-    this.focused = false;
+    this.setFocused(false);
     this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
   };
+
+  // DOM focus events can repeat without a change; report only real transitions.
+  private setFocused(focused: boolean): void {
+    if (this.focused === focused) return;
+    this.focused = focused;
+    const data = this.core.encodeFocus(focused);
+    if (data.length > 0) this.options.onData(data);
+  }
 
   private readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
@@ -1393,7 +1385,9 @@ export class GhosttyTerminalSurface {
     }
     if (event.button === 1 && isMiddleClickPastePlatform()) {
       // Keep pointerdown uncancelled so compatibility mousedown activates the split pane.
-      this.pasteTerminalSelection();
+      if (window.desktopBridge?.getPrimaryPasteEnabled?.() !== false) {
+        this.pasteTerminalSelection();
+      }
       return;
     }
     if (event.button !== 0) return;
@@ -2050,7 +2044,12 @@ export class GhosttyTerminalSurface {
       this.canvasConfigured = true;
       this.canvasDevicePixelRatio = canvasConfiguration.ratio;
     }
+    const previousBackground = this.snapshot?.background;
     this.snapshot = this.core.snapshot();
+    // Only a full render repaints the padding around the rows in the new default background.
+    if (previousBackground && !ghosttyColorsEqual(previousBackground, this.snapshot.background)) {
+      this.forceFullRender = true;
+    }
     if (!this.blinkEnabled()) this.cursorOn = true;
     // Move the origin only on full repaint; dirty-row updates cannot mix origins.
     const scrollState = this.readScrollbarState();

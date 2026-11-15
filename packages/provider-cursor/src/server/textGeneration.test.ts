@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -42,7 +43,7 @@ const layerFs = FileSystem.layerNoop({
   exists: () => Effect.succeed(hasCustomPolicy),
   makeTempDirectoryScoped: () => Effect.succeed("/isolated-text-generation"),
 });
-const layerTest = Layer.merge(layerFs, CursorSdk.layer);
+const layerTest = CursorSdk.layer.pipe(Layer.provideMerge(Layer.merge(layerFs, Path.layer)));
 
 const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 const cursorSettings = decodeCursorSettings({ enabled: true });
@@ -114,12 +115,24 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("continues in the temp directory when the SDK cannot sandbox", () =>
+  it.effect("recovers invalid output after the SDK cannot sandbox", () =>
     Effect.gen(function* () {
-      cursorSdkMock.create.mockImplementationOnce(async () => {
-        throw new Error(
-          "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
-        );
+      // The SDK checks sandbox support lazily, so create succeeds and send rejects.
+      cursorSdkMock.create.mockImplementationOnce(async () => ({
+        close: cursorSdkMock.close,
+        [Symbol.asyncDispose]: async () => {
+          cursorSdkMock.close();
+        },
+        send: async () => {
+          throw new Error(
+            "Local SDK sandboxing was requested, but sandboxing is not supported in this environment. Disable local.sandboxOptions.enabled or remove ~/.cursor/sandbox.json to run without sandboxing.",
+          );
+        },
+      }));
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "invalid-output-after-sandbox-fallback",
+        status: "finished",
+        result: "Not JSON",
       });
       const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",
@@ -134,7 +147,9 @@ describe("CursorTextGeneration", () => {
       });
 
       expect(generated.subject).toBe("Add generated commit message");
-      expect(cursorSdkMock.create).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.create).toHaveBeenCalledTimes(3);
+      expect(cursorSdkMock.prompt).toHaveBeenCalledTimes(2);
+      expect(cursorSdkMock.close).toHaveBeenCalledTimes(3);
       expect(cursorSdkMock.create.mock.calls[0]?.[0]).toMatchObject({
         local: { sandboxOptions: { enabled: true } },
       });
