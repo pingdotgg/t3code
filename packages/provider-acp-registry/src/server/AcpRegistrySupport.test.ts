@@ -561,6 +561,39 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("keeps only the end of a failed install's output in its error", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-failed-install-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_INSTALL_FAILURE_LINES: "40000" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.reason).toBe("install_failed");
+      expect(error.detail).toContain("exited with code 1");
+      expect(error.detail).toMatch(/npm error see the complete log for details$/u);
+      expect(error.detail.split("exited with code 1: ")[1]?.length).toBeLessThanOrEqual(1_000);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("launches the managed uv command over a PATH command named after the agent", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
@@ -705,6 +738,40 @@ describe("AcpRegistrySupport", () => {
                 );
           return Effect.succeed(HttpClientResponse.fromWeb(request, response));
         }),
+      ),
+    );
+  });
+
+  it.effect("installs a contained binary whose name starts with two dots", () => {
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "..example-agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-dot-name-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+      expect(resolved.spawn.command).toContain(
+        "/tools/example-agent/1.2.3/linux-x86_64/..example-agent",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
       ),
     );
   });
