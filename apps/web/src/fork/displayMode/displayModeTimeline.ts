@@ -62,6 +62,7 @@ function replyEntry(
       streaming: false,
       createdBy: "agent",
       createdAt: entry.createdAt,
+      // The turn fold's "Worked for" ends at updatedAt; the meta line shows editedAt instead.
       updatedAt: entry.createdAt,
       ...(editedAt === undefined ? {} : { editedAt }),
     },
