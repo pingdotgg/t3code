@@ -1062,6 +1062,16 @@ export const layer = Layer.effect(
       // Set by an instance's own report that its workspace skills changed.
       readonly rescan?: ProviderInstance;
     }) {
+      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
+        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
+      // What clients saw before the awaited scan, which may already have published the change.
+      const heldBeforeWait = input.rescan
+        ? workspaceSnapshotOf(
+            (yield* Ref.get(providersRef)).find(
+              (candidate) => candidate.instanceId === input.instanceId,
+            ),
+          )
+        : undefined;
       // A rescan waits for a running scan, which may have read files before the hook linked them.
       // Claims are read before snapshots: a scan publishes before it releases its claim.
       const runningScan = input.rescan
@@ -1079,8 +1089,6 @@ export const layer = Layer.effect(
       }
       const providers = yield* Ref.get(providersRef);
       const provider = providers.find((candidate) => candidate.instanceId === input.instanceId);
-      const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
-        candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
       const now = yield* DateTime.now;
       if (
@@ -1149,10 +1157,11 @@ export const layer = Layer.effect(
                   });
                   // Clients keep fetched snapshots, so a changed rescan must tell them to fetch again.
                   const rescanned = workspaceSnapshotOf(scanned);
+                  const held = heldBeforeWait ?? scanBase;
                   return input.rescan &&
                     !(
-                      Equal.equals(rescanned?.skills, scanBase?.skills) &&
-                      Equal.equals(rescanned?.slashCommands, scanBase?.slashCommands)
+                      Equal.equals(rescanned?.skills, held?.skills) &&
+                      Equal.equals(rescanned?.slashCommands, held?.slashCommands)
                     )
                     ? { ...scanned, workspaceRescannedAt: scannedAt }
                     : scanned;
