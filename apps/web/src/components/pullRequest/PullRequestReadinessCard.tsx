@@ -528,7 +528,7 @@ export function PullRequestReadinessCard({
         ) : null}
       </div>
       {primary ? (
-        <div className="border-t border-border bg-foreground/[0.02] px-3 py-2.5">
+        <div className="px-3 pt-1 pb-3">
           <div className="flex min-w-0 items-stretch">
             {primaryMenu ? (
               <Group split className="w-full">
