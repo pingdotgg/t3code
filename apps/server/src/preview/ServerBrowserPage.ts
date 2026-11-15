@@ -100,6 +100,22 @@ const withActionabilityReason = (message: string, cause: Error) => {
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const TARGET_COUNT_MS = 250;
+
+/** Bounds a step Playwright gives no timeout. An expired action's later steps never start. */
+const withinDeadline = async <A>(deadline: number, step: () => Promise<A>) => {
+  const expired = () =>
+    new ServerBrowserOperationError({
+      tag: "PreviewAutomationTimeoutError",
+      message: "The action did not finish in time. It may have partly happened; check the page.",
+    });
+  const left = deadline - Date.now();
+  if (left <= 0) throw expired();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(expired()), left);
+  });
+  return Promise.race([step(), timedOut]).finally(() => clearTimeout(timer));
+};
 const MAX_TARGET_CHARS = 200;
 
 const pageRefs = new WeakMap<Page, { generation: string; refs: Map<string, string> }>();
@@ -290,12 +306,12 @@ interface SnapshotStages {
   readonly timedOut: Set<SnapshotStage>;
 }
 
-const snapshotTimedOut = (stages?: SnapshotStages) =>
+const snapshotTimedOut = (stages?: SnapshotStages, timeoutMs = SNAPSHOT_TIMEOUT_MS) =>
   new ServerBrowserOperationError({
     tag: "PreviewAutomationTimeoutError",
-    message: `Snapshot capture timed out after ${SNAPSHOT_TIMEOUT_MS}ms. Try the snapshot again.`,
+    message: `Snapshot capture timed out after ${timeoutMs}ms. Try the snapshot again.`,
     detail: {
-      timeoutMs: SNAPSHOT_TIMEOUT_MS,
+      timeoutMs,
       pendingStages: stages ? [...new Set([...stages.timedOut, ...stages.running.keys()])] : [],
     },
   });
@@ -643,6 +659,8 @@ type SnapshotInput = {
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
+  /** What is left of the request when it is less than the snapshot's own limit. */
+  readonly timeoutMs?: number | undefined;
 };
 
 /** The scale a page renders at and its viewport in device-independent pixels. */
@@ -782,11 +800,12 @@ const capture = async (
 const snapshotTurns = new WeakMap<Page, number>();
 
 const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
-  const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+  const timeoutMs = Math.min(SNAPSHOT_TIMEOUT_MS, input.timeoutMs ?? SNAPSHOT_TIMEOUT_MS);
+  const deadline = Date.now() + timeoutMs;
   const stages: SnapshotStages = { running: new Map(), timedOut: new Set() };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(snapshotTimedOut(stages)), SNAPSHOT_TIMEOUT_MS);
+    timer = setTimeout(() => reject(snapshotTimedOut(stages, timeoutMs)), timeoutMs);
   });
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
@@ -801,7 +820,7 @@ const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
   try {
     return await Promise.race([captured, expired]);
   } catch (cause) {
-    throw isTimeout(cause) ? snapshotTimedOut(stages) : cause;
+    throw isTimeout(cause) ? snapshotTimedOut(stages, timeoutMs) : cause;
   } finally {
     clearTimeout(timer);
   }
@@ -897,16 +916,17 @@ const clickTarget = async (
 };
 
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
+    await locator.fill(input.text, { timeout: remaining() });
     return;
   }
   // A shadow host also matches :focus; use its innermost focused descendant.
   const target = locator ?? page.locator("*:focus").last();
   const focused =
-    (locator !== null || (await target.count()) > 0) &&
+    (locator !== null || (await withinDeadline(deadline, () => target.count())) > 0) &&
     (await target.evaluate(
       (element) => {
         // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
@@ -941,7 +961,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
         return active != null && (active === element || element.contains(active));
       },
       undefined,
-      { timeout },
+      { timeout: remaining() },
     ));
   if (focused !== true) {
     throw new ServerBrowserOperationError({
@@ -950,10 +970,10 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     });
   }
   if (input.clear) {
-    await page.keyboard.press("ControlOrMeta+A");
-    await page.keyboard.press("Delete");
+    await withinDeadline(deadline, () => page.keyboard.press("ControlOrMeta+A"));
+    await withinDeadline(deadline, () => page.keyboard.press("Delete"));
   }
-  await page.keyboard.insertText(input.text);
+  await withinDeadline(deadline, () => page.keyboard.insertText(input.text));
 };
 
 export const hover = async (
@@ -977,7 +997,8 @@ export const select = async (
   input: PreviewAutomationSelectInput,
 ): Promise<PreviewAutomationSelectResult> => {
   const locator = targetLocator(page, input)!;
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const options = await locator.evaluate(
     (element) =>
       element.tagName === "SELECT"
@@ -988,7 +1009,7 @@ export const select = async (
           )
         : null,
     undefined,
-    { timeout },
+    { timeout: remaining() },
   );
   const values =
     options &&
@@ -1004,7 +1025,7 @@ export const select = async (
       tag: "PreviewAutomationTargetNotEditableError",
       message: "This element is not a <select>. Click a custom dropdown, then click its option.",
     });
-  return { selected: await locator.selectOption(values, { timeout }) };
+  return { selected: await locator.selectOption(values, { timeout: remaining() }) };
 };
 
 export const drag = async (
@@ -1036,19 +1057,33 @@ export const setInputFiles = async (page: Page, input: PreviewAutomationUploadIn
   return true;
 };
 
-export const press = async (page: Page, input: PreviewAutomationPressInput) => {
-  await page.keyboard.press([...(input.modifiers ?? []), input.key].join("+"));
+export const press = async (
+  page: Page,
+  input: PreviewAutomationPressInput,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) => {
+  await withinDeadline(Date.now() + timeoutMs, () =>
+    page.keyboard.press([...(input.modifiers ?? []), input.key].join("+")),
+  );
 };
 
-export const scroll = async (page: Page, input: PreviewAutomationScrollInput) => {
+export const scroll = async (
+  page: Page,
+  input: PreviewAutomationScrollInput,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+) => {
   const delta = [input.deltaX ?? 0, input.deltaY ?? 0] as const;
   const locator = targetLocator(page, input);
   if (locator === null) {
     // Page-side code is passed as source: the server compiles without DOM types.
-    await page.evaluate(`scrollBy(${delta[0]}, ${delta[1]})`);
+    await withinDeadline(Date.now() + timeoutMs, () =>
+      page.evaluate(`scrollBy(${delta[0]}, ${delta[1]})`),
+    );
     return;
   }
-  await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
+  await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta, {
+    timeout: timeoutMs,
+  });
 };
 
 const UNRESPONSIVE_SCRIPT_PROBE_MS = 1_000;

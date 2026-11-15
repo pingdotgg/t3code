@@ -772,6 +772,8 @@ it.effect.each([
         const status = yield* Fiber.join(result);
 
         expect(status).toMatchObject({ url: heavy, title, loading: true });
+        // The default readiness returns the parsed document without waiting for `load`.
+        expect(page.waitForLoadState.mock.calls.map(([state]) => state)).not.toContain("load");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.useRealTimers())), Effect.provide(layer)),
 );
