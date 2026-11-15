@@ -1003,6 +1003,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ? ["-c", "core.fsyncMethod=batch"]
       : []),
   ] as const;
+  // Git 2.54-2.56 batch mode loses a large file's bulk-checkin pack when a smaller file was
+  // written loose earlier in the same add ("unable to rename temporary file"), so a failed
+  // batch add is staged once more with per-object fsync, which Git finalizes correctly.
+  const perObjectDurableWrite = [
+    "-c",
+    "core.fsync=objects,reference",
+    "-c",
+    "core.fsyncMethod=fsync",
+  ] as const;
+  const durableWriteBatches = durableWrite.length > perObjectDurableWrite.length;
 
   // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
   // core.longpaths is disabled in the user's Git configuration.
@@ -1379,13 +1389,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
-        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+        const stageFilesWith = (
+          durability: ReadonlyArray<string>,
+          exclusions: ReadonlyArray<string>,
+        ) =>
           execute({
             operation,
             cwd: input.cwd,
             args: [
               ...indexConfig,
-              ...durableWrite,
+              ...durability,
               ...longPaths,
               // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
               "-c",
@@ -1400,6 +1413,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ],
             env: commitEnv,
           });
+        const stageFiles = (exclusions: ReadonlyArray<string>) =>
+          durableWriteBatches
+            ? stageFilesWith(durableWrite, exclusions).pipe(
+                Effect.catchTags({
+                  VcsProcessExitError: () => stageFilesWith(perObjectDurableWrite, exclusions),
+                }),
+              )
+            : stageFilesWith(durableWrite, exclusions);
         yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
