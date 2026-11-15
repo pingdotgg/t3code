@@ -33,6 +33,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
+import { AppIconRow } from "./AppIconSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
@@ -348,6 +349,7 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <AppIconRow />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,
