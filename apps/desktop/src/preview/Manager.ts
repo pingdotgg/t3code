@@ -152,7 +152,7 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   foreground: "oklch(0.269 0 0)",
   popover: "white",
   popoverForeground: "oklch(0.269 0 0)",
-  primary: "oklch(0.488 0.217 264)",
+  primary: "oklch(0.5 0.09 205)",
   primaryForeground: "white",
   muted: "rgb(0 0 0 / 4%)",
   mutedForeground: "oklch(0.556 0 0)",
@@ -160,7 +160,7 @@ const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
   accentForeground: "oklch(0.269 0 0)",
   border: "rgb(0 0 0 / 8%)",
   input: "rgb(0 0 0 / 10%)",
-  ring: "oklch(0.488 0.217 264)",
+  ring: "oklch(0.5 0.09 205)",
   fontSans: "system-ui, sans-serif",
   fontMono: "ui-monospace, monospace",
 };

@@ -660,7 +660,7 @@ async function persistScopedSettingsPlan(
       return [
         {
           ...environment,
-          message: "This environment does not support this setting. Update T3 Code on it.",
+          message: "This environment does not support this setting. Update Exploro on it.",
         },
       ];
     }

@@ -72,7 +72,7 @@ export function SidebarFolderDrop(props: { children: ReactNode }) {
         stackedThreadToast({
           type: "error",
           title: `Could not add "${folder.name}"`,
-          description: response?.message ?? "T3 Code could not read the folder's path.",
+          description: response?.message ?? "Exploro could not read the folder's path.",
         }),
       );
     }

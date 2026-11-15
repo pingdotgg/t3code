@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="128" viewBox="0 0 400 128" fill="none">
+  <title>Exploro</title>
+  <rect width="128" height="128" rx="30" fill="#00727D"/>
+  <circle cx="56" cy="56" r="27" stroke="#FFFFFF" stroke-width="12"/>
+  <path d="M62 60V102L72.5 91.5L81 108L91 103L82.5 87H98Z" fill="#FEA92F" stroke="#00727D" stroke-width="6" stroke-linejoin="round" paint-order="stroke"/>
+  <!-- Live text: convert to outlines in Sora Bold before shipping it in a binary asset. -->
+  <text x="156" y="87" fill="#0C1E22" font-family="Sora, 'Segoe UI', system-ui, sans-serif" font-size="68" font-weight="700" letter-spacing="-2.4">Exploro</text>
+</svg>

@@ -1,5 +1,8 @@
 # Brand icons
 
+> Exploro renders these files from `assets/brand` with `vp run icons:export:exploro`. See
+> [brand/README.md](brand/README.md). The Icon Composer workflow below still holds T3 Code's artwork.
+
 The three Icon Composer projects are the source of truth for full application icons:
 
 - `dev/app-icon.icon`
