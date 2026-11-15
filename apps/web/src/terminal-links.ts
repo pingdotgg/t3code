@@ -162,9 +162,12 @@ export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
 }
 
-/** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
-export function resolveTerminalLinkTarget(text: string, cwd: string): string {
-  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text) : null;
+/**
+ * Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`.
+ * `hostname` is the terminal's environment's, which producers such as GNU `ls` put in the URI.
+ */
+export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
+  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
   return formatFilePathPosition(
     splitFilePathPosition(
