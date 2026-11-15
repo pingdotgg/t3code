@@ -491,7 +491,7 @@ const projectAddCommand = Command.make("add", {
         const existingProject = snapshot.projects.find(
           (project) => project.deletedAt === null && project.workspaceRoot === workspaceRoot,
         );
-        // Adding an archived project's folder again brings the project back, as every client does.
+        // Re-adding an archived project's folder restores it, matching the clients.
         if (existingProject?.archivedAt != null) {
           const title = Option.isSome(flags.title)
             ? yield* resolveProjectTitle(workspaceRoot, flags.title.value)
