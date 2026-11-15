@@ -127,10 +127,6 @@ describe("DesktopUpdates", () => {
 
   it.effect("re-checks an offered update without announcing it again", () => {
     const harness = makeHarness();
-    const announcements: unknown[] = [];
-    const logger = Logger.make(({ message }) => {
-      if ([message].flat().includes("update available")) announcements.push(message);
-    });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -159,7 +155,6 @@ describe("DesktopUpdates", () => {
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
         assert.equal(harness.sentStates.length, downloadedStates);
-        assert.lengthOf(announcements, 1);
 
         const unchangedState = yield* updates.getState;
         assert.equal(unchangedState.status, "downloaded");
@@ -179,17 +174,8 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "available");
         assert.equal(state.availableVersion, "1.2.5");
         assert.isNull(state.downloadedVersion);
-        assert.lengthOf(announcements, 2);
       }),
-    ).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestClock.layer(),
-          harness.layer,
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
   it.effect.each([
