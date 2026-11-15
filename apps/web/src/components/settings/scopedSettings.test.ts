@@ -5,11 +5,12 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,
-  type ServerSettingsPatch,
+  ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -29,6 +30,8 @@ import {
   type PendingScopedWrite,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+
+const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 function environment(
   id: string,
@@ -147,6 +150,32 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("changes speech engines without replacing each environment's local voice configuration", () => {
+    const targets = ["Laptop", "Server"].map((id) =>
+      environment(id, {
+        settings: {
+          speechOutput: {
+            ...DEFAULT_SERVER_SETTINGS.speechOutput,
+            piperExecutable: `/${id}/piper`,
+            piperVoiceId: `${id}-voice`,
+          },
+        },
+      }),
+    );
+    const patch = decodeServerSettingsPatch({
+      speechOutput: { engine: "openai" },
+    });
+    const plan = planScopedSettingsPatch(all, targets, patch);
+    expect(plan.serverWrites).toHaveLength(2);
+    for (const [index, write] of plan.serverWrites.entries()) {
+      const original = targets[index]!.serverConfig!.settings;
+      expect(applyServerSettingsPatch(original, write.patch).speechOutput).toEqual({
+        ...original.speechOutput,
+        engine: "openai",
+      });
+    }
+  });
+
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
       settings: {

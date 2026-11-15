@@ -11,6 +11,8 @@ it("reads prose and link labels, omits code and images, and bounds every chunk",
   expect(chunks.join(" ")).not.toMatch(/rm arquivo|secret.png|https:/);
   expect(chunks.every((chunk) => chunk.length > 0 && chunk.length <= 1800)).toBe(true);
   expect(speechTextChunks("```js\nconst x = 1\n```\n![image](a.png)")).toEqual([]);
+  expect(speechTextChunks("- Alpha\n\n  Bravo")).toEqual(["Alpha", "Bravo"]);
+  expect(speechTextChunks("- Alpha\n  - Bravo")).toEqual(["Alpha", "Bravo"]);
 });
 
 it("discards late synthesis after switching messages and aborts active playback", async () => {

@@ -60,6 +60,7 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
     if (prepared) void refresh(prepared);
     return () => {
       epoch.current++;
+      setPending(null);
     };
   }, [prepared, refresh]);
   const downloading = Boolean(transfer || action?.download);
@@ -107,9 +108,8 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId | null) {
           ...previous,
           error: "Could not update this voice. Check the connection and try again.",
         }));
-    } finally {
-      if (current === epoch.current && operation !== "cancel") setPending(null);
     }
+    if (current === epoch.current && operation !== "cancel") setPending(null);
   };
   return {
     voices: data?.voices ?? [],

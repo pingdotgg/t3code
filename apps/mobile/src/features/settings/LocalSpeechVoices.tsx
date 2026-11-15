@@ -123,13 +123,13 @@ function VoicePicker({
                 : null}
             </ListSection>
             <ListSection title="Voice">
-              {options.map((voice) => (
+              {options.map((voice, index) => (
                 <ListChoiceRow
                   key={voice.id}
                   label={voice.name}
                   description={`${voice.quality} · ${formatBytes(voice.size)}${voice.state === "installed" ? " · Installed" : ""}`}
                   selected={selected.id === voice.id}
-                  separated
+                  separated={index > 0}
                   onPress={() => setChoice({ language: voice.language, voiceId: voice.id })}
                 />
               ))}

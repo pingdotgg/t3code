@@ -22,7 +22,10 @@ function readableText(node: Nodes): string {
         ? node.children
             .map(readableText)
             .join(
-              node.type === "root" || node.type === "list" || node.type === "blockquote"
+              node.type === "root" ||
+                node.type === "list" ||
+                node.type === "listItem" ||
+                node.type === "blockquote"
                 ? "\n\n"
                 : "",
             )

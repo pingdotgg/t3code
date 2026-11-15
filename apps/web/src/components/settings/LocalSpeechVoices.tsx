@@ -37,164 +37,201 @@ export function LocalSpeechVoices({
     options.find((voice) => voice.active) ??
     options[0];
   const disabled = !catalog.canManage || catalog.busy || catalog.downloading;
+  const progress = catalog.transfer
+    ? Math.floor((100 * (catalog.transfer.downloaded ?? 0)) / catalog.transfer.size)
+    : 0;
   return (
-    <SettingsRow
-      title="Local voices"
-      description={`Voices are downloaded and stored on ${environment?.label ?? "the selected environment"}. ${active ? `Selected: ${active.name} · ${active.languageName}.` : "Choose a voice to download and use."}`}
-    >
-      <div className="mt-3 flex flex-col gap-3 pb-2">
-        {environments.length > 1 ? (
-          <Select
-            value={environment?.environmentId ?? ""}
-            onValueChange={(id) =>
-              setChosenEnvironment(
-                environments.find((environment) => environment.environmentId === id)
-                  ?.environmentId ?? null,
-              )
-            }
-          >
-            <SelectTrigger aria-label="Voice installation environment">
-              <SelectValue>{environment?.label}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup>
-              {environments.map((environment) => (
-                <SelectItem key={environment.environmentId} value={environment.environmentId}>
-                  {environment.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        ) : null}
-        {catalog.error ? (
-          <div role="alert">
-            <p className="text-sm text-muted-foreground">{catalog.error}</p>
+    <>
+      {environments.length > 1 ? (
+        <SettingsRow
+          title="Voice environment"
+          description="Where local voices are downloaded and stored."
+          control={
+            <Select
+              value={environment?.environmentId ?? ""}
+              onValueChange={(id) =>
+                setChosenEnvironment(
+                  environments.find((environment) => environment.environmentId === id)
+                    ?.environmentId ?? null,
+                )
+              }
+            >
+              <SelectTrigger size="sm" aria-label="Voice installation environment">
+                <SelectValue>{environment?.label}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
+                    {environment.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+      ) : null}
+      {catalog.error ? (
+        <SettingsRow
+          title="Local voices unavailable"
+          description={<span role="alert">{catalog.error}</span>}
+          control={
             <Button variant="outline" size="sm" onClick={() => void catalog.refresh()}>
               Try again
             </Button>
-          </div>
-        ) : null}
-        {!catalog.connected ? (
-          <p className="text-sm text-muted-foreground">
-            Connect to an environment to manage local voices.
-          </p>
-        ) : null}
-        {catalog.loading ? <p className="text-sm text-muted-foreground">Loading voices…</p> : null}
-        {selected && environment ? (
-          <>
-            <Select
-              value={language}
-              onValueChange={(language) => {
-                if (language)
-                  setChoice({ environmentId: environment.environmentId, language, voiceId: "" });
-              }}
-            >
-              <SelectTrigger aria-label="Speech output language">
-                <SelectValue>{languages.find(([code]) => code === language)?.[1]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {languages.map(([code, name]) => (
-                  <SelectItem key={code} value={code}>
-                    {name}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <Select
-              value={selected.id}
-              onValueChange={(voiceId) => {
-                if (voiceId && language)
-                  setChoice({ environmentId: environment.environmentId, language, voiceId });
-              }}
-            >
-              <SelectTrigger aria-label="Local speech voice">
-                <SelectValue>
-                  {selected.name} · {selected.quality}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {options.map((voice) => (
-                  <SelectItem key={voice.id} value={voice.id}>
-                    {voice.name} · {voice.quality}
-                    {voice.state === "installed" ? " · Installed" : ""}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              {Math.ceil(selected.size / 1024 / 1024)} MB ·{" "}
-              {selected.state === "installed" ? "Installed" : "Download required"} ·{" "}
-              <a
-                className="underline"
-                href={selected.modelCardUrl}
-                target="_blank"
-                rel="noreferrer"
+          }
+        />
+      ) : null}
+      {!catalog.connected || catalog.loading ? (
+        <SettingsRow
+          title="Local voices"
+          description={
+            catalog.loading
+              ? "Loading voices…"
+              : "Connect to an environment to manage local voices."
+          }
+        />
+      ) : null}
+      {selected && environment ? (
+        <>
+          <SettingsRow
+            title="Voice language"
+            description="Filter the voices available for local playback."
+            control={
+              <Select
+                value={language}
+                onValueChange={(language) => {
+                  if (language)
+                    setChoice({ environmentId: environment.environmentId, language, voiceId: "" });
+                }}
               >
-                Voice license
-              </a>
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {selected.state === "installed" ? (
-                <>
-                  <Button
-                    size="sm"
-                    variant={selected.active ? "secondary" : "outline"}
-                    disabled={disabled || selected.active}
-                    onClick={() => void catalog.run(selected.id, "select")}
-                  >
-                    {selected.active ? "Selected" : "Use voice"}
-                  </Button>
+                <SelectTrigger size="sm" aria-label="Speech output language">
+                  <SelectValue>{languages.find(([code]) => code === language)?.[1]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {languages.map(([code, name]) => (
+                    <SelectItem key={code} value={code}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+          <SettingsRow
+            title="Local voice"
+            description={
+              active
+                ? `Using ${active.name} · ${active.languageName} on ${environment.label}.`
+                : `Download a voice to start listening on ${environment.label}.`
+            }
+            control={
+              <Select
+                value={selected.id}
+                onValueChange={(voiceId) => {
+                  if (voiceId && language)
+                    setChoice({ environmentId: environment.environmentId, language, voiceId });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Local speech voice">
+                  <SelectValue>
+                    {selected.name} · {selected.quality}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {options.map((voice) => (
+                    <SelectItem key={voice.id} value={voice.id}>
+                      {voice.name} · {voice.quality}
+                      {voice.state === "installed" ? " · Installed" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          >
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 pb-2">
+              <p className="text-xs text-muted-foreground">
+                {Math.ceil(selected.size / 1024 / 1024)} MB ·{" "}
+                {selected.state === "installed" ? "Installed" : "Download required"} ·{" "}
+                <a
+                  className="underline"
+                  href={selected.modelCardUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Voice license
+                </a>
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {selected.state === "installed" ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={disabled || selected.active}
+                      onClick={() => void catalog.run(selected.id, "select")}
+                    >
+                      {selected.active ? "Selected" : "Use voice"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive-outline"
+                      disabled={disabled}
+                      onClick={() => void catalog.run(selected.id, "remove")}
+                    >
+                      Remove voice
+                    </Button>
+                  </>
+                ) : (
                   <Button
                     size="sm"
                     variant="outline"
                     disabled={disabled}
-                    onClick={() => void catalog.run(selected.id, "remove")}
+                    onClick={() => void catalog.run(selected.id, "download")}
                   >
-                    Remove voice
+                    Download & use voice
                   </Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={disabled}
-                  onClick={() => void catalog.run(selected.id, "download")}
-                >
-                  Download & use voice
-                </Button>
-              )}
+                )}
+              </div>
             </div>
-          </>
-        ) : null}
-        {catalog.transfer ? (
-          <div role="status" className="flex flex-col gap-2">
-            <p className="text-xs text-muted-foreground">
-              {catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"}{" "}
-              {catalog.transfer.name} ·{" "}
-              {Math.floor((100 * (catalog.transfer.downloaded ?? 0)) / catalog.transfer.size)}%
-            </p>
-            <progress
+          </SettingsRow>
+        </>
+      ) : null}
+      {catalog.transfer ? (
+        <SettingsRow
+          title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
+          status={<span role="status">{progress}% downloaded</span>}
+          control={
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={
+                !catalog.canManage ||
+                catalog.busy ||
+                !["downloading", "verifying"].includes(catalog.transfer.state)
+              }
+              onClick={() => void catalog.run(catalog.transfer!.id, "cancel")}
+            >
+              Cancel download
+            </Button>
+          }
+        >
+          <div className="mt-3 pb-2">
+            <div
+              role="progressbar"
               aria-label="Voice download progress"
-              value={catalog.transfer.downloaded ?? 0}
-              max={catalog.transfer.size}
-              className="h-1 w-full"
-            />
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  !catalog.canManage ||
-                  catalog.busy ||
-                  !["downloading", "verifying"].includes(catalog.transfer.state)
-                }
-                onClick={() => void catalog.run(catalog.transfer!.id, "cancel")}
-              >
-                Cancel download
-              </Button>
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={progress}
+              className="h-1 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className="h-full bg-primary transition-[width] duration-200"
+                style={{ width: `${progress}%` }}
+              />
             </div>
           </div>
-        ) : null}
-      </div>
-    </SettingsRow>
+        </SettingsRow>
+      ) : null}
+    </>
   );
 }

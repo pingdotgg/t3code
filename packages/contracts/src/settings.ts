@@ -1859,7 +1859,14 @@ export const ServerSettingsPatch = Schema.Struct({
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
-  speechOutput: Schema.optionalKey(SpeechOutputSettings),
+  speechOutput: Schema.optionalKey(
+    Schema.Struct({
+      engine: Schema.optionalKey(SpeechOutputSettings.fields.engine),
+      piperExecutable: Schema.optionalKey(SpeechOutputSettings.fields.piperExecutable),
+      piperVoiceId: Schema.optionalKey(Schema.toType(SpeechOutputSettings.fields.piperVoiceId)),
+      voice: Schema.optionalKey(SpeechOutputSettings.fields.voice),
+    }),
+  ),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

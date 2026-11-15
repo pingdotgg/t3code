@@ -22,29 +22,30 @@ export function SpeechOutputSettings() {
     <SettingsSection id="speech-output" title="Response playback">
       <SettingsRow
         title="Speech engine"
-        description="Read individual assistant responses using the speaker button. Local synthesis runs on the response's environment."
+        description="Listen to a response using its speaker button. Local voices run on the response’s environment."
         serverScoped
         settingKeys={["speechOutput"]}
-      >
-        <Select
-          value={settings.engine}
-          disabled={!canManage}
-          onValueChange={(value) => {
-            if (value)
-              update({
-                speechOutput: { ...settings, engine: value === "openai" ? "openai" : "piper" },
-              });
-          }}
-        >
-          <SelectTrigger aria-label="Speech output engine">
-            <SelectValue>{settings.engine === "piper" ? "Local · Piper" : "OpenAI"}</SelectValue>
-          </SelectTrigger>
-          <SelectPopup>
-            <SelectItem value="piper">Local · Piper</SelectItem>
-            <SelectItem value="openai">OpenAI · sends response text</SelectItem>
-          </SelectPopup>
-        </Select>
-      </SettingsRow>
+        control={
+          <Select
+            value={settings.engine}
+            disabled={!canManage}
+            onValueChange={(value) => {
+              if (value)
+                update({
+                  speechOutput: { engine: value === "openai" ? "openai" : "piper" },
+                });
+            }}
+          >
+            <SelectTrigger size="sm" aria-label="Speech output engine">
+              <SelectValue>{settings.engine === "piper" ? "Local · Piper" : "OpenAI"}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              <SelectItem value="piper">Local · Piper</SelectItem>
+              <SelectItem value="openai">OpenAI</SelectItem>
+            </SelectPopup>
+          </Select>
+        }
+      />
       {settings.engine === "piper" ? (
         <>
           <SettingsRow
@@ -52,50 +53,56 @@ export function SpeechOutputSettings() {
             description="Install piper-tts on this environment. Enter piper or the full path to its executable."
             serverScoped
             settingKeys={["speechOutput"]}
-          >
-            <Input
-              key={settings.piperExecutable}
-              aria-label="Piper executable"
-              defaultValue={settings.piperExecutable}
-              disabled={!canManage}
-              onBlur={(event) => {
-                const piperExecutable = event.target.value.trim();
-                if (piperExecutable !== settings.piperExecutable)
-                  update({ speechOutput: { ...settings, piperExecutable } });
-              }}
-            />
-          </SettingsRow>
+            control={
+              <div className="w-full @min-[32rem]/settings-row:w-64">
+                <Input
+                  key={settings.piperExecutable}
+                  size="sm"
+                  font="mono"
+                  aria-label="Piper executable"
+                  defaultValue={settings.piperExecutable}
+                  disabled={!canManage}
+                  onBlur={(event) => {
+                    const piperExecutable = event.target.value.trim();
+                    if (piperExecutable !== settings.piperExecutable)
+                      update({ speechOutput: { piperExecutable } });
+                  }}
+                />
+              </div>
+            }
+          />
           <LocalSpeechVoices environments={scope?.connectedEnvironments ?? []} />
         </>
       ) : (
         <SettingsRow
           title="OpenAI voice"
-          description="Uses the OpenAI key saved under Cloud providers in Voice settings. API usage is billed separately. Local errors never switch to OpenAI automatically."
+          description="Sends response text using the key saved under Cloud providers. API charges apply."
           serverScoped
           settingKeys={["speechOutput"]}
-        >
-          <Select
-            value={settings.voice}
-            disabled={!canManage}
-            onValueChange={(value) => {
-              const voice = SpeechOutputSchema.fields.voice.literals.find(
-                (voice) => voice === value,
-              );
-              if (voice) update({ speechOutput: { ...settings, voice } });
-            }}
-          >
-            <SelectTrigger aria-label="Speech output voice">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup>
-              {SpeechOutputSchema.fields.voice.literals.map((voice) => (
-                <SelectItem key={voice} value={voice}>
-                  {voice}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </SettingsRow>
+          control={
+            <Select
+              value={settings.voice}
+              disabled={!canManage}
+              onValueChange={(value) => {
+                const voice = SpeechOutputSchema.fields.voice.literals.find(
+                  (voice) => voice === value,
+                );
+                if (voice) update({ speechOutput: { voice } });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Speech output voice">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                {SpeechOutputSchema.fields.voice.literals.map((voice) => (
+                  <SelectItem key={voice} value={voice}>
+                    {voice}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
       )}
     </SettingsSection>
   );

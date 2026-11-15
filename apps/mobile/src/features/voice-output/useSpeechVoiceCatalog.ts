@@ -41,26 +41,28 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
     if (!prepared) return;
     const current = epoch.current;
     const request = ++revision.current;
-    try {
-      const data = await runSpeech(getEnvironmentSpeechVoices(prepared));
-      if (current === epoch.current && request === revision.current)
-        setResult({ prepared, data, error: null });
-    } catch {
-      if (current === epoch.current && request === revision.current)
-        setResult((previous) => ({
-          prepared,
-          data: previous.prepared === prepared ? previous.data : null,
-          error: "Could not load voices. Check the connection and try again.",
-        }));
-    }
+    await runSpeech(getEnvironmentSpeechVoices(prepared)).then(
+      (data) => {
+        if (current === epoch.current && request === revision.current)
+          setResult({ prepared, data, error: null });
+      },
+      () => {
+        if (current === epoch.current && request === revision.current)
+          setResult((previous) => ({
+            prepared,
+            data: previous.prepared === prepared ? previous.data : null,
+            error: "Could not load voices. Check the connection and try again.",
+          }));
+      },
+    );
   }, [prepared]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the catalog when the selected environment connects and rejects old connection results
   useEffect(() => {
     epoch.current++;
-    // oxlint-disable-next-line react/set-state-in-effect -- the callback reads the environment over HTTP before publishing its result
     void refresh();
     return () => {
       epoch.current++;
+      setPending(null);
     };
   }, [refresh]);
   const downloading = Boolean(transfer || action?.download);
@@ -84,33 +86,38 @@ export function useSpeechVoiceCatalog(environmentId: EnvironmentId) {
     const current = epoch.current;
     if (operation !== "cancel")
       setPending({ prepared, voiceId, download: operation === "download" });
-    try {
-      let data = await runSpeech(
-        {
-          download: downloadEnvironmentSpeechVoice,
-          select: selectEnvironmentSpeechVoice,
-          remove: removeEnvironmentSpeechVoice,
-          cancel: cancelEnvironmentSpeechVoiceDownload,
-        }[operation](prepared, voiceId),
+    await runSpeech(
+      {
+        download: downloadEnvironmentSpeechVoice,
+        select: selectEnvironmentSpeechVoice,
+        remove: removeEnvironmentSpeechVoice,
+        cancel: cancelEnvironmentSpeechVoiceDownload,
+      }[operation](prepared, voiceId),
+    )
+      .then(async (data) => {
+        if (
+          operation === "download" &&
+          data.voices.some((voice) => voice.id === voiceId && voice.state === "installed")
+        )
+          return runSpeech(selectEnvironmentSpeechVoice(prepared, voiceId));
+        return data;
+      })
+      .then(
+        (data) => {
+          if (current === epoch.current) {
+            revision.current++;
+            setResult({ prepared, data, error: null });
+          }
+        },
+        () => {
+          if (current === epoch.current)
+            setResult((previous) => ({
+              ...previous,
+              error: "Could not update this voice. Check the connection and try again.",
+            }));
+        },
       );
-      if (
-        operation === "download" &&
-        data.voices.some((voice) => voice.id === voiceId && voice.state === "installed")
-      )
-        data = await runSpeech(selectEnvironmentSpeechVoice(prepared, voiceId));
-      if (current === epoch.current) {
-        revision.current++;
-        setResult({ prepared, data, error: null });
-      }
-    } catch {
-      if (current === epoch.current)
-        setResult((previous) => ({
-          ...previous,
-          error: "Could not update this voice. Check the connection and try again.",
-        }));
-    } finally {
-      if (current === epoch.current && operation !== "cancel") setPending(null);
-    }
+    if (current === epoch.current && operation !== "cancel") setPending(null);
   };
   return {
     voices: data?.voices ?? [],
