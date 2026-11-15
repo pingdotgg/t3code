@@ -111,6 +111,21 @@ describe("VcsDriverRegistry", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reuses a negative lookup while no .git entry appears", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const projectDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-" });
+      const calls: string[] = [];
+
+      yield* Effect.gen(function* () {
+        const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+        assert.equal(yield* registry.detect({ cwd: projectDir }), null);
+        assert.equal(yield* registry.detect({ cwd: projectDir }), null);
+        assert.equal(calls.filter((call) => call === DETECT_COMMAND).length, 1);
+      }).pipe(Effect.provide(makeDiskBackedLayer(projectDir, calls)));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("detects a repository created after a negative lookup", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
