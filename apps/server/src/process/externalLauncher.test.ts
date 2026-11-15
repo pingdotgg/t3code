@@ -222,6 +222,7 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
       yield* launcher.launchEditor({ editor: "file-manager", cwd: "/workspace/file.ts:12:4" });
       yield* launcher.launchEditor({ editor: "vscode", cwd: rangeDirectory });
       yield* launcher.launchEditor({ editor: "zed", cwd: rangeDirectory });
+      yield* launcher.launchEditor({ editor: "idea", cwd: rangeDirectory });
       yield* launcher.launchEditor({ editor: "file-manager", cwd: rangeDirectory });
     }).pipe(
       Effect.provide(
@@ -252,6 +253,7 @@ it.effect.skipIf(windowsHost)("opens a colon line range at its start line", () =
         ["xdg-open", ["/workspace/file.ts:12:4"]],
         ["code", ["--new-window", rangeDirectory]],
         ["zeditor", [rangeDirectory]],
+        ["idea", [rangeDirectory]],
         ["xdg-open", [rangeDirectory]],
       ],
     );

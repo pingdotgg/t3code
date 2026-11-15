@@ -151,7 +151,7 @@ function resolveCommandEditorArgs(
     !isDirectory && Option.isSome(parsedTarget) && Option.isSome(parsedTarget.value.endLine)
       ? `${parsedTarget.value.path}:${parsedTarget.value.line}`
       : target;
-  const parsedLaunchTarget = parseTargetPathAndPosition(launchTarget);
+  const parsedLaunchTarget = isDirectory ? Option.none() : parseTargetPathAndPosition(launchTarget);
 
   switch (editor.launchStyle) {
     case "direct-path":
