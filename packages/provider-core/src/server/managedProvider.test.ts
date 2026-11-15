@@ -891,7 +891,8 @@ describe("makeManagedServerProvider", () => {
     { name: "no reading", hasUsage: false, clearPlan: false },
     { name: "an empty reading after clearing the plan", hasUsage: true, clearPlan: true },
     { name: "no reading after clearing the plan", hasUsage: false, clearPlan: true },
-  ])("keeps the live plan and limits after $name", ({ hasUsage, clearPlan }) =>
+    { name: "a label-only account reading", hasUsage: true, clearPlan: false, labelOnly: true },
+  ])("keeps the live plan and limits after $name", ({ hasUsage, clearPlan, labelOnly }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
@@ -910,7 +911,11 @@ describe("makeManagedServerProvider", () => {
             }
             return {
               ...refreshedSnapshot,
-              auth: { status: "authenticated", label: "tier-1" },
+              auth: {
+                status: "authenticated",
+                label: "tier-1",
+                ...(labelOnly ? { type: "accountLogin" as const } : {}),
+              },
               ...(hasUsage
                 ? { usageLimits: { checkedAt: refreshedSnapshot.checkedAt, windows: [] } }
                 : {}),
@@ -935,8 +940,14 @@ describe("makeManagedServerProvider", () => {
         }
         yield* Deferred.succeed(release, undefined);
         const refreshed = yield* Fiber.join(refresh);
-        assert.strictEqual(refreshed.auth.label, clearPlan ? undefined : "tier-2");
-        assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 70);
+        assert.strictEqual(
+          refreshed.auth.label,
+          labelOnly ? "tier-1" : clearPlan ? undefined : "tier-2",
+        );
+        assert.strictEqual(
+          refreshed.usageLimits?.windows[0]?.usedPercent,
+          labelOnly ? undefined : 70,
+        );
         assert.strictEqual(refreshed.usageLimits?.unavailable, undefined);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
@@ -972,6 +983,8 @@ describe("makeManagedServerProvider", () => {
   );
 
   it.effect.each([
+    { name: "unknown to label", from: {}, to: { label: "Team B" }, switched: true },
+    { name: "unknown to email", from: {}, to: { email: "b@example.com" }, switched: true },
     { name: "label to label", from: { label: "Team A" }, to: { label: "Team B" }, switched: true },
     {
       name: "label to email",

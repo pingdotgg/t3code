@@ -205,6 +205,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const identity = (auth: ServerProvider["auth"]) =>
           auth.email?.toLowerCase() ?? (auth.type === "accountLogin" ? auth.label : undefined);
         const switchedAccount =
+          (identity(probedSnapshot.auth) !== undefined && identity(previous) === undefined) ||
           differs(identity(probedSnapshot.auth), identity(previous)) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
@@ -220,7 +221,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const workspaceId =
           usageLimits === probedSnapshot.usageLimits ? undefined : state.snapshot.auth.workspaceId;
         const usageAuthLabel =
-          !switchedAccount && usageLimits?.checkedAt === state.snapshot.usageLimits?.checkedAt
+          !switchedAccount &&
+          !(probedSnapshot.auth.type === "accountLogin" && !probedSnapshot.auth.email) &&
+          usageLimits?.checkedAt === state.snapshot.usageLimits?.checkedAt
             ? state.usageAuthLabel
             : undefined;
         const labeledProbe =
