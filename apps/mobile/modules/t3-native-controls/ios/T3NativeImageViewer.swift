@@ -1,4 +1,5 @@
 import ImageIO
+import Photos
 import UIKit
 
 /// Full-screen image gallery modelled on Messages. It opens at once from the tapped thumbnail's
@@ -363,18 +364,12 @@ private final class T3ImageViewerPage: UIView, UIScrollViewDelegate {
   }
 }
 
-private final class T3ImageViewerScrim: UIView {
-  override class var layerClass: AnyClass { CAGradientLayer.self }
-
-  override init(frame: CGRect) {
-    super.init(frame: frame)
-    guard let gradient = layer as? CAGradientLayer else { return }
-    gradient.colors = [0.55, 0.3, 0].map { UIColor(white: 0, alpha: $0).cgColor }
-    gradient.locations = [0, 0.55, 1]
+/// Holds the controls over the whole screen while letting touches between them reach the image.
+private final class T3ImageViewerChrome: UIView {
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    let hit = super.hitTest(point, with: event)
+    return hit === self ? nil : hit
   }
-
-  @available(*, unavailable)
-  required init?(coder: NSCoder) { nil }
 }
 
 final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIGestureRecognizerDelegate {
@@ -388,7 +383,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private let backdrop = UIView()
   private let pager = UIScrollView()
   private var pages: [T3ImageViewerPage] = []
-  private let chrome = UIView()
+  private let chrome = T3ImageViewerChrome()
   private let titleLabel = UILabel()
   private let counterLabel = UILabel()
   private lazy var dismissPan = UIPanGestureRecognizer(target: self, action: #selector(handleDismissPan(_:)))
@@ -401,6 +396,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   private var laidOutSize = CGSize.zero
   private var isLayingOut = false
   private var shareButton: UIButton?
+  private var saveButton: UIButton?
   private static let pageGap: CGFloat = 20
 
   init(titles: [String], selectedIndex: Int) {
@@ -456,13 +452,14 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     updateTitle()
   }
 
+  /// Laid out like Messages: a blurred band with Close and the title, and Save and Share in a capsule below.
   private func configureChrome() {
     chrome.alpha = 0
-    chrome.translatesAutoresizingMaskIntoConstraints = false
+    chrome.frame = view.bounds
+    chrome.autoresizingMask = [.flexibleWidth, .flexibleHeight]
     view.addSubview(chrome)
-    let close = makeButton(symbol: "xmark", label: "Close") { [weak self] in self?.close() }
-    let share = makeButton(symbol: "square.and.arrow.up", label: "Share") { [weak self] in self?.share() }
-    shareButton = share
+    let band = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
+    let close = makeCloseButton()
     titleLabel.font = .preferredFont(forTextStyle: .headline)
     counterLabel.font = .preferredFont(forTextStyle: .caption1)
     for label in [titleLabel, counterLabel] {
@@ -470,63 +467,92 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
       label.textAlignment = .center
       label.adjustsFontForContentSizeCategory = true
       label.lineBreakMode = .byTruncatingMiddle
-      label.layer.shadowColor = UIColor.black.cgColor
-      label.layer.shadowOpacity = 0.5
-      label.layer.shadowRadius = 3
-      label.layer.shadowOffset = .zero
     }
+    counterLabel.textColor = UIColor(white: 1, alpha: 0.7)
     let titles = UIStackView(arrangedSubviews: [titleLabel, counterLabel])
     titles.axis = .vertical
     titles.alignment = .center
-    titles.isAccessibilityElement = false
-    let bar = UIStackView(arrangedSubviews: [close, titles, share])
-    bar.axis = .horizontal
-    bar.alignment = .center
-    bar.spacing = 12
-    bar.translatesAutoresizingMaskIntoConstraints = false
-    // A scrim like Photos', so the title stays readable over light images.
-    let scrim = T3ImageViewerScrim()
-    scrim.isUserInteractionEnabled = false
-    scrim.translatesAutoresizingMaskIntoConstraints = false
-    chrome.addSubview(scrim)
-    chrome.addSubview(bar)
+    let save = makeToolbarButton(symbol: "square.and.arrow.down", label: "Save to Photos") { [weak self] in self?.save() }
+    let share = makeToolbarButton(symbol: "square.and.arrow.up", label: "Share") { [weak self] in self?.share() }
+    saveButton = save
+    shareButton = share
+    let toolbar = makeCapsule(containing: [save, share])
+    for subview in [band, close, titles, toolbar] {
+      subview.translatesAutoresizingMaskIntoConstraints = false
+      chrome.addSubview(subview)
+    }
     let guide = view.safeAreaLayoutGuide
     NSLayoutConstraint.activate([
-      chrome.topAnchor.constraint(equalTo: view.topAnchor),
-      chrome.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-      chrome.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-      chrome.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-      scrim.topAnchor.constraint(equalTo: chrome.topAnchor),
-      scrim.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
-      scrim.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
-      scrim.bottomAnchor.constraint(equalTo: chrome.bottomAnchor, constant: 48),
-      bar.topAnchor.constraint(equalTo: guide.topAnchor, constant: 8),
-      bar.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
-      bar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
-      close.widthAnchor.constraint(equalTo: share.widthAnchor),
+      band.topAnchor.constraint(equalTo: chrome.topAnchor),
+      band.leadingAnchor.constraint(equalTo: chrome.leadingAnchor),
+      band.trailingAnchor.constraint(equalTo: chrome.trailingAnchor),
+      band.bottomAnchor.constraint(equalTo: close.bottomAnchor, constant: 10),
+      close.topAnchor.constraint(equalTo: guide.topAnchor, constant: 6),
+      close.leadingAnchor.constraint(equalTo: guide.leadingAnchor, constant: 16),
+      titles.centerXAnchor.constraint(equalTo: chrome.centerXAnchor),
+      titles.centerYAnchor.constraint(equalTo: close.centerYAnchor),
+      titles.leadingAnchor.constraint(greaterThanOrEqualTo: close.trailingAnchor, constant: 12),
+      titles.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -72),
+      toolbar.trailingAnchor.constraint(equalTo: guide.trailingAnchor, constant: -16),
+      toolbar.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -8),
     ])
-    titles.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
   }
 
-  private func makeButton(symbol: String, label: String, action: @escaping () -> Void) -> UIButton {
+  private func makeCloseButton() -> UIButton {
     var configuration: UIButton.Configuration
     if #available(iOS 26.0, *) {
       configuration = .glass()
     } else {
       configuration = .filled()
-      configuration.baseBackgroundColor = UIColor(white: 0.15, alpha: 0.75)
+      configuration.baseBackgroundColor = UIColor(white: 0.2, alpha: 0.8)
     }
     configuration.cornerStyle = .capsule
     configuration.baseForegroundColor = .white
+    configuration.image = UIImage(systemName: "xmark",
+                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold))
+    configuration.contentInsets = NSDirectionalEdgeInsets(top: 13, leading: 13, bottom: 13, trailing: 13)
+    let button = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in self?.close() })
+    button.accessibilityLabel = "Close"
+    button.overrideUserInterfaceStyle = .dark
+    return button
+  }
+
+  private func makeToolbarButton(symbol: String, label: String, action: @escaping () -> Void) -> UIButton {
+    var configuration = UIButton.Configuration.plain()
+    configuration.baseForegroundColor = .white
     configuration.image = UIImage(systemName: symbol,
-                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold))
-    configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+                                  withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
+    configuration.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
     let button = UIButton(configuration: configuration, primaryAction: UIAction { _ in action() })
     button.accessibilityLabel = label
-    button.overrideUserInterfaceStyle = .dark
-    button.setContentHuggingPriority(.required, for: .horizontal)
-    button.setContentCompressionResistancePriority(.required, for: .horizontal)
     return button
+  }
+
+  private func makeCapsule(containing buttons: [UIButton]) -> UIView {
+    let effect: UIVisualEffect
+    if #available(iOS 26.0, *) {
+      effect = UIGlassEffect()
+    } else {
+      effect = UIBlurEffect(style: .systemThinMaterialDark)
+    }
+    let capsule = UIVisualEffectView(effect: effect)
+    capsule.overrideUserInterfaceStyle = .dark
+    capsule.layer.cornerRadius = 24
+    capsule.layer.cornerCurve = .continuous
+    capsule.clipsToBounds = true
+    let stack = UIStackView(arrangedSubviews: buttons)
+    stack.axis = .horizontal
+    stack.spacing = 4
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    capsule.contentView.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.topAnchor.constraint(equalTo: capsule.contentView.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: capsule.contentView.bottomAnchor),
+      stack.leadingAnchor.constraint(equalTo: capsule.contentView.leadingAnchor, constant: 4),
+      stack.trailingAnchor.constraint(equalTo: capsule.contentView.trailingAnchor, constant: -4),
+      stack.heightAnchor.constraint(equalToConstant: 48),
+    ])
+    return capsule
   }
 
   private func updateTitle() {
@@ -768,6 +794,52 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
   }
 
   // MARK: Share, keyboard and accessibility
+
+  private func save() {
+    let file = fileForPage(currentIndex)
+    let image = pages[currentIndex].isFull ? pages[currentIndex].image : nil
+    guard file != nil || image != nil else { return }
+    // Original bytes keep the format and metadata; an SVG only has its rendered image.
+    let decodable = file.flatMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }.map { CGImageSourceGetCount($0) > 0 } ?? false
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+      guard status == .authorized || status == .limited else {
+        DispatchQueue.main.async { self?.showSaveError("Allow T3 Code to add photos in Settings.") }
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        if let file, decodable {
+          PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: file, options: nil)
+        } else if let image {
+          PHAssetChangeRequest.creationRequestForAsset(from: image)
+        }
+      }, completionHandler: { saved, error in
+        DispatchQueue.main.async {
+          if saved {
+            self?.confirmSaved()
+          } else {
+            self?.showSaveError(error?.localizedDescription ?? "Photos could not save this image.")
+          }
+        }
+      })
+    }
+  }
+
+  private func confirmSaved() {
+    UINotificationFeedbackGenerator().notificationOccurred(.success)
+    UIAccessibility.post(notification: .announcement, argument: "Saved to Photos")
+    saveButton?.configuration?.image = UIImage(systemName: "checkmark",
+                                               withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+      self?.saveButton?.configuration?.image = UIImage(
+        systemName: "square.and.arrow.down", withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .regular))
+    }
+  }
+
+  private func showSaveError(_ message: String) {
+    let alert = UIAlertController(title: "Could not save image", message: message, preferredStyle: .alert)
+    alert.addAction(UIAlertAction(title: "OK", style: .default))
+    present(alert, animated: true)
+  }
 
   private func share() {
     let item: Any? = fileForPage(currentIndex) ?? pages[currentIndex].image
