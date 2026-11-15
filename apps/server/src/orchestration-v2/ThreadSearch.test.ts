@@ -873,7 +873,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
             mention,
             "heron-mention",
             "user",
-            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py)`,
+            String.raw`Fix [\_\_init\_\_.py](pkg/__init__.py) and [\_café\_.py](pkg/_caf%C3%A9_.py)`,
           ),
         ],
         projections.apply,
@@ -884,11 +884,13 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         matches.map((match) => [match.threadId, match.snippet]),
         [[labeled, "See the heron plan now"]],
       );
-      const mentions = yield* search.search({ query: "__init__.py" });
-      assert.deepEqual(
-        mentions.matches.map((match) => [match.threadId, match.snippet]),
-        [[mention, "Fix __init__.py"]],
-      );
+      for (const query of ["__init__.py", "_café_.py"]) {
+        const mentions = yield* search.search({ query });
+        assert.deepEqual(
+          mentions.matches.map((match) => [match.threadId, match.snippet]),
+          [[mention, "Fix __init__.py and _café_.py"]],
+        );
+      }
     }),
   );
 
