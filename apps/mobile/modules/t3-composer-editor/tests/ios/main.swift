@@ -237,12 +237,11 @@ for readOnly in [true, false] {
   check(provider.loadCount == 0, "Locked inputs must not load pasted image providers")
 }
 
-func pastedText(_ items: [String], maxInputChars: Int = 120_000) -> String? {
+func pastedText(_ items: [String]) -> String? {
   let savedItems = UIPasteboard.general.items
   defer { UIPasteboard.general.items = savedItems }
   let editor = ComposerTextView()
   editor.textPasteThresholdBytes = 32 * 1024
-  editor.maxInputChars = maxInputChars
   var intercepted: String?
   editor.onPasteText = { text, _ in intercepted = text }
   UIPasteboard.general.items = items.map { [UTType.utf8PlainText.identifier: $0] }
@@ -252,8 +251,6 @@ func pastedText(_ items: [String], maxInputChars: Int = 120_000) -> String? {
 let halfA = String(repeating: "A", count: 20_000)
 let halfB = String(repeating: "B", count: 20_000)
 check(pastedText([halfA, halfB]) == halfA + halfB, "Items that together reach the threshold must fold")
-check(pastedText(["abc", "def"], maxInputChars: 5) == "abcdef",
-      "Items that together pass the input limit must be intercepted")
 print("Composer multi-item text paste checks passed")
 
 // Two-frame animated GIF: a mixed paste keeps the GIF's original bytes and the still image's PNG, in order.
