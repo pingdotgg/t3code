@@ -252,6 +252,9 @@ export const CodexDriver: ProviderDriver<
         models: Effect.suspend(() => snapshot.getSnapshot).pipe(
           Effect.map((value) => value.models),
         ),
+        customEndpoint: Effect.suspend(() => snapshot.getSnapshot).pipe(
+          Effect.map((value) => value.auth.endpoint !== undefined),
+        ),
         compatibility: installation.compatibility,
       },
     ).pipe(

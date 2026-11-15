@@ -1469,6 +1469,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    customEndpoint?: CodexAdapterV2.CodexAdapterV2Options["customEndpoint"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1533,6 +1534,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...(customEndpoint ? { customEndpoint } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -2160,6 +2162,59 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // regression: #37334 codex_apps cannot sign in when models go to a custom endpoint
+  it.effect("turns off Codex apps for threads on a custom endpoint", () =>
+    Effect.gen(function* () {
+      const scenario = "custom-endpoint-apps";
+      const entries = codexReplayPreamble({
+        nativeThreadId: "custom-endpoint-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      })
+        .slice(0, 5)
+        .map((entry) =>
+          entry.type === "expect_outbound" && entry.label === "thread/start"
+            ? {
+                ...entry,
+                frame: {
+                  id: 2,
+                  method: "thread/start",
+                  params: {
+                    config: {
+                      ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      "features.apps": false,
+                      "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+                    },
+                  },
+                },
+              }
+            : entry,
+        );
+      yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario, entries }),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        Effect.succeed(true),
+      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
