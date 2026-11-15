@@ -28,6 +28,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
@@ -2132,6 +2133,35 @@ describe("ThreadSettlementServiceV2 terminals", () => {
         assert.strictEqual(run.worktreePath, "/worktrees/thread");
         assert.strictEqual(run.trigger, "settle");
       }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect("warns when a settled thread's worktree is gone and its settle script cannot run", () =>
+    Effect.gen(function* () {
+      const missing = appThread("removed-worktree-thread", "settled", "/worktrees/removed");
+      const marker = appThread("marker-thread", "settled", "/worktrees/marker");
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([]),
+        currentThreads: [missing, marker],
+        existingWorktreePaths: ["/worktrees/marker"],
+      });
+      const warnings: Array<string> = [];
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(JSON.stringify(message));
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        yield* fixture.publishEvent(settledEvent(missing));
+        yield* fixture.publishEvent(settledEvent(marker));
+        assert.strictEqual((yield* Queue.take(fixture.scriptRuns)).threadId, marker.id);
+        expect(warnings.some((warning) => warning.includes("/worktrees/removed"))).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(fixture.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
     }),
   );
 
