@@ -3486,7 +3486,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
                           continue;
                         }
-                        if (projectFolders !== null && item.marker === "active-placeholder") {
+                        if (hasProjectFolders && item.marker === "active-placeholder") {
                           for (const folder of projectFolders) {
                             items.push(
                               <SidebarProjectFolderHeader

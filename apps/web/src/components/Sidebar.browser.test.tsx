@@ -17,6 +17,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { makeThreadFixture } from "../test-fixtures";
+import { useThreadActions } from "../hooks/useThreadActions";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
@@ -39,6 +40,10 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
 vi.mock("../state/entities", { spy: true });
 vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock(import("../hooks/useThreadActions"), async (original) => {
+  const actual = await original();
+  return { ...actual, useThreadActions: vi.fn(actual.useThreadActions) };
+});
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
@@ -152,6 +157,16 @@ describe("sidebar drag reorder", () => {
     "$mode sidebar, folders=$folders: pinned rows reorder=$reorders",
     async (scenario) => {
       using _settings = clientSettings(scenario.mode);
+      using stack = new DisposableStack();
+      const originalActions = vi.mocked(useThreadActions).getMockImplementation()!;
+      stack.defer(() => vi.mocked(useThreadActions).mockImplementation(originalActions));
+      const reorderPinnedThread = vi.fn().mockResolvedValue({ _tag: "Success" });
+
+      vi.mocked(useThreadActions).mockImplementation(() => ({
+        ...originalActions(),
+        reorderPinnedThread,
+      }));
+      vi.mocked(readEnvironmentScope).mockReturnValue(true);
       const alpha = project("alpha");
       const thread = (id: string, pinnedAt: string | null) =>
         makeThreadFixture({
@@ -160,6 +175,7 @@ describe("sidebar drag reorder", () => {
           projectId: alpha.id,
           title: id,
           pinnedAt,
+          pinOrderKey: pinnedAt === null ? null : id === "first" ? "a0" : "a1",
         });
       mockNewThread([alpha]);
       vi.mocked(useQuietThreadShells).mockReturnValue([
@@ -176,6 +192,13 @@ describe("sidebar drag reorder", () => {
         `[data-thread-item="${environmentId}:first"]`,
       );
       expect(row).not.toBeNull();
+      const second = screen.container.querySelector<HTMLElement>(
+        `[data-thread-item="${environmentId}:second"]`,
+      )!;
+      const firstRect = row!.getBoundingClientRect();
+      const secondRect = second.getBoundingClientRect();
+      const startY = firstRect.top + firstRect.height / 2;
+      const endY = secondRect.top + secondRect.height / 2;
       const pointer = (type: string, clientY: number) =>
         new PointerEvent(type, {
           bubbles: true,
@@ -184,14 +207,29 @@ describe("sidebar drag reorder", () => {
           isPrimary: true,
           button: 0,
           buttons: 1,
-          clientX: 10,
+          clientX: firstRect.left + firstRect.width / 2,
           clientY,
         });
-      await act(() => row!.dispatchEvent(pointer("pointerdown", 10)));
-      await act(() => document.dispatchEvent(pointer("pointermove", 40)));
+      await act(() => row!.dispatchEvent(pointer("pointerdown", startY)));
+      await act(() => document.dispatchEvent(pointer("pointermove", startY + 10)));
 
       expect(row!.classList.contains("z-20")).toBe(scenario.reorders);
-      await act(() => document.dispatchEvent(pointer("pointerup", 40)));
+      expect(
+        screen.container.querySelector('[data-testid="sidebar-active-placeholder"]') !== null,
+      ).toBe(!scenario.folders);
+      await act(() => document.dispatchEvent(pointer("pointermove", endY)));
+      await act(() => document.dispatchEvent(pointer("pointerup", endY)));
+      if (scenario.reorders) {
+        await vi.waitFor(() =>
+          expect(reorderPinnedThread).toHaveBeenCalledWith(
+            { environmentId, threadId: ThreadId.make("first") },
+            expect.any(String),
+          ),
+        );
+        expect(reorderPinnedThread.mock.calls[0]![1] > "a1").toBe(true);
+      } else {
+        expect(reorderPinnedThread).not.toHaveBeenCalled();
+      }
     },
   );
 });
