@@ -1,3 +1,4 @@
+import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 import { useAtomValue } from "@effect/atom-react";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -883,6 +884,7 @@ export function PreviewView({
             } satisfies ComposerImageAttachment)
           : null;
       if (image) {
+        await readComposerImageBytes(image.file);
         addImage(threadRef, image);
       }
       if (

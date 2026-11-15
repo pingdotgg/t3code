@@ -104,7 +104,10 @@ export async function readComposerImageBytes(file: File): Promise<void> {
   if (bytes) rememberComposerImageBytes(file, new Uint8Array(bytes));
 }
 
-/** Images with this key are the same image: same name, type, size and bytes. */
+/**
+ * Matches name, type, size and bytes; unread files match only themselves.
+ * Producers must await readComposerImageBytes before publishing images to the draft.
+ */
 export function composerImageDedupKey(
   image: Pick<ComposerImageAttachment, "mimeType" | "sizeBytes" | "name" | "file">,
 ): string {
