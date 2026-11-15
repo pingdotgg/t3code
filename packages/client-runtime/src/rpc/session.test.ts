@@ -35,6 +35,7 @@ import {
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "./session.ts";
+import { toServerClock } from "../clock.ts";
 import { makeEnvironmentServerConfigState } from "../state/server.ts";
 import { applyServerConfigProjection } from "../state/serverConfigProjection.ts";
 
@@ -1045,6 +1046,29 @@ describe("RpcSessionFactory", () => {
         }),
       );
       yield* Fiber.join(probeFiber);
+    }),
+  );
+
+  it.effect("reads the host clock from each connection's config, dropping it when absent", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const connectWith = (config: unknown) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const socketIndex = sockets.length;
+            const session = yield* factory.connect(PREPARED);
+            const ready = yield* Effect.forkChild(session.ready);
+            const socket = yield* awaitSocket(sockets, socketIndex);
+            socket.open();
+            yield* completeInitialConfig(socket, config);
+            yield* Fiber.join(ready);
+          }),
+        );
+
+      yield* connectWith({ ...ENCODED_SERVER_CONFIG, serverTime: "1970-01-01T01:00:00.000Z" });
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(3_600_000);
+      yield* connectWith(ENCODED_SERVER_CONFIG);
+      expect(toServerClock(PREPARED.environmentId, 0)).toBe(0);
     }),
   );
 

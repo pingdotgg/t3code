@@ -328,6 +328,14 @@ export function waitForProjectRemoval(ref: ScopedProjectRef, timeoutMs = 5_000):
   });
 }
 
+/** The thread's loaded timeline, for a handler that reads it once instead of subscribing. */
+export function readThreadTurnItems(ref: ScopedThreadRef) {
+  return (
+    appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(ref))?.projection
+      .visibleTurnItems ?? []
+  );
+}
+
 export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | null {
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }

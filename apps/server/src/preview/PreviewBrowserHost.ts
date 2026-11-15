@@ -130,15 +130,25 @@ export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")
   return listed.length > 0 ? listed : [loaderError];
 });
 
-export const sandboxBlocked = Effect.gen(function* () {
+export const usernsRestricted = Effect.gen(function* () {
   if ((yield* HostProcess.Platform) !== "linux") return false;
   const fs = yield* FileSystem.FileSystem;
-  const restricted = yield* fs.readFileString(USERNS_RESTRICTION).pipe(
+  return yield* fs.readFileString(USERNS_RESTRICTION).pipe(
     Effect.map((value) => value.trim() === "1"),
     Effect.orElseSucceed(() => false),
   );
+<<<<<<< origin/main
   if (!restricted) return false;
   // Any other profile may miss the installed browser's path; setup rewrites it.
   const profile = yield* fs.readFileString(APPARMOR_PROFILE_PATH).pipe(Effect.option);
   return Option.getOrUndefined(profile) !== APPARMOR_PROFILE;
+=======
+}).pipe(Effect.withSpan("PreviewBrowserHost.usernsRestricted"));
+
+/** A profile on disk can still be unloaded; only a failed launch shows that without root. */
+export const sandboxBlocked = Effect.gen(function* () {
+  if (!(yield* usernsRestricted)) return false;
+  const fs = yield* FileSystem.FileSystem;
+  return !(yield* fs.exists(APPARMOR_PROFILE_PATH).pipe(Effect.orElseSucceed(() => false)));
+>>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
 }).pipe(Effect.withSpan("PreviewBrowserHost.sandboxBlocked"));

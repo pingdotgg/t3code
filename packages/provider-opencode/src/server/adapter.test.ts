@@ -775,6 +775,18 @@ describe("OpenCodeAdapterV2", () => {
         let promptId = "";
         const harness = yield* makeOpenCodeRuntimeHarness(`usage-${ending}`, "root", {
           event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          provider: {
+            list: async () => ({
+              data: {
+                all: [
+                  {
+                    id: "anthropic",
+                    models: { "claude-sonnet": { limit: { context: 200_000, output: 8_000 } } },
+                  },
+                ],
+              },
+            }),
+          },
           session: {
             create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
             promptAsync: async (input: { messageID: string }) => {
@@ -895,6 +907,11 @@ describe("OpenCodeAdapterV2", () => {
                 hasSubagents: false,
               },
         );
+        // The thread's context window reads tokenUsage: the last step's context fill.
+        if (ending === "completed") {
+          assert.equal(completed?.providerTurn.tokenUsage?.usedTokens, 22);
+          assert.equal(completed?.providerTurn.tokenUsage?.maxTokens, 200_000);
+        }
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 

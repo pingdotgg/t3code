@@ -591,7 +591,11 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
+<<<<<<< origin/main
     runs-on: macos-26
+=======
+    runs-on: blacksmith-6vcpu-macos-27
+>>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
     timeout-minutes: 10
     steps:
       - name: Checkout

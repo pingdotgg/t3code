@@ -355,6 +355,12 @@ export function summarizeT3ToolCalls(
     case "environment-update":
       label = phrase("Updated", "update", `environment preferences ${times}`);
       break;
+    case "theme-read":
+      label = phrase("Checked", "check", `themes ${times}`);
+      break;
+    case "theme-set":
+      label = phrase("Set", "set", `the theme ${times}`);
+      break;
     case "environment-links":
       label = phrase("Listed", "list", `linked environments ${times}`);
       break;
@@ -473,6 +479,7 @@ export function summarizeT3ToolCalls(
       label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
       break;
     case "send-to-user":
+<<<<<<< origin/main
       label = phrase("Sent", "send", `${quantity(selected.length, "message")} to the user`);
       break;
     case "rewrite-to-user":
@@ -480,6 +487,9 @@ export function summarizeT3ToolCalls(
       break;
     case "dashboard":
       label = phrase("Used", "use", `the Dashboard ${times}`);
+=======
+      label = phrase("Sent", "send", quantity(selected.length, "message"));
+>>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
       break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);

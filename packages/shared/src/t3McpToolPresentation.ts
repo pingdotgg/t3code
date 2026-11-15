@@ -55,6 +55,8 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "theme-read"
+  | "theme-set"
   | "attachment-prepare"
   | "attachment-discard"
   | "attachment-send"
@@ -69,9 +71,13 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
+<<<<<<< origin/main
   | "send-to-user"
   | "rewrite-to-user"
   | "dashboard";
+=======
+  | "send-to-user";
+>>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -357,6 +363,8 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),
+  t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
+  t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
   t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
   t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
   t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
@@ -375,6 +383,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+<<<<<<< origin/main
   send_to_user: tool(["Send", "Sending", "Sent", "a message to the user"], "send-to-user"),
   replace_send_to_user: tool(
     ["Rewrite", "Rewriting", "Rewrote", "a message to the user"],
@@ -382,6 +391,9 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   dashboard_get: tool(["Read", "Reading", "Read", "the Dashboard"], "dashboard"),
   dashboard_set: tool(["Update", "Updating", "Updated", "the Dashboard"], "dashboard"),
+=======
+  send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
+>>>>>>> 37714a8de5effecdea2d712d0828d4769f080a59
 };
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));

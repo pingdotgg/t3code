@@ -717,6 +717,14 @@ describe("server browser evaluate", () => {
   });
 });
 
+describe("server browser unresponsive script", () => {
+  it("leaves a page that answers alone", async () => {
+    const send = vi.fn(async (_method: string) => ({}));
+    await ServerBrowserPage.stopUnresponsiveScript({ send } as unknown as CDPSession);
+    expect(send.mock.calls.map(([method]) => method)).toEqual(["Runtime.evaluate"]);
+  });
+});
+
 describe("server browser wait", () => {
   it("ends at its timeout when a check never answers", async () => {
     // As on a desktop tab whose Playwright utility world never answers.
