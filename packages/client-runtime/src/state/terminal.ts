@@ -284,9 +284,14 @@ export function createTerminalSession(
     });
     shellResized = resized;
     void resized.then((result) => {
-      // Only a new grid or generation sends again, so retry a failure once. Resend the current
-      // grid, not this one: a newer resize may already be queued behind it.
-      if (!retry && result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      // Only a new grid or generation sends again, so retry a failure once, unless a newer
+      // resize already replaced this one.
+      if (
+        !retry &&
+        resized === shellResized &&
+        result._tag === "Failure" &&
+        !isAtomCommandInterrupted(result)
+      ) {
         sendResize(true);
         return;
       }

@@ -240,6 +240,39 @@ it("sends each failed resize again once, in every attachment generation", async 
   ]);
 });
 
+it("does not retry a failed resize that a newer one replaced", async () => {
+  const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
+  const written = Promise.withResolvers<void>();
+  let resizes = 0;
+  let settling = -1;
+  const { session, attached, emit, mount, of, completeCommands } = setup({
+    initialInput: "pnpm dev\r",
+    // The newer resize succeeds; the superseded one, and any retry of it, fail.
+    resizeFailure: () => settling !== 1,
+    beforeCommand: async (name, input) => {
+      if (name === "resize") {
+        const call = resizes++;
+        await gates[call]?.promise;
+        settling = call;
+      }
+      if (name === "write" && "data" in input && input.data === "pnpm dev\r") written.resolve();
+    },
+  });
+  session.reportGridSize({ cols: 120, rows: 40 });
+  mount(attached);
+  emit({ status: "running", version: 1 });
+  session.reportGridSize({ cols: 100, rows: 30 });
+  gates[0]!.resolve();
+  await completeCommands(1);
+  gates[1]!.resolve();
+  await completeCommands();
+  await written.promise;
+  expect(of("resize")).toEqual([
+    { threadId, terminalId: "term-1", cols: 120, rows: 40 },
+    { threadId, terminalId: "term-1", cols: 100, rows: 30 },
+  ]);
+});
+
 it("writes the launch's initial input once, after the measured resize lands", async () => {
   const resize = Promise.withResolvers<void>();
   const latestResize = Promise.withResolvers<void>();
