@@ -44,7 +44,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
   comment: true,
   actions: [...definition.changeRequestActions],
-  mergeMethods: ["merge", "squash", "rebase"],
+  mergeMethods: ["merge", "squash", "rebase", "fast-forward"],
   updateMethods: ["merge", "rebase"],
   search: false,
   reactions: true,
@@ -385,6 +385,8 @@ export const make = Effect.gen(function* () {
           merge: repo.allow_merge_commits ?? true,
           squash: repo.allow_squash_merge ?? true,
           rebase: repo.allow_rebase ?? true,
+          // Added in Forgejo 7; older servers cannot fast-forward-only merge.
+          "fast-forward": repo.allow_fast_forward_only_merge ?? false,
         },
       } satisfies ProviderChangeRequestDetail;
     }),
@@ -542,7 +544,13 @@ export const make = Effect.gen(function* () {
               ...input,
               path: `${pullPath(input)}/merge`,
               method: "POST",
-              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+              body: {
+                Do:
+                  input.mergeMethod === "fast-forward"
+                    ? "fast-forward-only"
+                    : (input.mergeMethod ?? "merge"),
+                delete_branch_after_merge: deleteBranch,
+              },
             }).pipe(
               Effect.catchTags({
                 // Forgejo merges before deleting the branch, so a refused deletion still merged.
@@ -704,12 +712,11 @@ export const make = Effect.gen(function* () {
         // Before anything is typed the repository's own people stand in; a search reaches
         // contributors from forks, who are never assignable.
         if (query.length === 0) {
-          const users = yield* page(
+          const users = yield* readArray(
             { ...input, path: `${repoPath(input)}/assignees` },
             ForgejoUser,
-            100,
           );
-          return { items: actors(users.items), truncated: users.truncated };
+          return { items: actors(users), truncated: false };
         }
         const found = yield* readLinked(
           {
