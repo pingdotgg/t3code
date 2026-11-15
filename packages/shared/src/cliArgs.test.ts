@@ -16,6 +16,10 @@ describe("tokenizeCliArgs", () => {
       input: "--add-dir \\\\server\\share\\\\\n--verbose",
       expected: ["--add-dir", "\\\\server\\share\\\\", "--verbose"],
     },
+    {
+      input: "--add-dir /tmp/project\\\\ name --verbose",
+      expected: ["--add-dir", "/tmp/project\\ name", "--verbose"],
+    },
   ])("handles line continuations in $input", ({ input, expected }) => {
     expect(tokenizeCliArgs(input)).toEqual(expected);
   });

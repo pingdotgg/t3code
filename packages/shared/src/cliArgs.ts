@@ -53,8 +53,8 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
       const next = input[index + 1];
       if (next === "\n") {
         index++;
-      } else if (next === "\\") {
-        // Keep both so Windows UNC paths survive; the second can't start a continuation.
+      } else if (next === "\\" && input[index + 2] === "\n") {
+        // An escaped backslash can't start a continuation; keep both, as for other literal backslashes.
         current += "\\\\";
         index++;
       } else if (next !== undefined && /[\s'"]/.test(next)) {
