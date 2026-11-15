@@ -601,11 +601,21 @@ export const layerWithOptions = (
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                // A hand-off can keep a busy session attached; its process still uses its token.
+                // A hand-off can keep a busy session attached; its process still uses its token
+                // unless agent access was narrowed since it was issued.
                 const held = new Set<string>();
                 for (const entry of (yield* Ref.get(sessions)).values()) {
                   const heldId = entry.mcpCredentialIdByThread.get(threadId);
-                  if (heldId !== undefined && entry.attachedThreadIds.has(threadId)) {
+                  const heldCapabilities =
+                    heldId === undefined
+                      ? undefined
+                      : mcpConfigByCredentialId.get(heldId)?.capabilities;
+                  if (
+                    heldId !== undefined &&
+                    entry.attachedThreadIds.has(threadId) &&
+                    heldCapabilities?.has("preview") === browserToolsAvailable &&
+                    heldCapabilities.has("device") === deviceToolsAvailable
+                  ) {
                     held.add(heldId);
                   }
                 }

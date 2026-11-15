@@ -2977,6 +2977,9 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
       const otherInstanceId = ProviderInstanceId.make("codex-other");
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
@@ -3035,11 +3038,29 @@ it.effect(
           current!.authorizationHeader.replace(/^Bearer\s+/, ""),
         );
         assert.equal(resolved?.thread.providerInstanceId, modelSelection.instanceId);
+
+        // Narrowed agent access is not kept alive by the retained session.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: otherInstanceId,
+            threadId,
+          }),
+          modelSelection: { instanceId: otherInstanceId, model: "gpt-5.4" },
+          runtimePolicy,
+        });
+        assert.isUndefined(yield* registry.resolve(retainedToken!));
       });
 
       yield* effect.pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 1_000, secondInstanceId: otherInstanceId }),
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            secondInstanceId: otherInstanceId,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
         ),
       );
     }),
