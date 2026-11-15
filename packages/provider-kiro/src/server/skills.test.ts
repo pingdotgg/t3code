@@ -18,6 +18,9 @@ describe("discoverKiroSkills", () => {
       const workspace = path.join(repo, "packages", "app");
       const userRoot = path.join(home, ".kiro", "skills");
       const workspaceRoot = path.join(workspace, ".kiro", "skills");
+      const cloudSkills = (kiroHome: string) =>
+        path.join(kiroHome, "cloud-cache", "resolved", "config", "user", "skills");
+      const cloudRoot = cloudSkills(path.join(home, ".kiro"));
       const write = (root: string, folder: string, contents: string) =>
         fileSystem
           .makeDirectory(path.join(root, folder), { recursive: true })
@@ -29,6 +32,8 @@ describe("discoverKiroSkills", () => {
       const skill = (name: string, description: string) =>
         `---\nname: ${name}\ndescription: ${description}\n---\n\nBody.\n`;
 
+      yield* write(cloudRoot, "cloud-only", skill("cloud-only", "from the account"));
+      yield* write(cloudRoot, "user-only", skill("user-only", "cloud copy"));
       yield* write(userRoot, "shared", skill("shared", "user copy"));
       yield* write(userRoot, "user-only", skill("user-only", "from the home folder"));
       yield* write(workspaceRoot, "block", "---\nname: block\ndescription: >\n  one\n  two\n---\n");
@@ -54,19 +59,21 @@ describe("discoverKiroSkills", () => {
       assert.deepEqual(
         skills.map(({ name, description, scope }) => ({ name, description, scope })),
         [
-          { name: "shared", description: "workspace copy", scope: "project" },
+          { name: "cloud-only", description: "from the account", scope: "user" },
           { name: "user-only", description: "from the home folder", scope: "user" },
+          { name: "shared", description: "workspace copy", scope: "project" },
           { name: "block", description: "one two", scope: "project" },
           { name: "crlf", description: "windows", scope: "project" },
           { name: "renamed", description: "named by its front matter", scope: "project" },
           { name: "open", description: "no closing fence", scope: "project" },
         ],
       );
-      assert.equal(skills[0]?.path, path.join(workspaceRoot, "shared", "SKILL.md"));
+      assert.equal(skills[2]?.path, path.join(workspaceRoot, "shared", "SKILL.md"));
       assert.isTrue(skills.every((entry) => entry.enabled));
 
-      // With KIRO_HOME set, Kiro reads `$KIRO_HOME/skills` and not `~/.kiro/skills`.
+      // With KIRO_HOME set, Kiro reads that folder and nothing under `~/.kiro`.
       const kiroHome = path.join(home, "other-account");
+      yield* write(cloudSkills(kiroHome), "relocated-cloud", skill("relocated-cloud", "cloud"));
       yield* write(path.join(kiroHome, "skills"), "relocated", skill("relocated", "in KIRO_HOME"));
       const relocated = yield* discoverKiroSkills({
         cwd: repo,
@@ -75,6 +82,7 @@ describe("discoverKiroSkills", () => {
       assert.deepEqual(
         relocated.map(({ name, scope }) => ({ name, scope })),
         [
+          { name: "relocated-cloud", scope: "user" },
           { name: "relocated", scope: "user" },
           { name: "parent", scope: "project" },
         ],

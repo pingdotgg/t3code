@@ -74,10 +74,10 @@ const readSkillsRoot = Effect.fn("KiroSkills.readSkillsRoot")(function* (
 });
 
 /**
- * The skills a Kiro session in `cwd` loads: `~/.kiro/skills` (`KIRO_HOME`
- * replaces `~/.kiro`), then the workspace's own `.kiro/skills` (Kiro reads no
- * parent folder). A later skill replaces a same-named earlier one in its
- * place, as in Kiro's list.
+ * The skills a Kiro session in `cwd` loads: the account's cloud skills, then
+ * `~/.kiro/skills` (`KIRO_HOME` replaces `~/.kiro`), then the workspace's own
+ * `.kiro/skills` (Kiro reads no parent folder). A later skill replaces a
+ * same-named earlier one in its place, as in Kiro's list.
  */
 export const discoverKiroSkills = Effect.fn("discoverKiroSkills")(function* (input: {
   readonly cwd: string;
@@ -91,6 +91,8 @@ export const discoverKiroSkills = Effect.fn("discoverKiroSkills")(function* (inp
   const kiroHome = input.environment.KIRO_HOME?.trim() || path.join(home, ".kiro");
   const skills = new Map<string, ServerProviderSkill>();
   for (const [kiroFolder, scope] of [
+    // Kiro's own copy of the account's cloud skills, synced when a session starts.
+    [path.join(kiroHome, "cloud-cache", "resolved", "config", "user"), "user"],
     [kiroHome, "user"],
     [path.join(input.cwd, ".kiro"), "project"],
   ] as const) {

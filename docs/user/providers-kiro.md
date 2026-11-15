@@ -41,9 +41,10 @@ leaves the thread on Kiro's current agent.
 ## Skills
 
 The `/` and `$` menus list the Kiro skills in `~/.kiro/skills` and in `.kiro/skills` of the folder
-the thread runs in. As in Kiro, a parent folder's `.kiro/skills` is not read, a skill needs a valid
-`name` and a `description` in its `SKILL.md`, and a project skill replaces a `~/.kiro/skills` skill
-of the same name.
+the thread runs in, and your Kiro account's cloud skills as Kiro last synced them to this machine.
+As in Kiro, a parent folder's `.kiro/skills` is not read, a skill needs a valid `name` and a
+`description` in its `SKILL.md`, and a project skill replaces a `~/.kiro/skills` skill of the same
+name, which replaces a cloud skill of the same name.
 
 ## Permission Modes
 
