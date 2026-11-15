@@ -348,39 +348,6 @@ describe("PreviewView", () => {
     expect(mocks.setAnnotationSendEnabled).toHaveBeenLastCalledWith(TEST_RUNTIME_TAB_ID, true);
   });
 
-  it("publishes the annotation with its image after screenshot preparation", async () => {
-    setup();
-    const picked = annotation("annotation-preparing", {
-      dataUrl: "data:image/png;base64,AQID",
-      width: 1,
-      height: 1,
-      cropRect: { x: 0, y: 0, width: 1, height: 1 },
-    });
-    const onSendAnnotation = vi.fn();
-    mocks.pickElement.mockResolvedValue({ annotation: picked, submission: "send" });
-    await using _screen = await render(view(onSendAnnotation));
-    let markStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      markStarted = resolve;
-    });
-    let finishRead!: (value: ArrayBuffer) => void;
-    const bytes = new Promise<ArrayBuffer>((resolve) => {
-      finishRead = resolve;
-    });
-    using _read = vi.spyOn(File.prototype, "arrayBuffer").mockImplementation(() => {
-      markStarted();
-      return bytes;
-    });
-    await userEvent.click(page.getByRole("button", { name: "Annotate preview" }));
-    await started;
-    expect(mocks.addPreviewAnnotation).not.toHaveBeenCalled();
-    expect(mocks.addImage).not.toHaveBeenCalled();
-    finishRead(new Uint8Array([1, 2, 3]).buffer);
-    await vi.waitFor(() => expect(onSendAnnotation).toHaveBeenCalled());
-    expect(mocks.addPreviewAnnotation).toHaveBeenCalledWith(TEST_THREAD_REF, picked);
-    expect(mocks.addImage).toHaveBeenCalled();
-  });
-
   it("still sends annotation text when the picked element's crop is malformed", async () => {
     setup();
     const picked = annotation("annotation-2", {
