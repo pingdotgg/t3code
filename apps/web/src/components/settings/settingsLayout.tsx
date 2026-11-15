@@ -341,6 +341,7 @@ export function SettingsRow({
   mixed?: boolean;
   /** Why an administrator's policy turns this row's control off, from the contract's denial helpers. */
   managed?: string | undefined;
+  /** Why the control, which disables itself, cannot be used right now. */
   disabledReason?: string | undefined;
   children?: ReactNode;
 }) {
@@ -419,7 +420,7 @@ export function SettingsRow({
     ) : (
       resetAction
     );
-  const inertControl = (message: string) => (
+  const inertControl = (message: string, dim = true) => (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -435,7 +436,10 @@ export function SettingsRow({
       >
         <div
           inert
-          className="flex w-full items-center gap-2 opacity-50 @min-[32rem]/settings-row:w-auto"
+          className={cn(
+            "flex w-full items-center gap-2 @min-[32rem]/settings-row:w-auto",
+            dim && "opacity-50",
+          )}
         >
           {control}
         </div>
@@ -468,7 +472,7 @@ export function SettingsRow({
             : deviceReadOnly && control
               ? inertControl("Saved on this device. Select All projects to change it.")
               : disabledReason !== undefined && control
-                ? inertControl(disabledReason)
+                ? inertControl(disabledReason, false)
                 : control;
   const customized =
     context !== null &&

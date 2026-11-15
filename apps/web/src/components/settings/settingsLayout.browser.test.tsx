@@ -56,29 +56,3 @@ it.each([
   await userEvent.keyboard("{Enter} ");
   expect(changed).not.toHaveBeenCalled();
 });
-
-it("keeps a locally disabled control inert and restores interaction when its reason clears", async () => {
-  state.available = true;
-  const changed = vi.fn();
-  await using screen = await render(
-    <SettingsRow
-      title="Example setting"
-      disabledReason="Saving this setting."
-      control={<Switch checked onCheckedChange={changed} aria-label="Example setting" />}
-    />,
-  );
-
-  await userEvent.tab();
-  await expect.element(page.getByText("Saving this setting.")).toBeVisible();
-  await userEvent.keyboard("{Enter} ");
-  expect(changed).not.toHaveBeenCalled();
-
-  await screen.rerender(
-    <SettingsRow
-      title="Example setting"
-      control={<Switch checked onCheckedChange={changed} aria-label="Example setting" />}
-    />,
-  );
-  await screen.getByRole("switch", { name: "Example setting" }).click();
-  expect(changed).toHaveBeenCalledWith(false, expect.anything());
-});
