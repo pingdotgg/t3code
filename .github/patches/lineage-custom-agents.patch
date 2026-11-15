@@ -982,10 +982,7 @@ index eaa505663c..adfe8bdc2f 100644
    const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
    const gitDriver = yield* GitVcsDriver.GitVcsDriver;
    const serverSettings = yield* ServerSettings.ServerSettingsService;
-@@ -1235,6 +1240,26 @@ const make = Effect.gen(function* () {
-           ),
-         )
-       : Effect.succeed(project.defaultModelSelection);
+@@ -1235,3 +1240,23 @@ const make = Effect.gen(function* () {
 +
 +  const provideAgentFiles = <A, E>(
 +    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
