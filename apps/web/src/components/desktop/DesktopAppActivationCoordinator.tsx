@@ -1,6 +1,7 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useEffect, useEffectEvent, useRef } from "react";
+import { useRouter } from "@tanstack/react-router";
 
 import { handleDesktopAppActivationRequest } from "../../desktopAppActivation";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
@@ -16,6 +17,8 @@ import { useEnvironmentShellHasSnapshot } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { reportProjectFailure } from "../../hooks/useProjectGroupUpdate";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { resolveThreadRouteTarget } from "../../threadRoutes";
 
 export function DesktopAppActivationCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
@@ -24,6 +27,7 @@ export function DesktopAppActivationCoordinator() {
     label: "project unarchive",
   });
   const openThread = useNewThreadHandler();
+  const router = useRouter();
   const queueRef = useRef(Promise.resolve());
   const activation = window.desktopBridge?.appActivation;
   const shellHasSnapshot = useEnvironmentShellHasSnapshot(
@@ -89,6 +93,20 @@ export function DesktopAppActivationCoordinator() {
           }).then((result) => reportProjectFailure("Failed to unarchive project", result));
         }
         return openThread(projectRef);
+      },
+      getOpenThread: (projectRef) => {
+        const target = resolveThreadRouteTarget(
+          router.matchRoutes(router.state.location).at(-1)?.params ?? {},
+        );
+        const draft =
+          target?.kind === "draft"
+            ? useComposerDraftStore.getState().getDraftSession(target.draftId)
+            : null;
+        return draft?.environmentId === projectRef.environmentId &&
+          draft.projectId === projectRef.projectId &&
+          draft.promotedTo == null
+          ? { threadId: draft.threadId }
+          : null;
       },
     }),
   );
