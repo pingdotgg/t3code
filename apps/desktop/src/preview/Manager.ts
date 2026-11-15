@@ -966,13 +966,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const syncTabDialog = Effect.fn("PreviewManager.syncTabDialog")(function* (
     wc: Electron.WebContents,
-    dialog: DesktopPreviewDialog | null,
   ) {
     const updatedAt = yield* currentIso;
     const next = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
       const entry = [...tabs].find(([, tab]) => tab.webContentsId === wc.id);
       if (!entry) return [Option.none<readonly [string, PreviewTabState]>(), tabs] as const;
       const [tabId, current] = entry;
+      const dialog = dialogHolds.get(wc.id)?.current();
       const { dialog: _dialog, ...withoutDialog } = current;
       const state: PreviewTabState = {
         ...withoutDialog,
@@ -993,7 +993,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (dialogHolds.has(wc.id)) return;
     dialogHolds.set(
       wc.id,
-      holdPageDialogs(wc, (dialog) => runFork(syncTabDialog(wc, dialog))),
+      holdPageDialogs(wc, () => runFork(syncTabDialog(wc))),
     );
   };
 
