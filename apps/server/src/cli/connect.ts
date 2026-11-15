@@ -15,6 +15,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -546,6 +547,7 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     | EnvironmentAuth.EnvironmentAuth
     | BootService.BootService
     | SecureRandom.SecureRandom
+    | Digest.Digest
     | FileSystem.FileSystem
     | Path.Path
     | HttpClient.HttpClient

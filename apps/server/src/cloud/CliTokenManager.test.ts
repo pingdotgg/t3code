@@ -386,6 +386,7 @@ it.effect("reports a provider without device authorization instead of calling Cl
       Layer.mergeAll(
         Layer.succeed(HttpClient.HttpClient, oidcProvider({ requests, tokenResponse: {} })),
         ConfigProvider.layer(ConfigProvider.fromEnv({ env: OIDC_ENV })),
+        NodeCrypto.layer,
       ),
     ),
   );
