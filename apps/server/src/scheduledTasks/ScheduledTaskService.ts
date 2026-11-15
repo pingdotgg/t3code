@@ -627,6 +627,7 @@ export const layer = Layer.effect(
     const saveTask = (
       task: ScheduledTask,
       requireExisting: boolean,
+      sendMode: ScheduledTaskUpsertInput["sendMode"],
       /** The schedule this save read, when it left the schedule unchanged. */
       keptSchedule: ScheduledTask["schedule"] | null,
       webhook: {
@@ -704,7 +705,7 @@ export const layer = Layer.effect(
             ELSE COALESCE(excluded.thread_id, scheduled_tasks.thread_id)
           END,
           thread_mode = excluded.thread_mode,
-          send_mode = excluded.send_mode,
+          send_mode = COALESCE(${sendMode ?? null}, scheduled_tasks.send_mode),
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -890,8 +891,14 @@ export const layer = Layer.effect(
       const shell = yield* threadManagement.getThreadShell(threadId);
       if (shell === null) return;
       const thread = { projectId: shell.projectId, threadId };
-      const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
-      const dispatched = runs.find((run) => run.userMessageId === messageId);
+      const { runs, messages: dispatchedMessages } =
+        yield* threadManagement.getProjectThreadRecords(thread, ["runs", "messages"], {
+          messageIds: [messageId],
+        });
+      const messageRunId = dispatchedMessages.find((message) => message.id === messageId)?.runId;
+      const dispatched =
+        runs.find((run) => run.userMessageId === messageId) ??
+        runs.find((run) => run.id === messageRunId);
       if (dispatched === undefined) return;
       const { run } = yield* threadManagement.waitForThread({
         ...thread,
@@ -1561,6 +1568,7 @@ export const layer = Layer.effect(
       yield* saveTask(
         task,
         input.requireExisting === true,
+        input.sendMode,
         scheduleUnchanged ? existingTask.schedule : null,
         webhook,
       );

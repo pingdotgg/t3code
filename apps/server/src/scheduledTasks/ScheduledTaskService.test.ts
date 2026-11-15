@@ -420,10 +420,12 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
 );
 
 it.effect.each([
-  { status: "failed", error: "Weekly usage limit reached" },
-  { status: "interrupted", error: "The run was stopped." },
-  { status: "cancelled", error: "The run was cancelled." },
-] as const)("a run that ends $status after its message was accepted records it", (outcome) =>
+  { status: "failed", error: "Weekly usage limit reached", mode: "queue" },
+  { status: "failed", error: "Weekly usage limit reached", mode: "steer" },
+  { status: "failed", error: "Weekly usage limit reached", mode: "auto" },
+  { status: "interrupted", error: "The run was stopped.", mode: "queue" },
+  { status: "cancelled", error: "The run was cancelled.", mode: "queue" },
+] as const)("a $mode run that ends $status after its message was accepted records it", (outcome) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:test");
     const ended = yield* Deferred.make<void>();
@@ -444,7 +446,10 @@ it.effect.each([
                   ({
                     runs: [
                       { id: "run:1", status: "completed", userMessageId: "message:earlier" },
-                      { ...run, userMessageId },
+                      {
+                        ...run,
+                        userMessageId: outcome.mode === "queue" ? userMessageId : "message:active",
+                      },
                     ],
                     messages: [{ id: userMessageId, runId: "run:2" }],
                     turnItems: [
@@ -482,6 +487,7 @@ it.effect.each([
       const { task } = yield* service.upsert({
         id: ScheduledTaskId.make("task:quota"),
         title: "Quota bookkeeping",
+        sendMode: outcome.mode,
         prompt: "Update the notes",
         enabled: true,
         schedule: { type: "interval", everyMs: 60_000 },
@@ -511,6 +517,8 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
   Effect.gen(function* () {
     const scratch = ProjectId.make("project:scratch");
     const promoted = ProjectId.make("project:promoted");
+    const saving = yield* Deferred.make<void>();
+    const resumeSave = yield* Deferred.make<void>();
     const sends = yield* Ref.make<Array<{ projectId: ProjectId; commandId: string; mode: string }>>(
       [],
     );
@@ -545,7 +553,11 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
-            isScratchProject: () => Effect.succeed(false),
+            isScratchProject: () =>
+              Deferred.succeed(saving, undefined).pipe(
+                Effect.andThen(Deferred.await(resumeSave)),
+                Effect.as(true),
+              ),
           }),
           NodeCrypto.layer,
           Scheduler.layer,
@@ -582,6 +594,16 @@ it.effect("a bound run follows its thread when promotion moves it mid-send", () 
       );
       assert.equal(new Set(attempts.map((attempt) => attempt.commandId)).size, 1);
       assert.deepEqual(new Set(attempts.map((attempt) => attempt.mode)), new Set(["auto"]));
+      const staleSave = yield* service
+        .upsert({
+          ...input,
+          workspaceStrategy: { type: "worktree", branch: "task", baseRef: "main" },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(saving);
+      yield* service.upsert({ ...input, sendMode: "restart" });
+      yield* Deferred.succeed(resumeSave, undefined);
+      assert.equal((yield* Fiber.join(staleSave)).task.sendMode, "restart");
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
