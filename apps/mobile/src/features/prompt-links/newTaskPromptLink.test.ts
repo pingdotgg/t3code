@@ -177,27 +177,6 @@ function answerQuery(label: string, result: unknown) {
 }
 
 describe("takeNewTaskPromptLink", () => {
-  it("opens the filled draft once drafts load on the screen it landed on", async () => {
-    const { releaseStorage } = setup();
-    openLink(repoLink, stack(home, newTask()));
-    releaseStorage();
-    await settle();
-
-    expect(drafts()).toEqual([
-      expect.objectContaining({
-        text: "Review the linked project",
-        project: expect.objectContaining({ environmentId: "env-1", projectId: "project-1" }),
-      }),
-    ]);
-    expect(fixture.dispatched).toEqual([
-      expect.objectContaining({
-        type: "PUSH",
-        source: "new-task",
-        payload: expect.objectContaining({ name: "Thread" }),
-      }),
-    ]);
-  });
-
   it.each([
     ["leaving to Home", [stack(home)]],
     [
@@ -223,8 +202,19 @@ describe("takeNewTaskPromptLink", () => {
     releaseStorage();
     await settle();
 
-    expect(drafts()).toEqual([expect.objectContaining({ text: "The newer prompt" })]);
-    expect(fixture.dispatched).toHaveLength(1);
+    expect(drafts()).toEqual([
+      expect.objectContaining({
+        text: "The newer prompt",
+        project: expect.objectContaining({ environmentId: "env-1", projectId: "project-1" }),
+      }),
+    ]);
+    expect(fixture.dispatched).toEqual([
+      expect.objectContaining({
+        type: "PUSH",
+        source: "new-task",
+        payload: expect.objectContaining({ name: "Thread" }),
+      }),
+    ]);
   });
 
   it("opens no thread for a pull request found after leaving", async () => {
