@@ -84,6 +84,7 @@ describe("wakePullRequestSnooze", () => {
     ["checks", unchanged, link({ checksState: "failing" }), true],
     ["checks", link({ checksState: "passing" }), link({ checksState: "failing" }), false],
     ["checks", unchanged, approved, false],
+    ["checks", link({ checksState: undefined }), checksPassed, true],
     ["conflict", unchanged, conflicting, true],
     ["conflict", conflicting, conflicting, false],
     ["conflict", unchanged, approved, false],
@@ -105,9 +106,12 @@ describe("wakePullRequestSnooze", () => {
     assert.isFalse(woke("review", [unchanged, other], [link({ state: "merged" }), other]));
   });
 
-  it("takes a pull request's first read as its baseline", () => {
-    assert.isFalse(woke("review", [link(null)], [approved]));
+  it("wakes on qualifying first snapshots with an unknown baseline", () => {
+    assert.isTrue(woke("review", [link(null)], [approved]));
     assert.isFalse(woke("review", [], [approved]));
+    assert.isTrue(woke("checks", [link(null)], [checksPassed]));
+    assert.isTrue(woke("conflict", [link(null)], [conflicting]));
+    assert.isFalse(woke("update", [link(null)], [unchanged]));
   });
 
   it("leaves time snoozes and ended snoozes alone", () => {

@@ -10863,6 +10863,10 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
         });
       yield* sync("baseline", "review-required");
       yield* snooze("with-pr");
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.snoozedUntil,
+        DateTime.add(yield* DateTime.now, { days: 30 }),
+      );
       assert.equal(
         (yield* orchestrator.getThreadShell(threadId))?.snoozeUntilPullRequest,
         "review",

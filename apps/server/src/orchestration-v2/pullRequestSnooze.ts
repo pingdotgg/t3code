@@ -11,17 +11,17 @@ import { threadPullRequestKeysEqual } from "../sourceControl/threadPullRequests.
 
 function snapshotMeetsTrigger(
   trigger: PullRequestSnoozeTrigger,
-  before: ThreadPullRequestSnapshot,
+  before: ThreadPullRequestSnapshot | null,
   after: ThreadPullRequestSnapshot,
   watched: boolean,
 ): boolean {
   const reviewed =
     (after.reviewDecision === "approved" || after.reviewDecision === "changes-requested") &&
-    after.reviewDecision !== before.reviewDecision;
+    after.reviewDecision !== before?.reviewDecision;
   const checksFinished =
-    before.checksState === "pending" &&
+    (before?.checksState == null || before.checksState === "pending") &&
     (after.checksState === "passing" || after.checksState === "failing");
-  const conflicted = after.mergeability === "conflicting" && before.mergeability !== "conflicting";
+  const conflicted = after.mergeability === "conflicting" && before?.mergeability !== "conflicting";
   switch (trigger) {
     case "review":
       return reviewed;
@@ -56,7 +56,7 @@ export function wakePullRequestSnooze<
     open.some((link) => {
       const previous = before.find((candidate) => threadPullRequestKeysEqual(candidate, link));
       return (
-        previous?.snapshot != null &&
+        previous !== undefined &&
         link.snapshot !== null &&
         snapshotMeetsTrigger(trigger, previous.snapshot, link.snapshot, link.watch !== undefined)
       );
