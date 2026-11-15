@@ -743,14 +743,16 @@ export const make = Effect.gen(function* () {
     });
     yield* eachTarget(group, (target) => {
       const evaluated = evaluatePullRequestWatch(target.watch, detail, remarks, now);
-      const readBlocker = target.watch.readBlocker ?? newReadBlocker;
+      // Check news must survive recovery; defer a new blocker notice to the next quiet pass.
+      const readBlocker =
+        target.watch.readBlocker ?? (evaluated.changes.length === 0 ? newReadBlocker : undefined);
       const report =
         remarks === null && readBlocker !== undefined
           ? { ...evaluated, next: { ...evaluated.next, readBlocker } }
           : evaluated;
       const accessWake = target.watch.readBlocker === undefined ? blockerWake?.(target) : undefined;
       if (report.changes.length > 0) {
-        const changeWake = {
+        const wake = {
           ...pullRequestWatchMessage({
             number: target.link.number,
             url: target.link.url,
@@ -760,13 +762,6 @@ export const make = Effect.gen(function* () {
           }),
           includesRemarks: report.changes.some((change) => change.kind === "remarks"),
         };
-        const wake =
-          accessWake === undefined
-            ? changeWake
-            : {
-                ...combinePullRequestWatchWakes([accessWake, changeWake]),
-                includesRemarks: changeWake.includesRemarks,
-              };
         // An ending watch keeps what this pass saw, so watching again starts from it.
         return hold(
           report.exhausted

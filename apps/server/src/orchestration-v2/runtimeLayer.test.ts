@@ -4111,6 +4111,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           if (reason === "activity-only" && pass === 7) passed = true;
           yield* TestClock.adjust("2 minutes");
           yield* sweep;
+          if (reason === "activity-only" && pass === 7) {
+            assert.deepEqual(yield* summaries, ["#8: checks passed"]);
+            assert.isUndefined(
+              (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.readBlocker,
+            );
+          }
         }
 
         const thread = yield* orchestrator.getThreadShell(threadId);
@@ -4125,9 +4131,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         );
         const blockerExpected = blocked ? ["#8: host access blocked, watching for recovery"] : [];
         const expected =
-          reason === "activity-only"
-            ? [`${blockerExpected[0]}; #8: checks passed`]
-            : blockerExpected;
+          reason === "activity-only" ? ["#8: checks passed", ...blockerExpected] : blockerExpected;
         const recoveredExpected =
           reason === "activity-only" ? expected : [...expected, "#8: checks passed"];
         assert.deepEqual(yield* summaries, expected);
