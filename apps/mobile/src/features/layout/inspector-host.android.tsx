@@ -53,7 +53,8 @@ export function InspectorPanes(props: {
                   position: "absolute",
                   inset: 0,
                   opacity: visible ? 1 : 0,
-                  zIndex: visible ? 1 : 0,
+                  // A lower zIndex puts the visible pane first in native order, where Material finds its scroll view.
+                  zIndex: visible ? 0 : 1,
                 }}
               >
                 <PaneContent pane={pane} resetKeys={props.content?.resetKeys} />

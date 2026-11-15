@@ -1,3 +1,4 @@
+import { AssetWorkspaceAssetNotFoundError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Dialog from "./Dialog";
 import { useContext, useEffect, useEffectEvent, useState, type ComponentType } from "react";
@@ -36,6 +37,15 @@ class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>(
 }
 
 const isPreviewResolutionError = Schema.is(PreviewResolutionError);
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
+
+function remotePreviewFailureMessage(error: unknown): string {
+  if (!isAssetNotFoundError(error)) {
+    return "Reconnect to this environment and try again. The file may have been moved or deleted.";
+  }
+  const path = error.checkedPath ?? ("path" in error.resource ? error.resource.path : undefined);
+  return path ? `The file was not found at ${path}.` : error.message;
+}
 
 interface ResolvedPreviewUri {
   readonly uri: string;
@@ -64,8 +74,7 @@ async function resolvePreviewUri(
     .catch((error: unknown) => {
       throw new PreviewResolutionError({
         cause: error,
-        fallbackMessage:
-          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+        fallbackMessage: remotePreviewFailureMessage(error),
       });
     });
   return { uri: url + (item.srcFragment ?? "") };
@@ -88,6 +97,7 @@ function ResolvedFilePreview(
     readonly source: FilePreviewSource;
     readonly onRequestClose: () => void;
     readonly onOpenError?: (error: unknown) => void;
+    readonly onPresent: (isFinished: () => boolean) => void;
   },
 ) {
   const { progressiveGallery, Viewer } = props;
@@ -152,6 +162,7 @@ function ResolvedFilePreview(
       <Viewer
         source={{ kind: "image", images, selectedIndex }}
         onRequestClose={props.onRequestClose}
+        onPresent={props.onPresent}
         {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
       />
     );
@@ -196,6 +207,7 @@ function ResolvedFilePreview(
       }}
       onRequestClose={props.onRequestClose}
       onOpenError={onOpenError}
+      onPresent={props.onPresent}
     />
   );
 }
@@ -211,15 +223,43 @@ export function FilePreviewSession(props: FilePreviewModalProps & FilePreviewSes
       ? null
       : { ...props.source, gallery: filePreviewGallery(props.source, group) };
   usePreviewPresentation(source && filePreviewKey(source), props.onRequestClose);
+  // A tap can land after the native viewer closed but before its close reached the caller, which
+  // still holds the same item; that tap only opens a new viewer under a new key.
+  // Only a viewer that presented and has since closed reopens; one still resolving never does.
+  const [opening, setOpening] = useState<{
+    readonly source: FilePreviewModalProps["source"];
+    readonly count: number;
+    readonly presented: { readonly isFinished: () => boolean } | null;
+  }>({ source: props.source, count: 0, presented: null });
+  if (opening.source !== props.source) {
+    const sameItem =
+      opening.source !== null &&
+      props.source !== null &&
+      filePreviewKey(opening.source) === filePreviewKey(props.source);
+    const reopened = sameItem && opening.presented?.isFinished() === true;
+    setOpening({
+      source: props.source,
+      count: opening.count + (reopened ? 1 : 0),
+      presented: sameItem && !reopened ? opening.presented : null,
+    });
+  }
+  const { count } = opening;
+  const onPresent = (isFinished: () => boolean) =>
+    setOpening((current) =>
+      current.count === count && current.presented === null
+        ? { ...current, presented: { isFinished } }
+        : current,
+    );
 
   if (!source) return null;
   return (
     <ResolvedFilePreview
-      key={filePreviewKey(source)}
+      key={`${opening.count}:${filePreviewKey(source)}`}
       source={source}
       onRequestClose={props.onRequestClose}
       progressiveGallery={props.progressiveGallery}
       Viewer={props.Viewer}
+      onPresent={onPresent}
       {...(props.onOpenError ? { onOpenError: props.onOpenError } : {})}
     />
   );

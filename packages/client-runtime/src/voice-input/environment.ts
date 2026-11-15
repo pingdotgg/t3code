@@ -292,6 +292,17 @@ export const updateEnvironmentSpeechModelUnloadTimeout = (
       client.updateModelUnloadTimeout({ headers, payload: { timeout } }),
   });
 
+export const linkEnvironmentSpeechModels = (prepared: PreparedConnection, path: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.linkModels(),
+    // Hashing several multi-gigabyte files takes longer than an ordinary request.
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.linkModels({ headers, payload: { path } }),
+  });
+
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",
