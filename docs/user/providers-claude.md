@@ -111,12 +111,12 @@ row in the thread; open it to see every step.
 
 ## Artifacts
 
-Claude Code leaves its Artifact tool off in T3 Code threads, so Claude can't
-publish pages to claude.ai until you turn it on. Add `CLAUDE_CODE_ARTIFACT=1`
-under **Variables** in the Claude instance's **Environment** section in
-**Settings > Providers**, then start a new thread.
+Claude can publish pages to claude.ai with Claude Code's Artifact tool. To
+choose whether Claude threads get it, add `CLAUDE_CODE_ARTIFACT=1` (on) or
+`CLAUDE_CODE_ARTIFACT=0` (off) under **Variables** in the Claude instance's
+**Environment** section in **Settings > Providers**, then start a new thread.
 
-Your account and organization must also qualify. If Claude still says it can't
+Your account and organization must also qualify. If Claude says it can't
 publish, check Claude Code's
 [artifact requirements](https://code.claude.com/docs/en/artifacts#availability).
 
