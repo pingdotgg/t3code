@@ -44,6 +44,7 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       taskId: MONITOR_TASK_ID,
       description: "Background monitor test",
       kind: "monitor",
+      awaited: true,
       nativeItemId: "toolu_019b4EUbhEcYP4TS7vZn27N1",
       command: "sleep 8 && echo MONITOR_DONE",
       itemId: monitorItem?.id,
