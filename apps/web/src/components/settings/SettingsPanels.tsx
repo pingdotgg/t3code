@@ -935,8 +935,13 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("compact-thread-cards")}
-          description="Drop the branch line from sidebar cards. Environment and provider icons move next to the project name, and PRs next to the title. Hover a card for the details."
+          {...setting("compact-thread-cards")}
+          description={
+            <T>
+              Drop the branch line from sidebar cards. Environment and provider icons move next to
+              the project name, and PRs next to the title. Hover a card for the details.
+            </T>
+          }
           resetAction={
             settings.sidebarCompactThreadCards !==
             DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadCards ? (
@@ -956,7 +961,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarCompactThreadCards: Boolean(checked) })
               }
-              aria-label="Compact thread cards"
+              aria-label={gt("Compact thread cards")}
             />
           }
         />

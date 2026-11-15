@@ -467,7 +467,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "compact-thread-cards",
-    title: "Compact thread cards",
+    title: msg("Compact thread cards"),
     to: "/settings/general",
     searchTerms: ["sidebar dense smaller hide branch worktree provider environment row"],
   },
