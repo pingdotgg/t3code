@@ -138,6 +138,10 @@ that thread and completes the task with `delegated_task.remote.complete`. That
 internal command reuses the parent half of a local finalize, so the parent
 wakes the same way. Open remote tasks are followed again at startup, which is
 also what keeps restart recovery from treating them as abandoned provider work.
+The linked environment never calls back, so after the task's run there ends the
+follower keeps a `t3_thread_wait` with `afterRunId` open there: a later run,
+such as a background command's wake, becomes a new task, as a local child's
+wake does. That wait is not resumed after a restart here.
 
 The link is routing, not isolation: an agent the link starts runs as the
 receiving environment's user. **A full-access link is therefore not fenced**:

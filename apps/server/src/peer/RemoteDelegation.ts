@@ -863,8 +863,112 @@ const make = Effect.gen(function* () {
       result ?? noReply,
       "ran-out",
     );
-    return yield* settled(parentThreadId, taskId);
+    const done = yield* settled(parentThreadId, taskId);
+    if (done) {
+      yield* followLater(parentThreadId, taskId, resultRun.runId).pipe(Effect.forkIn(followers));
+    }
+    return done;
   });
+
+  /**
+   * After the task's run there ran out, a later run on its thread there, say one a background
+   * command's wake started, is a follow-up the parent hears about, as for a child here. It is
+   * recorded as a new task, whose follower then follows the run after it. A Stop here ends it.
+   */
+  const followLater = Effect.fn("RemoteDelegation.followLater")(
+    function* (parentThreadId: ThreadId, taskId: NodeId, afterRunId: RunId) {
+      const sequence = yield* threads.getThreadEventSequence(parentThreadId);
+      const { thread, task } = yield* readTask(parentThreadId, taskId);
+      const remote = task?.remoteChild;
+      if (task?.model == null || remote === undefined || remote.stoppedThere !== true) {
+        return true;
+      }
+      const scope = followScope(
+        { threadId: parentThreadId, providerInstanceId: thread.providerInstanceId },
+        remote,
+      );
+      const stoppedHere = threads
+        .streamStoredEventsFrom({
+          threadId: parentThreadId,
+          afterSequence: sequence,
+          eventType: "subagent.updated",
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === taskId &&
+              stored.event.payload.remoteChild?.stoppedThere === false,
+          ),
+          Stream.runHead,
+          Effect.as({ stoppedHere: true } as const),
+        );
+      const waited = yield* forwarding
+        .waitForThread(scope, remote.environmentId, {
+          threadId: remote.threadId,
+          afterRunId,
+          timeoutMs: FOLLOW_WAIT_MS,
+          untilDelegatedWorkSettled: true,
+        })
+        .pipe(Effect.raceFirst(stoppedHere));
+      if ("stoppedHere" in waited) return true;
+      // An older peer ignores `afterRunId` and answers with the run already followed.
+      if (waited.runId === null || waited.runId === afterRunId) return !waited.timedOut;
+      if (waited.timedOut || !isTerminal(waited.status)) return false;
+      const laterRunId = waited.runId;
+      const taskOf = threads
+        .getThreadRecords(parentThreadId, ["subagents"])
+        .pipe(
+          Effect.map(
+            ({ subagents }) =>
+              subagents.find(
+                (other) =>
+                  other.remoteChild?.environmentId === remote.environmentId &&
+                  other.remoteChild.threadId === remote.threadId &&
+                  other.remoteChild.runId === laterRunId,
+              )?.id,
+          ),
+        );
+      // A message sent from here started it, and is already its own task.
+      if ((yield* taskOf) !== undefined) return true;
+      const { runs } = yield* threads.getThreadRecords(parentThreadId, ["runs"]);
+      const parentRun = followUpOwnerRun(runs);
+      if (parentRun === null || parentRun.rootNodeId === null) return true;
+      yield* threads.dispatch({
+        type: "delegated_task.remote.request",
+        commandId: CommandId.make(
+          `command:remote-wake:${encodeURIComponent(parentThreadId)}:${encodeURIComponent(remote.environmentId)}:${encodeURIComponent(laterRunId)}`,
+        ),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId,
+        task: `(A later run of the thread in ${remote.label}.)`,
+        ...(task.title === null ? {} : { title: task.title }),
+        driver: task.driver,
+        modelSelection: { instanceId: task.providerInstanceId, model: task.model },
+        remoteChild: {
+          environmentId: remote.environmentId,
+          threadId: remote.threadId,
+          label: remote.label,
+          runId: laterRunId,
+        },
+        completionWake: "always",
+      });
+      const laterTaskId = yield* taskOf;
+      if (laterTaskId !== undefined) {
+        yield* followOne(parentThreadId, laterTaskId).pipe(Effect.forkIn(followers));
+      }
+      return true;
+    },
+    // `false` means no later run has ended there yet: wait again.
+    Effect.repeat({ while: (done) => !done }),
+    // The other machine asleep or a dropped route is retried; anything else ends following.
+    Effect.retry({
+      schedule: followRetry,
+      while: (error) => error._tag === "OrchestratorMcpFailure" && !isFinal(error),
+    }),
+    Effect.ignoreCause({ log: true }),
+  );
 
   /**
    * Whether the task is done here after the follower reported its run ran

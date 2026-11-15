@@ -295,7 +295,11 @@ const boxToolkitLayer = (thread: BoxThread) => {
         }
         // The queued run's own task stays open while the follow-up ahead of it settles.
         if (input.runId === boxQueuedRunId) return yield* Effect.never;
-        if (input.runId === boxLaterRunId) {
+        // The thread's later run comes after its own; nothing comes after that one.
+        if (input.afterRunId !== undefined && input.afterRunId !== boxRunId) {
+          return yield* Effect.never;
+        }
+        if (input.runId === boxLaterRunId || input.afterRunId === boxRunId) {
           const laterDone = yield* Deferred.await(thread.laterFinished).pipe(
             Effect.timeoutOption(input.timeoutMs),
           );

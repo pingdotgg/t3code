@@ -573,6 +573,8 @@ export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   runId: Schema.optional(RunId),
+  /** Without runId: wait on the first run that starts after this one. */
+  afterRunId: Schema.optional(RunId),
   timeoutMs: Schema.optional(Schema.Finite),
   untilDelegatedWorkSettled: Schema.optional(
     Schema.Boolean.annotate({

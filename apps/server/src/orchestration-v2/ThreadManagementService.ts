@@ -186,6 +186,8 @@ export interface ThreadManagementWaitInput {
    * completion delivery will wake it again, as a delegated task's result does.
    */
   readonly untilDelegatedWorkSettled?: boolean;
+  /** Without `runId`: wait on the first run that starts after this one instead. */
+  readonly afterRunId?: RunId;
 }
 
 export interface ThreadManagementWaitResult {
@@ -561,6 +563,34 @@ export function latestRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | undefined {
   return projection.runs.toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+/**
+ * The first run that started after `after` and may bring new work, as a wake starts a
+ * follow-up for a local child: not a restart of a run, nor a monitor's progress update.
+ */
+function nextRunAfter(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
+  after: OrchestrationV2Run,
+): OrchestrationV2Run | undefined {
+  const progressRuns = new Set(
+    projection.messages
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
+      .map((message) => message.runId),
+  );
+  return projection.runs
+    .filter(
+      (run) =>
+        run.ordinal > after.ordinal &&
+        run.startedAt !== null &&
+        run.restartContinuationOfRunId === undefined &&
+        !progressRuns.has(run.id),
+    )
+    .toSorted((left, right) => left.ordinal - right.ordinal)[0];
 }
 
 function latestRestartContinuation(
@@ -1001,8 +1031,12 @@ const make = Effect.gen(function* () {
     const afterSequence = yield* orchestrator
       .getThreadEventSequence(input.threadId)
       .pipe(Effect.mapError(loadError));
-    const target = yield* getProjectThreadRecords(input, ["runs"]);
-    const selectedRun =
+    let target: Pick<OrchestrationV2ThreadProjection, "runs"> = yield* getProjectThreadRecords(
+      input,
+      ["runs"],
+    );
+    let timeoutMs = input.timeoutMs;
+    let selectedRun =
       input.runId === undefined
         ? latestRun(target)
         : target.runs.find((candidate) => candidate.id === input.runId);
@@ -1011,6 +1045,49 @@ const make = Effect.gen(function* () {
         threadId: input.threadId,
         runId: input.runId,
       });
+    }
+    const afterRunId = input.runId === undefined ? input.afterRunId : undefined;
+    if (afterRunId !== undefined) {
+      const after = target.runs.find((candidate) => candidate.id === afterRunId);
+      if (after === undefined) {
+        return yield* new ThreadManagementRunNotFoundError({
+          threadId: input.threadId,
+          runId: afterRunId,
+        });
+      }
+      const waitStartedAt = yield* Clock.currentTimeMillis;
+      const nextRun = getProjectThreadRecords(input, ["runs", "messages"], {
+        messageRoles: ["user"],
+        monitorNotificationsOnly: true,
+      }).pipe(
+        Effect.map((records) => ({ records, run: nextRunAfter(records, after) })),
+        Effect.mapError(loadError),
+      );
+      const found = yield* nextRun;
+      const next =
+        found.run !== undefined
+          ? found
+          : Option.getOrUndefined(
+              Option.flatten(
+                yield* orchestrator
+                  .streamStoredEventsFrom({
+                    threadId: input.threadId,
+                    afterSequence,
+                    eventType: "run.updated",
+                  })
+                  .pipe(
+                    Stream.mapError(loadError),
+                    Stream.mapEffect(() => nextRun),
+                    Stream.filter((candidate) => candidate.run !== undefined),
+                    Stream.runHead,
+                    Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+                  ),
+              ),
+            );
+      if (next?.run === undefined) return { threadId: input.threadId, run: after, timedOut: true };
+      target = next.records;
+      selectedRun = next.run;
+      timeoutMs = input.timeoutMs - ((yield* Clock.currentTimeMillis) - waitStartedAt);
     }
     if (selectedRun === undefined) {
       return { threadId: input.threadId, run: null, timedOut: false };
@@ -1114,7 +1191,7 @@ const make = Effect.gen(function* () {
       ),
       Stream.filter((current) => current.settled),
       Stream.runHead,
-      Effect.timeoutOption(Duration.millis(Math.max(1, input.timeoutMs))),
+      Effect.timeoutOption(Duration.millis(Math.max(1, timeoutMs))),
     );
     const waited = Option.flatten(yield* wait);
     if (Option.isSome(waited)) return settledResult(waited.value);

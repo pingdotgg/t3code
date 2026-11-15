@@ -465,6 +465,77 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
   }),
 );
 
+it.effect("waitForThread after a run waits on the next run that brings new work", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-after");
+    const threadId = ThreadId.make("thread:thread-management:wait-after");
+    const runId = RunId.make("run:thread-management:wait-after");
+    const progressRunId = RunId.make("run:thread-management:wait-after:progress");
+    const wakeRunId = RunId.make("run:thread-management:wait-after:wake");
+    const subscribed = yield* Deferred.make<void>();
+    const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+    const run = (id: RunId, ordinal: number, status: OrchestrationV2Run["status"]) =>
+      ({ id, ordinal, status, startedAt: DateTime.makeUnsafe(ordinal * 1_000) }) as never;
+    let runs: Array<OrchestrationV2Run> = [run(runId, 1, "completed")];
+    // A monitor's progress update reports on old work; it is not the next run.
+    const messages = [
+      {
+        runId: progressRunId,
+        notification: { source: { kind: "monitor" }, outcome: "updated" },
+      },
+    ];
+    const stored = (sequence: number) =>
+      ({
+        sequence,
+        event: { threadId, type: "run.updated", payload: {} },
+      }) as unknown as OrchestrationV2StoredEvent;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (input) =>
+            input?.eventType === "run.updated"
+              ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(events)),
+                )
+              : Stream.never,
+          getThreadRecords: () =>
+            Effect.sync(
+              () =>
+                ({
+                  thread: { id: threadId, projectId, deletedAt: null },
+                  runs,
+                  messages,
+                }) as unknown as OrchestrationV2ThreadProjection,
+            ),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const fiber = yield* service
+      .waitForThread({ projectId, threadId, afterRunId: runId, timeoutMs: 60 * 60 * 1_000 })
+      .pipe(Effect.forkChild);
+    // A wait that returns early fails below instead of hanging here.
+    yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+    runs = [...runs, run(progressRunId, 2, "completed"), run(wakeRunId, 3, "running")];
+    yield* Queue.offer(events, stored(1));
+    runs = [...runs.slice(0, 2), run(wakeRunId, 3, "completed")];
+    yield* Queue.offer(events, stored(2));
+
+    expect(yield* Fiber.join(fiber)).toMatchObject({
+      timedOut: false,
+      run: { id: wakeRunId, status: "completed" },
+    });
+  }),
+);
+
 it.effect("waitForThread settles delegated work on a thread rolled back past its only run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-rolled-back");
