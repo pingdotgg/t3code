@@ -60,6 +60,8 @@ export const SUBAGENT_V2_NESTED_APPROVAL_PROMPT =
   "Do not run any commands yourself. Spawn one subagent and tell it not to run any commands itself but to spawn its own subagent, whose only task is to run this exact shell command: printf 'nested approval fixture' > nested-approval.txt and then reply with exactly: Written. Each agent waits for its child and replies with exactly what the child said. Wait for your subagent, then reply with exactly what it said.";
 export const OPENCODE_SUBAGENT_PROMPT =
   "Use the task tool exactly once. Delegate to the general subagent with this prompt: Respond exactly CHILD_OK. After the task completes, respond exactly PARENT_OK.";
+export const OPENCODE_BACKGROUND_WAKE_PROMPT =
+  "Use the task tool once with background set to true to delegate to the general subagent with the prompt: Respond exactly CHILD_OK. As soon as it is launched, reply exactly PARENT_OK and end your turn without waiting for it.";
 export const SUBAGENT_CONTINUE_PROMPT =
   "Spawn one subagent and have it reply exactly: initial subagent response";
 export const SUBAGENT_CONTINUE_PARENT_PROMPT =
