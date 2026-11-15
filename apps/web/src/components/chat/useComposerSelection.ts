@@ -19,12 +19,21 @@ import {
 } from "@t3tools/contracts";
 import type { deriveThreadStructureRuntime } from "@t3tools/client-runtime/state/thread-execution";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { type SetStateAction, useRef } from "react";
+import { type SetStateAction, useEffect, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
-import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
-import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
+import {
+  draftModelSelectionApplies,
+  resolveNewDraftStartFromOrigin,
+  threadHasStarted,
+} from "../../lib/chatThreadActions";
+import {
+  type DraftThreadEnvMode,
+  composerTargetKey,
+  isSameModel,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import {
   getStartedThreadModelChangeBlockReason,
   deriveLockedProvider,
@@ -101,25 +110,62 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const applyThreadModelPick = useApplyThreadModelPick();
 
-  const runtimeModeSelectionRef = useRef(0);
+  const runtimeModeSelectionsRef = useRef(new Map<string, number>());
+  const [pendingRuntimeModeSaves, setPendingRuntimeModeSaves] = useState(
+    () =>
+      new Map<
+        string,
+        { readonly id: number; readonly mode: RuntimeMode; readonly threadId: ThreadId }
+      >(),
+  );
+  const shellThreadId = activeThread?.id;
+  const shellRuntimeMode = activeThread?.runtimeMode;
+  // The shell arrives after the command resolves, and the draft override hides a later change until it is cleared.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the saved runtime-mode override once this thread's shell shows that mode
+  useEffect(() => {
+    const key = composerTargetKey(composerDraftTarget);
+    const pending = pendingRuntimeModeSaves.get(key);
+    if (!pending || runtimeModeSelectionsRef.current.get(key) !== pending.id) return;
+    if (shellThreadId !== pending.threadId || shellRuntimeMode !== pending.mode) return;
+    const draftMode =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.runtimeMode ?? null;
+    if (draftMode !== pending.mode) return;
+    setComposerDraftRuntimeMode(composerDraftTarget, null);
+  }, [
+    pendingRuntimeModeSaves,
+    shellThreadId,
+    shellRuntimeMode,
+    composerDraftTarget,
+    setComposerDraftRuntimeMode,
+  ]);
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
-    const selection = ++runtimeModeSelectionRef.current;
-    setComposerDraftRuntimeMode(composerDraftTarget, mode);
+    const target = composerDraftTarget;
+    const key = composerTargetKey(target);
+    const selection = (runtimeModeSelectionsRef.current.get(key) ?? 0) + 1;
+    runtimeModeSelectionsRef.current.set(key, selection);
+    setComposerDraftRuntimeMode(target, mode);
     if (isLocalDraftThread) {
-      setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+      setDraftThreadContext(target, { runtimeMode: mode });
     } else if (activeThread && !runInProgress) {
+      const threadId = activeThread.id;
       void setThreadRuntimeMode({
         environmentId: activeThread.environmentId,
         input: {
-          threadId: activeThread.id,
+          threadId,
           runtimeMode: mode,
           createdAt: new Date().toISOString(),
         },
       }).then((result) => {
         if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-          if (runtimeModeSelectionRef.current === selection) {
-            setComposerDraftRuntimeMode(composerDraftTarget, null);
+          if (runtimeModeSelectionsRef.current.get(key) === selection) {
+            setPendingRuntimeModeSaves((current) => {
+              if (current.get(key)?.id !== selection) return current;
+              const next = new Map(current);
+              next.delete(key);
+              return next;
+            });
+            setComposerDraftRuntimeMode(target, null);
           }
           const error = squashAtomCommandFailure(result);
           toastManager.add({
@@ -127,7 +173,17 @@ export function useComposerSelection(input: ComposerSelectionInput) {
             title: "Failed to update permission mode",
             description: error instanceof Error ? error.message : "An error occurred.",
           });
+          return;
         }
+        if (result._tag !== "Success" || runtimeModeSelectionsRef.current.get(key) !== selection) {
+          return;
+        }
+        setPendingRuntimeModeSaves((current) => {
+          if (runtimeModeSelectionsRef.current.get(key) !== selection) return current;
+          const next = new Map(current);
+          next.set(key, { id: selection, mode, threadId });
+          return next;
+        });
       });
     }
     scheduleComposerFocus();
@@ -201,7 +257,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       { preserveUnavailableSelection: true },
     );
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
-    const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    const storedDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    const draft = draftModelSelectionApplies(storedDraft, threadHasStarted(activeThread))
+      ? storedDraft
+      : null;
     const shownInstanceId =
       draft?.activeProvider ??
       activeRuntime?.providerInstanceId ??
@@ -221,9 +280,23 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     }
     const rememberedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
-    const nextModelSelection: ModelSelection =
+    const threadSelection = activeThread.modelSelection;
+    // This pick replaces the stored options, so the thread's own model carries them over.
+    const pickOptions =
       rememberedOptions !== undefined && rememberedOptions.length > 0
-        ? { instanceId, model: resolvedModel, options: [...rememberedOptions] }
+        ? rememberedOptions
+        : threadSelection.instanceId === instanceId &&
+            entry !== undefined &&
+            isSameModel(
+              { providers: providerStatuses, selectedProvider: entry.driver, settings },
+              threadSelection,
+              { instanceId, model: resolvedModel },
+            )
+          ? threadSelection.options
+          : undefined;
+    const nextModelSelection: ModelSelection =
+      pickOptions !== undefined && pickOptions.length > 0
+        ? { instanceId, model: resolvedModel, options: [...pickOptions] }
         : { instanceId, model: resolvedModel };
     const modelChangeBlockReason = getStartedThreadModelChangeBlockReason({
       hasStartedSession: activeRuntime !== null,

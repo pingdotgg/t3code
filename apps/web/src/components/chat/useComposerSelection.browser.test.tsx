@@ -143,6 +143,7 @@ it("switches back to the thread's stored model while the session runs on another
     expect(
       deriveEffectiveComposerModelState({
         draft,
+        threadStarted: true,
         providers,
         selectedProvider: ProviderDriverKind.make("cursor"),
         selectedInstanceId: cursor,
@@ -213,6 +214,8 @@ interface TestHarnessProps {
   readonly isLocalDraftThread?: boolean;
   readonly runInProgress?: boolean;
   readonly activeThread?: EnvironmentThreadShell;
+  readonly composerDraftTarget?: typeof threadRef;
+  readonly runtimeMode?: RuntimeMode;
   readonly setThreadRuntimeMode: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: {
@@ -227,7 +230,7 @@ interface TestHarnessProps {
 function TestHarness(props: TestHarnessProps) {
   const hook = useComposerSelection({
     environmentId: env,
-    composerDraftTarget: threadRef,
+    composerDraftTarget: props.composerDraftTarget ?? threadRef,
     draftThread: null,
     activeThread: props.activeThread ?? mockActiveThread,
     activeRuntime: null,
@@ -237,7 +240,7 @@ function TestHarness(props: TestHarnessProps) {
     lockedProvider: null,
     supportsProviderSwitchingViaHandoff: false,
     multipleModelSelections: null,
-    runtimeMode: "full-access",
+    runtimeMode: props.runtimeMode ?? "full-access",
     isLocalDraftThread: props.isLocalDraftThread ?? false,
     canOverrideServerThreadEnvMode: false,
     setPendingServerThreadEnvModeEntry: vi.fn(),
@@ -251,11 +254,12 @@ function TestHarness(props: TestHarnessProps) {
   return null;
 }
 
-function clearRuntimeModeDraft() {
-  useComposerDraftStore.getState().setRuntimeMode(threadRef, null);
+function clearRuntimeModeDraft(...targets: Array<typeof threadRef>) {
+  const keys = targets.length > 0 ? targets : [threadRef];
+  for (const target of keys) useComposerDraftStore.getState().setRuntimeMode(target, null);
   return {
     [Symbol.dispose]() {
-      useComposerDraftStore.getState().setRuntimeMode(threadRef, null);
+      for (const target of keys) useComposerDraftStore.getState().setRuntimeMode(target, null);
     },
   };
 }
@@ -266,7 +270,7 @@ describe("useComposerSelection runtime mode persistence", () => {
     const setThreadRuntimeMode = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
     let hook!: ReturnType<typeof useComposerSelection>;
 
-    await using _screen = await render(
+    await using screen = await render(
       <TestHarness
         setThreadRuntimeMode={setThreadRuntimeMode}
         onReady={(h) => {
@@ -292,6 +296,25 @@ describe("useComposerSelection runtime mode persistence", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
       "approval-required",
     );
+
+    const confirmed = {
+      ...mockActiveThread,
+      runtimeMode: "approval-required",
+    } as EnvironmentThreadShell;
+    await screen.rerender(
+      <TestHarness
+        activeThread={confirmed}
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode ?? null,
+      ).toBeNull();
+    });
   });
 
   it("reverts the draft runtime mode and alerts when persisting to the server fails", async () => {
@@ -412,5 +435,143 @@ describe("useComposerSelection runtime mode persistence", () => {
     expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
       "approval-required",
     );
+
+    const confirmed = {
+      ...mockActiveThread,
+      runtimeMode: "approval-required",
+    } as EnvironmentThreadShell;
+    await _screen.rerender(
+      <TestHarness
+        runInProgress
+        activeThread={confirmed}
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={(h) => {
+          hook = h;
+        }}
+      />,
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "approval-required",
+    );
   });
+
+  it("keeps a newer selection when the shell confirms an older save", async () => {
+    using _cleanup = clearRuntimeModeDraft();
+    const setThreadRuntimeMode = vi.fn().mockResolvedValue(AsyncResult.success(undefined));
+    let hook!: ReturnType<typeof useComposerSelection>;
+    const ready = (h: ReturnType<typeof useComposerSelection>) => {
+      hook = h;
+    };
+
+    await using screen = await render(
+      <TestHarness setThreadRuntimeMode={setThreadRuntimeMode} onReady={ready} />,
+    );
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("auto-accept-edits");
+    });
+
+    const olderConfirmation = {
+      ...mockActiveThread,
+      runtimeMode: "approval-required",
+    } as EnvironmentThreadShell;
+    await screen.rerender(
+      <TestHarness
+        activeThread={olderConfirmation}
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={ready}
+      />,
+    );
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+  });
+
+  it("rolls back a failed selection on one thread after a selection on another", async () => {
+    const otherThreadId = ThreadId.make("thread-2");
+    const otherThreadRef = scopeThreadRef(env, otherThreadId);
+    using _cleanup = clearRuntimeModeDraft(threadRef, otherThreadRef);
+    let rejectFirst!: (result: unknown) => void;
+    const firstSave = new Promise((resolve) => {
+      rejectFirst = resolve;
+    });
+    const setThreadRuntimeMode = vi
+      .fn()
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue(AsyncResult.success(undefined));
+    let hook!: ReturnType<typeof useComposerSelection>;
+    const ready = (h: ReturnType<typeof useComposerSelection>) => {
+      hook = h;
+    };
+
+    await using screen = await render(
+      <TestHarness setThreadRuntimeMode={setThreadRuntimeMode} onReady={ready} />,
+    );
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("approval-required");
+    });
+
+    const otherThread = {
+      ...mockActiveThread,
+      id: otherThreadId,
+    } as EnvironmentThreadShell;
+    await screen.rerender(
+      <TestHarness
+        activeThread={otherThread}
+        composerDraftTarget={otherThreadRef}
+        setThreadRuntimeMode={setThreadRuntimeMode}
+        onReady={ready}
+      />,
+    );
+    await act(() => {
+      hook.handleRuntimeModeChangeStable("auto-accept-edits");
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(otherThreadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+
+    await act(async () => {
+      rejectFirst(AsyncResult.failure(Cause.fail(new Error("First call failed"))));
+    });
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.runtimeMode ?? null,
+      ).toBeNull();
+    });
+    expect(useComposerDraftStore.getState().getComposerDraft(otherThreadRef)?.runtimeMode).toBe(
+      "auto-accept-edits",
+    );
+  });
+});
+
+it("saves a pick of a seeded model the started thread does not show", async () => {
+  const { setModelSelection } = setup();
+  setModelSelection.mockResolvedValue(AsyncResult.success(undefined));
+  const thread = cursorThread("thread-cursor-seeded");
+  appAtomRegistry.set(shellAtom(thread.id), thread);
+  useComposerDraftStore
+    .getState()
+    .setModelSelection(
+      scopeThreadRef(environmentId, thread.id),
+      createModelSelection(cursor, "auto-smart"),
+    );
+  await using _screen = await render(
+    <AppAtomRegistryProvider>
+      <Picker thread={thread} runtime={null} model="auto-smart" />
+    </AppAtomRegistryProvider>,
+  );
+  await page.getByRole("button", { name: "Pick the model" }).click();
+
+  await vi.waitFor(() =>
+    expect(setModelSelection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          threadId: thread.id,
+          modelSelection: expect.objectContaining({ instanceId: cursor, model: "auto-smart" }),
+        },
+      }),
+    ),
+  );
 });

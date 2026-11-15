@@ -179,7 +179,6 @@ export const make = Effect.gen(function* () {
           function* (
             cause:
               | WorkspaceSearchIndex.WorkspaceSearchIndexCreateFailed
-              | WorkspaceSearchIndex.WorkspaceSearchIndexScanTimedOut
               | WorkspaceSearchIndex.WorkspaceSearchIndexRefreshFailed,
           ) {
             yield* Effect.logWarning("Failed to refresh workspace search index", {
@@ -197,7 +196,6 @@ export const make = Effect.gen(function* () {
           Effect.provide(workspaceSearchIndexes.get(indexKey)),
           Effect.catchTags({
             WorkspaceSearchIndexCreateFailed: recoverRefreshFailure,
-            WorkspaceSearchIndexScanTimedOut: recoverRefreshFailure,
             WorkspaceSearchIndexRefreshFailed: recoverRefreshFailure,
           }),
         );
@@ -307,23 +305,30 @@ export const make = Effect.gen(function* () {
     ) {
       return [];
     }
-    const listed = yield* vcsProcess
-      .run({
-        operation: "WorkspaceEntries.listWorktrees",
-        command: "git",
-        args: ["worktree", "list", "--porcelain"],
-        cwd,
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-      })
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (!listed || listed.exitCode !== 0) return [];
+    const listWorktrees = (args: ReadonlyArray<string>) =>
+      vcsProcess
+        .run({
+          operation: "WorkspaceEntries.listWorktrees",
+          command: "git",
+          args: ["worktree", "list", "--porcelain", ...args],
+          cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+        })
+        .pipe(
+          Effect.map((result) => (result.exitCode === 0 ? result.stdout : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        );
+    // Only NUL framing keeps a newline in a worktree path. Pre-2.36 Git rejects `-z`.
+    const listed =
+      (yield* listWorktrees(["-z"])) ?? (yield* listWorktrees([]))?.replaceAll("\n", "\0");
+    if (listed === undefined) return [];
     const realCwd = yield* Effect.promise(() => NodeFSP.realpath(cwd).catch(() => cwd));
-    const worktreeRoots = listed.stdout.split(/\n\s*\n/).flatMap((record) => {
-      const lines = record.split("\n");
-      const worktree = lines.find((line) => line.startsWith("worktree "));
+    const worktreeRoots = listed.split("\0\0").flatMap((record) => {
+      const fields = record.split("\0");
+      const worktree = fields.find((field) => field.startsWith("worktree "));
       // A `prunable` record's directory is gone; another checkout may now sit there.
-      if (worktree === undefined || lines.some((line) => line.startsWith("prunable"))) return [];
+      if (worktree === undefined || fields.some((field) => field.startsWith("prunable"))) return [];
       const root = worktree.slice("worktree ".length);
       const relativeRoot = path.relative(realCwd, root);
       return relativeRoot === "" ||
@@ -576,9 +581,13 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => undefined));
     if (!result || result.exitCode !== 0) return { files: [], truncated: false };
+    // Filter before the cap so files sorting past it stay reachable by search.
+    const query = input.query?.toLowerCase() ?? "";
     const paths = result.stdout
       .split("\0")
-      .filter((entry) => entry.length > 0 && !entry.endsWith("/"))
+      .filter(
+        (entry) => entry.length > 0 && !entry.endsWith("/") && entry.toLowerCase().includes(query),
+      )
       .toSorted();
     const files = yield* Effect.promise(() =>
       Promise.all(
