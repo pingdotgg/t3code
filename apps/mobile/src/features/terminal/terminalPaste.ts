@@ -10,6 +10,8 @@ interface TerminalPasteInput {
 
 export interface TerminalPasteSession {
   readonly reset: (active: boolean) => void;
+  /** True until the terminal's liveness changes (stop, start or restart) after this call. */
+  readonly liveness: () => () => boolean;
   readonly paste: (input: TerminalPasteInput) => Promise<void>;
 }
 
@@ -21,6 +23,11 @@ export function createTerminalPasteSession(): TerminalPasteSession {
   return {
     reset(active) {
       liveTarget = active ? {} : null;
+    },
+
+    liveness() {
+      const target = liveTarget;
+      return () => liveTarget === target;
     },
 
     async paste({ readText, write, onReadError }) {

@@ -609,7 +609,9 @@ function ThreadTerminal(props: {
     }
 
     // Android's IME delivers a system paste as one input, which can exceed one write.
+    const isSameShell = pasteSession.liveness();
     for (const chunk of chunkTerminalWrite(data)) {
+      if (!isSameShell()) return false;
       const result = await writeTerminal({
         environmentId: selectedThread.environmentId,
         input: {

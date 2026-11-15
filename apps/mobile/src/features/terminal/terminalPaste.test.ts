@@ -34,6 +34,15 @@ describe("terminal paste session", () => {
     expect(writes).toEqual([]);
   });
 
+  it("reports a liveness change after capture, including a restart in place", () => {
+    const session = createTerminalPasteSession();
+    session.reset(true);
+    const isSameShell = session.liveness();
+    expect(isSameShell()).toBe(true);
+    session.reset(true);
+    expect(isSameShell()).toBe(false);
+  });
+
   it("never overlaps writes from rapid paste requests", async () => {
     const session = createTerminalPasteSession();
     session.reset(true);
