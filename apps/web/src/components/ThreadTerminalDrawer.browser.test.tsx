@@ -551,6 +551,7 @@ it("opens a relative terminal path where the shell is when the link is used", as
     "/repo/package.json",
     "/repo/sub/package.json",
     "/repo/sub/deeper/../package.json",
+    "/repo/crates/foo/src/lib.rs",
     "/etc/hosts",
   );
   const lookups: unknown[] = [];
@@ -588,10 +589,13 @@ it("opens a relative terminal path where the shell is when the link is used", as
   if (typeof validated === "function") await act(async () => validated(new MouseEvent("click")));
   shellCwd = Promise.resolve(AsyncResult.success("/repo/sub/deeper"));
   await openAfterHover("../package.json");
+  // A root-relative path printed from a subdirectory still opens where the shell launched.
+  await openAfterHover("crates/foo/src/lib.rs:1:27");
   expect(fixture.opened).toEqual([
     "/repo/sub/package.json:2",
     "/repo/sub/package.json:2",
     "/repo/sub/deeper/../package.json",
+    "/repo/crates/foo/src/lib.rs:1:27",
   ]);
   expect(lookups).toContainEqual({
     environmentId: threadRef.environmentId,

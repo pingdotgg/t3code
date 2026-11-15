@@ -606,6 +606,21 @@ function TerminalSessionViewport({
   const runForegroundCwd = useAtomCommand(terminalEnvironment.foregroundCwd, {
     reportFailure: false,
   });
+  const metadataThreadRef = useContext(FileMetadataThreadContext);
+  const locationExists = useEffectEvent(async (location: TerminalLinkLocation) => {
+    const query = getFileMetadataQueryAtom(
+      environmentId,
+      location.target,
+      location.cwd,
+      metadataThreadRef,
+    );
+    if (!query) return false;
+    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    return (
+      result._tag === "Success" &&
+      (result.value?.kind === "file" || result.value?.kind === "directory")
+    );
+  });
   const linkLocationFor = useEffectEvent(async (text: string): Promise<TerminalLinkLocation> => {
     const pid = readTerminalSession().pid;
     let shellCwd = cwd;
@@ -622,7 +637,17 @@ function TerminalSessionViewport({
       // Older servers, other platforms and ended or replaced shells fall back to the launch cwd.
       if (result._tag === "Success" && result.value !== null) shellCwd = result.value;
     }
-    return { text, cwd: shellCwd, target: resolveTerminalLinkTarget(text, shellCwd, hostname) };
+    const shellLocation = {
+      text,
+      cwd: shellCwd,
+      target: resolveTerminalLinkTarget(text, shellCwd, hostname),
+    };
+    if (shellCwd === cwd) return shellLocation;
+    // Tools such as cargo and `git diff --stat` print root-relative paths from a subdirectory.
+    const launchLocation = { text, cwd, target: resolveTerminalLinkTarget(text, cwd, hostname) };
+    return (await locationExists(shellLocation)) || !(await locationExists(launchLocation))
+      ? shellLocation
+      : launchLocation;
   });
   const hoverTerminalLink = useEffectEvent((text: string | null) => {
     const request = ++linkLocationRequestRef.current;
@@ -632,7 +657,6 @@ function TerminalSessionViewport({
       if (request === linkLocationRequestRef.current) showLinkLocation(location);
     });
   });
-  const metadataThreadRef = useContext(FileMetadataThreadContext);
   const linkMetadataQuery =
     linkLocation !== null && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
@@ -657,18 +681,7 @@ function TerminalSessionViewport({
     )
       return false;
     const location = await linkLocationFor(text);
-    const query = getFileMetadataQueryAtom(
-      environmentId,
-      location.target,
-      location.cwd,
-      metadataThreadRef,
-    );
-    if (!query) return false;
-    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
-    const exists =
-      result._tag === "Success" &&
-      (result.value?.kind === "file" || result.value?.kind === "directory");
-    return exists ? location : false;
+    return (await locationExists(location)) ? location : false;
   });
   const checkedLinkTarget = useEffectEvent((text: string) => {
     const location = linkLocationRef.current;
