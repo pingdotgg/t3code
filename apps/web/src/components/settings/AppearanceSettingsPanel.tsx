@@ -36,6 +36,7 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { WindowOpacitySetting } from "./WindowOpacitySetting";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -256,6 +257,8 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+
+        <WindowOpacitySetting />
 
         <SettingsRow
           {...searchableSetting("chat-width")}

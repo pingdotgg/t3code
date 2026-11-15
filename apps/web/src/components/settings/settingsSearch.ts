@@ -1,4 +1,4 @@
-import { HOSTED_APP_CHANNEL } from "~/branding";
+import { APP_BASE_NAME, HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
@@ -334,6 +334,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Glass opacity",
     to: "/settings/appearance",
     searchTerms: ["transparent transparency solid menus dialogs composer"],
+  },
+  {
+    // Prefixed because the slider control owns the `window-opacity` id.
+    id: "setting-window-opacity",
+    title: "Window transparency",
+    to: "/settings/appearance",
+    searchTerms: ["window opacity transparent translucent see-through fade desktop"],
+    desktopOnly: true,
   },
   {
     id: "diff-color-scheme",
@@ -1107,7 +1115,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pull-request-links-open-in-app",
-    title: "Open pull requests in T3 Code",
+    title: `Open pull requests in ${APP_BASE_NAME}`,
     to: "/settings/diffs",
     searchTerms: [
       `pr commit links ${SOURCE_CONTROL_HOST_LABELS} browser external click default pull request view panel`,

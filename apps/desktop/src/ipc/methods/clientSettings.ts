@@ -7,6 +7,7 @@ import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts"
 import * as DesktopSnapShot from "../../snapShot/DesktopSnapShot.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { applyNativeWindowOpacity } from "./windowTransparency.ts";
 
 export const getClientSettings = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_CLIENT_SETTINGS_CHANNEL,
@@ -27,5 +28,6 @@ export const setClientSettings = DesktopIpc.makeIpcMethod({
     const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
     yield* clientSettings.set(settings);
     yield* snapShot.configure(settings);
+    yield* applyNativeWindowOpacity(settings.windowOpacity);
   }),
 });

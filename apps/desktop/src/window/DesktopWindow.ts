@@ -10,7 +10,11 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type ClientSettings,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -42,6 +46,13 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import {
+  markCreatedTransparent,
+  nativeWindowOpacity,
+  shouldCreateTransparentWindow,
+  usesNativeWindowOpacity,
+  wasCreatedTransparent,
+} from "./WindowTransparency.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -84,6 +95,7 @@ function syncMacosWindowButtons(window: Electron.BrowserWindow): void {
 }
 
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
+const TRANSPARENT_WINDOW_BACKGROUND = "#00000000";
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
@@ -352,7 +364,11 @@ function syncWindowAppearance(
       return;
     }
 
-    window.setBackgroundColor(getInitialWindowBackgroundColor(shouldUseDarkColors));
+    window.setBackgroundColor(
+      wasCreatedTransparent(window)
+        ? TRANSPARENT_WINDOW_BACKGROUND
+        : getInitialWindowBackgroundColor(shouldUseDarkColors),
+    );
     const { titleBarOverlay } = getWindowTitleBarOptions(shouldUseDarkColors, platform);
     if (hasTitleBarOverlay && typeof titleBarOverlay === "object") {
       window.setTitleBarOverlay(titleBarOverlay);
@@ -467,6 +483,17 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
+    const savedWindowOpacity = Option.match(
+      yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>())),
+      {
+        onNone: () => DEFAULT_CLIENT_SETTINGS.windowOpacity,
+        onSome: (settings) => settings.windowOpacity,
+      },
+    );
+    const createTransparent = shouldCreateTransparentWindow(
+      environment.platform,
+      savedWindowOpacity,
+    );
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
@@ -480,7 +507,9 @@ export const make = Effect.gen(function* () {
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
-      backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors),
+      ...(createTransparent
+        ? { transparent: true, backgroundColor: TRANSPARENT_WINDOW_BACKGROUND }
+        : { backgroundColor: getInitialWindowBackgroundColor(shouldUseDarkColors) }),
       ...iconOption,
       title: environment.displayName,
       ...getWindowTitleBarOptions(shouldUseDarkColors, environment.platform),
@@ -502,6 +531,11 @@ export const make = Effect.gen(function* () {
       return Option.none();
     }
 
+    if (createTransparent) {
+      markCreatedTransparent(window);
+    } else if (usesNativeWindowOpacity(environment.platform)) {
+      window.setOpacity(nativeWindowOpacity(savedWindowOpacity));
+    }
     pendingMainReveals.set(window, Effect.void);
     yield* rendererHistory.register(window.webContents, { surface: "main" });
     if (environment.platform === "darwin") {

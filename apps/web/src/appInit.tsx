@@ -65,9 +65,21 @@ import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPicke
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
 
+function applyContentWindowOpacity(root: HTMLElement, windowOpacity: number): void {
+  if (windowOpacity >= 100) {
+    root.style.removeProperty("opacity");
+    delete root.dataset.windowTranslucent;
+  } else {
+    root.style.setProperty("opacity", `${windowOpacity / 100}`);
+    root.dataset.windowTranslucent = "";
+  }
+}
+
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
   const root = document.documentElement;
+  // On Linux the window itself cannot fade, so a transparent window fades its content instead.
+  const fadesContent = window.desktopBridge?.getWindowTransparency?.() === "compositor";
   let applied: ClientSettings | null = null;
   let appliedSeparateFonts: boolean | null = null;
   const apply = () => {
@@ -86,6 +98,9 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
+    }
+    if (fadesContent && previous?.windowOpacity !== settings.windowOpacity) {
+      applyContentWindowOpacity(root, settings.windowOpacity);
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);

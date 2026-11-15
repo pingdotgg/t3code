@@ -111,6 +111,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     }
     return result as ReturnType<DesktopBridge["getAppBranding"]>;
   },
+  getWindowTransparency: () => {
+    const result = ipcRenderer.sendSync(IpcChannels.GET_WINDOW_TRANSPARENCY_CHANNEL);
+    return result === "native" || result === "compositor" ? result : "restart-required";
+  },
+  relaunchForWindowOpacity: () =>
+    ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_WINDOW_OPACITY_CHANNEL),
   getRelayTelemetryEnabled: () =>
     ipcRenderer.sendSync(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL) === true,
   getPathForFile: (file: File) => webUtils.getPathForFile(file),

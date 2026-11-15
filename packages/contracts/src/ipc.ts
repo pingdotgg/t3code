@@ -1055,8 +1055,20 @@ export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
+/**
+ * How the desktop window applies the `windowOpacity` setting.
+ * `native`: the OS fades the whole window (Windows, macOS).
+ * `compositor`: the window was created transparent and the renderer fades its content (Linux).
+ * `restart-required`: the window was created opaque, so Linux needs a restart to fade it.
+ */
+export type DesktopWindowTransparencyMode = "native" | "compositor" | "restart-required";
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
+  /** Absent on desktop builds older than window opacity support. */
+  getWindowTransparency?: () => DesktopWindowTransparencyMode;
+  /** Restarts the app so Linux can recreate the window as transparent. */
+  relaunchForWindowOpacity?: () => Promise<void>;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
