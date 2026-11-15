@@ -9,7 +9,7 @@ import {
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import * as Haptics from "expo-haptics";
 import { Accelerometer } from "expo-sensors";
 import { Pressable, StatusBar, View } from "react-native";
@@ -404,13 +404,34 @@ function OpenDevicePreview({
   const [viewer] = useState(uuidv4);
   const { access, error, refresh } = useDeviceHubAccess(environmentId, session.hostId, viewer);
   const onUnauthorized = async () => refresh();
-  return access ? (
+  const readDetail = useAtomCommand(deviceEnvironment.detail, { reportFailure: false });
+  const [usKeyboardLayout, setUsKeyboardLayout] = useState<boolean | null>(
+    session.platform === "ios" ? null : false,
+  );
+  const readKeyboardLayout = useEffectEvent(async () => {
+    const input = { hostId: session.hostId, deviceId: session.deviceId };
+    const result = await readDetail({ environmentId, input });
+    return result._tag === "Success" ? (result.value.settings.usKeyboardLayout ?? true) : true;
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the iOS simulator's keyboard layout from the host before keys reach it
+  useEffect(() => {
+    if (session.platform !== "ios") return;
+    let current = true;
+    void readKeyboardLayout().then((layout) => {
+      if (current) setUsKeyboardLayout(layout);
+    });
+    return () => {
+      current = false;
+    };
+  }, [session.platform]);
+  return access && usKeyboardLayout !== null ? (
     <DeviceStreamWebView
       ref={streamRef}
       access={access}
       platform={session.platform}
       deviceId={session.deviceId}
       serveSimOnly={preview.serveSimOnly}
+      usKeyboardLayout={usKeyboardLayout}
       colors={{
         background: themeVariables["--color-sheet-solid"],
         foreground: themeVariables["--color-foreground"],
