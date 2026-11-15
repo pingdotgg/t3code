@@ -1,5 +1,7 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
@@ -199,26 +201,62 @@ export const make = Effect.gen(function* () {
 
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
-  // PR locations are immutable; caching avoids full PR reads for viewed-file checks.
+  // PR locations are immutable; every pull request read records one so later reads can skip it.
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
   // A pushed iteration never changes, so neither do its commits nor its change list.
   const knownIterations = new Map<string, ReadonlyArray<AzureDevOpsIteration>>();
   const iterationChanges = new Map<string, AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges>();
 
-  const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
-    const key = `${input.cwd} ${input.number}`;
-    const held = recall(locations, key);
-    if (held !== undefined) return Effect.succeed(held);
-    return cli
-      .getPullRequest({ cwd: input.cwd, number: input.number })
-      .pipe(
-        Effect.map((pullRequest) =>
-          pullRequest.location === null
-            ? null
-            : remember(locations, LOCATION_CACHE_CAPACITY, key, pullRequest.location),
+  // Reads still running, so a location lookup joins one instead of spawning its own az process.
+  const pendingLocations = new Map<
+    string,
+    Deferred.Deferred<
+      AzureDevOpsRepositoryLocation | null,
+      AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
+    >
+  >();
+
+  const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
+    Effect.suspend(() => {
+      const key = `${input.cwd} ${input.number}`;
+      const pending = Deferred.makeUnsafe<
+        AzureDevOpsRepositoryLocation | null,
+        AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError
+      >();
+      pendingLocations.set(key, pending);
+      return cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+        Effect.map((pullRequest) => {
+          if (pullRequest.location !== null) {
+            remember(locations, LOCATION_CACHE_CAPACITY, key, pullRequest.location);
+          }
+          return pullRequest;
+        }),
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (pendingLocations.get(key) === pending) pendingLocations.delete(key);
+            Deferred.doneUnsafe(
+              pending,
+              Exit.map(exit, (pullRequest) => pullRequest.location),
+            );
+          }),
         ),
       );
-  };
+    });
+
+  const locationOf = (input: { readonly cwd: string; readonly number: number }) =>
+    Effect.suspend(() => {
+      const key = `${input.cwd} ${input.number}`;
+      const held = recall(locations, key);
+      if (held !== undefined) return Effect.succeed(held);
+      const ownRead = readPullRequest(input).pipe(
+        Effect.map((pullRequest) => pullRequest.location),
+      );
+      const pending = pendingLocations.get(key);
+      // A read that failed or was interrupted under another request is retried here.
+      return pending === undefined
+        ? ownRead
+        : Deferred.await(pending).pipe(Effect.catchCause(() => ownRead));
+    });
 
   const readChecks = (input: { readonly cwd: string }, pullRequest: AzureDevOpsPullRequest) =>
     cli.listPolicyChecks({
@@ -364,7 +402,7 @@ export const make = Effect.gen(function* () {
         ),
 
     getChangeRequestPreview: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+      readPullRequest(input).pipe(
         Effect.mapError(fail("getChangeRequestPreview")),
         Effect.map((pullRequest) => ({
           number: pullRequest.number,
@@ -379,7 +417,7 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestChecks: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestChecks")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const pullRequest = yield* readPullRequest(input);
         const checks = yield* readChecks(input, pullRequest);
         return { state: pullRequest.state, checks };
       },
@@ -388,7 +426,7 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestSummary: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequestSummary")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const pullRequest = yield* readPullRequest(input);
         // Undefined keeps the last known state; null would claim no checks exist.
         const checksState = yield* readChecks(input, pullRequest).pipe(
           Effect.map((checks) => rollupCheckStatuses(checks.map((check) => check.status))),
@@ -404,7 +442,7 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: Effect.fn("AzureDevOpsPullRequestProvider.getChangeRequest")(
       function* (input) {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const pullRequest = yield* readPullRequest(input);
         const location = pullRequest.location;
         const iterations =
           location === null
@@ -449,15 +487,15 @@ export const make = Effect.gen(function* () {
     ),
 
     getChangeRequestActivity: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+      locationOf(input).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.flatMap((pullRequest) =>
-          (pullRequest.location === null
+        Effect.flatMap((location) =>
+          (location === null
             ? Effect.succeed({ comments: [], truncated: true })
             : cli
                 .listThreads({
                   cwd: input.cwd,
-                  location: pullRequest.location,
+                  location,
                   number: input.number,
                 })
                 .pipe(
