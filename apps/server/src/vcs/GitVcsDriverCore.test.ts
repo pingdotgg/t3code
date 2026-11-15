@@ -6896,12 +6896,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
 
+        const submoduleRepo = yield* makeTmpDir("git-submodule-");
+        yield* initRepoWithCommit(submoduleRepo);
+
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* writeTextFile(
-          cwd,
-          ".gitmodules",
-          '[submodule "missing"]\n\tpath = missing\n\turl = /nonexistent/repo.git\n',
+        yield* git(cwd, ["submodule", "add", NodeURL.pathToFileURL(submoduleRepo).href, "shared"]);
+        yield* fileSystem.writeFileString(
+          pathService.join(cwd, ".gitmodules"),
+          (yield* fileSystem.readFileString(pathService.join(cwd, ".gitmodules"))) +
+            '[submodule "missing"]\n\tpath = missing\n\turl = /nonexistent/repo.git\n',
         );
         yield* git(cwd, ["add", "."]);
         const gitlink = yield* git(cwd, ["rev-parse", "HEAD"]);
@@ -6934,7 +6938,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.lengthOf(results, 1);
         assert.isFalse(results[0]!.ok);
         assert.include(results[0]!.detail, "GitVcsDriver.createWorktree.updateSubmodules");
-      }),
+        // A submodule that did clone must not be left as a bare gitdir that reads as modified.
+        assert.equal(yield* git(worktreePath, ["status", "--porcelain"]), "");
+      }).pipe(withGitFileProtocol),
     );
 
     it.effect("creates worktrees under the configured worktrees directory", () =>
