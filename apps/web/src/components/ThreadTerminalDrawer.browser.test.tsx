@@ -1,4 +1,7 @@
-import { EMPTY_TERMINAL_SESSION_STATE } from "@t3tools/client-runtime/state/terminal";
+import {
+  applyTerminalAttachStreamEvent,
+  EMPTY_TERMINAL_SESSION_STATE,
+} from "@t3tools/client-runtime/state/terminal";
 import {
   EnvironmentId,
   ThreadId,
@@ -31,6 +34,7 @@ const fixture = vi.hoisted(() => ({
     _version: number,
     _generation?: number,
   ) => {},
+  sessionEvent: (_thread: ScopedThreadRef, _type: "snapshot" | "restarted", _pid = 123) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
   resizeCommand: {},
@@ -77,6 +81,7 @@ vi.mock("../state/terminalSessions", async () => {
   const makeSession = (threadId: ThreadId) =>
     Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
       ...EMPTY_TERMINAL_SESSION_STATE,
+      pty: { pid: 123 },
       status: fixture.statusByThreadId.get(threadId) ?? "closed",
       version: 1,
     });
@@ -98,6 +103,31 @@ vi.mock("../state/terminalSessions", async () => {
       ...(generation === undefined
         ? {}
         : { output: { ...EMPTY_TERMINAL_SESSION_STATE.output, generation } }),
+    });
+  };
+  fixture.sessionEvent = (thread, type, pid = 123) => {
+    const atom = session(thread.environmentId, thread.threadId);
+    const current = appAtomRegistry.get(atom);
+    appAtomRegistry.set(atom, {
+      ...current,
+      ...applyTerminalAttachStreamEvent(current, {
+        type,
+        threadId: thread.threadId,
+        terminalId: "term-1",
+        snapshot: {
+          threadId: thread.threadId,
+          terminalId: "term-1",
+          cwd: "/repo",
+          worktreePath: null,
+          status: "running",
+          pid,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          label: "Terminal 1",
+          updatedAt: "2026-11-15T00:00:00.000Z",
+        },
+      }),
     });
   };
   return {
@@ -393,12 +423,49 @@ it("drops the rest of a split paste when the shell restarts mid-paste", async ()
   });
   fixture.typeIntoSurface?.("p".repeat(70_000));
   await act(async () => {
-    fixture.setSession(threadRef, "running", 2, 1);
+    fixture.sessionEvent(threadRef, "restarted");
     settleWrite();
   });
   fixture.typeIntoSurface?.("after");
   expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 5]);
 });
+
+it.each([
+  { event: "snapshot" as const, pid: 123, closes: true },
+  { event: "snapshot" as const, pid: 456, closes: false },
+  { event: "restarted" as const, pid: 123, closes: false },
+])(
+  "recovers interrupted bracket framing for $event with PID $pid",
+  async ({ event, pid, closes }) => {
+    const { other: threadRef } = setup();
+    let settleWrite = () => {};
+    fixture.runWrite = () =>
+      new Promise((resolve) => {
+        settleWrite = () => {
+          fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+          resolve({ _tag: "Success" });
+        };
+      });
+    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const large = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
+    fixture.typeIntoSurface?.(large);
+    await act(async () => {
+      fixture.sessionEvent(threadRef, event, pid);
+      settleWrite();
+    });
+    await act(async () => {
+      fixture.typeIntoSurface?.("after");
+    });
+    expect(fixture.writes.map(({ data }) => data)).toEqual([
+      large.slice(0, 65_536),
+      ...(closes ? ["\x1b[201~"] : []),
+      "after",
+    ]);
+  },
+);
 
 it("resends a failed resize once in each writable session", async () => {
   const { other: threadRef } = setup();

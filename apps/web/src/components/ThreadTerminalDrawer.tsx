@@ -928,27 +928,39 @@ function TerminalSessionViewport({
       const sendTerminalInput = (data: string, fallbackError: string) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
         // Input belongs to the shell and surface it was typed into; a restart drops what is left.
-        const generation = writableSessionGeneration(
-          readTerminalSession(),
-          hasTerminalWriteAccess(),
-        );
+        const session = readTerminalSession();
+        const generation = writableSessionGeneration(session, hasTerminalWriteAccess());
+        const lifecycleVersion = session.lifecycleVersion;
         if (generation === null) return;
-        return writeInput(data, async (chunk) => {
-          if (
-            terminalRef.current !== terminal ||
-            writableSessionGeneration(readTerminalSession(), hasTerminalWriteAccess()) !==
-              generation
-          ) {
+        return writeInput(
+          data,
+          async (chunk) => {
+            const currentSession = readTerminalSession();
+            if (
+              terminalRef.current !== terminal ||
+              currentSession.lifecycleVersion !== lifecycleVersion ||
+              writableSessionGeneration(currentSession, hasTerminalWriteAccess()) !== generation
+            ) {
+              return false;
+            }
+            const result = await writeTerminal(chunk);
+            if (result._tag === "Success") return true;
+            if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              writeSystemMessage(terminal, error instanceof Error ? error.message : fallbackError);
+            }
             return false;
-          }
-          const result = await writeTerminal(chunk);
-          if (result._tag === "Success") return true;
-          if (!isAtomCommandInterrupted(result)) {
-            const error = squashAtomCommandFailure(result);
-            writeSystemMessage(terminal, error instanceof Error ? error.message : fallbackError);
-          }
-          return false;
-        });
+          },
+          async () => {
+            const current = readTerminalSession();
+            if (terminalRef.current !== terminal || session.pty === null) return true;
+            if (current.pty === null) return false;
+            if (current.pty !== session.pty) return true;
+            if (writableSessionGeneration(current, hasTerminalWriteAccess()) === null) return false;
+            const result = await writeTerminal("\x1b[201~");
+            return result._tag === "Success";
+          },
+        );
       };
 
       function handleBeforeKey(event: KeyboardEvent): boolean {

@@ -56,6 +56,9 @@ describe("createTerminalInputWriter", () => {
     const pasted = write(large, send);
     void write("b", send);
     void write("c", send);
+    expect(chunks()).toEqual(["a"]);
+    sent[0]!.settle(true);
+    await sends(2);
     expect(chunks()).toEqual(["a", first]);
 
     sent[1]!.settle(true);
@@ -68,6 +71,64 @@ describe("createTerminalInputWriter", () => {
     sent[3]!.settle(true);
     await sends(5);
     expect(chunks()).toEqual(["a", first, second, "b", "c"]);
+  });
+
+  it("bounds outstanding small writes and queues a later paste in dispatch order", async () => {
+    const write = createTerminalInputWriter();
+    const { sent, chunks, sends, send } = heldSend();
+    const inputs = Array.from({ length: 32 }, (_, index) => `key-${index}`);
+    const smallWrites = inputs.map((data) => write(data, send));
+    expect(chunks()).toEqual(inputs.slice(0, 8));
+
+    const large = "p".repeat(70_000);
+    const pasted = write(large, send);
+    const after = write("after", send);
+    expect(sent).toHaveLength(8);
+
+    // Finishing newer sends first must not let queued input overtake the oldest write.
+    for (let index = 7; index > 0; index--) sent[index]!.settle(true);
+    await Promise.all(smallWrites.slice(1, 8));
+    expect(sent).toHaveLength(8);
+    sent[0]!.settle(true);
+    for (let index = 8; index < inputs.length; index++) {
+      await sends(index + 1);
+      expect(sent).toHaveLength(index + 1);
+      sent[index]!.settle(true);
+    }
+    await Promise.all(smallWrites);
+    await sends(33);
+    expect(chunks()).toEqual([...inputs, large.slice(0, 65_536)]);
+    sent[32]!.settle(true);
+    await sends(34);
+    expect(chunks()).toEqual([...inputs, large.slice(0, 65_536), large.slice(65_536)]);
+    sent[33]!.settle(true);
+    await pasted;
+    await sends(35);
+    expect(sent[34]!.chunk).toBe("after");
+    sent[34]!.settle(true);
+    await after;
+  });
+
+  it("closes an interrupted bracketed paste before later input", async () => {
+    const write = createTerminalInputWriter();
+    const { sent, chunks, sends, send } = heldSend();
+    const large = `\x1b[200~${"p".repeat(140_000)}\x1b[201~`;
+    const pasted = write(large, send);
+    const after = write("after", send);
+    sent[0]!.settle(true);
+    await sends(2);
+    sent[1]!.settle(false);
+    await sends(3);
+    expect(chunks()).toEqual([large.slice(0, 65_536), large.slice(65_536, 131_072), "\x1b[201~"]);
+    sent[2]!.settle(false);
+    await pasted;
+    await sends(4);
+    expect(sent[3]!.chunk).toBe("\x1b[201~");
+    sent[3]!.settle(true);
+    await sends(5);
+    expect(sent[4]!.chunk).toBe("after");
+    sent[4]!.settle(true);
+    await after;
   });
 
   it("drops the rest of a split write after a failed chunk and keeps later input", async () => {

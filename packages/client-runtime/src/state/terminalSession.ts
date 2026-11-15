@@ -35,6 +35,8 @@ export interface TerminalGrid {
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
   readonly output: TerminalOutputState;
+  /** Snapshot identity survives a same-PID reconnect; a restart always replaces it. */
+  readonly pty: { readonly pid: number } | null;
   /** Null when the server predates shared terminal geometry. */
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
@@ -47,6 +49,8 @@ export interface TerminalSessionState {
 
 export interface TerminalBufferState {
   readonly output: TerminalOutputState;
+  /** Snapshot identity survives a same-PID reconnect; a restart always replaces it. */
+  readonly pty: { readonly pid: number } | null;
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
@@ -76,6 +80,7 @@ export function selectRunningSubprocessTerminalIds(
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   output: EMPTY_TERMINAL_OUTPUT_STATE,
+  pty: null,
   grid: null,
   status: "closed",
   error: null,
@@ -87,6 +92,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
+  pty: null,
   grid: null,
   status: "closed",
   error: null,
@@ -116,6 +122,12 @@ function terminalBufferStateFromSnapshot(
 ): TerminalBufferState {
   return {
     output: resetOutput(current.output, snapshot.history, maxBufferBytes),
+    pty:
+      snapshot.pid === null
+        ? null
+        : current.pty?.pid === snapshot.pid
+          ? current.pty
+          : { pid: snapshot.pid },
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
     error: null,
@@ -148,6 +160,7 @@ export function combineTerminalSessionState(
   return {
     summary,
     output: buffer.output,
+    pty: buffer.pty,
     grid: buffer.grid,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
@@ -181,7 +194,10 @@ export function applyTerminalAttachStreamEvent(
     }
     case "restarted":
       return {
-        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, current),
+        ...terminalBufferStateFromSnapshot(event.snapshot, maxBufferBytes, {
+          ...current,
+          pty: null,
+        }),
         lifecycleVersion: current.lifecycleVersion + 1,
       };
     case "output":
