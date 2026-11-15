@@ -173,6 +173,8 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const editorStyle = useAnimatedStyle(() => ({
     position: "absolute",
     overflow: "hidden",
+    // The compact slot is unknown until its first layout, so the editor would draw over the + button.
+    opacity: isExpanded || editorWidth.value > 0 ? 1 : 0,
     height,
     ...(isExpanded
       ? { left: 14, right: 14 }
