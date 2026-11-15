@@ -26,6 +26,7 @@ import { LinkRequestCard } from "./LinkRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
+  WorktreePreparingHeader,
   WorktreeWorkingHeader,
   WorktreeSetupCard,
   type WorktreeSetupCardProps,
@@ -96,6 +97,7 @@ import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3too
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { textDirection } from "@t3tools/shared/textDirection";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -132,9 +134,15 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
+import {
+  rememberSentImage,
+  sentImageHandoff,
+  type SentImageHandoff,
+} from "../../lib/sentImageHandoff";
 import { messageImageGallery } from "./messageImageGallery";
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
@@ -287,7 +295,7 @@ import {
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import { formatMessageTimestamp } from "./messageTimestamp";
+import { useMessageTimeFormatter } from "./useMessageTimeFormatter";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -320,6 +328,7 @@ export interface ThreadFeedProps {
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
+  readonly preparingWorktree?: boolean;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: ((message: QueuedThreadMessage) => void) | null;
@@ -480,12 +489,18 @@ function MessageImage(props: {
   readonly maxWidth?: number;
   readonly height?: number;
   readonly accessibilityLabel: string;
+  readonly handoff?: SentImageHandoff;
   readonly onPress: () => void;
-  readonly onLoad?: () => void;
+  readonly onLoad?: (size: { readonly width: number; readonly height: number }) => void;
   readonly onError?: () => void;
 }) {
   const imageStyle = useResolveClassNames(props.className);
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const [loadedSize, setSize] = useState<{ width: number; height: number } | null>(null);
+  // Until it loads, assume a handed-off image is a photo larger than the bubble's caps.
+  const size =
+    loadedSize ??
+    (props.handoff ? { width: props.handoff.aspectRatio * 4096, height: 4096 } : null);
+  const contentFit = props.maxWidth === undefined ? "cover" : "contain";
   const displaySize =
     props.maxWidth !== undefined && size !== null
       ? resolveMarkdownImageDisplaySize({
@@ -516,10 +531,12 @@ function MessageImage(props: {
         source={props.source}
         cachePolicy="memory-disk"
         style={{ width: "100%", height: "100%" }}
-        contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+        contentFit={contentFit}
+        placeholder={props.handoff ? { uri: props.handoff.uri } : undefined}
+        placeholderContentFit={contentFit}
         onLoad={(event) => {
           if (props.maxWidth !== undefined) setSize(event.source);
-          props.onLoad?.();
+          props.onLoad?.(event.source);
         }}
         onError={props.onError}
       />
@@ -535,21 +552,34 @@ function MessageAttachmentImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly handoff?: SentImageHandoff;
+  readonly onImageLoad?: (image: SentImageHandoff) => void;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const sourceIdentifier = useId();
   const resource = {
     _tag: "attachment" as const,
     attachmentId: props.attachmentId,
     fileName: props.name,
     mimeType: props.mimeType,
   };
+  const sourceIdentifier = filePreviewSourceIdentifier({
+    kind: "image",
+    environmentId: props.environmentId,
+    resource,
+  });
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  const { handoff } = props;
+  const source =
+    uri !== null
+      ? assetImageSource(props.environmentId, resource, uri)
+      : handoff !== undefined
+        ? { uri: handoff.uri }
+        : null;
 
-  if (uri === null) {
+  if (source === null) {
     return (
       <View
         className={`${props.className} items-center justify-center`}
@@ -570,11 +600,12 @@ function MessageAttachmentImage(props: {
     <PresentationSource identifier={sourceIdentifier}>
       <MessageImage
         key={props.attachmentId}
-        source={assetImageSource(props.environmentId, resource, uri)}
+        source={source}
         className={props.className}
         maxWidth={props.maxWidth}
         height={props.height}
         accessibilityLabel={`Open ${props.name}`}
+        {...handoffProps(handoff)}
         onPress={() =>
           props.onPressPreview(
             withGallery({
@@ -592,8 +623,10 @@ function MessageAttachmentImage(props: {
             }),
           )
         }
-        onLoad={() => {
+        onLoad={(size) => {
           retriedImage.current = false;
+          if (handoff)
+            props.onImageLoad?.({ uri: handoff.uri, aspectRatio: size.width / size.height });
         }}
         onError={() => {
           if (retriedImage.current) return;
@@ -832,7 +865,10 @@ function MessageAttachmentFile(props: {
   );
 }
 
+const handoffProps = (handoff: SentImageHandoff | undefined) => (handoff ? { handoff } : {});
+
 function UserMessageMedia(props: {
+  readonly messageId: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly pendingAttachments: QueuedThreadMessage["attachments"];
   readonly environmentId: EnvironmentId;
@@ -867,6 +903,8 @@ function UserMessageMedia(props: {
               name={attachment.name}
               mimeType={attachment.mimeType}
               {...imageProps(index)}
+              {...handoffProps(sentImageHandoff(props.messageId, index, attachment.id))}
+              onImageLoad={(loaded) => rememberSentImage(props.messageId, index, loaded)}
               onPressPreview={props.onPressPreview}
             />
           ) : !image && attachment.uploadedAttachmentId ? (
@@ -883,6 +921,8 @@ function UserMessageMedia(props: {
             <PendingMessageMedia
               attachment={attachment}
               {...imageProps(index)}
+              {...handoffProps(sentImageHandoff(props.messageId, index, attachment.id))}
+              onImageLoad={(image) => rememberSentImage(props.messageId, index, image)}
               onPressPreview={props.onPressPreview}
               onPlaybackStart={props.onPlaybackStart}
             />
@@ -899,6 +939,7 @@ function UserMessageMedia(props: {
           name={attachment.name}
           mimeType={attachment.mimeType}
           {...imageProps(props.pendingAttachments.length + index)}
+          {...handoffProps(sentImageHandoff(props.messageId, index))}
           onPressPreview={props.onPressPreview}
         />
       ) : isFileAttachment(attachment) ? (
@@ -965,23 +1006,31 @@ function PendingMessageMedia(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly handoff?: SentImageHandoff;
+  readonly onImageLoad?: (image: SentImageHandoff) => void;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
 }) {
   const withGallery = useFilePreviewGallery();
-  const { attachment } = props;
+  const { attachment, handoff } = props;
   const fileBacked = isFileBackedComposerAttachment(attachment);
   const preview = useLocalAttachmentPreview(fileBacked ? attachment : null);
   if (isImageAttachment(attachment)) {
-    const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
+    // The composer already showed this image; reuse its pixels and shape instead of a blank box.
+    const uri =
+      handoff?.uri ?? (fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri));
     return (
       <MessageImage
         key={attachment.id}
-        source={uri === null ? undefined : { uri }}
+        source={uri == null ? undefined : { uri }}
         className={props.className}
         maxWidth={props.maxWidth}
         height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
+        {...handoffProps(handoff)}
+        onLoad={(size) => {
+          if (uri) props.onImageLoad?.({ uri, aspectRatio: size.width / size.height });
+        }}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
@@ -1089,7 +1138,11 @@ interface MarkdownLinkHandlers {
     actionId: string,
     reply?: MarkdownLinkReply,
   ) => void;
-  readonly onImagePress?: (href: string) => void;
+  /** `withGallery` pages the image through its message's images; the feed's viewer sits outside that scope. */
+  readonly onImagePress?: (
+    href: string,
+    withGallery?: (source: FilePreviewSource) => FilePreviewSource,
+  ) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
@@ -1124,8 +1177,12 @@ function ArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const direction = textDirection(props.template.displayName);
   return (
-    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
+    <View
+      className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3"
+      style={direction ? { direction } : undefined}
+    >
       <View className="h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
         <SymbolView
           name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
@@ -1167,8 +1224,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
+  const withGallery = useFilePreviewGallery();
+  const onImagePress = props.linkHandlers.onImagePress;
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
+    ...(onImagePress ? { onImagePress: (href: string) => onImagePress(href, withGallery) } : {}),
     onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
     onFileContextMenuAction: (href, actionId) =>
       props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
@@ -1662,6 +1722,7 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
+    readonly formatMessageTime: (input: string) => string;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1907,7 +1968,7 @@ function renderFeedEntry(
     const presentation = resolveUserMessagePresentation(message);
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = formatMessageTimestamp(isUser ? message.createdAt : message.updatedAt);
+    const timestampLabel = props.formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = presentation.text.includes("<review_comment");
     // Android does not reposition children after maxWidth clamps bubbles; definite width prevents wide-block overlap.
@@ -2046,6 +2107,7 @@ function renderFeedEntry(
               style={{ width: props.duoColumns ? "85%" : props.userBubbleMaxWidth }}
             >
               <UserMessageMedia
+                messageId={message.id}
                 attachments={mediaAttachments}
                 pendingAttachments={pendingMedia}
                 environmentId={props.environmentId}
@@ -2735,6 +2797,7 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 } as const;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  const formatMessageTime = useMessageTimeFormatter();
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const guestShare = useThreadGuestShare(props.detailRef);
@@ -3000,7 +3063,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
+  const onMarkdownLinkPress = (
+    href: string,
+    imageEmbed = false,
+    reply?: MarkdownLinkReply,
+    withGallery?: (source: FilePreviewSource) => FilePreviewSource,
+  ) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -3033,7 +3101,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         if (request.signal.aborted) return;
         openPreview(
           scope,
-          media.kind === "video" ? { video: media.source } : { file: media.source },
+          media.kind === "video"
+            ? { video: media.source }
+            : { file: withGallery ? withGallery(media.source) : media.source },
         );
       };
       const resource = "resource" in media.source ? media.source.resource : null;
@@ -3108,7 +3178,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
     linkCustomization: enrichedThreadLinkCustomization,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
+    onImagePress: (href, withGallery) => onMarkdownLinkPress(href, true, undefined, withGallery),
     resolveImageSource,
     fileContextMenu: (href) => {
       const skill = enrichedSkillReference(href, props.skills);
@@ -3336,8 +3406,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const listAppearanceData = {
     disclosureLayout,
     reduceMotion,
+    formatMessageTime,
     worktreeSetup: props.worktreeSetup,
     setupWorkingStartedAt: props.setupWorkingStartedAt,
+    preparingWorktree: props.preparingWorktree,
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
     copiedRowId,
@@ -3422,7 +3494,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const groupedFeed = groupFeed(presentedFeed, {
     workflowOpeningMessageId: workflowOpening?.messageId,
     setupAnchorIndex:
-      props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
+      props.worktreeSetup || props.setupWorkingStartedAt || props.preparingWorktree
+        ? setupAnchorIndex
+        : undefined,
   });
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
@@ -3746,6 +3820,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ) : null}
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
+            formatMessageTime,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
@@ -3791,6 +3866,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
           ) : props.setupWorkingStartedAt && info.index === setupAnchorIndex ? (
             <WorktreeWorkingHeader startedAt={props.setupWorkingStartedAt} />
+          ) : props.preparingWorktree && info.index === setupAnchorIndex ? (
+            <WorktreePreparingHeader />
           ) : null}
         </ThreadMediaVisibility>
       </MessageImageGalleryScope>
@@ -3887,6 +3964,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
+                ) : setupAnchorIndex < 0 && props.preparingWorktree ? (
+                  <WorktreePreparingHeader />
                 ) : null}
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
