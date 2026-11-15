@@ -1368,5 +1368,16 @@ describe("thread outbox", () => {
         interrupted: false,
       }),
     ).toBe("restore");
+    // The server stores the rejection in its receipt and replays it for the same command ID.
+    expect(
+      resolveThreadOutboxFailureAction({
+        stage: "settings-sync",
+        error: new OrchestrationDispatchCommandError({
+          message:
+            "The current session is still running background agents or commands, and this change would end them. Wait for them to finish, or press Stop, then try again.",
+        }),
+        interrupted: false,
+      }),
+    ).toBe("restore");
   });
 });
