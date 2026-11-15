@@ -246,5 +246,19 @@
   "useAnotherWay": "Use Set up another way.",
   "whatAgentsMayDo": "What agents here may do there",
   "whatItMayDo": "What it may do",
-  "whichApp": "Which app?"
+  "whichApp": "Which app?",
+  "whatCanAppDo": "What can {{app}} do?",
+  "back": "Back",
+  "next": "Next",
+  "checkAgain": "Check again",
+  "checkingT3Connect": "Checking T3 Connect…",
+  "signInToT3Connect": "Sign in to T3 Connect",
+  "outOfTunnels": "Your T3 Connect account is out of tunnels.",
+  "restartT3CodeOn": "Restart T3 Code on {{name}}.",
+  "somethingElse": "Something else…",
+  "whenAppOpensSignIn": "When {{app}} opens the sign-in page, choose what it may do and approve with your T3 Connect account.",
+  "runTheseWhereAppRuns": "Run these where {{app}} runs.",
+  "codeToApprove": "Code to approve",
+  "expiresOneUse": "Expires {{time}} · one use",
+  "linkedList": "Linked: {{list}}"
 }

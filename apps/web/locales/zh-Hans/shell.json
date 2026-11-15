@@ -246,5 +246,19 @@
   "useAnotherWay": "请使用「用其他方式设置」。",
   "whatAgentsMayDo": "那里的代理可以做什么",
   "whatItMayDo": "它能做什么",
-  "whichApp": "用哪个应用？"
+  "whichApp": "用哪个应用？",
+  "whatCanAppDo": "{{app}}可以做什么？",
+  "back": "上一步",
+  "next": "下一步",
+  "checkAgain": "再检查一次",
+  "checkingT3Connect": "正在检查 T3 Connect…",
+  "signInToT3Connect": "登录 T3 Connect",
+  "outOfTunnels": "你的 T3 Connect 账户的隧道数量已用完。",
+  "restartT3CodeOn": "在{{name}}上重启 T3 Code。",
+  "somethingElse": "其他应用…",
+  "whenAppOpensSignIn": "当{{app}}打开登录页面时，选择它可以做什么，并用你的 T3 Connect 账户批准。",
+  "runTheseWhereAppRuns": "在{{app}}运行的地方执行这些命令。",
+  "codeToApprove": "待批准的代码",
+  "expiresOneUse": "{{time}}后过期 · 仅可使用一次",
+  "linkedList": "已链接：{{list}}"
 }

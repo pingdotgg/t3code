@@ -151,7 +151,7 @@ function Wizard({
           <AppStep choice={choice} onChoose={setChoice} />
         ) : step === 1 ? (
           <section className="space-y-3">
-            <h3 className="text-sm font-medium">What can {appName} do?</h3>
+            <h3 className="text-sm font-medium">{td("whatCanAppDo", { app: appName })}</h3>
             <RadioGroup
               aria-label={`What can ${appName} do?`}
               value={access}
@@ -183,14 +183,14 @@ function Wizard({
         >
           {step === 1 ? (
             <Button variant="outline" onClick={() => setStep(0)}>
-              Back
+              {td("back")}
             </Button>
           ) : null}
           {step === 2 ? (
             <Button onClick={close}>{td("done")}</Button>
           ) : (
             <Button disabled={step === 0 ? choice === null : access === null} onClick={next}>
-              Next
+              {td("next")}
             </Button>
           )}
         </WizardFooter>
@@ -367,7 +367,7 @@ function GateScreen({
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const retry = (onClick: () => void) => (
     <Button variant="outline" onClick={onClick}>
-      Check again
+      {td("checkAgain")}
     </Button>
   );
   const checkAgain = retry(() => void check());
@@ -376,7 +376,7 @@ function GateScreen({
       return (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner size="sm" tone="muted" />
-          Checking T3 Connect…
+          {td("checkingT3Connect")}
         </p>
       );
     case "sign-in":
@@ -395,7 +395,7 @@ function GateScreen({
               openAuthPrompt();
             }}
           >
-            Sign in to T3 Connect
+            {td("signInToT3Connect")}
           </Button>
         </GateMessage>
       );
@@ -461,9 +461,7 @@ function GateScreen({
               ) : null}
               {tunnelLimit !== null ? (
                 <>
-                  <p className="text-sm text-destructive-foreground">
-                    Your T3 Connect account is out of tunnels.
-                  </p>
+                  <p className="text-sm text-destructive-foreground">{td("outOfTunnels")}</p>
                   <ManageAccessButton environment={environment} label={td("manageTunnels")} />
                 </>
               ) : null}
@@ -473,7 +471,7 @@ function GateScreen({
           ) : (
             <div className="space-y-2 text-sm">
               <CommandBlock command="t3 connect link" />
-              <p>Restart T3 Code on {name}.</p>
+              <p>{td("restartT3CodeOn", { name })}</p>
               {checkAgain}
             </div>
           )}
@@ -545,7 +543,7 @@ function AppStep({
         onClick={() => onChoose("other")}
         className="w-full rounded-lg border border-border px-3 py-2.5 text-sm font-medium outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-primary/8"
       >
-        Something else…
+        {td("somethingElse")}
       </button>
     </section>
   );
@@ -568,8 +566,7 @@ function ConnectStep({
   const code =
     access === null ? (
       <p className="text-sm text-muted-foreground">
-        When {app?.name ?? "the app"} opens the sign-in page, choose what it may do and approve with
-        your T3 Connect account.
+        {td("whenAppOpensSignIn", { app: app?.name ?? "the app" })}
       </p>
     ) : (
       <ApprovalCode
@@ -659,7 +656,9 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
               .commands(mcpUrl)
               .map((command) => <CommandBlock key={command} command={command} />)
           : null}
-        <p className="text-xs text-muted-foreground">Run these where {app.name} runs.</p>
+        <p className="text-xs text-muted-foreground">
+          {td("runTheseWhereAppRuns", { app: app.name })}
+        </p>
         {note}
       </div>
     );
@@ -750,7 +749,8 @@ function ApprovalCode({
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm">
-          Code to approve <span className="font-medium">{td(accessConfig[access].label)}</span>
+          {td("codeToApprove")}{" "}
+          <span className="font-medium">{td(accessConfig[access].label)}</span>
         </span>
         {live ? null : (
           <Button size="sm" variant="outline" disabled={pending} onClick={() => void mint()}>
@@ -763,7 +763,9 @@ function ApprovalCode({
           <>
             <CopyRow label={td("code")} value={code.credential} />
             <p className="text-xs text-muted-foreground">
-              Expires {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} · one use
+              {td("expiresOneUse", {
+                time: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
+              })}
             </p>
           </>
         ) : (
@@ -821,7 +823,9 @@ function LinkedLine({
       access === null || levelRank(link.access) < levelRank(access) ? link.access : access;
     return `${name} · ${link.status === "expired" ? td("expired") : td(accessConfig[level].label)}`;
   });
-  return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;
+  return (
+    <p className="text-xs text-muted-foreground">{td("linkedList", { list: named.join(", ") })}</p>
+  );
 }
 
 /** Opens Sharing & access on this environment, where its clients and T3 Connect tunnels live. */
