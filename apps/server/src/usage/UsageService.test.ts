@@ -2445,6 +2445,122 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("prices Devin CLI history through effort-suffixed model names", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const dir = NodePath.join(home, "devin-cli");
+      const createdAt = Math.floor(Date.parse("2026-08-01T10:00:00Z") / 1000);
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(dir);
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, "sessions.db"));
+        try {
+          db.exec(`
+            CREATE TABLE sessions (id TEXT PRIMARY KEY, model TEXT, working_directory TEXT);
+            CREATE TABLE message_nodes (
+              row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              chat_message TEXT NOT NULL
+            )`);
+          db.prepare(
+            "INSERT INTO sessions VALUES ('session-1', 'gpt-6-astra-medium', '/home/dev/project')",
+          ).run();
+          const insert = db.prepare(
+            "INSERT INTO message_nodes (session_id, created_at, chat_message) VALUES (?, ?, ?)",
+          );
+          insert.run(
+            "session-1",
+            createdAt,
+            JSON.stringify({
+              role: "assistant",
+              content: "done",
+              metadata: {
+                request_id: "request-1",
+                generation_model: "claude-opus-5-5-high",
+                metrics: {
+                  input_tokens: 10,
+                  output_tokens: 5,
+                  cache_read_tokens: 4,
+                  cache_creation_tokens: 0,
+                },
+              },
+            }),
+          );
+          insert.run(
+            "session-1",
+            createdAt + 60,
+            JSON.stringify({
+              role: "assistant",
+              content: "done",
+              metadata: {
+                request_id: "request-2",
+                generation_model: null,
+                metrics: {
+                  input_tokens: 7,
+                  output_tokens: 3,
+                  cache_read_tokens: 0,
+                  cache_creation_tokens: 0,
+                },
+              },
+            }),
+          );
+        } finally {
+          db.close();
+        }
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-devin-test",
+            home,
+            settings: { providerInstances: settings.providerInstances },
+            ratesDocument: {
+              "claude-opus-5-5": { input_cost_per_token: 1, output_cost_per_token: 2 },
+            },
+            environment: { DEVIN_SESSIONS_DIR: dir },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      const root = yield* Effect.promise(() => NodeFSP.realpath(dir));
+      assert.deepStrictEqual(
+        summary.buckets
+          .filter((bucket) => bucket.provider === "devin")
+          .map(({ model, sourcePath, records, unpricedRecords, costUsd, costSource }) => ({
+            model,
+            sourcePath,
+            records,
+            unpricedRecords,
+            costUsd,
+            costSource,
+          }))
+          .toSorted((left, right) => left.model.localeCompare(right.model)),
+        [
+          {
+            model: "claude-opus-5-5-high",
+            sourcePath: root,
+            records: 1,
+            unpricedRecords: 0,
+            costUsd: 24,
+            costSource: "modelPriced",
+          },
+          {
+            model: "gpt-6-astra-medium",
+            sourcePath: root,
+            records: 1,
+            unpricedRecords: 1,
+            costUsd: 0,
+            costSource: "unpriced",
+          },
+        ],
+      );
+      const sources = summary.sources.filter((source) => source.fingerprint.provider === "devin");
+      assert.strictEqual(sources.length, 1);
+      assert.strictEqual(sources[0]!.fingerprint.resolvedHomePath, root);
+      assert.strictEqual(sources[0]!.distinctSessions, 1);
+    }),
+  );
+
   it.effect("reads configured and disabled accounts once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;
