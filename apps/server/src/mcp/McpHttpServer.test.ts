@@ -43,6 +43,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 
 import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
@@ -59,7 +60,9 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
+import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
+import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 
 const environmentId = EnvironmentId.make("environment-mcp-test");
 const threadId = ThreadId.make("thread-mcp-test");
@@ -295,7 +298,10 @@ const layerRecordingTools = (calls: Array<unknown>) => {
     OrchestratorToolkit.tools.t3_thread_list,
     OrchestratorToolkit.tools.t3_thread_read,
     OrchestratorToolkit.tools.t3_thread_wait,
+    ProjectToolkit.tools.t3_project_list,
     ProjectToolkit.tools.t3_project_update,
+    ThreadToolkit.tools.t3_queue,
+    PreviewControlsToolkit.tools.t3_preview_list,
     ProjectToolkit.tools.t3_thread_launch,
   );
   const record = McpToolAccess.reads((params: unknown) =>
@@ -312,7 +318,10 @@ const layerRecordingTools = (calls: Array<unknown>) => {
       t3_thread_list: record,
       t3_thread_read: record,
       t3_thread_wait: record,
+      t3_project_list: record,
       t3_project_update: record,
+      t3_queue: record,
+      t3_preview_list: record,
       t3_thread_launch: record,
     }),
   ).pipe(
@@ -322,6 +331,8 @@ const layerRecordingTools = (calls: Array<unknown>) => {
         McpToolAccessTestkit.liveThreadsLayer,
         Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(PreviewManager.PreviewManager)({}),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: process.cwd(),
@@ -749,18 +760,28 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
   },
 );
 
-it.effect("clamps a t3_thread_list limit above its maximum instead of rejecting the call", () => {
-  const calls: Array<unknown> = [];
-  return Effect.gen(function* () {
-    yield* callTool("t3_thread_list", { allProjects: true, limit: 200 });
-    yield* callTool("t3_thread_list", { allProjects: true, limit: 7 });
+const clampedListLimits = [
+  { tool: "t3_thread_list", input: { allProjects: true }, maximum: 100 },
+  { tool: "t3_project_list", input: {}, maximum: 100 },
+  { tool: "t3_queue", input: { action: "list" }, maximum: 100 },
+  { tool: "t3_preview_list", input: {}, maximum: 50 },
+];
 
-    expect(calls).toEqual([
-      { allProjects: true, limit: 100 },
-      { allProjects: true, limit: 7 },
-    ]);
-  }).pipe(Effect.provide(layerRecordingTools(calls)));
-});
+it.effect.each(clampedListLimits)(
+  "clamps a $tool limit above its maximum instead of rejecting the call",
+  ({ tool, input, maximum }) => {
+    const calls: Array<unknown> = [];
+    return Effect.gen(function* () {
+      yield* callTool(tool, { ...input, limit: maximum * 2 });
+      yield* callTool(tool, { ...input, limit: 7 });
+
+      expect(calls).toEqual([
+        { ...input, limit: maximum },
+        { ...input, limit: 7 },
+      ]);
+    }).pipe(Effect.provide(layerRecordingTools(calls)));
+  },
+);
 
 it("keeps cross-tool routing out of the delegate_task description", () => {
   const description = OrchestratorToolkit.tools.delegate_task.description ?? "";

@@ -1134,6 +1134,9 @@ export const layer: Layer.Layer<
         const openRunOwnedSubagents = yield* Ref.make(emptyOpenRunOwnedSubagentProjection());
         // The last stored root snapshot's pendingBackgroundWork; adapters that omit it leave it false.
         let rootSnapshotPendingWork = false;
+        // Owned child threads whose last snapshot reported pending work, such as a queued native
+        // continuation. Unlike the root's, these must hold the stream past owner loss.
+        const childSnapshotPendingWork = new Set<ProviderThreadId>();
         let rootTurnOwnershipChecked = false;
         const assistantStreaming = makeAssistantStreamingFilter(responseStreamingMode);
         // Set when ingestion ends or finalization settles the run's open items, which a later
@@ -1382,7 +1385,7 @@ export const layer: Layer.Layer<
           // while these sets are non-empty: turn_item.updated writes are not ownership-gated, so
           // late completions still land.
           const backgroundItems = yield* Ref.get(activeBackgroundTurnItems);
-          if (backgroundItems.size > 0) {
+          if (backgroundItems.size > 0 || childSnapshotPendingWork.size > 0) {
             return false;
           }
           if (yield* Ref.get(providerThreadOwnerLost)) {
@@ -1480,6 +1483,10 @@ export const layer: Layer.Layer<
               if (!routing.ownedProviderTurns.has(id)) {
                 pendingBackgroundProviderTurns.delete(id);
               }
+            }
+            // Routing now rejects the moved thread's snapshots, so none would clear its entry.
+            for (const id of childSnapshotPendingWork) {
+              if (!routing.ownedProviderThreadIds.has(id)) childSnapshotPendingWork.delete(id);
             }
             yield* Ref.update(
               activeBackgroundTurnItems,
@@ -1682,6 +1689,12 @@ export const layer: Layer.Layer<
             if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
               yield* Ref.set(latestProviderThread, event.providerThread);
               rootSnapshotPendingWork = event.pendingBackgroundWork === true;
+            } else if (event.providerThread.id !== input.providerThread.id) {
+              if (event.pendingBackgroundWork === true) {
+                childSnapshotPendingWork.add(event.providerThread.id);
+              } else if (event.pendingBackgroundWork === false) {
+                childSnapshotPendingWork.delete(event.providerThread.id);
+              }
             }
           }
           if (
