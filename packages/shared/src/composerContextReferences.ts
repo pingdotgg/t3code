@@ -10,7 +10,10 @@ import {
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 
-import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
+import {
+  assistantCitationProviderDataRanges,
+  expandAssistantCitationsForProvider,
+} from "./assistantCitations.ts";
 import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
@@ -429,13 +432,13 @@ export function projectComposerContextForProvider(input: {
 }
 
 const ENVELOPE_CLOSE = `</${CONTEXT_ENVELOPE_TAG}>`;
-const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ([^\];\n]*); ref=([^[\]\s]+)\]/g;
+const PROVIDER_MARKER = /\[([A-Z][^[\]:;\n]*): ((?:&lt;|[^\];\n])*); ref=([^[\]\s]+)\]/g;
 const PROVIDER_ENTRY =
   /<context kind="([^"]+)" id="([^"]+)"(?: unavailable="true"\/>|>\n[\s\S]*?\n<\/context>)/g;
 
 /** Recognize projected context by its entries and matching markers; a typed tag alone is text. */
 export function composerContextProviderDataRanges(text: string) {
-  const ranges: { start: number; end: number }[] = [];
+  const ranges = assistantCitationProviderDataRanges(text);
   for (
     let start = text.indexOf(ENVELOPE_OPEN);
     start !== -1;
@@ -449,14 +452,14 @@ export function composerContextProviderDataRanges(text: string) {
     if (entries.length === 0 || entries.map(([entry]) => entry).join("\n") !== body) continue;
     const markers = [...text.slice(0, start).matchAll(PROVIDER_MARKER)];
     const matchingMarkers = markers.filter((marker) =>
-      entries.some(
-        (entry) =>
-          marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2],
-      ),
+      entries.some((entry) => escapeAttribute(marker[3]!) === entry[2]),
     );
     if (
       !entries.every((entry) =>
-        matchingMarkers.some((marker) => escapeAttribute(marker[3]!) === entry[2]),
+        matchingMarkers.some(
+          (marker) =>
+            marker[1] === kindDisplayName(entry[1]!) && escapeAttribute(marker[3]!) === entry[2],
+        ),
       )
     )
       continue;
