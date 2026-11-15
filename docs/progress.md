@@ -82,3 +82,12 @@
 - Numbers: autoModel 13/13 (new blocked case), AutoFailoverService 6/6; server typecheck clean.
 - Limits: the bench is in memory, so a server restart forgets it (the usage report takes over). A failure whose session error differs from the run's error item has no error class and is not failed over.
 - Next: build the PC desktop app from `tomas/pc-nightly`; deploy to hub/hub2.
+
+## 2026-11-15: Auto failover review fixes, and a way back to the better model
+
+- What: (1) Auto's sticky rule now gives way when a better candidate for the level has room again. Before, a thread that failed over to a weaker model (say Grok) stayed there for good while that account was under 90% used, even after Claude reset. (2) Failover follows the `autoResumeLimitedThreads` setting: off means the failed instance is still benched (the next message the user sends routes around it), but T3 sends nothing on its own. (3) Failover skips a provider's own subagent threads, which cannot receive messages.
+- Why: review of `d25e0609c7` before it went on the PC. The failover sends turns by itself, so a mistake there spends every subscription. The one-way downgrade contradicted the Auto skill, which says a provider re-enters the chain when its window resets.
+- Checked and left alone: the domain event stream starts at the latest sequence, so a server restart does not replay old failed runs into failovers. A failover and the upstream reset-resume cannot both fire: the resume needs the thread's latest run to be the failed one. The return to a better model needs that account under 90%, so a thread does not hop back onto an account about to run out.
+- Numbers: autoModel 14/14, AutoFailoverService 7/7, server typecheck 0 errors.
+- Cost: moving back up is one more provider handoff (a thread summary). It happens once per reset, on the next message.
+- Next: build the PC desktop app from `tomas/pc-nightly` and install it.

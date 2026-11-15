@@ -322,6 +322,28 @@ describe("resolveAutoModelSelection", () => {
     ).toBeNull();
   });
 
+  it("returns from a weaker fallback once a better model has room again", () => {
+    const grok = {
+      ...claude("grok", 0, false),
+      driver: ProviderDriverKind.make("grok"),
+      models: [{ slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null }],
+      usageLimits: undefined,
+    } as unknown as ServerProvider;
+    const current = { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.7" };
+    const resolve = (claudeUsed: number) =>
+      resolveAutoModelSelection({
+        selection: auto(),
+        providers: [claude("claudeAuto", claudeUsed), grok],
+        now,
+        current,
+      });
+    // Claude is back: the thread leaves Grok.
+    expect(resolve(10)).toMatchObject({ sticky: false, selection: { instanceId: "claudeAuto" } });
+    // Claude is nearly out or exhausted: no hop back that would fail again at once.
+    expect(resolve(95)).toMatchObject({ sticky: true, selection: { instanceId: "grok" } });
+    expect(resolve(100)).toMatchObject({ sticky: true, selection: { instanceId: "grok" } });
+  });
+
   it("returns null when nothing is usable", () => {
     const providers = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
     expect(resolveAutoModelSelection({ selection: auto(), providers, now })).toBeNull();
