@@ -39,6 +39,32 @@ export function createSwipeRowActivation() {
 
 export type SwipeRowActivation = ReturnType<typeof createSwipeRowActivation>;
 
+const SCROLL_ACTIVATION_INTERVAL_MS = 150;
+const SCROLL_SETTLE_ACTIVATION_MS = 200;
+
+/**
+ * Wakes rows while the list glides, so a touch that catches a fling lands on a
+ * swipeable row, and once more after scrolling settles for the final range.
+ */
+export function createScrollActivationScheduler() {
+  let lastActivationAt = Number.NEGATIVE_INFINITY;
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    onScroll(activate: () => void) {
+      const now = Date.now();
+      if (now - lastActivationAt >= SCROLL_ACTIVATION_INTERVAL_MS) {
+        lastActivationAt = now;
+        activate();
+      }
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(activate, SCROLL_SETTLE_ACTIVATION_MS);
+    },
+    dispose() {
+      clearTimeout(settleTimer);
+    },
+  };
+}
+
 export const SwipeRowActivationContext = createContext<SwipeRowActivation | null>(null);
 
 const subscribeNever = () => () => {};

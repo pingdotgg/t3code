@@ -94,7 +94,7 @@ import {
   type HomeProjectSortOrder,
   sortHomeProjectScopes,
 } from "./homeThreadList";
-import { createSwipeRowActivation } from "./swipe-row-activation";
+import { createScrollActivationScheduler, createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
@@ -286,12 +286,9 @@ export function HomeScreen(props: HomeScreenProps) {
       rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
     );
   };
-  // Rows scrolled into view wake while the list glides, so a touch that catches the glide can swipe;
-  // the trailing timer covers the final position and scrolls that bypass the gate.
-  const activationTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const lastActivationAtRef = useRef(0);
+  const [scrollActivation] = useState(createScrollActivationScheduler);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
-  useEffect(() => () => clearTimeout(activationTimerRef.current), []);
+  useEffect(() => scrollActivation.dispose, [scrollActivation]);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     onFabScroll?.(event);
     if (workspace)
@@ -299,16 +296,7 @@ export function HomeScreen(props: HomeScreenProps) {
         "threads",
         Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
-    const now = Date.now();
-    if (now - lastActivationAtRef.current >= 150) {
-      lastActivationAtRef.current = now;
-      activateVisibleRows(listRef.current?.getState().data ?? []);
-    }
-    clearTimeout(activationTimerRef.current);
-    activationTimerRef.current = setTimeout(
-      () => activateVisibleRows(listRef.current?.getState().data ?? []),
-      200,
-    );
+    scrollActivation.onScroll(() => activateVisibleRows(listRef.current?.getState().data ?? []));
   };
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;

@@ -1,6 +1,32 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { createSwipeRowActivation } from "./swipe-row-activation";
+import { createScrollActivationScheduler, createSwipeRowActivation } from "./swipe-row-activation";
+
+describe("createScrollActivationScheduler", () => {
+  it("wakes rows scrolled into view before a fling settles, then the final range", () => {
+    vi.useFakeTimers();
+    try {
+      const activation = createSwipeRowActivation();
+      const scheduler = createScrollActivationScheduler();
+      let visible = ["a"];
+      const onScroll = () => scheduler.onScroll(() => activation.activate(visible));
+
+      for (let frame = 0; frame < 20; frame += 1) {
+        visible = [`row-${frame}`];
+        onScroll();
+        vi.advanceTimersByTime(16);
+      }
+      expect(activation.isActive("row-19")).toBe(false);
+      expect(activation.isActive("row-10")).toBe(true);
+
+      vi.advanceTimersByTime(200);
+      expect(activation.isActive("row-19")).toBe(true);
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("createSwipeRowActivation", () => {
   it("defers changes while a finger is on the list so a press is never remounted", () => {
