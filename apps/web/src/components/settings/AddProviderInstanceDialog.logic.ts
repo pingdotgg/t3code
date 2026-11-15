@@ -5,9 +5,22 @@ export type WizardNavigation =
 const IDENTITY_STEP = 1;
 const ACP_REGISTRY_IDENTITY_STEP = 1;
 
-export const ADD_PROVIDER_WIZARD_STEPS = ["Provider", "Identity", "Config"] as const;
-export const ACP_REGISTRY_WIZARD_STEPS = ["Provider", "Identity", "Sign in"] as const;
-export const LOCAL_ACP_WIZARD_STEPS = ["Provider", "Identity"] as const;
+// Step names are i18n keys; AddProviderInstanceWizardSteps translates them at render
+// so a language switch after module load still shows the current language.
+export const ADD_PROVIDER_WIZARD_STEPS = [
+  "providerWizard.provider",
+  "providerWizard.identity",
+  "providerWizard.config",
+] as const;
+export const ACP_REGISTRY_WIZARD_STEPS = [
+  "providerWizard.provider",
+  "providerWizard.identity",
+  "providerWizard.signIn",
+] as const;
+export const LOCAL_ACP_WIZARD_STEPS = [
+  "providerWizard.provider",
+  "providerWizard.identity",
+] as const;
 
 export interface ProviderIdentityDraft {
   readonly label: string;
