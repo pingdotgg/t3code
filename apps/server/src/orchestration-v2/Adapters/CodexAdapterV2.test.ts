@@ -6354,7 +6354,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   });
 
-  it.effect("Stop ends a background command no Codex process tracks any more", () =>
+  it.effect("ends a background command when its Codex process is gone", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stale-workspace-" });
@@ -6429,21 +6429,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* worker.drain();
         yield* Fiber.join(settled);
         yield* worker.drain();
-        const before = yield* orchestrator.getThreadShell(threadId);
-        assert.deepEqual(
-          before?.pendingBackgroundTasks?.map((task) => task.kind),
-          ["command"],
-          "the thread still shows the command the gone process never finished",
-        );
-        const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-        yield* orchestrator.dispatch({
-          type: "run.interrupt",
-          commandId: CommandId.make("stop-background-untracked"),
-          threadId,
-          runId: run.id,
-          holdQueue: true,
-        });
-        yield* worker.drain();
+        // regression: #37290 the command stayed running, and the thread waiting, until Stop.
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           projection.turnItems.flatMap((item) =>
