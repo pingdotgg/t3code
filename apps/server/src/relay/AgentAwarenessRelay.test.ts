@@ -49,7 +49,10 @@ const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
 const PROJECT_ID = ProjectId.make("relay-project");
 const NOW = "2026-09-04T12:00:00.000Z";
 
-function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
+type AwarenessShell = OrchestrationV2ThreadShell &
+  Pick<ProjectionStore.AgentAwarenessThread, "lastSnoozeWakeAt">;
+
+function shell(overrides: Partial<AwarenessShell> = {}): AwarenessShell {
   return {
     id: THREAD_ID,
     projectId: PROJECT_ID,
