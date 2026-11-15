@@ -466,7 +466,10 @@ export function buildCheckedAcpRegistrySnapshot(
       ? { documentationUrl: input.inspection.documentationUrl }
       : {}),
     installed: readiness.installed,
-    version: readiness.version,
+    version:
+      input.settings.source === "local"
+        ? (input.probe?.probe.agentVersion ?? readiness.version)
+        : readiness.version,
     // Failed discovery is a warning: an installed agent may still run real turns.
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
