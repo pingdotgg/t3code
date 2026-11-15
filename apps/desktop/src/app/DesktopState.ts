@@ -10,7 +10,12 @@ import type { BackendStartupFailure } from "../backend/DesktopBackendManager.ts"
 export type PrimaryBackendStartup =
   | { readonly _tag: "Starting" }
   | { readonly _tag: "Ready" }
-  | ({ readonly _tag: "Failing" } & BackendStartupFailure);
+  | ({ readonly _tag: "Failing" } & PrimaryBackendFailure);
+
+export interface PrimaryBackendFailure extends BackendStartupFailure {
+  /** Offered while a WSL-only primary is up but unreachable: switch to Windows for this launch. */
+  readonly useWindows?: Effect.Effect<void>;
+}
 
 export class DesktopState extends Context.Service<
   DesktopState,
