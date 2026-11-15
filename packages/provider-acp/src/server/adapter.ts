@@ -2049,6 +2049,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           EffectAcpSchema.SessionUpdate,
           { sessionUpdate: "state_update" }
         > | null = null;
+        // The root's last reportForegroundWork state; undefined until the agent reports one.
+        let rootForegroundWork: "running" | "idle" | undefined;
         const agentRequests = new Set<object>();
         const nativeChildren = new Map<string, AcpNativeChildSession>();
         const extractSubagentUpdate = (tool: AcpToolCallState) =>
@@ -2082,6 +2084,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             continuationRequests !== undefined &&
             setup.initializeResult.protocolVersion === 2;
           agentWork = null;
+          rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
@@ -7163,6 +7166,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   handlerGeneration,
                   Effect.gen(function* () {
                     if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    if ((yield* Ref.get(activeSessionId)) === notice.sessionId) {
+                      rootForegroundWork = notice.state;
+                    }
                     const context = yield* Ref.get(activeTurn);
                     if (
                       context === null ||
@@ -8759,6 +8765,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
                 Effect.map((drained) => drained.length),
               );
+              // A root woken after foreground idle ends on its next idle report.
+              if (drainedWakeCount > 0 && rootForegroundWork !== undefined) {
+                yield* runtimeCallbackPermit.withPermit(
+                  Effect.suspend(() => {
+                    if (rootForegroundWork === "idle") return finalizeTurn(context, "completed");
+                    context.workAccepted = true;
+                    return Effect.void;
+                  }),
+                );
+                return;
+              }
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drainedWakeCount === 0) {
