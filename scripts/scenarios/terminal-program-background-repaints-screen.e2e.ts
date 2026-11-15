@@ -6,10 +6,8 @@ import * as FileSystem from "effect/FileSystem";
 
 import { runPromise, test, WEB } from "./t3.ts";
 
-// A raw-mode process prints rows, then on `b` runs the real xtermcontrol (Debian package
-// xtermcontrol), which sets the default background with OSC 11, and records its exit status.
+// A raw-mode process prints rows, then on `b` sets the default background with OSC 11.
 const PROGRAM = String.raw`import { writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 
 const state = new URL("state", import.meta.url);
 process.stdin.setRawMode(true);
@@ -18,11 +16,7 @@ writeFileSync(state, "ready");
 process.stdin.on("data", (chunk) => {
   const key = chunk.toString();
   if (key === "b") {
-    const result = spawnSync("xtermcontrol", ["--bg=rgb:44/55/66"], {
-      stdio: "inherit",
-      env: { ...process.env, TERM: "xterm-256color" },
-    });
-    writeFileSync(state, "changed:" + (result.error?.message ?? result.status));
+    process.stdout.write("\x1b]11;rgb:44/55/66\x07", () => writeFileSync(state, "changed"));
   }
   if (key === "x") {
     process.stdin.setRawMode(false);
@@ -70,7 +64,7 @@ test(
 
     await terminal.focus();
     await browser.keyboard.type("b");
-    await expect.poll(() => read("state"), { timeout: 15_000 }).toBe("changed:0");
+    await expect.poll(() => read("state"), { timeout: 15_000 }).toBe("changed");
     await app.screenshot("after-background");
 
     // Sample the padding above the rows, a cell beside the printed rows, and the canvas bottom.
