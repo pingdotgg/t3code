@@ -1,12 +1,18 @@
+import {
+  UsagePolling,
+  UsageAfterReset,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { CodexSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
+import * as Hex from "effect/encoding/Hex";
+import * as Option from "effect/Option";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import type * as Signature from "effect/crypto/Signature";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -63,8 +69,28 @@ import * as CodexManagedTokenBroker from "../CodexManagedTokenBroker.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { openAiUserId } from "../../telemetry/Identify.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
+const decodeNativeAccount = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      auth_mode: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      OPENAI_API_KEY: Schema.optionalKey(Schema.NullOr(Schema.String)),
+      tokens: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Struct({
+            account_id: Schema.String,
+            id_token: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
 
+const encodeUsageOwner = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.String])),
+);
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const CODEX_STANDALONE_HOME_PATTERN = /^(.*)\/packages\/standalone\//is;
 
@@ -177,6 +203,7 @@ export const CodexDriver: ProviderDriver<
         config,
       });
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const digest = yield* Digest.Digest;
     const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
     const fileSystem = yield* FileSystem.FileSystem;
     const pathService = yield* Path.Path;
@@ -266,17 +293,74 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    const usageAccount = Effect.gen(function* () {
+      const account = yield* fileSystem
+        .readFileString(
+          pathService.join(homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath, "auth.json"),
+        )
+        .pipe(
+          Effect.catchTags({
+            PlatformError: (error) =>
+              error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+          }),
+          Effect.flatMap(decodeNativeAccount),
+          Effect.option,
+        );
+      if (Option.isNone(account)) return undefined;
+      const mode = account.value.auth_mode ?? (account.value.OPENAI_API_KEY ? "apikey" : "chatgpt");
+      const isChatGpt = mode === "chatgpt" || mode === "chatgptAuthTokens";
+      const workspaceId = isChatGpt ? account.value.tokens?.account_id.trim() : undefined;
+      const personId = isChatGpt
+        ? Option.getOrUndefined(openAiUserId(account.value.tokens?.id_token ?? ""))
+        : account.value.OPENAI_API_KEY?.trim();
+      const kind = workspaceId ? "chatgpt" : mode;
+      const usageRefreshKey = yield* digest
+        .digest(
+          Digest.sha256,
+          new TextEncoder().encode(encodeUsageOwner([kind, workspaceId ?? "", personId ?? ""])),
+        )
+        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      return { workspaceId, usageRefreshKey };
+    });
+    const getUsageRefreshKey = usageAccount.pipe(Effect.map((account) => account?.usageRefreshKey));
+
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
-    const checkProvider = modelCatalog.refreshInBackground.pipe(
-      Effect.andThen(
-        Effect.zipWith(
-          checkCodexProviderStatus(effectiveConfig, undefined, processEnv),
-          currentCatalog,
-          (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
-          { concurrent: true },
-        ),
-      ),
+    const checkProvider = Effect.gen(function* () {
+      const before = yield* usageAccount;
+      yield* modelCatalog.refreshInBackground;
+      const includeUsage = yield* UsagePolling;
+      const draft = yield* Effect.zipWith(
+        checkCodexProviderStatus(effectiveConfig, undefined, processEnv, undefined, !includeUsage),
+        currentCatalog,
+        (draft, catalog) => applyCodexModelCatalog(draft, catalog),
+        { concurrent: true },
+      );
+      const after = yield* usageAccount;
+      if (after && after.usageRefreshKey !== before?.usageRefreshKey) {
+        return stampIdentity({
+          ...draft,
+          auth: { status: "unknown", ...after },
+          usageLimits: {
+            ...makeUnavailableUsageLimits({ checkedAt: draft.checkedAt, reason: "probeFailed" }),
+            refreshAfter: 0,
+          },
+        });
+      }
+      return stampIdentity({
+        ...draft,
+        auth: before
+          ? {
+              ...draft.auth,
+              ...before,
+              workspaceId:
+                draft.auth.type === "chatgpt"
+                  ? (draft.auth.workspaceId ?? before.workspaceId)
+                  : undefined,
+            }
+          : draft.auth,
+      });
+    }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, pathService),
@@ -294,6 +378,7 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -386,7 +471,10 @@ export const CodexDriver: ProviderDriver<
             ResetCreditCoordinator.refreshAfterRedemption({
               outcome,
               getSnapshot: snapshot.getSnapshot,
-              refresh: snapshot.refresh,
+              refresh: snapshot.refresh.pipe(
+                Effect.provideService(UsagePolling, true),
+                Effect.provideService(UsageAfterReset, true),
+              ),
             }).pipe(
               Effect.filterOrFail(
                 (confirmed) => confirmed,

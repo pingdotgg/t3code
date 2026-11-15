@@ -179,6 +179,7 @@ interface ComposerSendInput {
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
   readonly isLocalDraftThread: boolean;
+  readonly prepareDraftSend: (() => Promise<void>) | undefined;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
   readonly runtimeMode: RuntimeMode;
@@ -279,6 +280,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeMessageCount,
     isServerThread,
     isLocalDraftThread,
+    prepareDraftSend,
     isGitRepo,
     phase,
     runtimeMode,
@@ -485,6 +487,14 @@ export function useComposerSend(input: ComposerSendInput) {
         id: `chat-send-environment-unavailable:${toastSlot}`,
       });
       return;
+    }
+    if (isLocalDraftThread && prepareDraftSend) {
+      sendInFlightRef.current = true;
+      await prepareDraftSend().finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (currentRouteThreadKeyRef.current !== routeThreadKey || promptRef.current !== promptAtSend)
+        return;
     }
     // Where side chats are unavailable, `/side` text can still be a literal answer.
     if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {

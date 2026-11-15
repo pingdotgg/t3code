@@ -18,6 +18,7 @@ export interface EnvironmentConnectionPresentation {
   readonly phase: EnvironmentConnectionPhase;
   readonly error: string | null;
   readonly traceId: string | null;
+  readonly generation?: number;
   /**
    * Set while reconnecting because the host has not approved this device yet. `error` then
    * says where to approve it and shows the code, and is not a failure.
@@ -64,7 +65,7 @@ export function presentConnectionState(
         traceId: state.lastFailure?.traceId ?? null,
       };
     case "connected":
-      return { phase: "connected", error: null, traceId: null };
+      return { phase: "connected", error: null, traceId: null, generation: state.generation };
     case "backoff":
       return {
         phase: "reconnecting",

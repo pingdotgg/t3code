@@ -55,6 +55,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import type { ServerProvider } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import { UsageAfterReset } from "@t3tools/provider-core/server/usageLimits";
 import {
   makeProviderEventRoutingState,
   type ProviderEventRouteIdentity,
@@ -236,7 +237,7 @@ const layer = it.layer(layerTest);
 
 it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the snapshot", () =>
   Effect.gen(function* () {
-    const refreshed = yield* Deferred.make<void>();
+    const refreshed = yield* Deferred.make<boolean>();
     const adapter = yield* ProviderAdapter.ProviderAdapterV2.pipe(
       Effect.provide(
         Layer.mock(ProviderAdapter.ProviderAdapterV2)({
@@ -264,7 +265,11 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
         generateTranscriptionPostProcessing: () => Effect.die("unused"),
       },
       snapshot: {
-        refreshUsage: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+        // Records whether the refresh may bypass the usage cooldown.
+        refreshUsage: UsageAfterReset.pipe(
+          Effect.flatMap((afterReset) => Deferred.succeed(refreshed, afterReset)),
+          Effect.asVoid,
+        ),
         getSnapshot: Effect.succeed({
           auth: { status: "authenticated", endpoint: "http://hub.test:8317" },
         } as ServerProvider),
@@ -336,7 +341,7 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
       }
       assert.deepEqual(lookups, [instance.instanceId, instance.instanceId]);
       assert.deepEqual(hubLookups, [["cursor", "http://hub.test:8317", "gpt-5.4"]]);
-      yield* Deferred.await(refreshed);
+      assert.isTrue(yield* Deferred.await(refreshed));
     }).pipe(
       Effect.provide(makeLayerTest(layerTestEventSink, instances)),
       Effect.provideService(UsageLimitResetFallback, {

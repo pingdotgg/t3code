@@ -1,3 +1,5 @@
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { useUsageLimitsRefresh } from "../../hooks/useUsageLimitsRefresh";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -15,6 +17,7 @@ export function useUsageLimitsPanel(input: {
   readonly environmentId: EnvironmentId;
   readonly threadKey: string;
   readonly panelKey: string | null;
+  readonly visible: boolean;
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly providerDriver: ServerProvider["driver"] | null;
   readonly providers: readonly ServerProvider[];
@@ -24,6 +27,7 @@ export function useUsageLimitsPanel(input: {
     environmentId,
     threadKey,
     panelKey,
+    visible,
     providerInstanceId,
     providerDriver,
     providers,
@@ -37,10 +41,18 @@ export function useUsageLimitsPanel(input: {
   if (panel !== null && panelKey !== null && panel.key !== panelKey) {
     setPanel(null);
   }
+  const nowMinute = useNowMinute(visible && panel !== null);
+  const reportNow = nowMinute ? Date.parse(`${nowMinute}:00Z`) : (panel?.now ?? 0);
   const report =
     panel !== null && panelKey !== null && panel.key === panelKey && providerInstanceId !== null
-      ? collectProviderUsageLimits(providerInstanceId, providers, sources, panel.now)
+      ? collectProviderUsageLimits(providerInstanceId, providers, sources, reportNow)
       : null;
+  useUsageLimitsRefresh(
+    environmentId,
+    providerInstanceId,
+    visible && report !== null,
+    providerDriver,
+  );
   const banner =
     report !== null && panel !== null
       ? // A fresh id per opening: the stack keeps the last dismissed id as "exiting".
@@ -48,7 +60,6 @@ export function useUsageLimitsPanel(input: {
           setPanel(null),
         )
       : null;
-  // Intercept /usage-limits only when Limits has selected-provider data.
   const offered =
     providerDriver !== null && hasProviderUsageLimits(providerDriver, providers, sources);
 

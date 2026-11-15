@@ -1,5 +1,9 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  UsagePolling,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
+import {
   ProviderDriverKind,
   settingsSecretLiteral,
   type ServerProviderModel,
@@ -33,7 +37,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
-import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { readOpenCodeGoUsageLimits, readOpenCodeGoCredentialFingerprint } from "./usageLimits.ts";
 import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
@@ -272,7 +276,8 @@ export const OpenCodeDriver: ProviderDriver<
     const pathService = yield* Path.Path;
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
     const agentScope = yield* AgentScope;
-    const httpClient = yield* HttpClient.HttpClient;
+    const httpClient =
+      (yield* ProviderHost.ProviderHost).usageHttpClient ?? (yield* HttpClient.HttpClient);
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
@@ -473,6 +478,14 @@ export const OpenCodeDriver: ProviderDriver<
       Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(Digest.Digest, digest),
     );
+    const getUsageRefreshKey =
+      effectiveConfig.enabled && !effectiveConfig.serverUrl.trim()
+        ? readOpenCodeGoCredentialFingerprint(processEnv).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
+            Effect.provideService(Digest.Digest, digest),
+          )
+        : Effect.undefined;
     let unsupportedUsageVersion: string | undefined;
     const checkUsageLimits = Effect.gen(function* () {
       if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
@@ -522,13 +535,24 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        usageLimits: checkUsageLimits,
+        credentialFingerprint: getUsageRefreshKey,
+        usageLimits: Effect.flatMap(UsagePolling, (enabled) =>
+          enabled ? checkUsageLimits : Effect.succeed(null),
+        ),
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits, installedVersion }) => ({
+      Effect.map(({ provider, usageLimits, credentialFingerprint, installedVersion }) => ({
         ...provider,
-        usageLimits,
+        // OpenCode 2 omits account identity; local key selection owns cached Go quotas.
+        auth: credentialFingerprint
+          ? { ...provider.auth, usageRefreshKey: credentialFingerprint }
+          : provider.auth,
+        usageLimits:
+          usageLimits ??
+          (provider.auth.status === "authenticated"
+            ? makeUnavailableUsageLimits({ checkedAt: provider.checkedAt, reason: "probeFailed" })
+            : undefined),
         ...(installedVersion === undefined ? {} : { installedVersion }),
       })),
       Effect.map(stampIdentity),
@@ -654,6 +678,7 @@ export const OpenCodeDriver: ProviderDriver<
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
+      getUsageRefreshKey,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

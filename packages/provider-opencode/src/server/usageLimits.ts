@@ -1,3 +1,7 @@
+import {
+  usageResponseCheckedAt,
+  usageReadRefreshAfter,
+} from "@t3tools/provider-core/server/usageLimits";
 import * as NodeSqlite from "node:sqlite";
 
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
@@ -24,6 +28,7 @@ const AuthFile = Schema.Struct({ "opencode-go": Schema.optionalKey(Schema.Unknow
 const ApiAuth = Schema.Struct({ type: Schema.Literal("api"), key: Schema.String });
 const decodeAuthFile = Schema.decodeEffect(Schema.fromJsonString(AuthFile));
 const decodeApiAuth = Schema.decodeUnknownOption(ApiAuth);
+const encodeKeys = Schema.encodeEffect(Schema.fromJsonString(Schema.Array(Schema.String)));
 // OpenCode 2's database tags a stored key "key"; auth.json tags it "api".
 const StoredKey = Schema.Struct({
   type: Schema.Literal("key"),
@@ -83,6 +88,52 @@ const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "ope
     catch: (cause) => new OpenCodeCredentialReadError({ databasePath, cause }),
   }).pipe(Effect.orElseSucceed(() => undefined));
 
+const readOpenCodeGoKeys = Effect.fn("readOpenCodeGoKeys")(function* (env: NodeJS.ProcessEnv) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dataHome =
+    env.XDG_DATA_HOME ||
+    path.join(env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory), ".local", "share");
+  const authPath = path.join(dataHome, "opencode", "auth.json");
+  const contents =
+    env.OPENCODE_AUTH_CONTENT ||
+    (yield* fs.readFileString(authPath).pipe(
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+      }),
+    ));
+  const auth = yield* decodeAuthFile(contents);
+  const apiAuth = decodeApiAuth(auth["opencode-go"]);
+  // OpenCode overlays stored API credentials after environment credentials.
+  const goKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
+  // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
+  // overrides local credentials, including the Console connection.
+  const databaseFile = env.OPENCODE_DB ?? "opencode.db";
+  const databasePath = path.resolve(dataHome, "opencode", databaseFile);
+  const storedKeys =
+    env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
+      ? []
+      : [
+          yield* readStoredApiKey(databasePath, "opencode"),
+          // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
+          yield* readStoredApiKey(databasePath, "opencode-go"),
+        ];
+  return [...new Set([...storedKeys, goKey].filter((key): key is string => Boolean(key)))];
+});
+
+export const readOpenCodeGoCredentialFingerprint = Effect.fn("readOpenCodeGoCredentialFingerprint")(
+  function* (environment: NodeJS.ProcessEnv) {
+    const keys = yield* readOpenCodeGoKeys(environment);
+    const digest = yield* Digest.Digest;
+    const serialized = yield* encodeKeys(keys);
+    return yield* digest
+      .digest(Digest.sha256, new TextEncoder().encode(serialized))
+      .pipe(Effect.map(Hex.encode));
+  },
+  Effect.orElseSucceed(() => undefined),
+);
+
 /** External OpenCode servers own their credentials; never read the host's account for them. */
 export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(function* (input: {
   readonly enabled: boolean;
@@ -93,59 +144,34 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
   if (!input.enabled || input.serverUrl.trim()) return unsupported;
 
+  let credentialFingerprint: string | undefined;
+  let refreshAfter: number | undefined;
   return yield* Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const env = input.environment;
-    const dataHome =
-      env.XDG_DATA_HOME ||
-      path.join(
-        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
-        ".local",
-        "share",
-      );
-    const authPath = path.join(dataHome, "opencode", "auth.json");
-    const contents =
-      env.OPENCODE_AUTH_CONTENT ||
-      (yield* fs.readFileString(authPath).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-      ));
-    const auth = yield* decodeAuthFile(contents);
-    const apiAuth = decodeApiAuth(auth["opencode-go"]);
-    // OpenCode overlays stored API credentials after environment credentials.
-    const goKey = (Option.isSome(apiAuth) ? apiAuth.value.key : env.OPENCODE_API_KEY)?.trim();
-    // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
-    // overrides local credentials, including the Console connection.
-    const databaseFile = env.OPENCODE_DB ?? "opencode.db";
-    const databasePath = path.resolve(dataHome, "opencode", databaseFile);
-    const storedKeys =
-      env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
-        ? []
-        : [
-            yield* readStoredApiKey(databasePath, "opencode"),
-            // OpenCode 2 imports auth.json once, so a replaced Go key only exists here.
-            yield* readStoredApiKey(databasePath, "opencode-go"),
-          ];
-    const keys = [...new Set([...storedKeys, goKey].filter((key): key is string => Boolean(key)))];
+    const keys = yield* readOpenCodeGoKeys(input.environment);
     let apiKey = keys[0];
     if (!apiKey) return unsupported;
 
     const client = yield* HttpClient.HttpClient;
-    const readUsage = (key: string) =>
-      client.execute(
+    const digest = yield* Digest.Digest;
+    const readUsage = Effect.fn("readOpenCodeGoUsageLimits.readUsage")(function* (key: string) {
+      credentialFingerprint = undefined;
+      // Unkeyed hashes match across environments; random Go keys resist offline guessing.
+      credentialFingerprint = yield* digest
+        .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${key}`))
+        .pipe(Effect.map(Hex.encode), Effect.orDie);
+      return yield* client.execute(
         HttpClientRequest.get("https://opencode.ai/zen/go/v1/usage").pipe(
           HttpClientRequest.bearerToken(key),
         ),
       );
+    });
     let response = yield* readUsage(apiKey);
     for (const key of keys.slice(1)) {
       if (response.status !== 401 && response.status !== 403) break;
       apiKey = key;
       response = yield* readUsage(apiKey);
     }
+    refreshAfter = usageReadRefreshAfter(response);
     // A valid Zen key can exist without a Go subscription.
     if (response.status === 403) return unsupported;
     const body = yield* HttpClientResponse.filterStatusOk(response).pipe(
@@ -176,23 +202,28 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
         resetsAt: DateTime.formatIso(body.usage.monthly.resetsAt),
       },
     ];
-    const digest = yield* Digest.Digest;
-    // Unkeyed hashes match across environments; random Go keys resist offline guessing.
-    const credentialFingerprint = yield* digest
-      .digest(Digest.sha256, new TextEncoder().encode(`opencode-go\0${apiKey}`))
-      .pipe(Effect.map(Hex.encode), Effect.orDie);
     return {
-      ...makeUsageLimits({ checkedAt, windows }),
+      ...makeUsageLimits({ checkedAt: usageResponseCheckedAt(response, checkedAt), windows }),
       credentialFingerprint,
     };
   }).pipe(
     Effect.timeout("5 seconds"),
-    Effect.orElseSucceed(() =>
-      makeUnavailableUsageLimits({
+    Effect.tapError((error) =>
+      Effect.sync(() => {
+        refreshAfter ??= usageReadRefreshAfter(error);
+      }),
+    ),
+    Effect.orElseSucceed(() => ({
+      ...makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
         message: "OpenCode Go could not read usage.",
       }),
-    ),
+      ...(credentialFingerprint ? { credentialFingerprint } : {}),
+    })),
+    Effect.map((limits) => ({
+      ...limits,
+      ...(refreshAfter !== undefined ? { refreshAfter } : {}),
+    })),
   );
 });

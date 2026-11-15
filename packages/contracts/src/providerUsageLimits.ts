@@ -46,6 +46,9 @@ export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 /** Clear bars for unavailable accounts; retain last good bars after a failed probe. */
 export const ServerProviderUsageLimits = Schema.Struct({
   checkedAt: IsoDateTime,
+  /** Server cache deadline in epoch milliseconds, independent of the sample time. */
+  refreshAfter: Schema.optional(NonNegativeInt),
+  stale: Schema.optional(Schema.Boolean),
   windows: ForwardCompatibleArray(ServerProviderUsageWindow),
   /** A $0 monthly spend cap has no percentage, so it cannot be a window. */
   zeroSpendCap: Schema.optional(Schema.Boolean),

@@ -1,3 +1,5 @@
+import { makeUsageHttpClient } from "@t3tools/provider-core/server/usageLimits";
+import { HttpClient } from "effect/http";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { ProviderCredentialError } from "@t3tools/provider-core/server/errors";
 import * as Digest from "effect/crypto/Digest";
@@ -24,11 +26,16 @@ export const layer = Layer.effect(
     const secrets = yield* ServerSecretStore.ServerSecretStore;
     const digest = yield* Digest.Digest;
     const fileSystem = yield* FileSystem.FileSystem;
+    const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+    const usageHttpClient = Option.isSome(httpClient)
+      ? yield* makeUsageHttpClient(httpClient.value)
+      : undefined;
     // Optional so standalone provider layers in tests probe at once.
     const lifecycleEvents = yield* Effect.serviceOption(
       ServerLifecycleEvents.ServerLifecycleEvents,
     );
     return ProviderHost.ProviderHost.of({
+      ...(usageHttpClient ? { usageHttpClient } : {}),
       paths: {
         cwd: config.cwd,
         baseDir: config.baseDir,

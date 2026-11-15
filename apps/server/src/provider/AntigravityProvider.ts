@@ -1,5 +1,10 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  UsagePolling,
+  UsageAccountReset,
+  makeUnavailableUsageLimits,
+} from "@t3tools/provider-core/server/usageLimits";
+import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
   type AntigravitySettings,
@@ -10,6 +15,7 @@ import {
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -181,6 +187,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const authUncheckedMessage = usesCredentials
     ? `Antigravity is installed. Connect with ${options.auth.label} to load models.`
     : AUTH_UNCHECKED_MESSAGE;
+  const pendingUsage = (checkedAt: string) =>
+    options.probeUsage
+      ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+      : undefined;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const initialDraft = {
     ...buildServerProvider({
@@ -198,6 +208,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         version: null,
         status: "warning",
         auth: { status: "unknown", ...(options.auth ? { type: options.auth.type } : {}) },
+        ...(options.probeUsage ? { usageLimits: pendingUsage(checkedAt)! } : {}),
         message: settings.enabled
           ? "Checking Antigravity availability."
           : "Antigravity is disabled in T3 Code settings.",
@@ -231,25 +242,29 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   // The quota read can take 30 seconds, so it never blocks readiness or a session start.
   // One read runs at a time; sign-in and sign-out interrupt it so a stale account never lands.
-  const usageRead = yield* FiberHandle.make();
+  const usageRead = yield* FiberHandle.make<unknown, never>();
   const republish = yield* Deferred.make<Effect.Effect<ServerProvider>>();
   const scope = yield* Effect.scope;
   const refreshUsage = Effect.fn("AntigravityProvider.refreshUsage")(function* () {
-    if (!options.probeUsage || (yield* PublishingUsage)) return;
+    if (!options.probeUsage || (yield* PublishingUsage) || !(yield* UsagePolling)) return;
     yield* FiberHandle.run(
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          Effect.gen(function* () {
+            const refreshAfter =
+              probed.refreshAfter ?? (yield* Clock.currentTimeMillis) + 5 * 60_000;
+            yield* SubscriptionRef.update(metadata, (state) => ({
+              ...state,
+              draft: {
+                ...state.draft,
+                usageLimits: resolveUsageLimitsAfterProbe({
+                  published: state.draft.usageLimits,
+                  probed: { ...probed, refreshAfter },
+                }),
+              },
+            }));
+          }),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(
@@ -297,6 +312,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
+    const usageRetryAfter =
+      initialized === undefined && (yield* UsagePolling) && !(yield* PublishingUsage)
+        ? (yield* Clock.currentTimeMillis) + 5 * 60_000
+        : undefined;
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
@@ -317,7 +336,15 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           version: version === "unknown" ? draft.version : version || draft.version,
           status: errorMessage ? "error" : authenticated ? "ready" : "warning",
           checkedAt: updatedAt,
-          usageLimits: missingInstallation ? undefined : draft.usageLimits,
+          usageLimits: missingInstallation
+            ? undefined
+            : usageRetryAfter !== undefined && draft.usageLimits
+              ? {
+                  ...draft.usageLimits,
+                  stale: true,
+                  refreshAfter: Math.max(usageRetryAfter, draft.usageLimits.refreshAfter ?? 0),
+                }
+              : draft.usageLimits,
           ...(missingInstallation
             ? {
                 models: [],
@@ -389,6 +416,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           installed: true,
           status: "ready",
           version: started.initializeResult.agentInfo?.version || draft.version,
+          usageLimits: draft.usageLimits ?? pendingUsage(updatedAt),
           auth: {
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",
@@ -522,7 +550,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: {
+      ...managed,
+      getSnapshot,
+      refreshUsage: managed.refreshUsage!.pipe(Effect.andThen(FiberHandle.awaitEmpty(usageRead))),
+    },
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
@@ -539,6 +571,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         Deferred.await(republish).pipe(
           Effect.flatten,
           Effect.provideService(PublishingUsage, true),
+          Effect.provideService(UsageAccountReset, true),
         ),
       ),
       Effect.asVoid,
