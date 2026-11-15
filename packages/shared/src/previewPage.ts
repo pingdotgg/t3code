@@ -661,7 +661,9 @@ type SnapshotInput = {
 /** The scale a page renders at and its viewport in device-independent pixels. */
 const renderingOf = async (input: SnapshotInput) => {
   if (input.renderScale !== "display") {
-    // Conn: read the CSS viewport; a desktop-hosted page has no Playwright viewport size.
+    // Conn: a desktop-hosted page has no Playwright viewport size, so its CSS viewport is read.
+    const sized = input.page.viewportSize();
+    if (sized !== null) return { renderScale: input.renderScale, viewport: sized };
     const { cssVisualViewport } = await input.cdp.send("Page.getLayoutMetrics");
     const viewport = {
       width: cssVisualViewport.clientWidth,

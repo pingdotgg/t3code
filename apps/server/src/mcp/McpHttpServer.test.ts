@@ -747,7 +747,7 @@ it.effect("treats null snapshot options like omitted ones", () =>
       const nulls = yield* callSnapshot({ tabId: null, includeImage: null, save: null });
 
       expect(nulls).toEqual(omitted);
-      expect(inputs).toEqual([{}, {}]);
+      expect(inputs).toEqual([{ pixelsRequired: false }, { pixelsRequired: false }]);
     }),
   ).pipe(Effect.provide(layerTest)),
 );
