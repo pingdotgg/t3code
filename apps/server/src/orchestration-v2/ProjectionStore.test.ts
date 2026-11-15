@@ -4745,6 +4745,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
         const oldWork = window.projection.visibleTurnItems.find((row) => row.item.deferredWork);
         assert.strictEqual(oldWork?.item.deferredWork?.itemCount, 987);
+        // A jump to an entry reads the full index, which folds the same group.
+        const jump = yield* historyPage(
+          threadId,
+          encodeThreadHistoryCursor({
+            snapshotSequence: 0,
+            sourceThreadId: threadId,
+            sourceItemId: "turn-item:bounded-sql-history:1000",
+            position: 1000,
+          }),
+          oldWork!.sourceItemId,
+          false,
+          "deferred",
+        );
+        assert.strictEqual(
+          jump.items.find((row) => row.item.deferredWork)?.item.deferredWork?.itemCount,
+          987,
+        );
         let cursor: string | null = oldWork!.item.deferredWork!.cursor;
         const loaded = new Set<TurnItemId>();
         for (let pages = 0; cursor !== null; pages += 1) {
