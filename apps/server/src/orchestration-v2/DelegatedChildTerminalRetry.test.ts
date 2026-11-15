@@ -41,11 +41,12 @@ type ParentRead = {
 };
 
 // The parent hears of a child only from the reaction to the child's terminal run.
-// `failRead` stands in for a storage error, such as a full disk, and fails the first read it accepts.
+// The injected failure stands in for a storage error, such as a full disk, and fails once.
 const runDelegation = (input: {
   readonly name: string;
   readonly parentEndsFirst: boolean;
-  readonly failRead: (read: ParentRead) => Effect.Effect<boolean>;
+  readonly failRead?: (read: ParentRead) => Effect.Effect<boolean>;
+  readonly failChildRunMessage?: boolean;
 }) =>
   Effect.gen(function* () {
     const cwd = yield* checkpointWorkspace(input.name);
@@ -145,12 +146,27 @@ const runDelegation = (input: {
           ...store,
           getThreadRecords: (threadId, fields, filter) =>
             Effect.gen(function* () {
-              if (armed && (yield* input.failRead({ store, threadId, fields, filter }))) {
+              if (
+                armed &&
+                input.failRead !== undefined &&
+                (yield* input.failRead({ store, threadId, fields, filter }))
+              ) {
                 armed = false;
                 return yield* new ProjectionStore.ProjectionStoreReadError({ threadId });
               }
               return yield* store.getThreadRecords(threadId, fields, filter);
             }),
+          getRunMessage: (threadId, runId) => {
+            if (
+              !armed ||
+              !input.failChildRunMessage ||
+              !IdAllocator.isDelegatedTaskThread(threadId)
+            ) {
+              return store.getRunMessage(threadId, runId);
+            }
+            armed = false;
+            return Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }));
+          },
         }),
       },
     );
@@ -300,5 +316,13 @@ it.effect("an idle parent is woken when its wake fails after the task settles", 
             Effect.map((records) => records.subagents.some((task) => task.result !== null)),
             Effect.orDie,
           ),
+  }),
+);
+
+it.effect("a delegated child reaches its parent after its own delivery read fails", () =>
+  runDelegation({
+    name: "delegated-child-terminal-delivery-read",
+    parentEndsFirst: false,
+    failChildRunMessage: true,
   }),
 );

@@ -15807,10 +15807,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ),
           );
         }
-        yield* threadDispatch.withLock(
-          threadId,
-          finalizeDelegatedCompletionDelivery(threadId, run.id),
-        );
+        yield* threadDispatch
+          .withLock(threadId, finalizeDelegatedCompletionDelivery(threadId, run.id))
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Failed to settle a delegated completion delivery", {
+                threadId,
+                runId: run.id,
+                cause,
+              }),
+            ),
+          );
         yield* threadDispatch
           .withLock(
             threadId,
