@@ -168,6 +168,7 @@ export function classifyRelayClientOutput(
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
   }
+  // cloudflared logs a browser closing its request mid-stream as ERR; the tunnel itself is fine.
   if (
     /\bERR\s+(?:Request failed\s+)?error="Incoming request ended abruptly: context canceled"(?:\s|$)/u.test(
       line,
