@@ -97,9 +97,9 @@ const refuseSwitch: CheckoutInput["switchRef"] = () => {
   throw new Error("An occupied branch must not trigger checkout");
 };
 
-function selectBranch(switchRef: CheckoutInput["switchRef"]) {
+function selectBranch(switchRef: CheckoutInput["switchRef"], picked = branch) {
   return checkoutNewTaskBranch({
-    branch,
+    branch: picked,
     project: { environmentId, workspaceRoot: cwd },
     workspaceMode: "local",
     readRefs,
@@ -135,6 +135,41 @@ async function addRemote(remoteName: string, sourceRef = branch.name) {
 }
 
 describe("new-task branch checkout", () => {
+  // The picker's list can say the branch is checked out after Git moved on.
+  async function pickWhileCurrent() {
+    await git("checkout", branch.name);
+    const listed = await readRefs({ environmentId, input: { cwd, query: branch.name } });
+    if (listed._tag !== "Success") throw new Error("List failed");
+    const picked = listed.value.refs.find((ref) => ref.name === branch.name);
+    if (!picked?.current) throw new Error("The branch was not listed as current");
+    await git("checkout", "main");
+    return picked;
+  }
+
+  it("checks out a branch listed as current after the project switched away", async () => {
+    const picked = await pickWhileCurrent();
+    expect((await selectBranch(switchRef, picked))._tag).toBe("Success");
+    expect((await git("branch", "--show-current")).stdout.trim()).toBe(branch.name);
+    expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe("feature\n");
+  });
+
+  it("reuses the worktree a branch listed as current has since moved to", async () => {
+    const picked = await pickWhileCurrent();
+    const worktreePath = NodePath.join(directory, "moved-worktree");
+    await git("worktree", "add", worktreePath, branch.name);
+    const result = await selectBranch(refuseSwitch, picked);
+    if (result._tag !== "Success") throw new Error("Checkout failed");
+    expect(result.value.worktreePath).toBe(worktreePath);
+    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
+  });
+
+  it("fails for a branch listed as current that has since been deleted", async () => {
+    const picked = await pickWhileCurrent();
+    await git("branch", "-D", branch.name);
+    expect((await selectBranch(switchRef, picked))._tag).toBe("Failure");
+    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
+  });
+
   it("switches to a free branch and clears its historical worktree path", async () => {
     const previousWorktree = NodePath.join(directory, "previous-worktree");
     await git("worktree", "add", previousWorktree, branch.name);
