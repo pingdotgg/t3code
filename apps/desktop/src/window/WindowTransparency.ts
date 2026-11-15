@@ -7,9 +7,8 @@ import {
 
 /**
  * Electron's `setOpacity` only works on Windows and macOS. Linux has no window-level
- * opacity, so a window that should fade is created `transparent` and the renderer fades
- * its own content. `transparent` cannot be toggled after creation, which is why Linux
- * needs a restart the first time opacity drops below 100%.
+ * opacity, so its window is always created `transparent` (which cannot be toggled later) and
+ * the renderer makes its own surfaces see-through. With opaque surfaces it looks unchanged.
  */
 export function usesNativeWindowOpacity(platform: NodeJS.Platform): boolean {
   return platform === "win32" || platform === "darwin";
@@ -25,11 +24,8 @@ export function nativeWindowOpacity(opacity: number | undefined): number {
   return clampWindowOpacity(opacity) / 100;
 }
 
-export function shouldCreateTransparentWindow(
-  platform: NodeJS.Platform,
-  opacity: number | undefined,
-): boolean {
-  return !usesNativeWindowOpacity(platform) && clampWindowOpacity(opacity) < MAX_WINDOW_OPACITY;
+export function shouldCreateTransparentWindow(platform: NodeJS.Platform): boolean {
+  return platform === "linux";
 }
 
 export function resolveWindowTransparencyMode(input: {

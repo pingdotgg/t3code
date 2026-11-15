@@ -490,10 +490,7 @@ export const make = Effect.gen(function* () {
         onSome: (settings) => settings.windowOpacity,
       },
     );
-    const createTransparent = shouldCreateTransparentWindow(
-      environment.platform,
-      savedWindowOpacity,
-    );
+    const createTransparent = shouldCreateTransparentWindow(environment.platform);
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {

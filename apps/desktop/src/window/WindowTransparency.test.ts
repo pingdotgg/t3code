@@ -19,12 +19,10 @@ describe("WindowTransparency", () => {
     expect(nativeWindowOpacity(55)).toBe(0.55);
   });
 
-  it("creates a transparent window only on Linux and only when it should fade", () => {
-    expect(shouldCreateTransparentWindow("linux", 100)).toBe(false);
-    expect(shouldCreateTransparentWindow("linux", undefined)).toBe(false);
-    expect(shouldCreateTransparentWindow("linux", 80)).toBe(true);
-    expect(shouldCreateTransparentWindow("win32", 80)).toBe(false);
-    expect(shouldCreateTransparentWindow("darwin", 40)).toBe(false);
+  it("creates a transparent window on Linux, where the renderer fades its own surfaces", () => {
+    expect(shouldCreateTransparentWindow("linux")).toBe(true);
+    expect(shouldCreateTransparentWindow("win32")).toBe(false);
+    expect(shouldCreateTransparentWindow("darwin")).toBe(false);
   });
 
   it("tells the renderer who fades the window", () => {

@@ -128,6 +128,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
+  /* How opaque the app's backdrop surfaces are; below 100% the window or a video shows through. */
+  --surface-alpha: 100%;
   /* A split pane's header leaves room for the panel controls fixed at the window's top right. */
   --workspace-split-header-end: calc(var(--workspace-controls-right) + 7.5rem);
   --chat-content-max-width: 46rem;
@@ -274,13 +276,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-card: var(--card);
   --color-code: var(--code-background);
   --color-foreground: var(--contrast-foreground);
-  --color-background: var(--background);
+  --color-background: color-mix(in oklab, var(--background) var(--surface-alpha), transparent);
   --color-message: var(--message-surface);
   --color-message-foreground: var(--contrast-message-foreground);
   --color-message-action: var(--message-action);
   --color-message-action-foreground: var(--message-action-foreground);
   --color-message-action-hover: var(--message-action-hover);
-  --color-sidebar: var(--sidebar);
+  --color-sidebar: color-mix(in oklab, var(--sidebar) var(--surface-alpha), transparent);
   --color-sidebar-foreground: var(--contrast-sidebar-foreground);
   --color-sidebar-muted-foreground: var(--contrast-sidebar-muted-foreground);
   --color-sidebar-control-surface: var(--sidebar-control-surface);
@@ -733,6 +735,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   html,
   body {
     background-color: var(--app-chrome-background);
+  }
+  /* See-through backdrops: the app's own surfaces carry the alpha, so the page under them must
+     paint nothing or the layers compound back to opaque. Beats the theme's inline colour. */
+  html:is([data-window-translucent], [data-video-background]),
+  html:is([data-window-translucent], [data-video-background]) body {
+    background-color: transparent !important;
   }
   body {
     @apply text-foreground relative;

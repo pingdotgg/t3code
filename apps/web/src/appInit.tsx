@@ -65,14 +65,17 @@ import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPicke
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { resolveActiveThreadRouteRef, resolveThreadRouteTarget } from "./threadRoutes";
 
+/** Backdrop surfaces turn see-through; text and controls stay solid so they remain readable. */
 function applyContentWindowOpacity(root: HTMLElement, windowOpacity: number): void {
   if (windowOpacity >= 100) {
-    root.style.removeProperty("opacity");
+    root.style.removeProperty("--surface-alpha");
     delete root.dataset.windowTranslucent;
   } else {
-    root.style.setProperty("opacity", `${windowOpacity / 100}`);
+    root.style.setProperty("--surface-alpha", `${windowOpacity}%`);
     root.dataset.windowTranslucent = "";
   }
+  // The theme copies the surface colour onto the page; refresh it so no stale alpha is left behind.
+  syncBrowserChromeTheme();
 }
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
