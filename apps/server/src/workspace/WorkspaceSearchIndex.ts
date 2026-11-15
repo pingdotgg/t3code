@@ -16,6 +16,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as LayerMap from "effect/LayerMap";
@@ -690,8 +691,31 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       .pipe(Effect.option);
   });
 
+  // The files fff indexed, so git results keep fff's scope (.ignore, hidden files, size limits).
+  const listIndexedFiles = Effect.fn("WorkspaceSearchIndex.listIndexedFiles")(function* () {
+    const deadline = (yield* Clock.currentTimeMillis) + WORKSPACE_INDEX_SCAN_TIMEOUT_MS;
+    while (true) {
+      const progress = yield* Effect.promise(() =>
+        finder.getScanProgressAsync().catch(() => undefined),
+      );
+      if (progress?.ok && !progress.value.isScanning) {
+        const result = yield* Effect.promise(() =>
+          finder
+            .fileSearchAsync("", { pageSize: progress.value.scannedFilesCount + 1 })
+            .catch(() => undefined),
+        );
+        if (!result?.ok) return Option.none<ReadonlySet<string>>();
+        return Option.some<ReadonlySet<string>>(
+          new Set(result.value.items.map((item) => toPosixPath(item.relativePath, hostIsWindows))),
+        );
+      }
+      if ((yield* Clock.currentTimeMillis) >= deadline) return Option.none<ReadonlySet<string>>();
+      yield* Effect.sleep("50 millis");
+    }
+  });
+
   // fff's grep before its content index is ready opens every file itself, as slowly as the build.
-  // None when git cannot search this folder (not a repository, git missing).
+  // None when git cannot search this folder (not a repository, git missing, no PCRE for a regex).
   const searchContentsWithGit = Effect.fn("WorkspaceSearchIndex.searchContentsWithGit")(function* (
     input: Omit<ProjectSearchContentsInput, "cwd">,
   ): Effect.fn.Return<Option.Option<ProjectSearchContentsResult>> {
@@ -700,10 +724,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       maxMatchesPerFile: CONTENT_SEARCH_MAX_MATCHES_PER_FILE,
       onlyMatching: false,
     };
+    const indexedFilesFiber = yield* Effect.forkChild(listIndexedFiles());
     let regexMode = input.useRegex;
     let regexFallbackError: string | undefined;
     let result = yield* runGitGrep(input.query, { ...options, regexMode });
     if (regexMode && Option.isSome(result) && result.value.exitCode === 128) {
+      if (/USE_LIBPCRE|Perl-compatible/i.test(result.value.stderr)) return Option.none();
       // fff searches an invalid pattern as a literal and reports why.
       regexFallbackError = result.value.stderr.trim().split("\n")[0] || "Invalid regex";
       regexMode = false;
@@ -739,6 +765,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       ? undefined
       : new RegExp(escapeRegExp(input.query), input.caseSensitive ? "gu" : "giu");
 
+    const indexedFiles = yield* Fiber.join(indexedFilesFiber);
+    if (Option.isNone(indexedFiles)) return Option.none();
     const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
     for (const record of parseGitGrepRecords(
       result.value.stdout,
@@ -746,6 +774,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       result.value.stdoutTruncated,
     )) {
       const [relativePath, lineNumber, rawLine] = record as [string, string, string];
+      if (!indexedFiles.value.has(relativePath)) continue;
       const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
         0,
         CONTENT_LINE_MAX_LENGTH,

@@ -12,6 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import { ChildProcessSpawner } from "effect/process";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -308,6 +309,8 @@ it.live("answers content searches with git grep while a slow content index build
       "const Needle = 1;\r\nneedles(a.b);\nnone\n",
     );
     yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "needle\n");
+    // Left out of fff's index (as `.ignore` would), so git results must leave it out too.
+    yield* fileSystem.writeFileString(path.join(cwd, "generated.txt"), "needle\n");
 
     let isWarmupComplete = false;
     const grep = vi.fn(async () => ({
@@ -326,12 +329,22 @@ it.live("answers content searches with git grep while a slow content index build
       waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
       getScanProgressAsync: async () => ({
         ok: true as const,
-        value: { isScanning: false, isWarmupComplete },
+        value: { isScanning: false, isWarmupComplete, scannedFilesCount: 1 },
+      }),
+      fileSearchAsync: async () => ({
+        ok: true as const,
+        value: { items: [fileItem("src/a.ts")], scores: [], totalMatched: 1 },
       }),
       watch: () => ({ ok: true as const, value: () => undefined }),
       grepAsync: grep,
     } as unknown as FileFinder;
-    vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+    const noPcreFinder = {
+      ...finder,
+      waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: true })),
+    } as unknown as FileFinder;
+    vi.spyOn(FileFinder, "create")
+      .mockReturnValueOnce({ ok: true, value: finder })
+      .mockReturnValueOnce({ ok: true, value: noPcreFinder });
 
     const searchIndex = yield* WorkspaceSearchIndex.make(cwd, "content");
     const search = (input: Partial<Parameters<typeof searchIndex.searchContents>[0]>) =>
@@ -376,9 +389,38 @@ it.live("answers content searches with git grep while a slow content index build
     expect(yield* search({ limit: 1 })).toMatchObject({ truncated: true });
     expect(grep).not.toHaveBeenCalled();
 
+    // A git without PCRE must not turn a valid regex into a literal; fff answers once ready.
+    const noPcreIndex = yield* WorkspaceSearchIndex.make(cwd, "content").pipe(
+      Effect.provideService(
+        VcsProcess.VcsProcess,
+        VcsProcess.VcsProcess.of({
+          run: (input) =>
+            input.args.includes("-P")
+              ? Effect.succeed({
+                  exitCode: ChildProcessSpawner.ExitCode(128),
+                  stdout: "",
+                  stderr:
+                    "fatal: cannot use Perl-compatible regexes when not compiled with USE_LIBPCRE\n",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                })
+              : vcsProcess.run(input),
+        }),
+      ),
+    );
+    const regex = yield* noPcreIndex.searchContents({
+      query: "ne+dles?",
+      limit: 10,
+      caseSensitive: false,
+      wholeWord: false,
+      useRegex: true,
+    });
+    expect(regex.regexFallbackError).toBeUndefined();
+    expect(grep).toHaveBeenCalledTimes(1);
+
     isWarmupComplete = true;
     yield* search({});
-    expect(grep).toHaveBeenCalledTimes(1);
+    expect(grep).toHaveBeenCalledTimes(2);
     expect(finder.destroy).not.toHaveBeenCalled();
   }).pipe(Effect.scoped, Effect.provide(testLayer)),
 );
