@@ -661,10 +661,18 @@ async fn ws(
         })
 }
 
+/// A periodic check that never catches up. tokio's default (`Burst`) fires every missed tick
+/// back to back: after a 3-day container freeze, 8,640 checks at once for a 30 s period.
+pub(crate) fn check_every(period: Duration) -> tokio::time::Interval {
+    let mut interval = tokio::time::interval(period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    interval
+}
+
 /// Resolves once `session_id` is revoked or expires, here or by another process (the CLI).
 async fn revoked(auth: &AuthStore, session_id: &str) {
     let mut changes = auth.subscribe();
-    let mut check = tokio::time::interval(Duration::from_secs(30));
+    let mut check = check_every(Duration::from_secs(30));
     loop {
         tokio::select! {
             change = changes.recv() => match change {
@@ -738,6 +746,24 @@ impl<T: IntoResponse> WithStatus for T {
 
 #[cfg(test)]
 mod tests {
+    /// A thaw after a freeze in which the monotonic clock ran on: one tick, then the period.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_check_fires_once_after_a_long_freeze() {
+        let mut check = super::check_every(std::time::Duration::from_secs(30));
+        check.tick().await;
+        for jump in [10 * 60, 2 * 3600, 3 * 86_400] {
+            tokio::time::advance(std::time::Duration::from_secs(jump)).await;
+            let mut ticks = 0;
+            while tokio::time::timeout(std::time::Duration::ZERO, check.tick())
+                .await
+                .is_ok()
+            {
+                ticks += 1;
+            }
+            assert_eq!(ticks, 1, "after +{jump}s");
+        }
+    }
+
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;

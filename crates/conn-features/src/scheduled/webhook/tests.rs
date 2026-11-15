@@ -695,3 +695,27 @@ async fn a_prompt_over_the_provider_limit_is_logged_and_not_run() {
         Some("The filled-in prompt is too long.")
     );
 }
+
+/// The one-minute windows read the service's wall clock, as T3's `takeRateSlot`
+/// (`nowMs - entry.at < 60_000`, `ScheduledTaskService.ts`). A full window is free again
+/// after any jump of a minute or more; a jump never fills one.
+#[test]
+fn rate_and_log_windows_clear_after_a_wall_clock_jump() {
+    use super::{RATE_LIMIT_PER_MINUTE, Slot, State};
+    let state = State::default();
+    let t0 = ms("2026-07-01T09:00:00.000Z");
+    for jump_s in [10 * 60, 2 * 3600, 3 * 86_400] {
+        let start = t0 + jump_s * 1000;
+        for n in 0..RATE_LIMIT_PER_MINUTE {
+            let slot = State::take_slot(&state.rate, "t", start, n as u64);
+            assert_eq!(slot, Slot::Allowed);
+        }
+        assert_eq!(
+            State::take_slot(&state.rate, "t", start, 99),
+            Slot::FirstRejected
+        );
+        assert!(state.run_window_full("t", start));
+        assert!(State::take_log_slot(&state.dedupe_log, "t", start, 1));
+        assert!(!State::take_log_slot(&state.dedupe_log, "t", start, 1));
+    }
+}

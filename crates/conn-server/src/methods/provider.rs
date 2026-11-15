@@ -16,7 +16,9 @@
 //! `consumeResetCredit`) stay unregistered and answer "not supported".
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use conn_support::time::Mark;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -93,11 +95,21 @@ pub struct ProviderStatus {
 #[derive(Clone, Debug)]
 struct Lease {
     client_id: String,
-    expires: Instant,
+    /// When it was taken, on both clocks: T3 expires leases by the wall clock
+    /// (`isLeaseActive`), so a lease taken before a container froze ends on wake.
+    since: Mark,
+    ttl: Duration,
     /// `isForegroundLease`: visible, and focused or recently used.
     foreground: bool,
     /// `provider-status` scopes: `None` for every instance, else the instance id.
     scopes: Vec<Option<String>>,
+}
+
+impl Lease {
+    /// Neither clock has passed the TTL.
+    fn active_at(&self, now: &Mark) -> bool {
+        self.since.elapsed_to(now) < self.ttl
+    }
 }
 
 /// `DEFAULT_LEASE_TTL_MS` and `MAX_LEASE_TTL_MS`.
@@ -133,6 +145,10 @@ impl ProviderStatus {
 
     /// `server.reportClientActivity` (`ClientActivityReportInput`): renews the client's lease.
     pub fn report_activity(&self, input: &Value) {
+        self.report_activity_at(input, Mark::now());
+    }
+
+    fn report_activity_at(&self, input: &Value, now: Mark) {
         let Some(client_id) = input["clientId"]
             .as_str()
             .map(str::trim)
@@ -156,14 +172,14 @@ impl ProviderStatus {
             .collect();
         let lease = Lease {
             client_id: client_id.to_owned(),
-            expires: Instant::now() + ttl,
+            since: now,
+            ttl,
             foreground: input["visible"] == true
                 && (input["focused"] == true || input["recentlyInteracted"] == true),
             scopes,
         };
         let mut leases = self.leases();
-        let now = Instant::now();
-        leases.retain(|l| l.expires > now && l.client_id != lease.client_id);
+        leases.retain(|l| l.active_at(&now) && l.client_id != lease.client_id);
         if leases.len() >= MAX_LEASES {
             leases.remove(0);
         }
@@ -173,9 +189,12 @@ impl ProviderStatus {
     /// `shouldRunScopeWork` for `provider-status` (generic or this instance): an active lease
     /// with the scope, in the foreground unless the profile is `performance`.
     fn wants(&self, instance_id: &str, performance: bool) -> bool {
-        let now = Instant::now();
+        self.wants_at(instance_id, performance, &Mark::now())
+    }
+
+    fn wants_at(&self, instance_id: &str, performance: bool, now: &Mark) -> bool {
         self.leases().iter().any(|lease| {
-            lease.expires > now
+            lease.active_at(now)
                 && (performance || lease.foreground)
                 && lease
                     .scopes
@@ -522,5 +541,123 @@ mod tests {
         assert_eq!(entry["message"], "Grok is disabled in T3 Code settings.");
         let _: conn_contract::ServerProvidersItemItem =
             conn_contract::from_json(entry.clone()).unwrap();
+    }
+
+    fn lease_input() -> Value {
+        json!({"clientId": "web-1", "visible": true, "focused": true, "ttlMs": 45_000,
+               "scopes": [{"type": "provider-status"}]})
+    }
+
+    /// A lease taken before Orbit froze the container ends on wake by the wall clock, as T3's
+    /// `isLeaseActive` (`BackgroundPolicy.ts`), whether or not the monotonic clock moved. A
+    /// wall clock stepped back does not keep it alive.
+    #[test]
+    fn a_lease_ends_after_a_jump_on_either_clock() {
+        let status = ProviderStatus::default();
+        let taken = Mark::now();
+        status.report_activity_at(&lease_input(), taken);
+        let wall = |secs: u64| Mark {
+            wall_ms: taken.wall_ms + secs * 1000,
+            mono: taken.mono,
+        };
+        let mono = |secs: u64| Mark {
+            wall_ms: taken.wall_ms,
+            mono: taken.mono + Duration::from_secs(secs),
+        };
+        assert!(status.wants_at("grok", false, &wall(30)));
+        for jump in [10 * 60, 2 * 3600, 3 * 86_400] {
+            assert!(
+                !status.wants_at("grok", false, &wall(jump)),
+                "wall +{jump}s"
+            );
+            assert!(
+                !status.wants_at("grok", false, &mono(jump)),
+                "monotonic +{jump}s"
+            );
+        }
+        let stepped_back = Mark {
+            wall_ms: taken.wall_ms - 3_600_000,
+            mono: taken.mono + Duration::from_secs(60),
+        };
+        assert!(!status.wants_at("grok", false, &stepped_back));
+        // A renewal after the wake counts again.
+        status.report_activity_at(&lease_input(), wall(3 * 86_400));
+        assert!(status.wants_at("grok", false, &wall(3 * 86_400 + 1)));
+    }
+
+    /// Counts the periodic probes.
+    struct Counted {
+        id: conn_contract::ProviderInstanceId,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl conn_provider::Provider for Counted {
+        fn instance_id(&self) -> &conn_contract::ProviderInstanceId {
+            &self.id
+        }
+        fn driver(&self) -> &str {
+            "grok"
+        }
+        fn capabilities(
+            &self,
+        ) -> conn_provider::BoxFuture<
+            '_,
+            conn_provider::ProviderResult<conn_contract::ProviderCapabilities>,
+        > {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "capabilities",
+                })
+            })
+        }
+        fn open_session(
+            &self,
+            _input: conn_provider::OpenSessionInput,
+        ) -> conn_provider::BoxFuture<'_, conn_provider::ProviderResult<conn_provider::OpenedSession>>
+        {
+            Box::pin(async {
+                Err(conn_provider::ProviderError::Unsupported {
+                    operation: "open_session",
+                })
+            })
+        }
+        fn refresh_status_on_interval(
+            &self,
+            _instance: Option<Value>,
+            _defer: bool,
+        ) -> conn_provider::BoxFuture<'_, bool> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { false })
+        }
+    }
+
+    /// A thaw after a long freeze in which the monotonic clock ran on: the 5-minute interval
+    /// fires once, not once per missed interval, as T3's `Effect.sleep` loop
+    /// (`managedProvider.ts`). The lease here is renewed on wake.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_probe_interval_fires_once_after_a_long_freeze() {
+        let counted = Arc::new(Counted {
+            id: "grok".into(),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let deps = Deps {
+            engine: None,
+            providers: vec![counted.clone()],
+            ..Deps::default()
+        };
+        start_status_refresh(&deps);
+        tokio::task::yield_now().await;
+        for (jump, total) in [(10 * 60, 1), (2 * 3600, 2), (3 * 86_400, 3)] {
+            deps.provider_status.report_activity(&lease_input());
+            tokio::time::advance(Duration::from_secs(jump)).await;
+            for _ in 0..10 {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(
+                counted.calls.load(std::sync::atomic::Ordering::SeqCst),
+                total,
+                "after +{jump}s"
+            );
+        }
     }
 }
