@@ -3,11 +3,16 @@ import * as NodeModule from "node:module";
 import * as NodeSea from "node:sea";
 import * as NodeURL from "node:url";
 
+import { enableCliCompileCache } from "./cliCompileCache.ts";
 import { isEntrypoint } from "./entrypoint.ts";
 
 // Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
 async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
   if (!NodeSea.isSea()) return import("./binMain.ts");
+
+  // The embedded CLI is one bundle, compiled whole on load, so binMain's own call comes too late.
+  // Caching it halves `t3` startup.
+  enableCliCompileCache();
 
   // Keep the executable's module URL so the CLI finds the web client and native packages beside it.
   const require = NodeModule.createRequire(import.meta.url);
