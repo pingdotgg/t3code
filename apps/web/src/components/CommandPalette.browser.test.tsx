@@ -81,7 +81,9 @@ describe("CommandPalette open intents", () => {
       document.dispatchEvent(pointer("pointerup", 50, window.innerHeight - 30));
     });
     expect(onDrop).toHaveBeenCalledOnce();
-    expect((onDrop.mock.calls[0]![0] as CustomEvent).detail).toEqual([{ environmentId, threadId }]);
+    expect((onDrop.mock.calls[0]![0] as CustomEvent).detail).toEqual([
+      { environmentId, threadId, title: "Drag this thread" },
+    ]);
     expect(screen.router?.state.location.pathname).toBe(pathname);
   });
 
