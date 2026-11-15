@@ -96,6 +96,7 @@ import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3too
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { textDirection } from "@t3tools/shared/textDirection";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
@@ -150,6 +151,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
+import { markdownReferenceDefinitions, withReferenceDefinitions } from "../../lib/markdownDocument";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -235,6 +237,8 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
+  agentWorkingDirectories,
+  findAgentDirectoryMatch,
   needsWorkspaceBasenameLookup,
   pickProjectLinkMatch,
   pickWorkspaceLinkMatch,
@@ -255,7 +259,11 @@ import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { environmentThreadShells, threadEnvironment } from "../../state/threads";
+import {
+  environmentThreadDetails,
+  environmentThreadShells,
+  threadEnvironment,
+} from "../../state/threads";
 import { ThreadWorkflowOpening, useWorkflowOpening } from "./thread-workflow-opening";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
@@ -277,6 +285,7 @@ import {
   ThreadMarkdownImageUnavailable,
   ThreadMarkdownImageView,
 } from "./ThreadMarkdownImage";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { formatMessageTimestamp } from "./messageTimestamp";
@@ -471,6 +480,8 @@ function MessageImage(props: {
   readonly className: string;
   readonly maxWidth?: number;
   readonly height?: number;
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
   readonly onLoad?: () => void;
   readonly onError?: () => void;
 }) {
@@ -485,11 +496,13 @@ function MessageImage(props: {
         })
       : null;
   return (
-    <ExpoImage
-      source={props.source}
-      cachePolicy="memory-disk"
+    <ZoomableImagePressable
+      accessibilityRole="imagebutton"
+      accessibilityLabel={props.accessibilityLabel}
+      onPress={props.onPress}
       style={[
         imageStyle,
+        { overflow: "hidden" },
         props.maxWidth !== undefined
           ? (displaySize ?? {
               width: Math.min(props.maxWidth, MARKDOWN_IMAGE_MAX_WIDTH),
@@ -499,13 +512,19 @@ function MessageImage(props: {
             ? { height: props.height }
             : undefined,
       ]}
-      contentFit={props.maxWidth === undefined ? "cover" : "contain"}
-      onLoad={(event) => {
-        if (props.maxWidth !== undefined) setSize(event.source);
-        props.onLoad?.();
-      }}
-      onError={props.onError}
-    />
+    >
+      <ExpoImage
+        source={props.source}
+        cachePolicy="memory-disk"
+        style={{ width: "100%", height: "100%" }}
+        contentFit={props.maxWidth === undefined ? "cover" : "contain"}
+        onLoad={(event) => {
+          if (props.maxWidth !== undefined) setSize(event.source);
+          props.onLoad?.();
+        }}
+        onError={props.onError}
+      />
+    </ZoomableImagePressable>
   );
 }
 
@@ -550,8 +569,12 @@ function MessageAttachmentImage(props: {
 
   return (
     <PresentationSource identifier={sourceIdentifier}>
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={props.attachmentId}
+        source={assetImageSource(props.environmentId, resource, uri)}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${props.name}`}
         onPress={() =>
           props.onPressPreview(
@@ -570,22 +593,15 @@ function MessageAttachmentImage(props: {
             }),
           )
         }
-      >
-        <MessageImage
-          source={assetImageSource(props.environmentId, resource, uri)}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-          onLoad={() => {
-            retriedImage.current = false;
-          }}
-          onError={() => {
-            if (retriedImage.current) return;
-            retriedImage.current = true;
-            void refreshAssetUrl();
-          }}
-        />
-      </Pressable>
+        onLoad={() => {
+          retriedImage.current = false;
+        }}
+        onError={() => {
+          if (retriedImage.current) return;
+          retriedImage.current = true;
+          void refreshAssetUrl();
+        }}
+      />
     </PresentationSource>
   );
 }
@@ -960,21 +976,18 @@ function PendingMessageMedia(props: {
   if (isImageAttachment(attachment)) {
     const uri = fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri);
     return (
-      <Pressable
-        accessibilityRole="imagebutton"
+      <MessageImage
+        key={attachment.id}
+        source={uri === null ? undefined : { uri }}
+        className={props.className}
+        maxWidth={props.maxWidth}
+        height={props.height}
         accessibilityLabel={`Open ${attachment.name}`}
         onPress={() => {
           const source = composerImageGallery([attachment])[0];
           if (source) props.onPressPreview(withGallery(source));
         }}
-      >
-        <MessageImage
-          source={uri === null ? undefined : { uri }}
-          className={props.className}
-          maxWidth={props.maxWidth}
-          height={props.height}
-        />
-      </Pressable>
+      />
     );
   }
   if (preview.uri === null) {
@@ -1066,10 +1079,17 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
   return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
 }
 
+/** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
+type MarkdownLinkReply = Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">;
+
 interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string) => void;
+  readonly onLinkPress: (href: string, reply?: MarkdownLinkReply) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
-  readonly onFileContextMenuAction: (href: string, actionId: string) => void;
+  readonly onFileContextMenuAction: (
+    href: string,
+    actionId: string,
+    reply?: MarkdownLinkReply,
+  ) => void;
   readonly onImagePress?: (href: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly fileEmbedLabel?: (href: string, standalone: boolean) => string | null;
@@ -1105,8 +1125,12 @@ function ArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const direction = textDirection(props.template.displayName);
   return (
-    <View className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3">
+    <View
+      className="my-2 min-w-0 flex-row items-center gap-3 rounded-2xl border border-border bg-card px-3 py-3"
+      style={direction ? { direction } : undefined}
+    >
       <View className="h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-subtle">
         <SymbolView
           name={ARTIFACT_TEMPLATE_SYMBOL_BY_KIND[props.template.artifactKind]}
@@ -1140,6 +1164,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
+  readonly reply?: MarkdownLinkReply | undefined;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
@@ -1149,6 +1174,9 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
     ...props.linkHandlers,
+    onLinkPress: (href) => props.linkHandlers.onLinkPress(href, props.reply),
+    onFileContextMenuAction: (href, actionId) =>
+      props.linkHandlers.onFileContextMenuAction(href, actionId, props.reply),
     linkCustomization: (href) =>
       withChipIcon(props.linkHandlers.linkCustomization?.(href), threadIcons.get(href)),
   };
@@ -1169,6 +1197,8 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 // Folds split first, so an artifact card inside a fold stays inside it.
 function AssistantMarkdownBlocks(props: {
   readonly markdown: string;
+  /** The reply's reference definitions, passed down by the enclosing fold. */
+  readonly definitions?: ReadonlyArray<string> | undefined;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -1176,15 +1206,20 @@ function AssistantMarkdownBlocks(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
   readonly models: ReturnType<typeof useModelMentions>;
 }) {
-  const blocks = useMemo(
-    () =>
-      splitMarkdownDetails(props.markdown).map((block) =>
-        block.kind === "details"
-          ? block
-          : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
-      ),
-    [props.markdown],
-  );
+  const { blocks, definitions } = useMemo(() => {
+    const blocks = splitMarkdownDetails(props.markdown).map((block) =>
+      block.kind === "details"
+        ? block
+        : { ...block, segments: splitCodexArtifactTemplateMarkdown(block.markdown) },
+    );
+    const [first] = blocks;
+    // A reply rendered as one document resolves its own references; skip the extra parse.
+    const whole = blocks.length === 1 && first?.kind === "markdown" && first.segments.length === 1;
+    return {
+      blocks,
+      definitions: props.definitions ?? (whole ? [] : markdownReferenceDefinitions(props.markdown)),
+    };
+  }, [props.markdown, props.definitions]);
   return blocks.map((block) => {
     if (block.kind === "details") {
       return (
@@ -1193,7 +1228,7 @@ function AssistantMarkdownBlocks(props: {
           summary={block.summary}
           initiallyOpen={block.open}
         >
-          <AssistantMarkdownBlocks {...props} markdown={block.body} />
+          <AssistantMarkdownBlocks {...props} markdown={block.body} definitions={definitions} />
         </MarkdownDetailsFold>
       );
     }
@@ -1212,7 +1247,9 @@ function AssistantMarkdownBlocks(props: {
       return (
         <SelectableMarkdownText
           key={`markdown:${offset}`}
-          markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
+          markdown={renderCodexInlineDirectivesAsMarkdown(
+            withReferenceDefinitions(segment.markdown, definitions),
+          )}
           skills={props.skills}
           models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
@@ -1730,6 +1767,24 @@ function renderFeedEntry(
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
       />
+    );
+  }
+
+  if (entry.type === "sent-message") {
+    return (
+      <View className="mb-1 px-1">
+        <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+          <AssistantMarkdownContent
+            markdown={entry.text}
+            environmentId={props.environmentId}
+            markdownStyles={markdownStyles.assistant}
+            linkHandlers={props.markdownLinkHandlers}
+            onUseArtifactTemplate={props.onUseArtifactTemplate}
+            renderImage={props.renderMarkdownImage}
+            skills={props.skills}
+          />
+        </MarkdownImageAvailableWidthContext>
+      </View>
     );
   }
 
@@ -2256,6 +2311,7 @@ function renderFeedEntry(
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
+              reply={message.projectedItem}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
               renderImage={props.renderMarkdownImage}
               skills={props.skills}
@@ -2845,6 +2901,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     linkPath: string,
     path: string,
     signal: AbortSignal,
+    reply: MarkdownLinkReply | undefined,
   ): Promise<string> => {
     const relativePath = resolveWorkspaceRelativeFilePath(props.workspaceRoot, path);
     if (
@@ -2876,6 +2933,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         root,
         entries: result._tag === "Success" ? result.value.entries : [],
       }));
+    const metadataOf = (target: string) =>
+      executeAtomQuery(
+        appAtomRegistry,
+        projectEnvironment.fileMetadata({
+          environmentId: props.environmentId,
+          input: { path: target },
+        }),
+        queryOptions,
+      );
     const lookup = async () => {
       const own = await searchRoot(workspaceRoot);
       let match = pickWorkspaceLinkMatch(relativePath, workspaceRoot, own.entries);
@@ -2900,15 +2966,35 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ? null
             : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
       }
+      if (match === null && reply !== undefined && !signal.aborted) {
+        // No project has the file, so it opens where the agent last worked, as written.
+        const agentRoots = agentWorkingDirectories(
+          appAtomRegistry.get(
+            environmentThreadDetails.quietThreadAtom(
+              scopeThreadRef(props.environmentId, props.threadId),
+            ),
+          )?.projection.visibleTurnItems ?? [],
+          reply,
+        ).filter((root) => root !== workspaceRoot);
+        const agentPaths = agentRoots.map((root) => resolveWorkspaceFilePath(root, relativePath));
+        if (agentPaths.length === 0) return relativePath;
+        const [original, ...found] = await Promise.all(
+          [originalPath, ...agentPaths].map(metadataOf),
+        );
+        if (original?._tag !== "Success" || original.value !== null) return relativePath;
+        const index = found.findIndex(
+          (result) => result._tag === "Success" && result.value?.kind === "file",
+        );
+        const literal = agentPaths[index];
+        if (literal !== undefined || !needsWorkspaceBasenameLookup(relativePath)) {
+          return literal ?? relativePath;
+        }
+        return (
+          (await findAgentDirectoryMatch(relativePath, agentRoots, searchRoot)) ?? relativePath
+        );
+      }
       if (!match || match === relativePath || signal.aborted) return relativePath;
-      const metadata = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.fileMetadata({
-          environmentId: props.environmentId,
-          input: { path: originalPath },
-        }),
-        queryOptions,
-      );
+      const metadata = await metadataOf(originalPath);
       // Another project's file never replaces a thread-local file the search missed.
       return metadata._tag === "Success" &&
         (needsWorkspaceBasenameLookup(relativePath) && !otherProject
@@ -2919,7 +3005,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     };
     return lookup().catch(() => relativePath);
   };
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const onMarkdownLinkPress = (href: string, imageEmbed = false, reply?: MarkdownLinkReply) => {
     markdownLinkRequest.current?.abort();
     const request = new AbortController();
     markdownLinkRequest.current = request;
@@ -2986,7 +3072,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (presentation.kind === "file") {
       const path = resolveFileLinkPath(props.workspaceRoot, presentation.path);
       if (path === null) return;
-      void findFileLinkTarget(presentation.path, path, request.signal).then((target) => {
+      void findFileLinkTarget(presentation.path, path, request.signal, reply).then((target) => {
         if (request.signal.aborted) return;
         void Haptics.selectionAsync();
         navigation.navigate("ThreadFile", {
@@ -3025,7 +3111,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         },
         standalone,
       ),
-    onLinkPress: onMarkdownLinkPress,
+    onLinkPress: (href, reply) => onMarkdownLinkPress(href, false, reply),
     linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
@@ -3058,7 +3144,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
-    onFileContextMenuAction: (href, actionId) => {
+    onFileContextMenuAction: (href, actionId, reply) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
@@ -3086,7 +3172,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           markdownLinkRequest.current?.abort();
           const request = new AbortController();
           markdownLinkRequest.current = request;
-          void findFileLinkTarget(presentation.path, path, request.signal).then((found) => {
+          void findFileLinkTarget(presentation.path, path, request.signal, reply).then((found) => {
             if (request.signal.aborted) return;
             const fullPath =
               props.workspaceRoot && !isAbsolutePath(found)
@@ -3111,7 +3197,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           return;
         }
         case "open-file":
-          onMarkdownLinkPress(href);
+          onMarkdownLinkPress(href, false, reply);
           return;
         case "save":
           shareFileChip(target);
@@ -3718,13 +3804,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   if (props.contentPresentation.kind === "unavailable" && props.queuedMessages.length === 0) {
     return (
-      <ThreadFeedPlaceholder
-        title={props.contentPresentation.title}
-        detail={props.contentPresentation.detail}
-        topInset={topContentInset}
-        bottomInset={bottomContentInset}
-        horizontalPadding={horizontalPadding}
-      />
+      <View style={{ flex: 1, marginLeft: contentLeftInset, marginRight: contentRightInset }}>
+        <ThreadFeedPlaceholder
+          title={props.contentPresentation.title}
+          detail={props.contentPresentation.detail}
+          topInset={topContentInset}
+          bottomInset={bottomContentInset}
+          horizontalPadding={horizontalPadding}
+        />
+      </View>
     );
   }
 
