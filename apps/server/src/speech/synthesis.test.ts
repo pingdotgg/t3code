@@ -276,6 +276,25 @@ it.effect.each(["openai", "xai", "openrouter"] as const)(
         const streamFailure = yield* Effect.flip(synthesize(provider, request));
         expect(streamFailure).toHaveProperty("cause");
         expect(streamFailure.message).not.toContain("private stream diagnostic");
+        const reading = Promise.withResolvers<void>();
+        upstream.mockResolvedValueOnce(
+          new Response(
+            // No buffer, so pull runs only once synthesis reads the body.
+            new ReadableStream<Uint8Array>(
+              {
+                pull: () => {
+                  reading.resolve();
+                  return new Promise(() => {});
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          ),
+        );
+        const stalled = yield* Effect.forkChild(Effect.flip(synthesize(provider, request)));
+        yield* Effect.promise(() => reading.promise);
+        yield* TestClock.adjust("2 minutes");
+        expect(yield* Fiber.join(stalled)).toMatchObject({ reason: "unavailable" });
         for (const operation of (provider === "openai"
           ? ["synthesis"]
           : ["catalog", "synthesis"]) as ReadonlyArray<"catalog" | "synthesis">) {

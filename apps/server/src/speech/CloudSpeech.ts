@@ -168,6 +168,7 @@ type SynthesisBackend = {
 
 // OpenAI accepts at most 4096 characters per request.
 const CLOUD_SYNTHESIS_TEXT_LIMIT = 4000;
+const SYNTHESIS_STALL_TIMEOUT = "30 seconds";
 
 function wave(samples: Float32Array) {
   const buffer = new ArrayBuffer(44 + samples.length * 2);
@@ -525,6 +526,11 @@ export const layer = Layer.effect(
               ? Effect.fail(unavailable())
               : Effect.succeed(chunk),
           ),
+          // The request timeout ends at the headers; a body that stalls must fail too.
+          Stream.timeoutOrElse({
+            duration: SYNTHESIS_STALL_TIMEOUT,
+            orElse: () => Stream.fail(unavailable()),
+          }),
         );
       },
       (effect, provider) =>

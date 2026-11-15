@@ -401,7 +401,8 @@ const make = Effect.gen(function* () {
     );
     if (!worker?.model.alive || worker.modelId !== definition.id) {
       yield* unloadWorker;
-      const model = yield* Effect.tryPromise({
+      // Uninterruptible, so a stream stopped mid-load still records the process it started.
+      const loaded = yield* Effect.tryPromise({
         try: () =>
           loadLocalSynthesisModel({
             libraries: installs.map((install) => ({
@@ -413,10 +414,17 @@ const make = Effect.gen(function* () {
             signal: lifetime.signal,
           }),
         catch: (cause) => failure("unavailable", cause),
-      });
-      yield* Effect.logInfo("Loaded the local speech model.", { backend: model.backend });
-      worker = { modelId: definition.id, model };
+      }).pipe(
+        Effect.tap((model) =>
+          Effect.sync(() => {
+            worker = { modelId: definition.id, model };
+          }),
+        ),
+        Effect.uninterruptible,
+      );
+      yield* Effect.logInfo("Loaded the local speech model.", { backend: loaded.backend });
     }
+    if (!worker) return yield* failure("unavailable");
     const { model } = worker;
     const language = localSynthesisLanguage(request.language, model.languages);
     const spoken = model

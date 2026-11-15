@@ -238,7 +238,6 @@ export function ReadAloudSection() {
                 install.state === "verifying" ? "Verifying…" : `${installProgress}% downloaded`
               }
               disabled={!canManage}
-              loading
               onPress={() => changeInstall("cancel")}
             />
           ) : install.state === "installed" ? (
