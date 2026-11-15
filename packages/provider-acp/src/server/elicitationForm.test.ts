@@ -96,5 +96,10 @@ describe("parseElicitationForm", () => {
       q0: ["Postgres"],
       q0__other: "SQLite",
     });
+    // The optional companion must not block submitting the selections alone:
+    // clients require text for a question with no initial answer.
+    const companion = multi.questions.find((question) => question.id === "q0__other");
+    assert(companion === undefined || companion.initialAnswer !== undefined);
+    assert.deepStrictEqual(multi.content({ q0: ["Postgres"] }), { q0: ["Postgres"] });
   });
 });
