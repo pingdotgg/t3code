@@ -242,10 +242,9 @@ export function composerCommandKeyHandler(input: {
       dismissComposerTrigger(trigger);
       return true;
     }
-    const modified = event.shiftKey || event.altKey || event.metaKey || event.ctrlKey;
     if (
       menuIsActive &&
-      !modified &&
+      !event.shiftKey &&
       (submissionIntent === null || submissionIntent === "foreground")
     ) {
       const currentItems = composerMenuItemsRef.current;
