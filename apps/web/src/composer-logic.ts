@@ -63,7 +63,7 @@ export function composerRequiresModifier(
 export function composerSubmissionIntentForKey(input: {
   event: ShortcutEventLike & { isComposing?: boolean; keyCode?: number; repeat?: boolean };
   keybindings: ResolvedKeybindingsConfig;
-  /** The when-clause context the app's shortcut listeners see, so both resolve Enter alike. */
+  /** The when-clause context ChatView's shortcut listeners see, so both resolve Enter alike. */
   context: Partial<ShortcutMatchContext>;
   platform?: string;
   isSoftwareKeyboardOpen: boolean;
