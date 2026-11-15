@@ -249,6 +249,7 @@ describe("GhosttyTerminalSurface visibility", () => {
             cursor: { r: 255, g: 255, b: 255 },
           },
           onData,
+          onBinary() {},
           onResize() {},
           onSelectionChange() {},
           beforeKey: () => false,
@@ -1056,19 +1057,24 @@ describe("isTerminalCompositionKey", () => {
 
 describe("application mouse reporting", () => {
   it("drops repeated motion reports until another mouse action resets the cell", () => {
-    const first = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", "");
-    expect(first).toEqual({ send: true, nextMotionData: "\u001b[<35;8;4M" });
+    const data = "\u001b[<35;8;4M";
+    const report = { data, binary: false };
+    const first = resolveTerminalMouseData("motion", report, null);
+    expect(first).toEqual({ send: true, nextMotionData: report });
 
-    const duplicate = resolveTerminalMouseData("motion", "\u001b[<35;8;4M", first.nextMotionData);
-    expect(duplicate).toEqual({ send: false, nextMotionData: "\u001b[<35;8;4M" });
+    const duplicate = resolveTerminalMouseData("motion", report, first.nextMotionData);
+    expect(duplicate).toEqual({ send: false, nextMotionData: report });
 
-    const press = resolveTerminalMouseData("press", "\u001b[<0;8;4M", duplicate.nextMotionData);
-    expect(press).toEqual({ send: true, nextMotionData: "" });
+    const press = resolveTerminalMouseData("press", report, duplicate.nextMotionData);
+    expect(press).toEqual({ send: true, nextMotionData: null });
+    expect(resolveTerminalMouseData("motion", report, press.nextMotionData).send).toBe(true);
 
-    expect(resolveTerminalMouseData("motion", "\u001b[<35;8;4M", press.nextMotionData)).toEqual({
-      send: true,
-      nextMotionData: "\u001b[<35;8;4M",
-    });
+    const legacy = { data: "\x1b[M@\x80$", binary: true };
+    const utf8 = { ...legacy, binary: false };
+    const legacyMotion = resolveTerminalMouseData("motion", legacy, null);
+    const utf8Motion = resolveTerminalMouseData("motion", utf8, legacyMotion.nextMotionData);
+    expect(utf8Motion.send).toBe(true);
+    expect(resolveTerminalMouseData("motion", legacy, utf8Motion.nextMotionData).send).toBe(true);
   });
 });
 

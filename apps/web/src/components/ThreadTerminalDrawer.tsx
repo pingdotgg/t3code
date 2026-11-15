@@ -723,6 +723,7 @@ function TerminalSessionViewport({
         theme: terminalThemeFromApp(mount),
         font: terminalFontOptions(setupFont.family, setupFont.size),
         onData: (data) => handleData(data),
+        onBinary: (data) => void sendTerminalInput(data, "Terminal write failed", true),
         onResize: (cols, rows) => void resizeTerminal(cols, rows),
         onSelectionChange: () => {},
         beforeKey: (event) => handleBeforeKey(event),
@@ -929,12 +930,12 @@ function TerminalSessionViewport({
 
       const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
-      const writeInputChunk = (data: string) =>
+      const writeInputChunk = (data: string, binary?: true) =>
         retainedTerminalWrite.current({
           environmentId,
-          input: { threadId, terminalId, data },
+          input: binary ? { threadId, terminalId, data, binary } : { threadId, terminalId, data },
         });
-      const sendTerminalInput = (data: string, fallbackError: string) => {
+      const sendTerminalInput = (data: string, fallbackError: string, binary?: true) => {
         // The server rejects input until the shell runs, and each rejection would print an error.
         // Input belongs to the shell and surface it was typed into; a restart the client has seen drops what is left.
         const session = readTerminalSession();
@@ -962,7 +963,7 @@ function TerminalSessionViewport({
             ) {
               return "not-dispatched";
             }
-            const result = await writeInputChunk(chunk);
+            const result = await writeInputChunk(chunk, binary);
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
