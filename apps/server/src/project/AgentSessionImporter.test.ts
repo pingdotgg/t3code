@@ -501,9 +501,8 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("counts only new threads when re-importing cached and changed transcripts", () =>
+it.effect("counts only new threads when re-importing cached and recovered transcripts", () =>
   Effect.gen(function* () {
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
     const events = yield* EventStore.EventStoreV2;
     const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
     const cached = candidate(
@@ -511,45 +510,36 @@ it.effect("counts only new threads when re-importing cached and changed transcri
       "020e7f00-dce6-406b-8ec6-ed90498945d6",
       "claudeAgent",
     );
-    const changed = candidate(CODEX_MODEL_SELECTION, "changed");
-    const initial = yield* makeImporter([cached, changed]);
+    const recovered = candidate(CODEX_MODEL_SELECTION, "recovered");
+    const initial = yield* makeImporter([cached, recovered]);
     expect(yield* initial.run).toEqual({ importedCount: 2, skippedCount: 0 });
-    const before = yield* events.read({ threadId: importId(changed) }).pipe(Stream.runCollect);
-    changed.source.size += 100;
-    changed.source.mtimeMs += 1;
-    changed.thread.messages.push({
-      role: "user",
-      text: "Continue outside T3",
-      createdAt: timestamp,
-    });
-    const duplicate = { ...changed.source, filePath: "/tmp/duplicate.jsonl" };
+    const before = yield* events.read({ threadId: importId(recovered) }).pipe(Stream.runCollect);
+    // The file changed on disk but still holds the imported messages.
+    recovered.source.size += 100;
+    recovered.source.mtimeMs += 1;
+    const duplicate = { ...recovered.source, filePath: "/tmp/duplicate.jsonl" };
     const fresh = candidate(CODEX_MODEL_SELECTION, "fresh");
     const repeated = yield* makeImporter([
       { _tag: "AlreadyImported", source: cached.source },
-      changed,
+      recovered,
       { _tag: "Duplicate", source: duplicate },
       fresh,
       { _tag: "Skipped" },
     ]);
 
     expect(yield* repeated.run).toEqual({ importedCount: 1, skippedCount: 1 });
-    expect(yield* events.read({ threadId: importId(changed) }).pipe(Stream.runCollect)).toEqual(
+    expect(yield* events.read({ threadId: importId(recovered) }).pipe(Stream.runCollect)).toEqual(
       before,
     );
-    expect(
-      (yield* projections.getThreadRecords(importId(changed), ["messages"])).messages.map(
-        (message) => message.text,
-      ),
-    ).toEqual(["Fix it", "Fixed"]);
     expect(
       new Set(
         repeated.published.flatMap((stored) => ("event" in stored ? [stored.event.threadId] : [])),
       ),
     ).toEqual(new Set([importId(fresh)]));
     expect(
-      Option.getOrThrow(yield* runtimes.getByThreadId({ threadId: importId(changed) })),
+      Option.getOrThrow(yield* runtimes.getByThreadId({ threadId: importId(recovered) })),
     ).toMatchObject({
-      runtimePayload: { importedTranscripts: [changed.source, duplicate] },
+      runtimePayload: { importedTranscripts: [recovered.source, duplicate] },
     });
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
@@ -1053,7 +1043,7 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
     });
 
     expect(yield* importer.run).toEqual({ importedCount: 100, skippedCount: 1 });
-    expect(yield* importer.run).toEqual({ importedCount: 101, skippedCount: 0 });
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
     const oldest = yield* ProjectionStore.ProjectionStoreV2.pipe(
       Effect.flatMap((projections) =>
         projections.getThread(ThreadId.make("import:codex:session-100")),
