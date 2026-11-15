@@ -70,6 +70,16 @@ export const acceptsPrivateNetworkConnection = (socket: {
     (address) => address !== undefined && isPrivateNetworkAddress(address),
   );
 
+/** The connection arrived on loopback or one of `localHosts`, never another interface. */
+export const acceptsConnectionOnLocalHosts = (
+  socket: { readonly localAddress?: string | undefined },
+  localHosts: ReadonlyArray<string>,
+): boolean => {
+  const address = socket.localAddress?.replace(/^::ffff:/i, "");
+  if (address === undefined) return false;
+  return address === "::1" || address.startsWith("127.") || localHosts.includes(address);
+};
+
 export const loopbackUrlHostForAddress = (address: NetAddress.InetAddress): string =>
   NetAddress.isUnspecified(address.address)
     ? "127.0.0.1"

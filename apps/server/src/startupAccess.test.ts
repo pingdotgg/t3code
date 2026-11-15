@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as NetAddress from "effect/net/NetAddress";
 
 import {
+  acceptsConnectionOnLocalHosts,
   acceptsPrivateNetworkConnection,
   loopbackUrlHostForAddress,
   resolveHeadlessConnectionString,
@@ -85,5 +86,20 @@ describe("acceptsPrivateNetworkConnection", () => {
     expect(accepts("203.0.113.7", "192.168.1.31")).toBe(false);
     expect(accepts("169.254.10.1", "169.254.10.2")).toBe(false);
     expect(accepts(undefined, "192.168.1.31")).toBe(false);
+  });
+});
+
+describe("acceptsConnectionOnLocalHosts", () => {
+  const accepts = (localAddress: string | undefined) =>
+    acceptsConnectionOnLocalHosts({ localAddress }, ["172.27.0.99"]);
+
+  it("serves loopback and the listed addresses only", () => {
+    expect(accepts("127.0.0.1")).toBe(true);
+    expect(accepts("::1")).toBe(true);
+    expect(accepts("::ffff:172.27.0.99")).toBe(true);
+    // An in-distro tailnet address and a Docker bridge.
+    expect(accepts("100.101.102.103")).toBe(false);
+    expect(accepts("172.17.0.1")).toBe(false);
+    expect(accepts(undefined)).toBe(false);
   });
 });

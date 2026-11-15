@@ -784,12 +784,14 @@ describe("DesktopBackendConfiguration", () => {
           url: "127.0.0.1",
           bind: "127.0.0.1",
         },
-        // NAT keeps the wildcard so wslhost loopback forwarding still reaches the backend.
+        // NAT keeps the wildcard for wslhost loopback forwarding, but serves only loopback and the
+        // distro IP, not an in-distro tailnet address.
         {
           exposureBindHost: "127.0.0.1",
           distroIp: "172.27.0.99",
           url: "172.27.0.99",
           bind: "0.0.0.0",
+          accepted: ["172.27.0.99"],
         },
         { exposureBindHost: "0.0.0.0", distroIp: "127.0.0.1", url: "127.0.0.1", bind: "0.0.0.0" },
         {
@@ -798,9 +800,9 @@ describe("DesktopBackendConfiguration", () => {
           url: "172.27.0.99",
           bind: "0.0.0.0",
         },
-      ] as const;
+      ];
 
-      for (const { exposureBindHost, distroIp, url, bind } of cases) {
+      for (const { exposureBindHost, distroIp, url, bind, accepted } of cases) {
         const config = yield* Effect.gen(function* () {
           const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
           return yield* configuration.resolveWsl({ port: 5050, distro: null });
@@ -822,8 +824,12 @@ describe("DesktopBackendConfiguration", () => {
           ),
         );
         assert.deepEqual(
-          { url: config.httpBaseUrl.hostname, bind: config.bootstrap.host },
-          { url, bind },
+          {
+            url: config.httpBaseUrl.hostname,
+            bind: config.bootstrap.host,
+            accepted: config.bootstrap.acceptedLocalHosts,
+          },
+          { url, bind, accepted },
           `network access bind ${exposureBindHost}, distro IP ${distroIp}`,
         );
       }

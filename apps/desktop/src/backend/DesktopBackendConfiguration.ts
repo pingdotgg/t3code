@@ -653,11 +653,13 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     : Option.getOrElse(distroIp, () => "127.0.0.1");
   const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
   // With network access off, a backend Windows reaches over loopback listens only there. NAT keeps
-  // the wildcard: Windows dials the distro IP, and loopback must still answer for wslhost
-  // forwarding and the localhost sign-in return page. The NAT address is host-only.
+  // the wildcard because loopback must still answer for wslhost forwarding and the localhost
+  // sign-in return page, but serves only loopback and the distro IP Windows dials.
   const { bindHost: exposureBindHost } = yield* serverExposure.backendConfig;
-  const wslBindHost =
-    exposureBindHost !== "0.0.0.0" && rendererHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+  const networkAccessible = exposureBindHost === "0.0.0.0";
+  const wslBindHost = !networkAccessible && rendererHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+  const acceptedLocalHosts =
+    !networkAccessible && rendererHost !== "127.0.0.1" ? [rendererHost] : undefined;
 
   const bootstrap = {
     mode: "desktop" as const,
@@ -665,6 +667,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     port: input.port,
     // Omit t3Home to keep the Linux backend from sharing the primary's Windows SQLite file.
     host: wslBindHost,
+    ...(acceptedLocalHosts ? { acceptedLocalHosts } : {}),
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
     // PortSchema rejects 0 even when Tailscale Serve is disabled.

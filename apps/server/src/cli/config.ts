@@ -506,6 +506,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     serverTracePath,
     host,
     ...(privateNetworkOnly ? { privateNetworkOnly } : {}),
+    ...(bootstrap?.acceptedLocalHosts ? { acceptedLocalHosts: bootstrap.acceptedLocalHosts } : {}),
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),

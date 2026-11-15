@@ -14,6 +14,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   // Omit in WSL to use the Linux home instead of the mapped Windows directory.
   t3Home: Schema.optional(Schema.String),
   host: Schema.String,
+  // A wildcard listener serves only connections to loopback or these addresses.
+  acceptedLocalHosts: Schema.optionalKey(Schema.Array(Schema.String)),
   desktopBootstrapToken: Schema.String,
   // Derives rotating tokens instead of trusting desktopBootstrapToken indefinitely; see @t3tools/shared/desktopBootstrapToken.
   desktopBootstrapSecret: Schema.optionalKey(Schema.String),
