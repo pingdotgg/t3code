@@ -38,6 +38,8 @@ test(
 
     await screen.getByRole("button", "Toggle terminal drawer").tap();
     const input = screen.getByRole("textbox", "Terminal input");
+    // The input mounts before fonts and WASM finish loading and its handlers are installed.
+    await expect(input).toHaveAttribute("data-workspace-focus-default", "");
     await input.focus();
     await browser.keyboard.type("cat build.log; touch cat.done\n");
     await expect.poll(() => readLines(`${project}/cat.done`), { timeout: 30_000 }).toEqual([""]);
