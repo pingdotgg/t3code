@@ -128,7 +128,7 @@ function MarkdownCodeBlockTitleContent({
 
 export function MarkdownCodeBlock({
   code,
-  copyText = code.endsWith("\n") ? code.slice(0, -1) : code,
+  copyText,
   language,
   fenceTitle,
   theme,
@@ -180,7 +180,8 @@ export function MarkdownCodeBlock({
     // make the rendered command differ from what the terminal would receive.
     !/[\p{Cc}\p{Cf}]/u.test(code.slice(0, -1));
 
-  const handleCopy = () => copyToClipboard(copyText);
+  const handleCopy = () =>
+    copyToClipboard(copyText ?? (code.endsWith("\n") ? code.slice(0, -1) : code));
 
   const copyButton = (
     <Tooltip>
