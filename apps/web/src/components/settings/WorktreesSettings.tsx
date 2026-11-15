@@ -1,5 +1,6 @@
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
+import { ReflinkWorktreesRow } from "~/fork/reflinkWorktrees/ReflinkWorktreesRow";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { WorktreeSubmodulesRow } from "./ProjectDefaultsSettings";
@@ -59,6 +60,7 @@ export function WorktreesSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="worktree-creation" title="Creation">
         {!isProjectScope && <WorktreesDirectoryRow />}
+        {!isProjectScope && <ReflinkWorktreesRow />}
         <StartFromRemoteRow />
         <AdvancedSettings targetIds={[searchableSetting("worktree-submodules").id]}>
           <WorktreeSubmodulesRow />

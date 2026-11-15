@@ -1815,6 +1815,38 @@ describe("orphan worktree reports", () => {
     ),
   );
 
+  it.live("keeps checkout caches in current and nested previous locations out of the report", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        fixture.setThreads([]);
+        const previous = `${fixture.config.worktreesDir}/old`;
+        fixture.setSettings({ previousWorktreesDirectories: [previous] });
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        const caches = [fixture.config.worktreesDir, previous].map(
+          (root) => `${root}/.t3-checkout-cache`,
+        );
+        for (const folder of [
+          orphan,
+          ...caches.map((cache) => `${cache}/0123456789abcdef/bucket`),
+        ]) {
+          yield* fixture.fs.makeDirectory(folder, { recursive: true });
+        }
+        for (const folder of [
+          orphan,
+          previous,
+          ...caches,
+          ...caches.map((cache) => `${cache}/0123456789abcdef`),
+        ]) {
+          yield* fixture.fs.utimes(folder, 1, 1);
+        }
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: orphan, outcome: "kept" }),
+        ]);
+      }),
+    ),
+  );
+
   it.live.each(["nested", "direct"] as const)(
     "reports a linked orphan's size without removing its files (%s)",
     (location) =>

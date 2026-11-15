@@ -47,7 +47,7 @@ import {
   gitConfigEnv,
   unsetInheritedRepositoryEnv,
 } from "./VcsProcess.ts";
-import { makeWorktreeCheckoutCache } from "./worktreeCheckoutCache.ts";
+import { makeWorktreeCheckoutSites } from "../fork/reflinkWorktrees/worktreeCheckoutSites.ts";
 import { removeLinkedWorktree } from "./worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import {
@@ -966,7 +966,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const { worktreesDir, worktreeCheckoutCacheDir } = yield* ServerConfig.ServerConfig;
+  const { worktreesDir } = yield* ServerConfig.ServerConfig;
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const digest = yield* Digest.Digest;
   const hostPlatform = yield* HostProcess.Platform;
@@ -1168,10 +1168,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         input.writesSharedConfig ? withSharedConfigLock(input.cwd, execution) : execution,
     );
 
-  const checkoutCache = yield* makeWorktreeCheckoutCache({
-    cacheDir: worktreeCheckoutCacheDir,
-    execute,
-  });
+  const checkoutSites = yield* makeWorktreeCheckoutSites({ execute });
 
   const executeGit = (
     operation: string,
@@ -4639,7 +4636,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: "unbounded" },
     );
     const checkoutWorkers = configuredCheckoutWorkers ?? "0";
-    const fastCheckout = checkoutCache !== undefined && options?.fastCheckout === true;
+    const checkoutCache =
+      options?.fastCheckout === true
+        ? yield* checkoutSites.select(options.worktreesDirectory ?? "")
+        : undefined;
+    const fastCheckout = checkoutCache !== undefined;
     const cacheGeneration = fastCheckout ? yield* checkoutCache.currentGeneration : 0;
     const stockCheckout = executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
@@ -5545,7 +5546,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.ensuring(invalidateWorktreeCreationCaches(input.cwd)),
       );
     }),
-    clearWorktreeCheckoutCache: checkoutCache?.clear ?? Effect.void,
+    applyWorktreeCheckoutSettings: checkoutSites.apply,
     fetchRefIntoBranch: Effect.fnUntraced(function* (input) {
       return yield* withListRefsInvalidation(input.cwd, fetchRefIntoBranch(input));
     }),

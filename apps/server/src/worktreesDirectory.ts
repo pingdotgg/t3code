@@ -7,6 +7,10 @@ import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import {
+  homeCheckoutCacheDir,
+  isCheckoutCachePath,
+} from "./fork/reflinkWorktrees/checkoutCacheSites.ts";
 
 /** Null for filesystem roots or settings not absolute on this host, including synced foreign-platform paths. */
 export function resolveWorktreesDirectory(
@@ -50,6 +54,7 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const homeCacheDir = yield* homeCheckoutCacheDir;
 
   // Match Git's symlink-following location: nearest real ancestor plus missing path components.
   const realLocation = (target: string): Effect.Effect<string> =>
@@ -83,6 +88,7 @@ export const makeIsManagedWorktreePath = Effect.gen(function* () {
       realLocation,
     );
     const candidate = yield* realLocation(worktreePath);
+    if (isCheckoutCachePath(candidate, { homeCacheDir })) return false;
     return roots.some((root) => {
       if (isFilesystemRoot(root, path)) return false;
       const relative = path.relative(root, candidate);

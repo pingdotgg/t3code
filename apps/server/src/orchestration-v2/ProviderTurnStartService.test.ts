@@ -78,7 +78,10 @@ const normalize = (target: string) => {
 const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
   Layer.mergeAll(
     Path.layer,
-    Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
+    Layer.mock(ServerConfig.ServerConfig)({
+      worktreesDir,
+      worktreeCheckoutCacheDir: "/tmp/provider-turn-start-caches/worktree-checkouts",
+    } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
   );
 
@@ -146,20 +149,23 @@ function startWithMissingWorktree(
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
-        Layer.succeed(FileSystem.FileSystem, {
-          exists: () => Effect.succeed(false),
-          realPath: (target: string) =>
-            normalize(target) in realPaths
-              ? Effect.succeed(realPaths[normalize(target)])
-              : Effect.fail(
-                  PlatformError.systemError({
-                    _tag: "NotFound",
-                    module: "FileSystem",
-                    method: "realPath",
-                    pathOrDescriptor: target,
-                  }),
-                ),
-        } as never),
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            exists: () => Effect.succeed(false),
+            realPath: (target: string) =>
+              normalize(target) in realPaths
+                ? Effect.succeed(realPaths[normalize(target)])
+                : Effect.fail(
+                    PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "FileSystem",
+                      method: "realPath",
+                      pathOrDescriptor: target,
+                    }),
+                  ),
+          } as never),
+        ),
         layerWorktreeLocation(),
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
@@ -245,6 +251,11 @@ it.each([
       [managedWorktreesDir]: managedWorktreesDir,
       [`${managedWorktreesDir}/project`]: "/tmp/provider-turn-start-project/.git",
     },
+    recreated: false,
+  },
+  {
+    label: "the checkout cache inside the managed folder",
+    worktreePath: `${managedWorktreesDir}/.t3-checkout-cache/0123456789abcdef`,
     recreated: false,
   },
   {

@@ -896,12 +896,18 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
 
         const worktreeCwd = path.join(claudeHomePath, ".t3", "worktrees", "t3code", "wt-1");
-        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(worktreeCwd),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+        const checkoutCacheCwd = path.join(claudeHomePath, "w", ".t3-checkout-cache", "k", "files");
+        for (const [slug, cwd] of [
+          ["-slug", worktreeCwd],
+          ["-cache", checkoutCacheCwd],
+        ] as const) {
+          yield* fileSystem.makeDirectory(cwd, { recursive: true });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", slug, "a.jsonl"),
+            contents: claudeSessionLine(cwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
+        }
 
         const result = yield* runScan({ claudeHomePath, codexHomePath });
 

@@ -213,7 +213,25 @@ Turning it off deletes the cache.
 The first worktree of a repository uses Git's normal checkout and fills the cache. It needs Git 2.42
 or newer. Git's normal checkout is also used for worktrees on a different drive from the T3 home
 directory, sparse checkouts, repositories whose attributes use filters such as Git LFS, and
-repositories whose checkout settings changed.
+repositories whose checkout settings changed. A cache folder that is a link to another folder is
+not used, and worktrees then use Git's normal checkout.
+
+## Reflink worktrees on Linux
+
+**Settings → Worktrees → Reflink worktrees** is on by default for each Linux machine. Where the
+worktree location's drive supports copy-on-write clones (reflinks, as on Btrfs or XFS formatted with
+reflink support), T3 Code keeps a few recent checkouts of each repository on that drive and clones new
+worktrees from them. Worktrees then share disk space until their files change. The cache is a
+hidden `.t3-checkout-cache` folder inside the worktree location, or the `caches` folder of the T3
+home directory when the default location is on the same drive. Changing the location deletes the
+old location's cache, and turning the setting off deletes the cache. When several T3 homes share a
+worktree location, each one also deletes another home's cache there once it has not been used for
+30 days.
+
+On drives that cannot clone, such as ext4, worktrees use Git's normal checkout and no cache is kept.
+The other limits of fast worktree checkout on macOS apply too. Dependencies such as `node_modules`
+are not cached; a package manager that clones from a store on the same drive, such as pnpm with
+`package-import-method=clone-or-copy`, shares them in the same way.
 
 ## Storage cleanup
 

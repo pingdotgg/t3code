@@ -517,6 +517,7 @@ it.layer(
             Layer.mergeAll(
               Layer.mock(ServerConfig.ServerConfig)({
                 worktreesDir,
+                worktreeCheckoutCacheDir: "/synthetic-caches/worktree-checkouts",
               } as ServerConfig.ServerConfig["Service"]),
               ServerSettings.layerTest(),
               Layer.mock(ProjectService.ProjectService)({

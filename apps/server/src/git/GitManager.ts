@@ -54,6 +54,7 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import {
   type ChangeRequestTerminology,
@@ -84,6 +85,11 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  checkoutCacheRetention,
+  fastCheckoutFor,
+  sameCheckoutCacheRetention,
+} from "../fork/reflinkWorktrees/fastCheckoutSetting.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isNonRepositoryGitStderr } from "../vcs/GitVcsDriverCore.ts";
@@ -790,19 +796,26 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
+  const hostPlatform = yield* HostProcess.Platform;
   const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => ({
       worktreesDirectory: settings.worktreesDirectory,
-      fastCheckout: settings.fastWorktreeCheckout,
+      fastCheckout: fastCheckoutFor(settings, hostPlatform),
     })),
     Effect.orElseSucceed(() => ({ worktreesDirectory: "" })),
   );
-  // Turning fast checkout off deletes its cache right away, not at the next worktree.
-  yield* serverSettingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.fastWorktreeCheckout),
-    Stream.changes,
-    Stream.filter((enabled) => !enabled),
-    Stream.runForEach(() => gitCore.clearWorktreeCheckoutCache),
+  // Settings changes move or delete checkout caches right away, and boot catches up on changes
+  // made while the server was down.
+  const settingsChanges = yield* serverSettingsService.subscribeChanges;
+  yield* serverSettingsService.getSettings.pipe(
+    Effect.option,
+    Effect.flatMap((initial) =>
+      Stream.concat(Stream.fromIterable(Option.toArray(initial)), settingsChanges).pipe(
+        Stream.map((settings) => checkoutCacheRetention(settings, hostPlatform)),
+        Stream.changesWith(sameCheckoutCacheRetention),
+        Stream.runForEach(gitCore.applyWorktreeCheckoutSettings),
+      ),
+    ),
     Effect.forkScoped,
   );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(

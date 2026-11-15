@@ -119,7 +119,7 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("allows previous custom worktree locations but never a filesystem root", () =>
+  it.effect("allows previous custom worktree locations but not their root or checkout caches", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
@@ -141,6 +141,57 @@ describe("ReviewService", () => {
         ),
       );
       assert.strictEqual(result.cwd, previous);
+      const cache = `${previous}/.t3-checkout-cache/0123456789abcdef`;
+      yield* fs.makeDirectory(cache, { recursive: true });
+      const cacheError = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: cache }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(layer({ workspaceRoot, baseDir, previousWorktreesDirectories: [previous] })),
+      );
+      assert.strictEqual(cacheError._tag, "VcsRepositoryDetectionError");
+      // A T3 home inside a registered project keeps its own checkout cache out too, also when its
+      // caches folder links elsewhere in the project.
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      yield* fs.makeDirectory(`${projectRoot}/elsewhere/caches`, { recursive: true });
+      yield* fs.makeDirectory(`${projectRoot}/linked/.t3`, { recursive: true });
+      yield* fs.symlink(`${projectRoot}/elsewhere/caches`, `${projectRoot}/linked/.t3/caches`);
+      for (const [home, caches] of [
+        [`${projectRoot}/.t3`, `${projectRoot}/.t3/caches`],
+        [`${projectRoot}/linked/.t3`, `${projectRoot}/elsewhere/caches`],
+      ] as const) {
+        const homeCache = `${caches}/worktree-checkouts/bucket/entry/files`;
+        yield* fs.makeDirectory(homeCache, { recursive: true });
+        const homeCacheError = yield* Effect.gen(function* () {
+          const review = yield* ReviewService.ReviewService;
+          return yield* review.getDiffPreview({ cwd: homeCache }).pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(layer({ workspaceRoot, baseDir: home, projectRoots: [projectRoot] })),
+        );
+        assert.match(
+          "detail" in homeCacheError ? homeCacheError.detail : "",
+          /must stay within the configured workspace root/,
+        );
+      }
+      // A reserved folder that is a link never holds a cache, so its target stays the project's.
+      const linkedRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-linked-" });
+      const relocated = `${projectRoot}/relocated-cache`;
+      yield* fs.makeDirectory(`${relocated}/0123456789abcdef/bucket`, { recursive: true });
+      yield* fs.symlink(relocated, `${linkedRoot}/.t3-checkout-cache`);
+      const linkedTarget = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ cwd: `${relocated}/0123456789abcdef/bucket` });
+      }).pipe(
+        Effect.provide(
+          layer({
+            workspaceRoot,
+            baseDir,
+            previousWorktreesDirectories: [linkedRoot],
+            projectRoots: [projectRoot],
+          }),
+        ),
+      );
+      assert.strictEqual(linkedTarget.cwd, `${relocated}/0123456789abcdef/bucket`);
 
       const rootLink = `${baseDir}/root-link`;
       yield* fs.symlink("/", rootLink);

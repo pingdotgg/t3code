@@ -17,6 +17,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -29,6 +31,7 @@ import type {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
   ModelSelection,
+  ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 
 import {
@@ -65,6 +68,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import type { CheckoutCacheRetention } from "../fork/reflinkWorktrees/fastCheckoutSetting.ts";
 import * as GitManager from "./GitManager.ts";
 
 /** A change request the fake host reports. Omitted fields read as an open, undated request. */
@@ -627,7 +631,9 @@ function makeManager(input?: {
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
+  settingsChanges?: PubSub.PubSub<ServerSettingsValue>;
   gitConfigReads?: string[];
+  checkoutSettingsApplied?: Queue.Queue<CheckoutCacheRetention>;
   gitCommands?: string[];
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
@@ -648,7 +654,24 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
+  const settingsChanges = input?.settingsChanges;
+  const layerServerSettingsBase = ServerSettings.ServerSettingsService.layerTest(
+    input?.serverSettings,
+  );
+  const layerServerSettings =
+    settingsChanges === undefined
+      ? layerServerSettingsBase
+      : Layer.effect(
+          ServerSettings.ServerSettingsService,
+          ServerSettings.ServerSettingsService.pipe(
+            Effect.map((service) => ({
+              ...service,
+              subscribeChanges: PubSub.subscribe(settingsChanges).pipe(
+                Effect.map(Stream.fromSubscription),
+              ),
+            })),
+          ),
+        ).pipe(Layer.provide(layerServerSettingsBase));
 
   const gitCommands = input?.gitCommands;
   const gitSpawnGate = input?.gitSpawnGate;
@@ -683,22 +706,28 @@ function makeManager(input?: {
         }),
       ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)))
     : Layer.empty;
-  const gitVcsDriver = input?.gitConfigReads
-    ? Layer.effect(
-        GitVcsDriver.GitVcsDriver,
-        GitVcsDriver.make.pipe(
-          Effect.map((service) =>
-            GitVcsDriver.GitVcsDriver.of({
-              ...service,
-              readConfigValue: (cwd, key) =>
-                Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
-                  Effect.andThen(service.readConfigValue(cwd, key)),
-                ),
-            }),
+  const checkoutSettingsApplied = input?.checkoutSettingsApplied;
+  const gitVcsDriver =
+    input?.gitConfigReads || checkoutSettingsApplied
+      ? Layer.effect(
+          GitVcsDriver.GitVcsDriver,
+          GitVcsDriver.make.pipe(
+            Effect.map((service) =>
+              GitVcsDriver.GitVcsDriver.of({
+                ...service,
+                readConfigValue: (cwd, key) =>
+                  Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
+                    Effect.andThen(service.readConfigValue(cwd, key)),
+                  ),
+                applyWorktreeCheckoutSettings: (retention) =>
+                  checkoutSettingsApplied === undefined
+                    ? service.applyWorktreeCheckoutSettings(retention)
+                    : Queue.offer(checkoutSettingsApplied, retention).pipe(Effect.asVoid),
+              }),
+            ),
           ),
-        ),
-      )
-    : GitVcsDriver.layer;
+        )
+      : GitVcsDriver.layer;
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
@@ -773,6 +802,30 @@ const layerGitManagerTest = layerGitFixtureTemplates.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("applies checkout cache settings at boot and again only when they change", () =>
+    Effect.gen(function* () {
+      const settingsChanges = yield* PubSub.unbounded<ServerSettingsValue>();
+      const checkoutSettingsApplied = yield* Queue.unbounded<CheckoutCacheRetention>();
+      yield* makeManager({ settingsChanges, checkoutSettingsApplied });
+      expect((yield* Queue.take(checkoutSettingsApplied)).current).toBe("");
+
+      yield* PubSub.publish(settingsChanges, {
+        ...DEFAULT_SERVER_SETTINGS,
+        defaultAutoPull: !DEFAULT_SERVER_SETTINGS.defaultAutoPull,
+      });
+      yield* PubSub.publish(settingsChanges, {
+        ...DEFAULT_SERVER_SETTINGS,
+        previousWorktreesDirectories: ["/srv/old-worktrees"],
+      });
+      yield* PubSub.publish(settingsChanges, {
+        ...DEFAULT_SERVER_SETTINGS,
+        worktreesDirectory: "/srv/worktrees",
+      });
+      expect((yield* Queue.take(checkoutSettingsApplied)).current).toBe("/srv/worktrees");
+      expect(yield* Queue.size(checkoutSettingsApplied)).toBe(0);
+    }),
+  );
+
   it.effect(
     "publishes local Git changes during a held PR lookup without caching its old branch",
     () =>
