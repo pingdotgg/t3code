@@ -45,8 +45,13 @@ export function getThreadErrorBannerMessage(error: string): string {
     : error;
 }
 
-export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
-  return error === null ? null : `${threadKey}\u0000${error}`;
+// The failed run is part of the key so a later run failing with the same text shows again.
+export function getThreadErrorBannerKey(
+  threadKey: string,
+  error: string | null,
+  runId?: string | null,
+): string | null {
+  return error === null ? null : `${threadKey}\u0000${runId ?? ""}\u0000${error}`;
 }
 
 export function shouldShowThreadErrorBanner(
