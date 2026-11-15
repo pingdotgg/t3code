@@ -760,6 +760,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "terse-replies",
+    title: "Terse replies (caveman)",
+    to: "/settings/chat",
+    scope: "environment-defaults",
+    searchTerms: ["caveman short brief concise agent answers register normal mode"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/maintenance",

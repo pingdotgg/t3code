@@ -565,6 +565,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
       ? ["Keep awake while agents work"]
       : []),
+    ...(settings.terseReplies !== DEFAULT_UNIFIED_SETTINGS.terseReplies
+      ? ["Terse replies (caveman)"]
+      : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
       : []),
@@ -689,6 +692,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
+      terseReplies: DEFAULT_UNIFIED_SETTINGS.terseReplies,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
@@ -1305,6 +1309,33 @@ export function ChatSettingsPanel() {
                 <SelectItem value="steer">Steer</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection id="agent-replies" title="Agent replies">
+        <SettingsRow
+          serverScoped
+          settingKeys={["terseReplies"]}
+          {...searchableSetting("terse-replies")}
+          description="Ask every agent for short, plain chat replies. Files, commits and PR text stay in normal prose. Applies to new turns."
+          resetAction={
+            settings.terseReplies !== DEFAULT_UNIFIED_SETTINGS.terseReplies ? (
+              <SettingResetButton
+                label="terse replies"
+                onClick={() =>
+                  updateSettings({ terseReplies: DEFAULT_UNIFIED_SETTINGS.terseReplies })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["terseReplies"]}
+              checked={settings.terseReplies}
+              onCheckedChange={(checked) => updateSettings({ terseReplies: Boolean(checked) })}
+              aria-label="Terse replies (caveman)"
+            />
           }
         />
       </SettingsSection>

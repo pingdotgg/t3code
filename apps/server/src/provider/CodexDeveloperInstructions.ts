@@ -35,6 +35,7 @@ export interface CodexRuntimeInfo {
   readonly model: string;
   readonly modelName?: string | undefined;
   readonly reasoningEffort?: string | undefined;
+  readonly terseReplies?: boolean;
 }
 
 /** Keep this outside collaboration mode; model-catalog mode text overrides client developer_instructions. */

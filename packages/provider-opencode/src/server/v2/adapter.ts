@@ -819,6 +819,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       readonly scope: Scope.Closeable;
     },
   ) {
+    const terseRepliesEnabled = input.terseReplies ?? Effect.succeed(false);
     let connection = initial.connection;
     const supportsNativeGoals = () => compareSemverVersions(connection.version, "2.2.5") >= 0;
     nativeGoalSupport = supportsNativeGoals();
@@ -4235,7 +4236,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          terseReplies: yield* terseRepliesEnabled,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."

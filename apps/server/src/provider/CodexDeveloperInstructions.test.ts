@@ -10,7 +10,12 @@ import {
 
 describe("buildCodexAdditionalContext", () => {
   describe.each([
-    { model: "custom-model", modelName: "Custom 🦊 Model", reasoningEffort: "xhigh" },
+    {
+      model: "custom-model",
+      modelName: "Custom 🦊 Model",
+      reasoningEffort: "xhigh",
+      terseReplies: true,
+    },
   ])("with runtime $model", (runtime) => {
     it.each([undefined, { browser: true, device: true }])(
       "keeps every entry within Codex's per-entry cap with tools %j",

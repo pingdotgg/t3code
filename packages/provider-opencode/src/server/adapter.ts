@@ -1004,6 +1004,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const scope = yield* Effect.scope;
+        const terseRepliesEnabled = input.terseReplies ?? Effect.succeed(false);
         const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({
           binaryPath: options.settings.binaryPath,
@@ -3180,7 +3181,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
 
         // OpenCode runs each step with the agent and system prompt of the latest
         // user message, so every prompt in a turn, steers included, repeats them.
-        const turnPromptOptions = (turn: ActiveOpenCodeTurn) => {
+        const turnPromptOptions = (turn: ActiveOpenCodeTurn, terseReplies: boolean) => {
           const agent =
             getModelSelectionStringOptionValue(turn.modelSelection, "agent") ??
             (turn.runtimePolicy.interactionMode === "plan" ? "plan" : undefined);
@@ -3190,7 +3191,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ...(variant === undefined ? {} : { variant }),
             system: [
               orchestrationSystemPrompt,
-              buildRuntimeInstructions({ harness: "OpenCode", model: turn.modelSelection.model }),
+              buildRuntimeInstructions({
+                harness: "OpenCode",
+                model: turn.modelSelection.model,
+                terseReplies,
+              }),
             ]
               .filter(Boolean)
               .join("\n\n"),
@@ -3547,7 +3552,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId!,
                   model: parsedModel,
-                  ...turnPromptOptions(turn),
+                  ...turnPromptOptions(turn, yield* terseRepliesEnabled),
                   parts,
                 },
                 admissionAbortController!,
@@ -3681,7 +3686,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId,
                   model: parsedModel,
-                  ...turnPromptOptions(turn),
+                  ...turnPromptOptions(turn, yield* terseRepliesEnabled),
                   parts,
                 },
                 admissionAbortController!,

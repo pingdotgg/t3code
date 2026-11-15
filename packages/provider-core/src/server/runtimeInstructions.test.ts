@@ -14,6 +14,17 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "<pull_request_linking>");
   });
 
+  it("asks for terse chat replies only when the setting is on", () => {
+    const off = buildRuntimeInstructions({ harness: "Codex" });
+    const on = buildRuntimeInstructions({ harness: "Codex", terseReplies: true });
+
+    assert.notInclude(off, "<terse_replies>");
+    assert.include(on, "<pull_request_linking>");
+    assert.include(on, "<terse_replies>");
+    assert.include(on, "This governs chat replies only.");
+    assert.include(on, '"normal mode" or "stop caveman"');
+  });
+
   it("links PRs the agent creates, takes over, or pushes to, and no others", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
 
