@@ -4,6 +4,7 @@ import {
   MessageId,
   OrchestrationMessageContext,
   ThreadId,
+  TurnItemId,
   type PreviewAnnotationPayload,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -24,6 +25,7 @@ import {
   previewAnnotationFromRecord,
   pullRequestContextKindLabel,
   resolveUserMessageContext,
+  responseContextRecord,
   reviewCommentContextLabel,
   selectedMessageContextFragment,
   reviewCommentContextRecord,
@@ -227,6 +229,26 @@ describe("composerContextRecords", () => {
     expect(record.label).toBe(`${"a".repeat(46)}…`);
   });
 
+  it("shortens a long reply label without splitting an emoji", () => {
+    const text = `${"a".repeat(63)}😀 trailing`;
+    const record = responseContextRecord({
+      citation: {
+        version: 1,
+        environmentId: EnvironmentId.make("environment-1"),
+        threadId: ThreadId.make("thread-1"),
+        messageId: MessageId.make("message-1"),
+        text,
+        start: 0,
+        end: text.length,
+        prefix: "",
+        suffix: "",
+      },
+      itemId: TurnItemId.make("item-1"),
+      subagents: [],
+    });
+    expect(record.label).toBe("a".repeat(63));
+  });
+
   it("restores multiple edits on one target without parsing display strings", () => {
     const styleChanges = [
       ...annotation.styleChanges,
@@ -243,6 +265,12 @@ describe("composerContextRecords", () => {
     );
     expect(restored.styleChanges).toEqual(styleChanges);
     expect(restored.elements[0]?.id).toBe("el_1");
+  });
+
+  it("clamps an oversized annotation comment so the record still decodes", () => {
+    const record = previewAnnotationContextRecord({ ...annotation, comment: "c".repeat(8_001) });
+    expect(record.comment.endsWith("… truncated …")).toBe(true);
+    expect(decodeMessageContext({ version: 1, records: [record] }).records).toEqual([record]);
   });
 
   it("removes an expired terminal chip by its kind-scoped id, not the producer id", () => {

@@ -10,6 +10,7 @@ import {
   ThreadId,
   ThreadFolderId,
   type ThreadFolderMutation,
+  type ThreadTitleRegenerationOutcome,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
@@ -21,7 +22,9 @@ const state = vi.hoisted(() => ({
   dropBusy: false,
   holdingRows: false,
   failedAction: null as string | null,
+  titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
+  onArchivedRefresh: undefined as (() => void) | undefined,
   scopes: new Map<string, Set<string>>(),
   shells: [] as EnvironmentThreadShell[],
   folders: [] as EnvironmentThreadFolder[],
@@ -76,6 +79,7 @@ vi.mock("../../components/ui/Dialog", () => ({
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: (environmentId: string) => {
     state.archivedRefreshes.push(environmentId);
+    state.onArchivedRefresh?.();
   },
 }));
 vi.mock("../../state/session", () => ({
@@ -98,8 +102,9 @@ vi.mock("../../state/server", () => ({
   },
   threadFoldersAtom: "thread-folders",
 }));
-vi.mock("../../state/atom-registry", () => ({
-  appAtomRegistry: {
+vi.mock("../../state/atom-registry", async () => {
+  const registry = (await import("effect/reactivity")).AtomRegistry.make();
+  const stub = {
     set: (_atom: string, value: boolean) => {
       state.dropBusy = value;
     },
@@ -133,8 +138,22 @@ vi.mock("../../state/atom-registry", () => ({
                         },
                       ]),
                     ),
-  },
-}));
+  };
+  // Real atoms such as composerDraftsAtom go to a real registry; strings are stubbed state.
+  return {
+    appAtomRegistry: {
+      get: (atom: unknown) =>
+        typeof atom === "string"
+          ? stub.get(atom)
+          : registry.get(atom as Parameters<typeof registry.get>[0]),
+      set: (atom: unknown, value: unknown) =>
+        typeof atom === "string"
+          ? stub.set(atom, value as boolean)
+          : registry.set(atom as Parameters<typeof registry.set>[0], value),
+    },
+  };
+});
+
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));
@@ -173,6 +192,7 @@ vi.mock("../../state/threads", () => ({
       "reorderPin",
       "reorderActive",
       "updateMetadata",
+      "regenerateTitle",
     ].map((action) => [
       action,
       async (request: {
@@ -187,12 +207,14 @@ vi.mock("../../state/threads", () => ({
         if (action === state.failedAction)
           return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
         state.afterRequest?.();
-        return AsyncResult.success(undefined);
+        return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
       },
     ]),
   ),
 }));
 
+import { appAtomRegistry } from "../../state/atom-registry";
+import { composerDraftsAtom } from "../../state/use-composer-drafts";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -218,13 +240,15 @@ const mutationCases = [
   ["unsnoozeThread", "unsnooze"],
   ["pinThread", "pin"],
   ["unpinThread", "unpin"],
-  ["regenerateThreadTitle", "updateMetadata"],
+  ["regenerateThreadTitle", "regenerateTitle"],
 ] as const;
 
 beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
+  state.titleOutcome = null;
   state.archivedRefreshes = [];
+  state.onArchivedRefresh = undefined;
   state.pendingOrder = null;
   state.dropBusy = false;
   state.holdingRows = false;
@@ -250,6 +274,16 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+it("reports a failed title generation as unsuccessful and allows another request", async () => {
+  const actions = useThreadListActions();
+  const thread = makeThread();
+  state.titleOutcome = { status: "failed", message: "Model unavailable" };
+  expect(await actions.regenerateThreadTitle(thread)).toBe(false);
+
+  state.titleOutcome = { status: "renamed" };
+  expect(await actions.regenerateThreadTitle(thread)).toBe(true);
+});
+
 describe("thread list operation permissions", () => {
   it.each(mutationCases)(
     "%s rejects a retained callback after its environment loses permission",
@@ -272,7 +306,9 @@ describe("thread list operation permissions", () => {
     expect(state.requests).toEqual([]);
   });
 
-  it("rechecks permission after a retained delete confirmation", async () => {
+  it("rechecks permission after a retained delete confirmation, then clears the draft", async () => {
+    const draft = { text: "unsent", attachments: [] };
+    appAtomRegistry.set(composerDraftsAtom, { "primary:thread": draft, "primary:other": draft });
     useThreadListActions().confirmDeleteThread(makeThread());
     const confirm = state.dialogs[0]?.onConfirm;
     expect(confirm).toBeTypeOf("function");
@@ -281,6 +317,15 @@ describe("thread list operation permissions", () => {
     await confirm!();
 
     expect(state.requests).toEqual([]);
+    expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toContain("primary:thread");
+
+    state.scopes.get(primaryEnvironmentId)!.add(AuthOrchestrationOperateScope);
+    const deleted = new Promise<void>((resolve) => (state.onArchivedRefresh = resolve));
+    confirm!();
+    await deleted;
+
+    expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
+    expect(Object.keys(appAtomRegistry.get(composerDraftsAtom))).toEqual(["primary:other"]);
   });
 });
 
@@ -615,6 +660,19 @@ describe("thread action undo", () => {
     expect(readThreadUndoNotice()).toBeNull();
     await undo();
     expect(state.requests.map(({ action }) => action)).toEqual(["unpin"]);
+  });
+
+  it("keeps the earlier Undo until archiving succeeds", async () => {
+    const actions = useThreadListActions();
+    const thread = makeThread();
+    await actions.settleThread(thread);
+    state.failedAction = "archive";
+    expect(await actions.archiveThread(thread)).toBe(false);
+    expect(readThreadUndoNotice()?.action).toBe("Settled");
+
+    state.failedAction = null;
+    expect(await actions.archiveThread(thread)).toBe(true);
+    expect(readThreadUndoNotice()).toBeNull();
   });
 });
 

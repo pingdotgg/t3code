@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
@@ -15,6 +16,7 @@ import {
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
+  resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
@@ -339,6 +341,35 @@ describe("resolveSidebarThreadStatus", () => {
   });
 });
 
+describe("resolveSidebarRowStatus", () => {
+  const failedRuntime = {
+    status: "failed" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: "Provider turn failed.",
+    updatedAt: "2026-03-09T10:05:00.000Z",
+  };
+  const failed = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    runtime: failedRuntime,
+    latestRun: { ...makeLatestRun(), status: "failed" as const },
+  };
+
+  it("settles a failure the user opened to ready, without showing Done", () => {
+    expect(resolveSidebarRowStatus({ ...failed, lastVisitedAt: undefined })).toBe("failed");
+
+    const opened = { ...failed, lastVisitedAt: "2026-03-09T10:06:00.000Z" };
+    expect(resolveSidebarRowStatus(opened)).toBe("ready");
+    expect(hasUnseenCompletion(opened)).toBe(false);
+    // A runtime failure without a failed run has no date, so a visit cannot settle it.
+    expect(resolveSidebarRowStatus({ ...opened, latestRun: null })).toBe("failed");
+  });
+});
+
 describe("searchSidebarThreads", () => {
   const searchThread = (id: string, title: string, latestUserMessageAt: string) => ({
     environmentId: localEnvironmentId,
@@ -656,6 +687,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
       deletedThreadIds: new Set([ThreadId.make("thread-active"), ThreadId.make("thread-newest")]),
       sortOrder: "created_at",
       now: "2026-03-09T10:10:00.000Z",
+      delegatedUnderParent: new Set(),
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-next"));
@@ -666,6 +698,7 @@ describe("getFallbackThreadIdAfterDelete", () => {
       "snoozed",
       { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: "2026-03-09T10:06:00.000Z" },
     ],
+    ["delegated", { id: ThreadId.make("thread-delegated") }],
     ["settled", { settledOverride: "settled", settledAt: "2026-03-09T10:06:00.000Z" }],
     [
       "side chat",
@@ -711,6 +744,12 @@ describe("getFallbackThreadIdAfterDelete", () => {
       deletedThreadId: ThreadId.make("thread-active"),
       sortOrder: "created_at",
       now: "2026-03-09T10:10:00.000Z",
+      delegatedUnderParent: new Set([
+        threadKey({
+          environmentId: localEnvironmentId,
+          threadId: ThreadId.make("thread-delegated"),
+        }),
+      ]),
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-visible"));
