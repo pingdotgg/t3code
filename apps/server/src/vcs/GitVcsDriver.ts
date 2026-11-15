@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -123,7 +124,10 @@ export interface ExecuteGitProgress {
 }
 
 export interface CreateWorktreeProgress {
-  /** Git refuses existing paths; claimed paths belong to this call and can be removed on cancel. */
+  /**
+   * Runs uninterruptibly once the worktree exists; from then on the caller owns its cleanup.
+   * For new-branch calls on Git supporting add --reason, cancellation before the claim removes what it made.
+   */
   readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
     percent: number;
@@ -333,6 +337,8 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
+    /** Refs, HEAD and shallow boundaries. Null when the snapshot cannot be read. */
+    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
@@ -569,6 +575,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
     args: ReadonlyArray<string>,
     options?: {
       readonly stdin?: string;
+      readonly onSpawn?: () => void;
       readonly env?: NodeJS.ProcessEnv;
       readonly allowNonZeroExit?: boolean;
       readonly timeoutMs?: number;
@@ -584,6 +591,7 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
       cwd,
       spawnCwd: globalThis.process.cwd(),
       ...(options?.stdin !== undefined ? { stdin: options.stdin } : {}),
+      ...(options?.onSpawn !== undefined ? { onSpawn: options.onSpawn } : {}),
       ...(options?.env !== undefined ? { env: options.env } : {}),
       ...(options?.allowNonZeroExit !== undefined
         ? { allowNonZeroExit: options.allowNonZeroExit }
@@ -655,6 +663,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
       ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+      ...(input.onSpawn !== undefined ? { onSpawn: input.onSpawn } : {}),
       ...(input.env !== undefined ? { env: input.env } : {}),
       ...(input.allowNonZeroExit !== undefined ? { allowNonZeroExit: input.allowNonZeroExit } : {}),
       ...(input.timeoutMs !== undefined ? { timeoutMs: input.timeoutMs } : {}),
@@ -928,6 +937,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "--git-common-dir",
         "--git-path",
         "index",
+        "--show-toplevel",
         "--show-prefix",
         "--verify",
         "--quiet",
@@ -938,11 +948,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const headExists = result.exitCode === 0;
     const headChecked = headExists || result.exitCode === 1;
     const lines = result.stdout.split("\n");
-    const [gitCommonDir = "", indexPath = "", prefix = "", head = ""] = lines;
-    if (headChecked && lines.length === (headExists ? 5 : 4) && lines.at(-1) === "") {
+    const [gitCommonDir = "", indexPath = "", topLevel = "", prefix = "", head = ""] = lines;
+    if (headChecked && lines.length === (headExists ? 6 : 5) && lines.at(-1) === "") {
       return {
         gitCommonDir: gitCommonDir.trim(),
         indexPath: indexPath.trim(),
+        topLevel: topLevel.trim(),
         prefix,
         headExists,
         head: headExists ? head : undefined,
@@ -959,10 +970,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     return {
       gitCommonDir: fallbackCommonDir,
       indexPath: undefined,
+      topLevel: undefined,
       prefix: prefixResult.stdout.replace(/\n$/, ""),
       headExists: headChecked ? headExists : yield* hasHeadCommit(cwd),
       head: undefined,
     };
+  });
+
+  // $displaypath is relative to cwd, so "../" marks submodules outside a nested workspace.
+  const listSubmodules = Effect.fn("GitVcsDriver.listSubmodules")(function* (cwd: string) {
+    const result = yield* execute({
+      operation: "GitVcsDriver.checkpoints.listSubmodules",
+      cwd,
+      args: ["submodule", "foreach", "--quiet", 'printf "%s\\0" "$displaypath"'],
+    });
+    return result.stdout
+      .split("\0")
+      .filter((entry) => entry !== "" && !entry.startsWith("../"))
+      .map((entry) => path.join(cwd, entry));
   });
 
   // Git defaults and macOS writeout-only can leave empty refs after crashes; flush before publication.
@@ -1055,9 +1080,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "-c",
         "splitIndex.sharedIndexExpire=never",
       ];
-      const { gitCommonDir, indexPath, prefix, headExists, head } = yield* resolveCaptureRepository(
-        input.cwd,
-      );
+      const { gitCommonDir, indexPath, topLevel, prefix, headExists, head } =
+        yield* resolveCaptureRepository(input.cwd);
       // Read before the snapshot and pinned to the same HEAD: a switch that lands while files are
       // being staged then belongs to the next checkpoint instead of being applied to this one.
       const headMoves = head === undefined ? [] : yield* readHeadMoves(input.cwd);
@@ -1700,6 +1724,40 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: [...durableWrite, "update-ref", input.checkpointRef, commitOid],
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
+
+      // The tree records only each submodule's HEAD, so submodules keep their own ref.
+      const hasSubmodules =
+        topLevel === undefined ||
+        (yield* fileSystem
+          .exists(path.join(topLevel, ".gitmodules"))
+          .pipe(Effect.orElseSucceed(() => true)));
+      if (!hasSubmodules) return;
+      // A submodule that cannot be captured drops its ref, so restore leaves it alone.
+      yield* listSubmodules(input.cwd).pipe(
+        Effect.flatMap((submodules) =>
+          Effect.forEach(
+            submodules,
+            (cwd) =>
+              checkpoints
+                .captureCheckpoint({ cwd, checkpointRef: input.checkpointRef })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("submodule checkpoint capture failed", { cwd, cause }).pipe(
+                      Effect.andThen(
+                        checkpoints
+                          .deleteCheckpointRefs({ cwd, checkpointRefs: [input.checkpointRef] })
+                          .pipe(Effect.ignore),
+                      ),
+                    ),
+                  ),
+                ),
+            { discard: true },
+          ),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
+        ),
+      );
     }, Effect.scoped),
 
     hasCheckpointRef: (input) =>
@@ -1725,15 +1783,48 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd: input.cwd,
         args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
       });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
-        const sparseConfig = yield* execute({
+      const sparseConfig =
+        tracked.stdout.length > 0
+          ? yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--bool", "core.sparseCheckout"],
+              allowNonZeroExit: true,
+            })
+          : null;
+      const sparseCheckout = sparseConfig?.stdout.trim() === "true";
+      // Restoring away the last tracked file can remove a nested workspace directory.
+      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsProcessExitError({
+              operation,
+              command: "git restore",
+              cwd: input.cwd,
+              exitCode: 0,
+              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+            }),
+        ),
+      );
+      const resetIndex = Effect.gen(function* () {
+        // On Windows clean can remove './' and exit 0.
+        yield* recreateWorkspace;
+        yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["config", "--bool", "core.sparseCheckout"],
-          allowNonZeroExit: true,
+          args: [...longPaths, "reset", "--quiet", "--", "."],
         });
-        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+      });
+      let mutationStarted = false;
+      const onSpawn = () => {
+        mutationStarted = true;
+      };
+      // Queued commands preserve user staging; spawned children stop before this scope resets it.
+      yield* Effect.addFinalizer((exit) =>
+        mutationStarted && Exit.hasInterrupts(exit) ? resetIndex.pipe(Effect.ignore) : Effect.void,
+      );
+      // An empty index and checkpoint have nothing for git restore's pathspec to match.
+      if (tracked.stdout.length > 0) {
         const restore = [...longPaths, "restore", "--source", commitOid, "--worktree", "--staged"];
         // restore leaves skip-worktree paths alone. Outside a sparse checkout every such bit was
         // set by hand and capture recorded the file, so override them all.
@@ -1741,6 +1832,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          onSpawn,
         });
         if (sparseCheckout) {
           // Sparse exclusions stay excluded; only skip-worktree paths the rules select are manual.
@@ -1812,28 +1904,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
       }
-      // Restoring away the last tracked file can remove a nested workspace directory.
-      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
-      const resetIndex = Effect.gen(function* () {
-        // On Windows clean can remove './' and exit 0.
-        yield* recreateWorkspace;
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
-        });
-      });
       yield* recreateWorkspace;
       const clean = execute({
         operation,
@@ -1841,6 +1911,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         args: [...longPaths, "clean", "-fd", "--", "."],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
+        onSpawn,
       });
       let cleaned = yield* clean;
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
@@ -1893,8 +1964,34 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
       yield* resetIndex;
 
+      // A submodule without this ref was not captured, and restoring it to HEAD would lose edits.
+      // The root is already restored, so a failing submodule must not hide that from the caller.
+      yield* listSubmodules(input.cwd).pipe(
+        Effect.flatMap((submodules) =>
+          Effect.forEach(
+            submodules,
+            (cwd) =>
+              checkpoints
+                .restoreCheckpoint({
+                  cwd,
+                  checkpointRef: input.checkpointRef,
+                  fallbackToHead: false,
+                })
+                .pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("submodule checkpoint restore failed", { cwd, cause }),
+                  ),
+                ),
+            { discard: true },
+          ),
+        ),
+        Effect.catch((cause) =>
+          Effect.logWarning("submodule checkpoint restore failed", { cwd: input.cwd, cause }),
+        ),
+      );
+
       return true;
-    }),
+    }, Effect.scoped),
 
     diffCheckpoints: Effect.fn("GitVcsDriver.checkpoints.diffCheckpoints")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
@@ -2100,6 +2197,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
           { discard: true },
         );
+        const submodules = yield* listSubmodules(input.cwd).pipe(Effect.orElseSucceed(() => []));
+        for (const cwd of submodules) {
+          yield* checkpoints.deleteCheckpointRefs({ cwd, checkpointRefs: input.checkpointRefs });
+        }
       },
     ),
   };
