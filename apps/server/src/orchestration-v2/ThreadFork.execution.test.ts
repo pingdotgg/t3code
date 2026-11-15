@@ -26,6 +26,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -442,6 +443,7 @@ it.effect.each([
   "a $execution fork's first /compact is rejected only when no history reaches it: $rejected",
   ({ execution, rejected }) => {
     const opened: Array<ProviderInstanceId> = [];
+    const sessionOpened = Deferred.makeUnsafe<void>();
     const adapter = (driverName: "claudeAgent" | "codex") => {
       const driver = ProviderDriverKind.make(driverName);
       const instanceId = ProviderInstanceId.make(driverName);
@@ -454,7 +456,10 @@ it.effect.each([
           ),
         planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
         openSession: (input) =>
-          Effect.sync(() => opened.push(instanceId)).pipe(
+          Effect.sync(() => {
+            opened.push(instanceId);
+            Deferred.doneUnsafe(sessionOpened, Effect.void);
+          }).pipe(
             Effect.andThen(
               new ProviderAdapter.ProviderAdapterOpenSessionError({
                 driver,
@@ -621,6 +626,14 @@ it.effect.each([
         creationSource: "web",
       });
       yield* worker.drain();
+      // The harness daemon may hold the start effect, which drain then skips.
+      if (rejected) {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const started = yield* outbox.listByCommandId(CommandId.make("fork-compact-compact"));
+        yield* Effect.forEach(started, (effect) => outbox.awaitSettled(effect.id));
+      } else {
+        yield* Deferred.await(sessionOpened);
+      }
 
       const projection = yield* orchestrator.getThreadProjection(targetThreadId);
       if (execution === "portable_context") {

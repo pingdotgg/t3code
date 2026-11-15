@@ -429,8 +429,18 @@ it.effect("schedules assisted learning for a run the restart interrupted", () =>
     runtimeRequests: [],
     providerSessions: [],
     providerThreads: [],
-    providerTurns: [],
-    runs: [{ id: runId, status: "running", providerInstanceId: ProviderInstanceId.make("codex") }],
+    // An accepted provider turn; without one, recovery resends the prompt instead of interrupting.
+    providerTurns: [
+      { runAttemptId: RunAttemptId.make("attempt_restart_learning"), status: "running" },
+    ],
+    runs: [
+      {
+        id: runId,
+        status: "running",
+        activeAttemptId: RunAttemptId.make("attempt_restart_learning"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      },
+    ],
     attempts: [],
     nodes: [],
     subagents: [],

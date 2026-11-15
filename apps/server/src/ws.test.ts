@@ -843,7 +843,10 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
-  Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
+  Layer.mock(CodexInstallation.CodexInstallation)({
+    managedDirectory: "/unused",
+    checkForUpdate: Effect.void,
+  }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),

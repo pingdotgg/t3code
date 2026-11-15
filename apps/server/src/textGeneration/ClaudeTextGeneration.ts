@@ -216,17 +216,19 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         (cause) => new TextGenerationError({ operation, detail: cause.message, cause }),
       ),
     );
+    const accountSettings = claudeAccountSettings(
+      claudeSettings.setupMode === "cli"
+        ? parseClaudeAccountDir(claudeSettings.homePath)
+        : undefined,
+    );
     const settings = claudePrivateSettings({
       ...launchArgSettings,
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
       ...(typeof ultracode === "boolean" ? { ultracode } : {}),
-      ...claudeAccountSettings(
-        claudeSettings.setupMode === "cli"
-          ? parseClaudeAccountDir(claudeSettings.homePath)
-          : undefined,
-      ),
+      ...accountSettings,
+      env: { ...launchArgSettings?.env, ...accountSettings?.env },
     });
     const settingsJson = yield* encodeJsonForOperation(
       operation,

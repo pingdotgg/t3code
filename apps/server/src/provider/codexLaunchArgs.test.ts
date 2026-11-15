@@ -59,7 +59,7 @@ describe("codexExecLaunchArgs", () => {
       codexExecLaunchArgs(
         "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
       ),
-      ["--enable", "foo", "--disable", "hooks"],
+      ["--enable", "foo", "--disable", "hooks", ...privacyArgs],
     );
   });
 

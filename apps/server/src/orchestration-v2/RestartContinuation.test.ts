@@ -179,7 +179,10 @@ it.effect("recovers an admitted continuation after another crash before provider
     const recovery = yield* ProviderRuntimeRecovery.make.pipe(
       Effect.provide(
         Layer.mergeAll(
-          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          ServerSettings.layerTest({
+            continueThreadsAfterServerUpdate: true,
+            enableAssistedLearning: false,
+          }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getRecoveryThreadIds: () => Effect.succeed([threadId]),
             getRuntimeRecoveryProjection: () => Effect.succeed(running),

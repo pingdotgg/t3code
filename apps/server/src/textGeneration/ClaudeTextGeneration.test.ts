@@ -287,7 +287,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             title: "Use instance settings",
           },
         }),
-        argsMustContain: `"env":{"ANTHROPIC_VERTEX_PROJECT_ID":"vertex-project-a"}`,
+        argsMustContain: `"ANTHROPIC_VERTEX_PROJECT_ID":"vertex-project-a"`,
         claudeConfig: {
           launchArgs: `--settings '{"env":{"ANTHROPIC_VERTEX_PROJECT_ID":"vertex-project-a"}}'`,
         },
