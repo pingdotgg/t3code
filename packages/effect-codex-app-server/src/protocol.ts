@@ -229,6 +229,26 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         ] as const;
       }).pipe(Effect.flatten);
 
+    // Node ends stdout before it reports the exit of a crashed process, so wait briefly
+    // for the exit status. Pipes can also close while the process keeps running, so the
+    // wait must not hang pending requests.
+    const exitStatusOr = (
+      fallback: CodexError.CodexAppServerError,
+      operation: "read-input-stream" | "write-output-stream",
+    ) =>
+      options.terminationError === undefined
+        ? Effect.succeed(fallback)
+        : options.terminationError.pipe(
+            Effect.timeoutOrElse({
+              duration: EXIT_STATUS_GRACE,
+              orElse: () => Effect.succeed(fallback),
+            }),
+            // A defect here would leave termination marked handled but unfinished.
+            Effect.catchDefect((cause) =>
+              Effect.succeed(new CodexError.CodexAppServerTransportError({ operation, cause })),
+            ),
+          );
+
     const offerOutgoing =
       /* Every protocol write reaches this helper; request spans cover the operation. */
       Effect.fnUntraced(function* (message: Record<string, unknown>) {
@@ -474,29 +494,12 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             Effect.matchEffect({
               onFailure: (error) => handleTermination(() => Effect.succeed(error)),
               onSuccess: () =>
-                handleTermination(() => {
-                  const ended = new CodexError.CodexAppServerInputStreamEndedError({});
-                  // Node ends stdout before it reports the exit of a crashed process, so
-                  // wait briefly for the exit status. stdout can also close while the
-                  // process keeps running, so the wait must not hang pending requests.
-                  return options.terminationError === undefined
-                    ? Effect.succeed(ended)
-                    : options.terminationError.pipe(
-                        Effect.timeoutOrElse({
-                          duration: EXIT_STATUS_GRACE,
-                          orElse: () => Effect.succeed(ended),
-                        }),
-                        // A defect here would leave termination marked handled but unfinished.
-                        Effect.catchDefect((cause) =>
-                          Effect.succeed(
-                            new CodexError.CodexAppServerTransportError({
-                              operation: "read-input-stream",
-                              cause,
-                            }),
-                          ),
-                        ),
-                      );
-                }),
+                handleTermination(() =>
+                  exitStatusOr(
+                    new CodexError.CodexAppServerInputStreamEndedError({}),
+                    "read-input-stream",
+                  ),
+                ),
             }),
           ),
       }),
@@ -517,11 +520,13 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       Stream.run(options.stdio.stdout()),
       Effect.catchCause((cause) =>
         handleTermination(() =>
-          Effect.succeed(
+          // Writing to a process that already exited fails with EPIPE; report the exit.
+          exitStatusOr(
             new CodexError.CodexAppServerTransportError({
               operation: "write-output-stream",
               cause: Cause.squash(cause),
             }),
+            "write-output-stream",
           ),
         ),
       ),

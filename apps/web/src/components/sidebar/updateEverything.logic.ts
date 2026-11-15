@@ -176,7 +176,8 @@ function channelSwitchBlockReason(
 
 /** This app's reinstall restarts every server it hosts, so each of their databases must allow the
  * switch. `backendCount` is the desktop's own inventory: a backend still starting has no client
- * entry yet. A cached config can outlive its connection, so only a connected server's head counts. */
+ * entry yet. A cached config can outlive its connection, so only a connected server's head counts.
+ * With Local environment off this app runs no server, so its reinstall restarts none. */
 export function localSwitchBlockReason(
   appVersion: string,
   release: ChannelSwitchRelease,
@@ -185,8 +186,9 @@ export function localSwitchBlockReason(
     readonly databaseMigration: number | undefined;
   }>,
   backendCount: number,
+  localEnvironmentEnabled: boolean,
 ): string | null {
-  if (!crossesTrack(appVersion, release)) return null;
+  if (!localEnvironmentEnabled || !crossesTrack(appVersion, release)) return null;
   if (
     hosted.length === 0 ||
     hosted.length < backendCount ||
