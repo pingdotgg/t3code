@@ -145,6 +145,59 @@ describe("mobile model options", () => {
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
+  it("carries the version advisory into the update-required group", () => {
+    const versionAdvisory = {
+      status: "current",
+      currentVersion: "2.1.311",
+      latestVersion: "2.1.311",
+      updateCommand: "brew upgrade --cask claude-code",
+      canUpdate: true,
+      checkedAt: null,
+      message: null,
+    };
+    const config = {
+      providers: [
+        {
+          instanceId: "claudeAgent",
+          driver: "claudeAgent",
+          displayName: "Claude",
+          enabled: true,
+          installed: true,
+          versionAdvisory,
+          auth: { status: "authenticated" },
+          updateRequiredModels: [
+            { slug: "claude-fable-5-2", name: "Claude Fable 5.2", minVersion: "2.1.321" },
+          ],
+          models: [
+            {
+              slug: "claude-opus-5-5",
+              name: "Claude Opus 5.5",
+              isCustom: false,
+              capabilities: null,
+            },
+          ],
+        },
+      ],
+    } as unknown as ServerConfig;
+
+    const options = buildModelOptions(
+      config,
+      { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" },
+      undefined,
+      null,
+    );
+    const [option] = options;
+    expect(option?.providerUpdateRequired).toEqual({
+      driver: "claudeAgent",
+      updateRequiredModels: [
+        { slug: "claude-fable-5-2", name: "Claude Fable 5.2", minVersion: "2.1.321" },
+      ],
+      versionAdvisory,
+    });
+    const [group] = groupByProvider([option!]);
+    expect(group?.updateRequired).toEqual(option?.providerUpdateRequired);
+  });
+
   it("carries a thread's stored options onto an optionless pick of its own model", () => {
     const claude = ProviderInstanceId.make("claudeAgent");
     const stored: ModelSelection = {
