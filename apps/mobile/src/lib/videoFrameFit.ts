@@ -12,3 +12,14 @@ export function fitVideoFrame(video: Size, bounds: Size, maxWidth: number): Size
   const width = Math.min(bounds.width, maxWidth, bounds.height * ratio);
   return { width, height: width / ratio };
 }
+
+/** Inline frame for a video of known shape: full width up to `maxSide` on its longer edge. */
+export function inlineVideoFrame(video: Size | null | undefined, maxSide: number) {
+  if (!video || video.width <= 0 || video.height <= 0) return null;
+  const ratio = video.width / video.height;
+  return {
+    width: "100%",
+    maxWidth: Math.min(maxSide, maxSide * ratio),
+    aspectRatio: ratio,
+  } as const;
+}
