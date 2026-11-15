@@ -750,8 +750,12 @@ const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.id === right?.id &&
   (left.variant ?? "default") === (right?.variant ?? "default");
 
+// Plan mode owns the agent while it is on; otherwise the composer's choice wins and `build` is
+// the fallback. The picker never stores `plan`, so a stale value cannot override the toggle.
 const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
+  input.runtimePolicy.interactionMode === "plan"
+    ? "plan"
+    : (getModelSelectionStringOptionValue(input.modelSelection, "agent") ?? "build");
 
 const commandOf = (text: string) => {
   const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());

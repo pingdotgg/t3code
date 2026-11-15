@@ -61,4 +61,37 @@ describe("getProviderModelCapabilities", () => {
       customCapabilities,
     );
   });
+
+  it.each([undefined, "plan"])(
+    "keeps an unset agent unset when the Plan agent is hidden (current: %s)",
+    (currentValue) => {
+      const models = [
+        model({
+          slug: "opencode/test",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "agent",
+                label: "Agent",
+                type: "select",
+                options: [
+                  { id: "researcher", label: "Researcher" },
+                  { id: "plan", label: "Plan" },
+                ],
+                ...(currentValue === undefined ? {} : { currentValue }),
+              },
+            ],
+          },
+        }),
+      ];
+
+      // Falling back to another option would store an agent nobody picked, which then wins over
+      // the Plan toggle.
+      const descriptor = getProviderModelCapabilities(models, "opencode/test", PROVIDER, false)
+        .optionDescriptors?.[0];
+      expect(
+        descriptor?.type === "select" ? descriptor.currentValue : "unexpected",
+      ).toBeUndefined();
+    },
+  );
 });

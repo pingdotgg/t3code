@@ -22,10 +22,13 @@ import { settingsSecretLiteral } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
+import { Agent } from "@opencode/schema/agent";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  makeOpenCode2AgentLoader,
   makeOpenCode2ModelLoader,
+  type OpenCode2AgentLoader,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -507,6 +510,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  loadAgents?: OpenCode2AgentLoader,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -520,9 +524,14 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        undefined,
+        loadAgents?.read ?? Effect.succeed({ agents: [] }),
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -1073,6 +1082,75 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
         "full-access",
       ]);
       NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
+    }),
+  );
+
+  it.effect("lists a project's OpenCode 2 agents and keeps them when a refresh fails", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      let failed = false;
+      let agents = [
+        Agent.Info.default(Agent.ID.make("build")),
+        {
+          ...Agent.Info.default(Agent.ID.make("researcher")),
+          name: Agent.Name.make("Researcher"),
+          mode: "all" as const,
+        },
+      ];
+      const loadAgents = yield* makeOpenCode2AgentLoader(
+        Effect.suspend(() =>
+          failed
+            ? Effect.fail(
+                new OpenCodeRuntime.OpenCodeRuntimeError({
+                  operation: "agent.list",
+                  detail: "agents unavailable",
+                }),
+              )
+            : Effect.succeed(agents),
+        ),
+      );
+      const read = checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+        ]),
+        loadAgents,
+      );
+      const ready = yield* read;
+      type AgentDescriptor = {
+        readonly type?: string;
+        readonly options?: ReadonlyArray<unknown>;
+        readonly currentValue?: string;
+      };
+      const agentDescriptor = (snapshot: typeof ready): AgentDescriptor | undefined => {
+        const descriptors = snapshot.models[0]?.capabilities?.optionDescriptors ?? [];
+        const descriptor = descriptors.find((option) => option.id === "agent") as
+          | AgentDescriptor
+          | undefined;
+        return descriptor?.type === "select" ? descriptor : undefined;
+      };
+
+      NodeAssert.equal(ready.status, "ready");
+      NodeAssert.deepEqual(agentDescriptor(ready)?.options, [
+        { id: "build", label: "build", isDefault: true },
+        { id: "researcher", label: "Researcher" },
+      ]);
+      NodeAssert.equal(agentDescriptor(ready)?.currentValue, "build");
+
+      failed = true;
+      const stale = yield* read;
+      // A failed agent refresh keeps the last known choices and leaves the probe alone.
+      NodeAssert.equal(stale.status, "ready");
+      NodeAssert.deepEqual(agentDescriptor(stale), agentDescriptor(ready));
+
+      failed = false;
+      agents = [];
+      const empty = yield* read;
+      NodeAssert.equal(empty.status, "ready");
+      NodeAssert.equal(agentDescriptor(empty), undefined);
     }),
   );
 

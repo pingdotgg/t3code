@@ -66,6 +66,28 @@ export function replayOpenCodeServer(
   return HttpClient.make((request) => {
     const path = new URL(request.url).pathname;
     requestedPaths.push(path);
+    // OpenCode 2 answers per location; a static body would hand one project's agents to another.
+    if (path === "/api/agent") {
+      const directory = new URL(request.url).searchParams.get("location[directory]") ?? "/work";
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            location: { directory },
+            data: [
+              {
+                id: "build",
+                name: "build",
+                mode: "primary",
+                hidden: false,
+                request: { settings: {}, headers: {}, body: {} },
+                permissions: [],
+              },
+            ],
+          }),
+        ),
+      );
+    }
     const recorded: RecordedResponse =
       request.headers.authorization === expected
         ? (answers[path] ?? responses.unauthorized)
