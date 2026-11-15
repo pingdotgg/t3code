@@ -307,6 +307,59 @@ it.effect(
         }
         expect(decodeBody(f.sent[0]!.body).status).toBe("waiting");
         yield* f.store.apply({
+          id: EventId.make("event:approval-resolved"),
+          type: "runtime-request.updated",
+          threadId,
+          nodeId,
+          occurredAt: f.now,
+          payload: {
+            id: requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "command",
+            status: "resolved",
+            responseCapability: {
+              type: "live",
+              providerSessionId: ProviderSessionId.make("session:approval"),
+            },
+            createdAt: f.now,
+            resolvedAt: f.now,
+          },
+        });
+        yield* f.store.apply({
+          id: EventId.make("event:secret"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          occurredAt: f.now,
+          payload: {
+            id: TurnItemId.make("secret:input"),
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "waiting",
+            title: null,
+            startedAt: f.now,
+            completedAt: null,
+            updatedAt: f.now,
+            type: "secret_request",
+            label: "Test credential",
+            reason: "Pending input",
+            secretStatus: "pending",
+          },
+        });
+        yield* TestClock.adjust("5 seconds");
+        yield* f.api.runDueWork;
+        expect(f.sent).toHaveLength(2);
+        expect(decodeBody(f.sent[1]!.body).status).toBe("waiting");
+        yield* f.store.apply({
           id: EventId.make("event:message"),
           type: "message.updated",
           threadId,
@@ -355,23 +408,23 @@ it.effect(
         yield* f.setStatus("completed");
         yield* TestClock.adjust("5 seconds");
         yield* f.api.runDueWork;
-        expect(f.sent).toHaveLength(2);
-        expect(decodeBody(f.sent[1]!.body)).toMatchObject({
+        expect(f.sent).toHaveLength(3);
+        expect(decodeBody(f.sent[2]!.body)).toMatchObject({
           threadId,
           runId,
           status: "completed",
           lastMessage: { id: "message:answer", role: "assistant" },
         });
-        expect(f.sent[1]!.body).not.toContain("Sensitive answer");
+        expect(f.sent[2]!.body).not.toContain("Sensitive answer");
         expect(f.sent[0]!.body).not.toContain(Redacted.value(endpoint.secret));
-        expect(decodeBody(f.sent[1]!.body).link).toContain("https://app.t3.codes");
+        expect(decodeBody(f.sent[2]!.body).link).toContain("https://app.t3.codes");
         const again = yield* f.call(subscribe);
         expect(again.structuredContent).toMatchObject({
           subscriptionId: registration.subscriptionId,
           state: "delivered",
         });
         yield* f.api.runDueWork;
-        expect(f.sent).toHaveLength(2);
+        expect(f.sent).toHaveLength(3);
       }),
     ),
 );

@@ -245,10 +245,13 @@ const make = Effect.gen(function* () {
       const records = yield* threads
         .getProjectThreadRecords(
           { threadId: row.thread_id, projectId: shell.projectId },
-          ["runs", "runtimeRequests"],
+          ["runs", "runtimeRequests", "turnItems"],
           {
             runIds: [row.run_id],
             runtimeRequestStatuses: shell.pendingRuntimeRequest ? ["pending"] : [],
+            turnItemTypes: ["secret_request"],
+            turnItemRunIds: shell.pendingRuntimeRequest ? [row.run_id] : [],
+            turnItemStatuses: ["waiting"],
           },
         )
         .pipe(Effect.mapError((cause) => new RunWebhookError({ reason: "thread", cause })));
@@ -273,8 +276,13 @@ const make = Effect.gen(function* () {
       const request = blocking.find((entry) =>
         nodes?.nodes.some((node) => node.id === entry.nodeId && node.runId === row.run_id),
       );
-      const status = !terminal(run.status) && request ? "waiting" : run.status;
-      const observation = status === "waiting" ? `waiting:${request?.id ?? ""}` : status;
+      const requestId =
+        request?.id ??
+        records.turnItems.find(
+          (item) => item.type === "secret_request" && item.secretStatus === "pending",
+        )?.id;
+      const status = !terminal(run.status) && requestId ? "waiting" : run.status;
+      const observation = status === "waiting" ? `waiting:${requestId ?? ""}` : status;
       if (
         (observation === row.last_observation && body === null) ||
         (!terminal(status) && status !== "waiting")
