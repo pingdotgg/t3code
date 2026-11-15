@@ -86,7 +86,7 @@ export interface DeviceNetworkMachine {
   readonly key: string;
   readonly kind: MachineKind;
   readonly entry: MachineEntry;
-  /** Other environments on the same node, such as the one a reinstall left behind. */
+  /** Other environments on the same node, such as the one a reinstall left behind and still live. */
   readonly others: ReadonlyArray<MachineEntry>;
   /** A connected host of another network shown here: adding it merges the two networks. */
   readonly inOtherNetwork: boolean;
@@ -381,8 +381,15 @@ function groupMachines(
     return false;
   });
   const merged = kept.map((machine) => {
-    const extra = absorbed.get(machine);
-    return extra === undefined ? machine : { ...machine, others: [...machine.others, ...extra] };
+    const others = [...machine.others, ...(absorbed.get(machine) ?? [])];
+    // Beside a live member, a revoked earlier install is only its tombstone: it stays in the
+    // roster to keep that install out, and asks nothing of the user.
+    return {
+      ...machine,
+      others: isLiveMember(machine.entry.member)
+        ? others.filter((other) => other.isHost || other.member?.access !== "revoked")
+        : others,
+    };
   });
   return merged.sort(
     (a, b) =>

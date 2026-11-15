@@ -137,6 +137,11 @@ trusted:
 - **Each direction is its own handshake.** The issuer links back before
   answering, so one request yields a mutual link, each half proven by the side
   granting it. Gossip between linked members only adds addresses to try.
+- **Membership is the grant; a link is only how it is carried.** A member links
+  to a machine the moment a sync adds it to the roster, and opening a member
+  makes a link that is missing, expired or kept at an address that stopped
+  answering. No user step, scan or pairing code stands between a roster entry
+  and access both ways. The scan only repairs what those missed.
 - **A member is bound to its Tailscale node** (`StableID` from whois, `ID` in
   status). An explicit add binds or rebinds it, and a different node answering
   for the same environment id is refused. A member left unbound by the upgrade
@@ -197,7 +202,9 @@ Apps open members without a click. A bounded loop, `dueNetworkMemberOpens` in
 opens records not yet saved and re-opens refused sessions, including hand-paired
 members still listed live. At most two opens run at once across all members,
 with one attempt per change of opening hosts, online status or session
-generation, and a 2 s to 5 min backoff. The app fetches the member's
+generation, and a 2 s to 5 min backoff. A failed open runs again after each
+backoff while the member is still due: a machine is listed the instant it is
+added, before the host asked can open it, so the first open often fails. The app fetches the member's
 public descriptor before asking any server to mint, so an offline member costs
 no server-to-server call. A member switched off in this app (a record's `off`,
 or a disabled saved entry) is never opened, which is why members offer that

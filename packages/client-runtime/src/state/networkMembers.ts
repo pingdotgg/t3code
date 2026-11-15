@@ -387,6 +387,9 @@ export function createNetworkMemberAtoms<R, E, EO>(
           ),
         ),
         setAttempt({ phase: "connecting" }),
+        Effect.sync(() =>
+          atomRegistry.get(dueOpensAtom).find((due) => due.environmentId === renewal.environmentId),
+        ),
       );
     },
   });

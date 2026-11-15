@@ -1104,6 +1104,8 @@ const make = Effect.gen(function* () {
     yield* Effect.forEach(cuts.narrowed, (id) => cutBrokered(id), { discard: true });
     yield* Effect.forEach(cuts.appsCut, (appId) => cutApp(appId), { discard: true });
     yield* seedLimits(cuts.added);
+    // A machine another member added is linked now, not at the next scan. Not awaited: it dials.
+    if (!narrowOnly && cuts.added.length > 0) yield* Effect.forkIn(linkMembers, serviceScope);
   });
 
   const notTakingPart = () =>
@@ -1252,15 +1254,28 @@ const make = Effect.gen(function* () {
       Effect.ignore,
       Effect.andThen(ask),
     );
+    // Membership is the grant. A link that is missing, ran out, or is kept at an address that
+    // stopped answering is made again here, at any address Tailscale proves is that member.
+    const relink = refresh(environmentId).pipe(Effect.andThen(ask));
     const credential = yield* ask.pipe(
-      Effect.catchTags({ TailnetDevicesUnauthorizedError: () => retry }),
+      Effect.catchTags({
+        TailnetDevicesUnauthorizedError: () => retry,
+        PeerLinkError: (cause) =>
+          cause.reason === "unknown_link" ||
+          cause.reason === "expired" ||
+          cause.reason === "unreachable"
+            ? relink
+            : Effect.fail(cause),
+      }),
       Effect.mapError((cause) =>
         cause._tag === "PeerLinkError"
-          ? new TailnetDevicesError({
-              reason: "unknown_device",
-              message: "This machine has no link to that device.",
-              cause,
-            })
+          ? cause.reason === "unreachable"
+            ? unreachable("That device did not answer this machine.", cause)
+            : new TailnetDevicesError({
+                reason: "unknown_device",
+                message: "This machine could not link to that device yet.",
+                cause,
+              })
           : cause._tag === "TailnetDevicesUnauthorizedError"
             ? new TailnetDevicesError({
                 reason: "forbidden",
@@ -1727,6 +1742,12 @@ const make = Effect.gen(function* () {
           return false;
         }
         yield* membership.adopt({ members: offered.members, apps: offered.apps });
+        // Where the other members answer, so this machine can link to each without a scan.
+        yield* Effect.forEach(
+          offered.devices.filter((device) => device.environmentId !== self.environmentId),
+          addHint,
+          { discard: true },
+        );
         if (!merging) yield* cutAppsNotIn(offered.apps);
         yield* seedLimits(
           offered.members
@@ -1831,6 +1852,35 @@ const make = Effect.gen(function* () {
     });
   }).pipe(Effect.ignore);
 
+  /** Makes or renews this machine's link to every member, and to machines linked to it alone. */
+  const linkMembers: Effect.Effect<void> = Effect.gen(function* () {
+    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
+    const roster = yield* membership.members.pipe(Effect.orElseSucceed(() => []));
+    // Probing and gossip can take a while; a pairing that ran out meanwhile has expired.
+    const checkedAt = yield* DateTime.now;
+    // Members' links, and links another machine granted this one alone.
+    const renew = new Set<EnvironmentId>([
+      ...roster
+        .filter((member) => member.access !== "revoked")
+        .map((member) => member.environmentId),
+      ...current.filter((link) => link.origin === "tailnet").map((link) => link.environmentId),
+    ]);
+    renew.delete(yield* environment.getEnvironmentId);
+    for (const environmentId of renew) {
+      const link = current.find((candidate) => candidate.environmentId === environmentId);
+      // A pairing-code link is the user's choice; only tailnet links are made or renewed here.
+      if (
+        link !== undefined &&
+        link.origin === "paired" &&
+        DateTime.isGreaterThan(link.expiresAt, checkedAt)
+      ) {
+        continue;
+      }
+      if (yield* hasUsableLink(environmentId)) continue;
+      yield* refresh(environmentId);
+    }
+  }).pipe(Effect.withSpan("TailnetDevices.linkMembers"));
+
   const scan: TailnetDevices["Service"]["scan"] = Effect.gen(function* () {
     if (!(yield* enabled)) return;
     const tailnet = yield* identity.read;
@@ -1877,31 +1927,7 @@ const make = Effect.gen(function* () {
     );
     // Gossip first: a linked member may know addresses the scan cannot guess.
     yield* push;
-    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
-    const roster = yield* membership.members.pipe(Effect.orElseSucceed(() => []));
-    // Probing and gossip can take a while; a pairing that ran out meanwhile has expired.
-    const checkedAt = yield* DateTime.now;
-    // Members' links, and links another machine granted this one alone.
-    const renew = new Set<EnvironmentId>([
-      ...roster
-        .filter((member) => member.access !== "revoked")
-        .map((member) => member.environmentId),
-      ...current.filter((link) => link.origin === "tailnet").map((link) => link.environmentId),
-    ]);
-    renew.delete(self);
-    for (const environmentId of renew) {
-      const link = current.find((candidate) => candidate.environmentId === environmentId);
-      // A pairing-code link is the user's choice; only tailnet links are made or renewed here.
-      if (
-        link !== undefined &&
-        link.origin === "paired" &&
-        DateTime.isGreaterThan(link.expiresAt, checkedAt)
-      ) {
-        continue;
-      }
-      if (yield* hasUsableLink(environmentId)) continue;
-      yield* refresh(environmentId);
-    }
+    yield* linkMembers;
   }).pipe(Effect.withSpan("TailnetDevices.scan"));
 
   const start: TailnetDevices["Service"]["start"] = Effect.gen(function* () {

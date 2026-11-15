@@ -540,9 +540,13 @@ function machineDetail(
           ? [`Linked to ${hostLabel(group, host)} only`]
           : [],
     ),
-    ...entry.links.map(({ host, link }) => {
+    // A member's own links are how the network carries it, not something the user made.
+    ...entry.links.flatMap(({ host, link }) => {
+      if (link.origin !== "paired") return [];
       const health = peerLinkHealth(link, now);
-      return `Paired with ${hostLabel(group, host)}${health.kind === "expired" ? ", expired" : health.kind === "reachable" ? "" : ", not answering"}`;
+      return [
+        `Paired with ${hostLabel(group, host)}${health.kind === "expired" ? ", expired" : health.kind === "reachable" ? "" : ", not answering"}`,
+      ];
     }),
     entry.inApp?.kind === "open"
       ? readOnlyHere

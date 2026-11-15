@@ -11,6 +11,7 @@ import {
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Semaphore from "effect/Semaphore";
@@ -781,7 +782,8 @@ export function dueNetworkMemberOpens(input: {
 /**
  * Bounds opens: one attempt per member and `attemptKey`, successive attempts spaced by an
  * exponential backoff from `baseMs` up to `capMs`, and at most `concurrency` running at once
- * across all members. A member left alone for `capMs` starts over.
+ * across all members. A failed open runs again after each backoff while the member is still due.
+ * A member left alone for `capMs` starts over.
  */
 export function makeNetworkMemberRenewals(options?: {
   readonly baseMs?: number;
@@ -793,35 +795,62 @@ export function makeNetworkMemberRenewals(options?: {
   const permits = Semaphore.makeUnsafe(options?.concurrency ?? 2);
   const attempts = new Map<
     EnvironmentId,
-    { readonly key: string; readonly failures: number; readonly at: number }
+    {
+      readonly key: string;
+      readonly failures: number;
+      readonly at: number;
+      /** Its open did not succeed, so the same key is tried again. */
+      readonly failed: boolean;
+    }
   >();
   return {
-    /** Runs `open` when the policy allows it, after waiting out the backoff; false when skipped. */
+    /**
+     * Runs `open` when the policy allows it, after waiting out the backoff; false when skipped.
+     * When it fails, `stillDue` names the member's renewal now, or nothing to stop: a machine that
+     * just joined is listed before its host can open it, so the first open often fails.
+     */
     renew: Effect.fn("NetworkMembers.renew")(function* <A, E, R>(
       renewal: NetworkMemberRenewal,
       open: Effect.Effect<A, E, R>,
       /** Runs once the backoff is waited out, as the attempt starts. */
       started: Effect.Effect<void> = Effect.void,
+      stillDue: Effect.Effect<NetworkMemberRenewal | undefined> = Effect.undefined,
     ) {
-      const previous = attempts.get(renewal.environmentId);
-      if (previous?.key === renewal.attemptKey) return false;
-      let now = yield* Clock.currentTimeMillis;
-      const failures = previous === undefined || now - previous.at >= capMs ? 0 : previous.failures;
-      if (previous !== undefined && failures > 0) {
-        const wait = previous.at + Math.min(capMs, baseMs * 2 ** (failures - 1)) - now;
-        if (wait > 0) {
-          yield* Effect.sleep(wait);
-          now = yield* Clock.currentTimeMillis;
+      const { environmentId } = renewal;
+      let current = renewal;
+      while (true) {
+        const previous = attempts.get(environmentId);
+        if (previous?.key === current.attemptKey && !previous.failed) return false;
+        let now = yield* Clock.currentTimeMillis;
+        const failures =
+          previous === undefined || now - previous.at >= capMs ? 0 : previous.failures;
+        if (previous !== undefined && failures > 0) {
+          const wait = previous.at + Math.min(capMs, baseMs * 2 ** (failures - 1)) - now;
+          if (wait > 0) {
+            yield* Effect.sleep(wait);
+            now = yield* Clock.currentTimeMillis;
+          }
         }
+        const attempt = { key: current.attemptKey, failures: failures + 1, at: now };
+        attempts.set(environmentId, { ...attempt, failed: false });
+        yield* started;
+        const exit = yield* permits
+          .withPermits(1)(open)
+          .pipe(
+            // An interrupted open counts as failed too, so its key is not spent.
+            Effect.onExit((result) =>
+              Effect.sync(() => {
+                if (!Exit.isSuccess(result))
+                  attempts.set(environmentId, { ...attempt, failed: true });
+              }),
+            ),
+            Effect.exit,
+          );
+        if (Exit.isSuccess(exit)) return true;
+        const next = yield* stillDue;
+        if (next === undefined) return yield* exit;
+        current = next;
       }
-      attempts.set(renewal.environmentId, {
-        key: renewal.attemptKey,
-        failures: failures + 1,
-        at: now,
-      });
-      yield* started;
-      yield* permits.withPermits(1)(open);
-      return true;
     }),
   };
 }

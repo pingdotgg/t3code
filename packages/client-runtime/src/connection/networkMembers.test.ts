@@ -717,6 +717,39 @@ describe("makeNetworkMemberRenewals", () => {
       }
     }),
   );
+
+  it.effect("a failed open is tried again after each backoff while the member is still due", () =>
+    Effect.gen(function* () {
+      const renewals = makeNetworkMemberRenewals({ baseMs: 1_000, capMs: 4_000 });
+      const renewal = { environmentId: laptop, attemptKey: "hosts|0" };
+      // The machine joined a moment ago: its host has no link to it for the first two opens.
+      let opens = 0;
+      const open = Effect.suspend(() => (++opens < 3 ? Effect.fail("no link yet") : Effect.void));
+      let due = true;
+      const stillDue = Effect.sync(() => (due ? renewal : undefined));
+
+      const fiber = yield* renewals
+        .renew(renewal, open, Effect.void, stillDue)
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(999);
+      expect(opens).toBe(1);
+      yield* TestClock.adjust(1);
+      expect(opens).toBe(2);
+      yield* TestClock.adjust(2_000);
+      expect(yield* Fiber.join(fiber)).toBe(true);
+      expect(opens).toBe(3);
+
+      // No longer due (offline, switched off, gone from the roster): the failure ends it.
+      due = false;
+      opens = 0;
+      const stopped = yield* renewals
+        .renew({ ...renewal, attemptKey: "hosts|1" }, open, Effect.void, stillDue)
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(4_000);
+      expect(yield* Fiber.join(stopped)).toBe("no link yet");
+      expect(opens).toBe(1);
+    }),
+  );
 });
 
 describe("opening members without a click", () => {
