@@ -2294,14 +2294,19 @@ const make = Effect.gen(function* () {
   };
 
   // A stalled viewer must not hold the capture lock past the request, or later snapshots and
-  // recording stall behind it.
+  // recording stall behind it. Waiting for the lock counts too; an expired turn is skipped.
   const withScreencastsPaused = <A>(
     tab: ServerTab,
     deadlineMs: number,
     capture: () => Promise<A>,
-  ): Promise<A> =>
-    withCaptureLock(tab, async () => {
-      const remainingMs = () => Math.max(1, Math.floor(deadlineMs - performance.now()));
+  ): Promise<A> => {
+    const remainingMs = () => Math.max(1, Math.floor(deadlineMs - performance.now()));
+    const captured = withCaptureLock(tab, async () => {
+      if (performance.now() >= deadlineMs)
+        throw new ServerBrowserPage.ServerBrowserOperationError({
+          tag: "PreviewAutomationTimeoutError",
+          message: "The snapshot timed out waiting for the tab's previous capture.",
+        });
       tab.capturing += 1;
       const recording = tab.recording;
       try {
@@ -2331,6 +2336,8 @@ const make = Effect.gen(function* () {
         ).catch(constVoid);
       }
     });
+    return ServerBrowserPage.withinTimeout(captured, remainingMs(), "The snapshot");
+  };
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {

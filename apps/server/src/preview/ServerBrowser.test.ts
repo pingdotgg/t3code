@@ -42,6 +42,7 @@ import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as PreviewAgentActivity from "./PreviewAgentActivity.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import { SessionControl } from "./SessionControl.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 vi.mock("./ServerBrowserContexts.ts", () => ({
@@ -1557,7 +1558,7 @@ it.effect("a first still that never returns does not stall the tab's later captu
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a snapshot fails at its request's timeout when a viewer never pauses", () =>
+it.effect("a viewer that never pauses holds no snapshot past its request's timeout", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, broker, tabId } = yield* ready;
@@ -1572,23 +1573,39 @@ it.effect("a snapshot fails at its request's timeout when a viewer never pauses"
         pausing.resolve();
         return stuck.promise;
       });
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
       yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+      const snapshot = (session: string, timeoutMs: number) =>
+        broker
+          .invoke<PreviewAutomationSnapshot>({
+            scope: asSession(session),
+            tabId,
+            operation: "snapshot",
+            input: {},
+            timeoutMs,
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
 
-      const snapshotting = yield* broker
-        .invoke<PreviewAutomationSnapshot>({
-          scope,
-          tabId,
-          operation: "snapshot",
-          input: {},
-          timeoutMs: 2_000,
-        })
-        .pipe(Effect.flip, Effect.forkScoped);
+      const owner = yield* snapshot(scope.thread.providerSessionId, 15_000);
       yield* Effect.promise(() => pausing.promise);
-      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(4_000));
-      expect(yield* Fiber.join(snapshotting)).toMatchObject({
-        _tag: "PreviewAutomationTimeoutError",
+      // An observer reads without the tab's control queue, straight into the capture lock.
+      const observing = Promise.withResolvers<void>();
+      const observe = SessionControl.prototype.observe;
+      using _observe = vi.spyOn(SessionControl.prototype, "observe").mockImplementation(function (
+        this: SessionControl,
+        run,
+      ) {
+        const result = observe.call(this, run);
+        observing.resolve();
+        return result;
       });
+      const observer = yield* snapshot("agent-observer", 2_000);
+      yield* Effect.promise(() => observing.promise);
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(2_500));
+      expect(yield* Fiber.join(observer)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+
+      yield* Effect.promise(() => vi.advanceTimersByTimeAsync(15_000));
+      expect(yield* Fiber.join(owner)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
     }),
   ).pipe(Effect.provide(layer)),
 );
