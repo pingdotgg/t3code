@@ -286,7 +286,6 @@ export function decodeScanCache(
                 !dedupeKey.endsWith(`:${timestampMs}:${model}`)
               ? `${dedupeKey.slice(0, -model.length)}${timestampMs}:${model}`
               : dedupeKey,
-
       });
     }
     return records;
@@ -328,7 +327,6 @@ export function decodeScanCache(
     const legacy =
       (entry.p === "claude" && version < 18) ||
       (entry.p === "grok" && version < 17) ||
-
       (format.state !== undefined &&
         (version < 6 ||
           (entry.p === "codex" && (version < 14 || (version < 15 && malformedRecords > 0)))));

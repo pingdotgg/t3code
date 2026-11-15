@@ -908,7 +908,6 @@ export const make = Effect.gen(function* () {
     const modelAliases = resolveModelAliases(settings.usageModelAliases);
     const sources: Array<Omit<UsageSource, "distinctSessions">> = [];
 
-
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
