@@ -3048,6 +3048,7 @@ describe("storage cleanup reports and local file policies", () => {
     runCleanupTest(
       Effect.gen(function* () {
         const fixture = yield* pausedMeasurementFixture();
+        fixture.setSettleScript(Effect.never);
         const cleanup = yield* fixture.service.runNow.pipe(Effect.forkChild);
         yield* Deferred.await(fixture.measuring);
         yield* withWorkspaceLease(
@@ -3070,6 +3071,7 @@ describe("storage cleanup reports and local file policies", () => {
           bytes: null,
         });
         expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
+        expect(fixture.settleRuns()).toEqual([]);
       }),
     ),
   );
