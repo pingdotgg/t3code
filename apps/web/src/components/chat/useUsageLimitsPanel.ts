@@ -7,6 +7,7 @@ import type {
 import { collectProviderUsageLimits, hasProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { useUsageLimitsVisible } from "../../hooks/useUsageLimitsVisible";
 import { toastManager } from "../ui/toast";
 import { usageLimitsBannerItem } from "./ComposerUsageLimits";
 
@@ -48,6 +49,7 @@ export function useUsageLimitsPanel(input: {
           setPanel(null),
         )
       : null;
+  useUsageLimitsVisible(banner !== null);
   // Intercept /usage-limits only when Limits has selected-provider data.
   const offered =
     providerDriver !== null && hasProviderUsageLimits(providerDriver, providers, sources);

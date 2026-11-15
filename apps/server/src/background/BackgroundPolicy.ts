@@ -35,6 +35,8 @@ export class BackgroundPolicy extends Context.Service<
     ) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<BackgroundPolicySnapshot>;
     readonly shouldRunScopeWork: (scope: BackgroundScope) => Effect.Effect<boolean>;
+    /** Whether a client that may run provider checks also has a usage limits view on screen. */
+    readonly shouldPollUsageLimits: Effect.Effect<boolean>;
     readonly shouldRunOpportunisticWork: Effect.Effect<boolean>;
   }
 >()("t3/background/BackgroundPolicy") {}
@@ -228,6 +230,9 @@ export const make = Effect.fn("background.policy.make")(function* () {
       recentlyInteracted: input.recentlyInteracted,
       ...(input.appState !== undefined ? { appState: input.appState } : {}),
       ...(input.lowPowerMode !== undefined ? { lowPowerMode: input.lowPowerMode } : {}),
+      ...(input.usageLimitsVisible !== undefined
+        ? { usageLimitsVisible: input.usageLimitsVisible }
+        : {}),
       scopes: input.scopes,
       updatedAt: now,
       expiresAt,
@@ -261,6 +266,17 @@ export const make = Effect.fn("background.policy.make")(function* () {
     );
   });
 
+  const shouldPollUsageLimits = Effect.gen(function* () {
+    const [current, settings] = yield* Effect.all([snapshot, backgroundActivitySettings]);
+    if (isHostConstrained(current.hostPower, settings)) return false;
+    return current.leases.some(
+      (lease) =>
+        // A client that predates the field cannot say, so it keeps the readings it relied on.
+        lease.usageLimitsVisible !== false &&
+        leaseMayRunScopedWork(lease, { type: "provider-status" }, current.updatedAt, settings),
+    );
+  });
+
   const shouldRunOpportunisticWork = Effect.map(
     snapshot,
     (current) => current.shouldRunOpportunisticWork,
@@ -290,6 +306,7 @@ export const make = Effect.fn("background.policy.make")(function* () {
     removeRpcClient,
     snapshot,
     shouldRunScopeWork,
+    shouldPollUsageLimits,
     shouldRunOpportunisticWork,
   });
 });

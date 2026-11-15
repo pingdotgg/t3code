@@ -13,12 +13,14 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "./ProviderHost.ts";
 import { makeManagedServerProvider } from "./managedProvider.ts";
+import { UsagePolling } from "./usageLimits.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const fastModeCapabilities = createModelCapabilities({
@@ -99,6 +101,7 @@ const refreshedSnapshotSecond: ServerProvider = {
 
 function layerProviderHost(input: {
   readonly runBackgroundWork: boolean;
+  readonly pollUsageLimits?: boolean;
   readonly settings?: Pick<ProviderHost.ProviderHost["Service"], "settings">["settings"];
   readonly awaitServerReady?: Effect.Effect<void>;
 }) {
@@ -119,6 +122,9 @@ function layerProviderHost(input: {
         subscribe: Effect.succeed(Stream.empty),
       },
       shouldRunBackgroundWork: () => Effect.succeed(input.runBackgroundWork),
+      ...(input.pollUsageLimits === undefined
+        ? {}
+        : { shouldPollUsageLimits: Effect.succeed(input.pollUsageLimits) }),
       ...(input.awaitServerReady ? { awaitServerReady: input.awaitServerReady } : {}),
       resolveAttachmentPath: () => null,
       credentials: () => Effect.die("unused"),
@@ -371,6 +377,58 @@ describe("makeManagedServerProvider", () => {
     ).pipe(
       Effect.provide(
         Layer.mergeAll(layerProviderHost({ runBackgroundWork: false }), TestClock.layer()),
+      ),
+    ),
+  );
+
+  it.effect("periodic checks leave the quota alone while no usage view is on screen", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const reads = yield* Ref.make(0);
+        const invalidations = yield* Ref.make(0);
+        const checks = yield* Queue.unbounded<boolean>();
+        const limits = (usedPercent: number): NonNullable<ServerProvider["usageLimits"]> => ({
+          checkedAt: "2026-04-10T00:00:01.000Z",
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent }],
+        });
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          // Stands in for a driver: it spends a quota request only when the check may poll.
+          checkProvider: Effect.gen(function* () {
+            const pollingUsage = yield* UsagePolling;
+            const usedPercent = pollingUsage
+              ? yield* Ref.updateAndGet(reads, (count) => count + 25)
+              : undefined;
+            yield* Queue.offer(checks, pollingUsage);
+            return usedPercent === undefined
+              ? refreshedSnapshot
+              : { ...refreshedSnapshot, usageLimits: limits(usedPercent) };
+          }),
+          invalidateUsageCache: Ref.update(invalidations, (count) => count + 1),
+          refreshInterval: "5 minutes",
+        });
+
+        assert.isTrue(yield* Queue.take(checks));
+        yield* TestClock.adjust("5 minutes");
+        assert.isFalse(yield* Queue.take(checks));
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, limits(25));
+
+        // A turn that failed on its usage limit re-reads at once, past any cached reading.
+        yield* provider.refreshUsage!;
+        assert.isTrue(yield* Queue.take(checks));
+        assert.strictEqual(yield* Ref.get(invalidations), 1);
+        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, limits(50));
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerProviderHost({ runBackgroundWork: true, pollUsageLimits: false }),
+          TestClock.layer(),
+        ),
       ),
     ),
   );

@@ -115,3 +115,39 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("a probe told to leave the quota alone still discovers models", () =>
+  Effect.gen(function* () {
+    const usage = vi.fn(async () => ({ rate_limits_available: true, rate_limits: [] }));
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { email: "dev@example.com", subscriptionType: "pro", tokenSource: "oauth" },
+            commands: [],
+            models: [{ value: "claude-opus", displayName: "Opus", description: "" }],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usage,
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const environment = {
+      PATH: (yield* HostProcess.Environment).PATH,
+      CLAUDE_CONFIG_DIR: yield* fileSystem.makeTempDirectoryScoped(),
+    };
+    const settings = yield* decodeClaudeSettings({ binaryPath: "claude" });
+
+    const skipped = yield* probeClaudeCapabilities(settings, environment, undefined, true, false);
+    assert.deepEqual(
+      skipped.models?.map((model) => model.value),
+      ["claude-opus"],
+    );
+    assert.equal(skipped.usage, undefined);
+    assert.equal(usage.mock.calls.length, 0);
+
+    const read = yield* probeClaudeCapabilities(settings, environment);
+    assert.equal(read.usage?.rate_limits_available, true);
+    assert.equal(usage.mock.calls.length, 1);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

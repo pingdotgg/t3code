@@ -158,6 +158,16 @@ const readGrokCredential = Effect.fn("readGrokCredential")(function* (
   return credential?.auth_mode === "api_key" ? undefined : credential;
 });
 
+/** The signed-in email alone, for a check that may not spend a usage request. */
+export const readGrokEmail = Effect.fn("readGrokEmail")(function* (
+  environment: NodeJS.ProcessEnv = process.env,
+) {
+  const credential = yield* Effect.option(
+    readGrokCredential(environment).pipe(Effect.timeout("10 seconds")),
+  );
+  return Option.getOrUndefined(credential)?.email?.trim() || undefined;
+});
+
 export const readGrokAccount = Effect.fn("readGrokAccount")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {

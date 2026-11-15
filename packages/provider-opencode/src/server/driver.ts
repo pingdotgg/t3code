@@ -33,6 +33,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2Catalog.ts";
 import {
@@ -522,13 +523,15 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        usageLimits: checkUsageLimits,
+        usageLimits: UsagePolling.pipe(
+          Effect.flatMap((pollingUsage) => (pollingUsage ? checkUsageLimits : Effect.undefined)),
+        ),
       },
       { concurrency: "unbounded" },
     ).pipe(
       Effect.map(({ provider, usageLimits, installedVersion }) => ({
         ...provider,
-        usageLimits,
+        ...(usageLimits ? { usageLimits } : {}),
         ...(installedVersion === undefined ? {} : { installedVersion }),
       })),
       Effect.map(stampIdentity),

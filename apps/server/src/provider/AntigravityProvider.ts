@@ -35,7 +35,10 @@ import {
   isCommandMissingCause,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
+import {
+  resolveUsageLimitsAfterProbe,
+  UsagePolling,
+} from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
@@ -337,7 +340,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
         },
       } satisfies AntigravityProviderState;
     });
-    if (initialized !== undefined) yield* refreshUsage();
+    if (initialized !== undefined && (yield* UsagePolling)) yield* refreshUsage();
     return yield* options.stampIdentity(next.draft);
   });
 

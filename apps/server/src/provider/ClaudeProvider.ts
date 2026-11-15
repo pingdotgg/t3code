@@ -491,6 +491,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeStatus = true,
+  includeUsage = includeStatus,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -552,7 +553,7 @@ const probeClaudeCapabilities = (
         const { getSettings } = q as ClaudeSettingsQuery;
         const [usageResult, settingsResult] = yield* Effect.all(
           [
-            includeStatus
+            includeUsage
               ? Effect.tryPromise({
                   try: () =>
                     q.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET({

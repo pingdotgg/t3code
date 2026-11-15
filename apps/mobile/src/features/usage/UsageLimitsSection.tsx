@@ -37,6 +37,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { useUsageLimitsVisible } from "./useUsageLimitsVisible";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -329,6 +330,7 @@ export function useRefreshLimits(
     .map(([environmentId]) => environmentId);
   const connectedKey = environmentIdsKey(connectedIds);
   useAtomMount(active && connectedKey !== "" ? limitsAutoRefreshSetAtom(connectedKey) : IDLE_ATOM);
+  useUsageLimitsVisible(active);
   const failedIds = new Set(
     useAtomValue(limitsRefreshFailuresAtom(environmentIdsKey(selected.map(([id]) => id)))),
   );

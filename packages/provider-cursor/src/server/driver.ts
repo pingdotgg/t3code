@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -230,10 +231,16 @@ export const CursorDriver: ProviderDriver<
                 snapshot.auth.status === "authenticated"
               ),
             (snapshot) =>
-              readCursorUsageLimits(effectiveConfig, {
-                ...processEnv,
-                CURSOR_API_KEY: apiKey,
-              }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits }))),
+              UsagePolling.pipe(
+                Effect.flatMap((pollingUsage) =>
+                  pollingUsage
+                    ? readCursorUsageLimits(effectiveConfig, {
+                        ...processEnv,
+                        CURSOR_API_KEY: apiKey,
+                      }).pipe(Effect.map((usageLimits) => ({ ...snapshot, usageLimits })))
+                    : Effect.succeed(snapshot),
+                ),
+              ),
           ),
         ),
       ),

@@ -5,6 +5,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -14,6 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
 import * as ServerConfig from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -204,62 +206,73 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
-    const capabilitiesProbeCache = yield* Cache.makeWith(
-      () =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
-          Effect.flatMap((capabilities) =>
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-              Effect.map((workspaceId) => ({
-                _tag: "fresh" as const,
-                capabilities:
-                  workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
-              })),
-            ),
+    const probeCapabilities = (includeUsage: boolean) =>
+      probeClaudeCapabilities(effectiveConfig, processEnv, stateDir, true, includeUsage).pipe(
+        Effect.flatMap((capabilities) =>
+          ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+            Effect.map((workspaceId) => ({
+              _tag: "fresh" as const,
+              capabilities:
+                workspaceId === undefined ? capabilities : { ...capabilities, workspaceId },
+            })),
           ),
-          Effect.tap(({ capabilities }) =>
-            Ref.set(lastGoodCapabilities, capabilities).pipe(
-              Effect.andThen(modelRoutes.record(capabilities.models ?? [])),
-            ),
-          ),
-          Effect.ensuring(modelRoutes.settle),
-          Effect.catch((error) =>
-            Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
-              Effect.flatMap((capabilities) =>
-                capabilities === undefined
-                  ? Effect.fail(error)
-                  : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
-                      Effect.flatMap((workspaceId) =>
-                        workspaceId === capabilities.workspaceId
-                          ? Effect.succeed({
-                              _tag: "fallback" as const,
-                              capabilities: withoutUsage(capabilities),
-                            })
-                          : Effect.fail(error),
-                      ),
-                    ),
-              ),
-            ),
-          ),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
         ),
-      {
-        capacity: 1,
-        timeToLive: (exit) =>
-          // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
-          Exit.isSuccess(exit) &&
-          exit.value._tag === "fresh" &&
-          exit.value.capabilities.usage !== undefined
-            ? CAPABILITIES_PROBE_TTL
-            : Duration.zero,
-      },
-    );
+        Effect.tap(({ capabilities }) =>
+          Ref.set(lastGoodCapabilities, capabilities).pipe(
+            Effect.andThen(modelRoutes.record(capabilities.models ?? [])),
+          ),
+        ),
+        Effect.ensuring(modelRoutes.settle),
+        Effect.catch((error) =>
+          Ref.getAndSet(lastGoodCapabilities, undefined).pipe(
+            Effect.flatMap((capabilities) =>
+              capabilities === undefined
+                ? Effect.fail(error)
+                : ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
+                    Effect.flatMap((workspaceId) =>
+                      workspaceId === capabilities.workspaceId
+                        ? Effect.succeed({
+                            _tag: "fallback" as const,
+                            capabilities: withoutUsage(capabilities),
+                          })
+                        : Effect.fail(error),
+                    ),
+                  ),
+            ),
+          ),
+        ),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+    const capabilitiesProbeCache = yield* Cache.makeWith(() => probeCapabilities(true), {
+      capacity: 1,
+      timeToLive: (exit) =>
+        // Only fresh usage earns the TTL; failures, fallbacks and usage-less probes retry.
+        Exit.isSuccess(exit) &&
+        exit.value._tag === "fresh" &&
+        exit.value.capabilities.usage !== undefined
+          ? CAPABILITIES_PROBE_TTL
+          : Duration.zero,
+    });
     const capabilitiesCacheKey = yield* makeClaudeCapabilitiesCacheKey(
       effectiveConfig,
       stateDir,
       processEnv,
     );
-    const resolveCapabilities = Cache.get(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+    // A check that may not read the quota reuses a live reading, else probes without one, uncached.
+    const resolveCapabilities = UsagePolling.pipe(
+      Effect.flatMap((pollingUsage) =>
+        pollingUsage
+          ? Cache.get(capabilitiesProbeCache, capabilitiesCacheKey)
+          : Cache.getOption(capabilitiesProbeCache, capabilitiesCacheKey).pipe(
+              Effect.flatMap(
+                Option.match({
+                  onNone: () => probeCapabilities(false),
+                  onSome: Effect.succeed,
+                }),
+              ),
+            ),
+      ),
       Effect.map((result) => result.capabilities),
     );
 

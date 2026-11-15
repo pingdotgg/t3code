@@ -181,7 +181,7 @@ export const make = Effect.gen(function* () {
       Effect.andThen(interval),
       Effect.flatMap((current) =>
         Duration.isPositive(current)
-          ? backgroundPolicy.shouldRunScopeWork({ type: "provider-status" })
+          ? backgroundPolicy.shouldPollUsageLimits
           : Effect.succeed(false),
       ),
       Effect.flatMap((shouldRun) => (shouldRun ? refresh : Effect.void)),

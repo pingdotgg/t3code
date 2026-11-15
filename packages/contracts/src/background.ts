@@ -73,6 +73,8 @@ export const ClientActivityReportInput = Schema.Struct({
   recentlyInteracted: Schema.Boolean,
   appState: Schema.optionalKey(Schema.Literals(["active", "inactive", "background", "unknown"])),
   lowPowerMode: Schema.optionalKey(BackgroundBooleanState),
+  /** False while no usage limits view is on screen. Absent on clients that predate the field. */
+  usageLimitsVisible: Schema.optionalKey(Schema.Boolean),
   scopes: Schema.Array(BackgroundScope),
   ttlMs: Schema.optionalKey(Schema.Number),
   observedAt: Schema.DateTimeUtc,
@@ -89,6 +91,7 @@ export const ClientActivityLease = Schema.Struct({
   recentlyInteracted: Schema.Boolean,
   appState: Schema.optionalKey(Schema.Literals(["active", "inactive", "background", "unknown"])),
   lowPowerMode: Schema.optionalKey(BackgroundBooleanState),
+  usageLimitsVisible: Schema.optionalKey(Schema.Boolean),
   scopes: Schema.Array(BackgroundScope),
   updatedAt: Schema.DateTimeUtc,
   expiresAt: Schema.DateTimeUtc,

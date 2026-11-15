@@ -47,7 +47,10 @@ import {
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
-import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import {
+  makeUnavailableUsageLimits,
+  UsagePolling,
+} from "@t3tools/provider-core/server/usageLimits";
 import {
   codexRateLimitsFailureMessage,
   codexRateLimitsToLimits,
@@ -971,6 +974,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     CODEX_AUTH_PROBE_TIMEOUT_MS,
     resolvedEnvironment,
   );
+  const pollingUsage = yield* UsagePolling;
   const probeResult = yield* probe({
     probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
@@ -978,7 +982,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
     environment: resolvedEnvironment,
-    ...(managedAuth ? { skipNativeUsage: true } : {}),
+    ...(managedAuth || !pollingUsage ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
     Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
@@ -1098,7 +1102,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         : snapshot.models === undefined
           ? { message: "Codex did not return its model catalog in time." }
           : {}),
-      ...(managedAuth ? {} : { usageLimits }),
+      ...(managedAuth || !pollingUsage ? {} : { usageLimits }),
     },
   });
 });

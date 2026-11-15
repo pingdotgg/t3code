@@ -98,7 +98,7 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
         },
       }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        shouldRunScopeWork: () => Effect.succeed(false),
+        shouldPollUsageLimits: Effect.succeed(false),
       }),
       Layer.succeed(
         HttpClient.HttpClient,
@@ -149,7 +149,7 @@ it.effect("reads a management key from its secret provider", () => {
         },
       }),
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-        shouldRunScopeWork: () => Effect.succeed(false),
+        shouldPollUsageLimits: Effect.succeed(false),
       }),
       Layer.succeed(SecretResolver.SecretResolver, {
         label: (provider) => Effect.succeed(provider),

@@ -3,6 +3,15 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
+
+/**
+ * False only inside a periodic check that runs while no usage limits view is on screen. A driver
+ * then skips its quota request and reports no usage, and the published reading stays.
+ */
+export const UsagePolling = Context.Reference<boolean>("@t3tools/provider-core/UsagePolling", {
+  defaultValue: () => true,
+});
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,

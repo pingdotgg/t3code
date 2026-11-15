@@ -43,6 +43,7 @@ export const layer = Layer.effect(
         subscribe: serverSettings.subscribeChanges,
       },
       shouldRunBackgroundWork: backgroundPolicy.shouldRunScopeWork,
+      shouldPollUsageLimits: backgroundPolicy.shouldPollUsageLimits,
       ...Option.match(lifecycleEvents, {
         onNone: () => ({}),
         onSome: (events) => ({ awaitServerReady: events.awaitReady }),

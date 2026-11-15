@@ -18,6 +18,7 @@ import { AppState } from "react-native";
 
 import * as MobileStorage from "../persistence/mobile-storage";
 import {
+  isUsageLimitsViewRetained,
   observeMobileBackgroundActivitySubscription,
   onRetainedMobileBackgroundScopesChange,
   retainedMobileBackgroundScopes,
@@ -73,6 +74,7 @@ export const layerReporter = Layer.effectDiscard(
                 focused: active,
                 recentlyInteracted: active,
                 appState: normalizeAppState(appState),
+                usageLimitsVisible: isUsageLimitsViewRetained(),
                 scopes: [
                   ...BASELINE_SCOPES,
                   ...retainedMobileBackgroundScopes(environmentId as EnvironmentId),

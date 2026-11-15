@@ -19,6 +19,25 @@ function notify(): void {
   }
 }
 
+let usageLimitsViews = 0;
+
+/** Counts a usage limits view as on screen until the returned release runs. */
+export function retainUsageLimitsView(): () => void {
+  usageLimitsViews += 1;
+  if (usageLimitsViews === 1) notify();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    usageLimitsViews -= 1;
+    if (usageLimitsViews === 0) notify();
+  };
+}
+
+export function isUsageLimitsViewRetained(): boolean {
+  return usageLimitsViews > 0;
+}
+
 function stableScopeKey(environmentId: EnvironmentId, scope: BackgroundScope): string {
   switch (scope.type) {
     case "server-config":

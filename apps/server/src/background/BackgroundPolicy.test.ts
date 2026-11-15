@@ -198,6 +198,32 @@ describe("BackgroundPolicy", () => {
     }).pipe(Effect.provide(layerFor(nominalHostPower))),
   );
 
+  it.effect("polls usage limits only for a foreground client with a limits view on screen", () =>
+    Effect.gen(function* () {
+      const policy = yield* BackgroundPolicy.BackgroundPolicy;
+      const report = (overrides: Partial<ClientActivityReportInput>) =>
+        policy.reportClientActivity(
+          AuthSessionId.make("session-1"),
+          RpcClientId.make(1),
+          makeReport({ scopes: [{ type: "provider-status" }], ...overrides }),
+        );
+
+      yield* report({ usageLimitsVisible: false });
+      assert.isFalse(yield* policy.shouldPollUsageLimits);
+      assert.isTrue(yield* policy.shouldRunScopeWork({ type: "provider-status" }));
+
+      yield* report({ usageLimitsVisible: true });
+      assert.isTrue(yield* policy.shouldPollUsageLimits);
+
+      yield* report({ usageLimitsVisible: true, visible: false, focused: false });
+      assert.isFalse(yield* policy.shouldPollUsageLimits);
+
+      // A client from before the field keeps the polling it relied on.
+      yield* report({});
+      assert.isTrue(yield* policy.shouldPollUsageLimits);
+    }).pipe(Effect.provide(layerFor(nominalHostPower))),
+  );
+
   it.effect("battery saver profile pauses scoped work on battery", () =>
     Effect.gen(function* () {
       const policy = yield* BackgroundPolicy.BackgroundPolicy;

@@ -46,6 +46,21 @@ function notifyRetainedScopesChanged(): void {
   }
 }
 
+let usageLimitsViews = 0;
+
+/** Counts a usage limits view as on screen until the returned release runs. */
+export function retainUsageLimitsView(): () => void {
+  usageLimitsViews += 1;
+  if (usageLimitsViews === 1) notifyRetainedScopesChanged();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    usageLimitsViews -= 1;
+    if (usageLimitsViews === 0) notifyRetainedScopesChanged();
+  };
+}
+
 function stableScopeKey(environmentId: EnvironmentId, scope: BackgroundScope): string {
   switch (scope.type) {
     case "server-config":
@@ -103,6 +118,7 @@ function createActivityReport(
     focused: document.hasFocus(),
     recentlyInteracted: wasRecentlyInteracted(lastInteractionAtMs, observedAtMs),
     appState: document.visibilityState === "visible" ? "active" : "background",
+    usageLimitsVisible: usageLimitsViews > 0,
     scopes,
     ttlMs: LEASE_TTL_MS,
     observedAt: DateTime.makeUnsafe(observedAtMs),

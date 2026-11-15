@@ -20,7 +20,8 @@ import {
   enrichGrokSnapshot,
 } from "./status.ts";
 import { grokUsageReader } from "./usage.ts";
-import { readGrokAccount } from "./usageLimits.ts";
+import { UsagePolling } from "@t3tools/provider-core/server/usageLimits";
+import { readGrokAccount, readGrokEmail } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
   defaultProviderContinuationIdentity,
@@ -192,13 +193,19 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
             snapshot.auth.status === "authenticated"
           ),
         (snapshot) =>
-          readGrokAccount(processEnv).pipe(
-            Effect.map(({ email, usageLimits }) => ({
+          Effect.gen(function* () {
+            // The email is local; only the usage request is skipped.
+            if (!(yield* UsagePolling)) {
+              const email = yield* readGrokEmail(processEnv);
+              return email ? { ...snapshot, auth: { ...snapshot.auth, email } } : snapshot;
+            }
+            const { email, usageLimits } = yield* readGrokAccount(processEnv);
+            return {
               ...snapshot,
               auth: email ? { ...snapshot.auth, email } : snapshot.auth,
               usageLimits,
-            })),
-          ),
+            };
+          }),
       ),
       Effect.map(stampIdentity),
       Effect.provideService(HttpClient.HttpClient, httpClient),

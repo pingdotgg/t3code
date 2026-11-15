@@ -20,6 +20,7 @@ import {
   applyUsageLimitsUpdate,
   makeUsageLimits,
   resolveUsageLimitsAfterProbe,
+  UsagePolling,
 } from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
 
@@ -178,6 +179,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
     // A probe without usage must not erase a report published while its I/O was in flight.
     const usageBeforeProbe = (yield* Ref.get(snapshotStateRef)).snapshot.usageLimits;
+    const pollingUsage = yield* UsagePolling;
     const probedSnapshot = yield* input.checkProvider;
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
@@ -205,10 +207,19 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
+        // A check that skipped the quota read has no reading to replace the published one with.
+        const skippedUsageRead =
+          !pollingUsage &&
+          probedSnapshot.enabled &&
+          probedSnapshot.auth.status !== "unauthenticated" &&
+          state.snapshot.usageLimits !== undefined &&
+          (probedSnapshot.usageLimits === undefined ||
+            probedSnapshot.usageLimits.unavailable?.reason === "probeFailed");
         const usageLimits = switchedAccount
           ? probedSnapshot.usageLimits
-          : probedSnapshot.usageLimits === undefined &&
-              state.snapshot.usageLimits !== usageBeforeProbe
+          : skippedUsageRead ||
+              (probedSnapshot.usageLimits === undefined &&
+                state.snapshot.usageLimits !== usageBeforeProbe)
             ? state.snapshot.usageLimits
             : resolveUsageLimitsAfterProbe({
                 published: state.snapshot.usageLimits,
@@ -339,9 +350,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    const pollUsage = yield* host.shouldPollUsageLimits ?? Effect.succeed(true);
+    if (!pollUsage || !needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
       if (needsProviderRefresh(snapshot)) {
-        yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
+        yield* applySnapshotBase(yield* input.getSettings, {
+          forceRefresh: true,
+          deferFailure,
+        }).pipe(Effect.provideService(UsagePolling, pollUsage));
       }
       return;
     }

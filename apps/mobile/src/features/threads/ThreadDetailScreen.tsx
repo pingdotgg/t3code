@@ -132,6 +132,7 @@ import {
 } from "../../native/native-layout-metrics";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
+import { useUsageLimitsVisible } from "../usage/useUsageLimitsVisible";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
 import { getComposerDraftSnapshot, setFreshSessionPending } from "../../state/use-composer-drafts";
@@ -1007,6 +1008,7 @@ function ThreadDetailBody(
           usageLimitsPanel.now,
         )
       : null;
+  useUsageLimitsVisible(usageLimitsReport !== null);
   const showUsageLimits = (report: UsageLimitsReport | null) =>
     setUsageLimitsPanel(
       report === null
