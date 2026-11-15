@@ -27,11 +27,15 @@ export interface EnvironmentProject extends OrchestrationProjectShell {
 }
 
 /** The live projects on `environmentId` a thread can move into: all but No project. */
-export function threadMoveProjects(
-  projects: ReadonlyArray<EnvironmentProject>,
+export function threadMoveProjects<
+  P extends Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> & {
+    readonly archivedAt?: EnvironmentProject["archivedAt"];
+  },
+>(
+  projects: ReadonlyArray<P>,
   environmentId: EnvironmentId,
   scratchWorkspaceRoot: string | null | undefined,
-): ReadonlyArray<EnvironmentProject> {
+): ReadonlyArray<P> {
   return projects.filter(
     (project) =>
       project.environmentId === environmentId &&

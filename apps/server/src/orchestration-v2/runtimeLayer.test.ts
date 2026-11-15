@@ -88,6 +88,7 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ThreadProjectMove from "../project/ThreadProjectMove.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -10211,6 +10212,9 @@ const layerThreadProjectMoveTest = ThreadProjectMove.layer.pipe(
         { defaultModelSelection: modelSelection },
         { organization: "Org", lockedSettings: [], limits: { maxRuntimeMode: "auto" } },
       ),
+      Layer.mock(ServerEnvironment.ServerEnvironmentIdentity)({
+        getEnvironmentId: Effect.succeed(EnvironmentId.make("machine-move-test")),
+      }),
       IdAllocator.layer,
       NodeCrypto.layer,
     ),
@@ -10378,6 +10382,7 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         projectId: targetId,
         bundle,
         movedFrom: "Laptop",
+        leftBehind: { diffs: true, worktree: true, attachments: 0, scheduledTasks: 0 },
       });
       const imported = (yield* orchestrator.getThreadRecords(threadId, [])).thread;
       assert.equal(imported.projectId, targetId);
@@ -10403,10 +10408,10 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         projection.visibleTurnItems.map(({ item }) =>
           item.type === "system_notice" ? item.message : "",
         ),
-        "Moved from Laptop. Its files and diffs stayed there.",
+        "Moved from Laptop. Files, diffs and the worktree stayed there.",
       );
 
-      yield* service.finishMove({ threadId, movedTo: "VPS" });
+      yield* service.finishMove({ threadId, movedTo: "VPS", revision: exported.revision });
       const finished = yield* threads.getThreadSnapshot(threadId);
       assert.isNotNull(finished.projection.thread.archivedAt);
       assert.include(
@@ -10416,34 +10421,35 @@ it.layer(layerThreadProjectMoveTest)("moving a thread to another project", (it) 
         "Moved to VPS. Messages sent here stay separate from that thread.",
       );
 
-      const busyId = ThreadId.make("machine-move-busy");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("machine-move-busy-create"),
-        threadId: busyId,
+      // A turn starts on the source after the export, from another device or a schedule.
+      const raced = yield* service.importThread({
         projectId: targetId,
-        title: "Busy",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
+        bundle,
+        movedFrom: "Laptop",
+        leftBehind: { diffs: false, worktree: false, attachments: 0, scheduledTasks: 0 },
       });
+      const before = yield* service.exportThread(raced.threadId);
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
         creationSource: "web",
-        commandId: CommandId.make("machine-move-busy-message"),
-        threadId: busyId,
-        messageId: MessageId.make("machine-move-busy-message"),
+        commandId: CommandId.make("machine-move-raced-message"),
+        threadId: raced.threadId,
+        messageId: MessageId.make("machine-move-raced-message"),
         text: "Keep this run active.",
         attachments: [],
         modelSelection,
         dispatchMode: { type: "start_immediately" },
       });
-      const busy = yield* service.exportThread(busyId).pipe(Effect.flip);
+      const refused = yield* service
+        .finishMove({ threadId: raced.threadId, movedTo: "VPS", revision: before.revision })
+        .pipe(Effect.flip);
+      assert.equal(
+        refused.message,
+        "It changed after the move started, so it was left active here. Its newest messages aren't in the moved copy.",
+      );
+      assert.isNull((yield* orchestrator.getThreadRecords(raced.threadId, [])).thread.archivedAt);
+      const busy = yield* service.exportThread(raced.threadId).pipe(Effect.flip);
       assert.equal(busy.message, "The thread still has work in progress. Finish or stop it first.");
     }),
   );

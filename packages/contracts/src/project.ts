@@ -583,15 +583,19 @@ export type ThreadMoveBundle = typeof ThreadMoveBundle.Type;
 export const ProjectExportThreadInput = Schema.Struct({ threadId: ThreadId });
 export type ProjectExportThreadInput = typeof ProjectExportThreadInput.Type;
 
+/** What a move leaves on the source environment, so messages name only what applies. */
+export const ThreadMoveLeftBehind = Schema.Struct({
+  diffs: Schema.Boolean,
+  worktree: Schema.Boolean,
+  attachments: NonNegativeInt,
+  scheduledTasks: NonNegativeInt,
+});
+
 export const ProjectExportThreadResult = Schema.Struct({
   bundle: ThreadMoveBundle,
-  /** What stays on this environment, so the confirmation names only what applies. */
-  leftBehind: Schema.Struct({
-    diffs: Schema.Boolean,
-    worktree: Schema.Boolean,
-    attachments: NonNegativeInt,
-    scheduledTasks: NonNegativeInt,
-  }),
+  leftBehind: ThreadMoveLeftBehind,
+  /** The thread's runs at export; finishing the move refuses once a new one has started. */
+  revision: Schema.String,
 });
 export type ProjectExportThreadResult = typeof ProjectExportThreadResult.Type;
 
@@ -600,6 +604,7 @@ export const ProjectImportThreadInput = Schema.Struct({
   bundle: ThreadMoveBundle,
   /** The source machine as the user knows it, for the new thread's notice. */
   movedFrom: TrimmedNonEmptyString,
+  leftBehind: ThreadMoveLeftBehind,
 });
 export type ProjectImportThreadInput = typeof ProjectImportThreadInput.Type;
 
@@ -610,6 +615,8 @@ export const ProjectFinishThreadMoveInput = Schema.Struct({
   threadId: ThreadId,
   /** Where the conversation went, as the user knows it, for the archived thread's notice. */
   movedTo: TrimmedNonEmptyString,
+  /** From the export the target imported, so newer work is never archived unseen. */
+  revision: Schema.String,
 });
 export type ProjectFinishThreadMoveInput = typeof ProjectFinishThreadMoveInput.Type;
 

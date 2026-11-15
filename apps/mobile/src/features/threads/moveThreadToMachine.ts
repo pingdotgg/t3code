@@ -75,8 +75,8 @@ export async function moveThreadToMachine(
   if (outcome._tag === "Failed") Dialog.alert("Could not move thread", outcome.message);
   if (outcome._tag === "Moved" && outcome.archiveError !== null) {
     Dialog.alert(
-      `Moved, but the thread is still active on ${fromMachine}`,
-      `${outcome.archiveError} Archive it there so you don't continue both.`,
+      `Moved, but the original is still active on ${fromMachine}`,
+      `${outcome.archiveError} The moved copy is on ${machine.label}.`,
     );
   }
 }

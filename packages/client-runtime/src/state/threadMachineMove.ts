@@ -6,11 +6,11 @@ import type {
   ProjectImportThreadInput,
   ProjectImportThreadResult,
   ScopedThreadRef,
-  ServerConfig,
   ThreadId,
 } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
+import { scopedThreadKey } from "../environment/scoped.ts";
 import { type EnvironmentProject, threadMoveProjects } from "./models.ts";
 import {
   type AtomCommand,
@@ -45,24 +45,36 @@ export type ThreadMachineMoveOutcome =
       readonly archiveError: string | null;
     };
 
-export interface ThreadMachineMoveTarget {
+export interface ThreadMachineMoveTarget<P = EnvironmentProject> {
   readonly environmentId: EnvironmentId;
   readonly label: string;
-  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly projects: ReadonlyArray<P>;
 }
 
-/** The other connected machines a thread can move to, each with its projects. Both ends must support it. */
-export function threadMachineMoveTargets(input: {
+interface MoveServerConfig {
+  readonly scratchWorkspaceRoot?: string | undefined;
+  readonly environment: { readonly capabilities: { readonly threadMoveToMachine?: boolean } };
+}
+
+/**
+ * The other connected machines a thread can move to, each with its projects. Both ends must
+ * support it, and this connection must be able to change threads on both.
+ */
+export function threadMachineMoveTargets<
+  P extends Parameters<typeof threadMoveProjects>[0][number],
+>(input: {
   readonly sourceEnvironmentId: EnvironmentId;
   readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
-  readonly serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>;
-  readonly projects: ReadonlyArray<EnvironmentProject>;
+  readonly serverConfigs: ReadonlyMap<EnvironmentId, MoveServerConfig>;
+  readonly projects: ReadonlyArray<P>;
   readonly labelOf: (environmentId: EnvironmentId) => string | undefined;
   readonly canOperate: (environmentId: EnvironmentId) => boolean;
-}): ReadonlyArray<ThreadMachineMoveTarget> {
+}): ReadonlyArray<ThreadMachineMoveTarget<P>> {
   const supports = (environmentId: EnvironmentId) =>
     input.serverConfigs.get(environmentId)?.environment.capabilities.threadMoveToMachine === true;
-  if (!supports(input.sourceEnvironmentId)) return [];
+  if (!supports(input.sourceEnvironmentId) || !input.canOperate(input.sourceEnvironmentId)) {
+    return [];
+  }
   return input.connectedEnvironmentIds.flatMap((environmentId) => {
     const label = input.labelOf(environmentId);
     if (
@@ -88,6 +100,8 @@ function failureMessage(result: AtomCommandResult<unknown, unknown>): string {
   return error instanceof Error && error.message !== "" ? error.message : "Try again.";
 }
 
+const movesInFlight = new Set<string>();
+
 /**
  * Copies the thread's conversation to a project on another machine, then archives it here. The
  * client carries the bundle over connections it already has, so the servers never trust each
@@ -103,6 +117,20 @@ export async function moveThreadToMachine(input: {
   readonly targetLabel: string;
   readonly confirm: (exported: ProjectExportThreadResult) => Promise<boolean>;
 }): Promise<ThreadMachineMoveOutcome> {
+  // A second pick while one runs would import the conversation twice.
+  const key = scopedThreadKey(input.source);
+  if (movesInFlight.has(key)) return { _tag: "Cancelled" };
+  movesInFlight.add(key);
+  try {
+    return await moveOnce(input);
+  } finally {
+    movesInFlight.delete(key);
+  }
+}
+
+async function moveOnce(
+  input: Parameters<typeof moveThreadToMachine>[0],
+): Promise<ThreadMachineMoveOutcome> {
   const { registry, commands, source, target } = input;
   const settled = (result: AtomCommandResult<unknown, unknown>): ThreadMachineMoveOutcome =>
     isAtomCommandInterrupted(result)
@@ -122,6 +150,7 @@ export async function moveThreadToMachine(input: {
       projectId: target.projectId,
       bundle: exported.value.bundle,
       movedFrom: input.sourceLabel,
+      leftBehind: exported.value.leftBehind,
     },
   });
   if (imported._tag !== "Success") return settled(imported);
@@ -129,7 +158,11 @@ export async function moveThreadToMachine(input: {
 
   const finished = await commands.finishThreadMove.run(registry, {
     environmentId: source.environmentId,
-    input: { threadId: source.threadId, movedTo: input.targetLabel },
+    input: {
+      threadId: source.threadId,
+      movedTo: input.targetLabel,
+      revision: exported.value.revision,
+    },
   });
   return {
     _tag: "Moved",

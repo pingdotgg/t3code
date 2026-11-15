@@ -362,8 +362,8 @@ export async function moveThreadToMachineAndOpen(
     toastManager.add(
       stackedThreadToast({
         type: "warning",
-        title: `Moved, but the thread is still active on ${fromMachine}`,
-        description: `${outcome.archiveError} Archive it there so you don't continue both.`,
+        title: `Moved, but the original is still active on ${fromMachine}`,
+        description: `${outcome.archiveError} The moved copy is on ${toMachine}.`,
       }),
     );
   }

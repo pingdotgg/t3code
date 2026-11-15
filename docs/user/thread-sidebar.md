@@ -72,6 +72,10 @@ session there with that history. Files, diffs, the worktree, attachments and
 scheduled tasks stay on the first machine, where the old thread is archived. To go
 back, unarchive it there, or move the new thread back the same way.
 
+The other machine must be able to run the thread's provider, or its project needs a
+default model. If the thread gets a new message while it moves, the original stays
+active, because the copy doesn't have that message.
+
 ### Start in the background
 
 In a desktop browser or the desktop app, press `Cmd+Enter` on macOS or `Ctrl+Enter`

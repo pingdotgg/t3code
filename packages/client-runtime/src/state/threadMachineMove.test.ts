@@ -10,7 +10,11 @@ import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AtomCommand } from "./runtime.ts";
-import { moveThreadToMachine, type ThreadMachineMoveCommands } from "./threadMachineMove.ts";
+import {
+  moveThreadToMachine,
+  threadMachineMoveTargets,
+  type ThreadMachineMoveCommands,
+} from "./threadMachineMove.ts";
 
 const source = { environmentId: EnvironmentId.make("laptop"), threadId: ThreadId.make("old") };
 const target = { environmentId: EnvironmentId.make("vps"), projectId: ProjectId.make("api") };
@@ -24,11 +28,12 @@ const exported: ProjectExportThreadResult = {
     messages: [{ role: "user", text: "Port it.", createdAt: "2026-01-01T00:00:00.000Z" }],
   },
   leftBehind: { diffs: true, worktree: false, attachments: 0, scheduledTasks: 0 },
+  revision: "1:run",
 };
 
 type Step = "export" | "import" | "finish";
 
-function setup(failing: ReadonlySet<Step>) {
+function setup(failing: ReadonlySet<Step>, exportGate: Promise<void> = Promise.resolve()) {
   const calls: Array<{ readonly step: Step; readonly environmentId: string }> = [];
   const command = <A>(
     step: Step,
@@ -41,6 +46,7 @@ function setup(failing: ReadonlySet<Step>) {
     label: step,
     run: async (_registry, { environmentId }) => {
       calls.push({ step, environmentId });
+      if (step === "export") await exportGate;
       return failing.has(step)
         ? AsyncResult.failure(Cause.fail(new Error(`${step} failed`)))
         : AsyncResult.success(value);
@@ -101,5 +107,39 @@ describe("moveThreadToMachine", () => {
       threadRef: { environmentId: "vps", threadId: "new" },
       archiveError: "finish failed",
     });
+  });
+
+  it("ignores a second move of the same thread while one is in flight", async () => {
+    let release = () => {};
+    const { calls, move } = setup(new Set(), new Promise<void>((resolve) => (release = resolve)));
+    const first = move();
+    expect(await move()).toEqual({ _tag: "Cancelled" });
+    release();
+    expect((await first)._tag).toBe("Moved");
+    expect(calls.filter((call) => call.step === "import")).toHaveLength(1);
+  });
+});
+
+describe("threadMachineMoveTargets", () => {
+  const laptop = EnvironmentId.make("laptop");
+  const vps = EnvironmentId.make("vps");
+  const supported = { environment: { capabilities: { threadMoveToMachine: true } } };
+  const targets = (canOperate: ReadonlySet<string>) =>
+    threadMachineMoveTargets({
+      sourceEnvironmentId: laptop,
+      connectedEnvironmentIds: [laptop, vps],
+      serverConfigs: new Map([
+        [laptop, supported],
+        [vps, supported],
+      ]),
+      projects: [{ id: ProjectId.make("api"), environmentId: vps, workspaceRoot: "/api" }],
+      labelOf: (environmentId) => environmentId,
+      canOperate: (environmentId) => canOperate.has(environmentId),
+    }).map((machine) => machine.environmentId);
+
+  it("lists machines only when this connection can change threads on both ends", () => {
+    expect(targets(new Set(["laptop", "vps"]))).toEqual(["vps"]);
+    expect(targets(new Set(["vps"]))).toEqual([]);
+    expect(targets(new Set(["laptop"]))).toEqual([]);
   });
 });

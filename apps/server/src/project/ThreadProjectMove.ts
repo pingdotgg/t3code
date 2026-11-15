@@ -2,6 +2,9 @@ import {
   CommandId,
   EventId,
   isRuntimeModeAbove,
+  type ModelSelection,
+  PROVIDER_SEND_TURN_MAX_FILE_BYTES,
+  type ProviderInstanceId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
   type ProjectExportThreadResult,
@@ -10,11 +13,12 @@ import {
   type ProjectImportThreadInput,
   type ProjectImportThreadResult,
   type ThreadId,
+  type ThreadMoveBundle,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { threadMoveNotice } from "@t3tools/shared/threadMove";
+import { threadMoveLeftBehindList, threadMoveNotice } from "@t3tools/shared/threadMove";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -23,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import { threadHasUnfinishedWork } from "../orchestration-v2/Orchestrator.ts";
@@ -36,6 +41,35 @@ import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 const MOVE_EVENT_PREFIX = "thread-machine-move";
+const TOO_LARGE = "This conversation is too large to move.";
+const CHANGED =
+  "It changed after the move started, so it was left active here. Its newest messages aren't in the moved copy.";
+
+/** The source's own provider when this machine runs it, else the project default when usable. */
+export function movedModelSelection(input: {
+  readonly source: ModelSelection;
+  readonly projectDefault: ModelSelection | null;
+  readonly usable: (instanceId: ProviderInstanceId) => boolean;
+}): ModelSelection | null {
+  if (input.usable(input.source.instanceId)) return input.source;
+  return input.projectDefault !== null && input.usable(input.projectDefault.instanceId)
+    ? input.projectDefault
+    : null;
+}
+
+/** Imports hold bundles to the transcript export's budget, which exports already pass. */
+export function threadMoveBundleFits(bundle: ThreadMoveBundle, maxBytes: number): boolean {
+  return Buffer.byteLength(JSON.stringify(bundle), "utf8") <= maxBytes;
+}
+
+/** Changes when a run starts, so finishing a move never archives work its export missed. */
+function threadRevision(runs: ReadonlyArray<{ readonly id: string; readonly ordinal: number }>) {
+  const last = runs.reduce<(typeof runs)[number] | undefined>(
+    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+    undefined,
+  );
+  return `${runs.length}:${last?.id ?? ""}`;
+}
 
 export class ThreadProjectMoveError extends Schema.TaggedError<ThreadProjectMoveError>()(
   "ThreadProjectMoveError",
@@ -85,6 +119,7 @@ const make = Effect.gen(function* () {
   const ids = yield* IdAllocator.IdAllocatorV2;
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const randomId = (yield* SecureRandom.SecureRandom).uuidV4();
 
   const fail = (reason: string) => (cause: unknown) =>
@@ -172,12 +207,18 @@ const make = Effect.gen(function* () {
         reason: "The thread still has work in progress. Finish or stop it first.",
       });
     }
-    const { projection } = yield* threads
-      .getThreadSnapshot(threadId)
-      .pipe(Effect.mapError(fail("Could not read the thread.")));
-    const thread = projection.thread;
+    // The transcript export's size preflight, budget and concurrency limit bound the bundle.
+    const transcript = yield* threads.getThreadTranscript(threadId).pipe(
+      Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environmentIdentity),
+      Effect.mapError((cause) =>
+        cause._tag === "ThreadTranscriptTooLargeError"
+          ? new ThreadProjectMoveError({ reason: TOO_LARGE, cause })
+          : new ThreadProjectMoveError({ reason: "Could not read the thread.", cause }),
+      ),
+    );
+    const thread = records.thread;
     let attachments = 0;
-    const messages = projection.visibleTurnItems.flatMap(({ item }) => {
+    const messages = transcript.items.flatMap(({ item }) => {
       if (item.type === "user_message") attachments += item.attachments.length;
       if (item.type !== "user_message" && item.type !== "assistant_message") return [];
       if (item.text.trim() === "") return [];
@@ -204,30 +245,40 @@ const make = Effect.gen(function* () {
         messages,
       },
       leftBehind: {
-        diffs: projection.runs.length > 0,
+        diffs: records.runs.length > 0,
         worktree: thread.worktreePath !== null,
         attachments,
         scheduledTasks: tasks.tasks.filter((task) => task.threadId === threadId).length,
       },
+      revision: threadRevision(records.runs),
     };
   });
 
   const importThread: ThreadProjectMove["Service"]["importThread"] = Effect.fn(
     "ThreadProjectMove.importThread",
   )(function* (input) {
+    if (!threadMoveBundleFits(input.bundle, PROVIDER_SEND_TURN_MAX_FILE_BYTES)) {
+      return yield* new ThreadProjectMoveError({ reason: TOO_LARGE });
+    }
     const project = yield* readTarget(input.projectId);
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(fail("Could not read this machine's settings.")),
     );
     const projectSettings = resolveProjectSettings(settings, project.id, project).settings;
-    // Provider instances are per machine; one this machine lacks falls back to the project default.
-    const instanceId = input.bundle.modelSelection.instanceId;
-    const usable =
-      (yield* registry.list()).includes(instanceId) &&
-      (yield* threads.isProviderInstanceEnabledForProject({ projectId: project.id, instanceId }));
-    const modelSelection = usable
-      ? input.bundle.modelSelection
-      : (projectSettings.defaultModelSelection ?? input.bundle.modelSelection);
+    // Provider instances are per machine, so the thread may need this project's default.
+    const usableIds = yield* Effect.filter(yield* registry.list(), (instanceId) =>
+      threads.isProviderInstanceEnabledForProject({ projectId: project.id, instanceId }),
+    );
+    const modelSelection = movedModelSelection({
+      source: input.bundle.modelSelection,
+      projectDefault: projectSettings.defaultModelSelection,
+      usable: (instanceId) => usableIds.includes(instanceId),
+    });
+    if (modelSelection === null) {
+      return yield* new ThreadProjectMoveError({
+        reason: `This machine can't run the thread's provider (${input.bundle.modelSelection.instanceId}), and ${project.title} has no usable default model. Set up that provider here, or choose a default model for ${project.title}.`,
+      });
+    }
     const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
     const runtimeMode =
       ceiling !== undefined && isRuntimeModeAbove(input.bundle.runtimeMode, ceiling)
@@ -298,7 +349,7 @@ const make = Effect.gen(function* () {
           nodeId: null,
           providerThreadId: null,
           ordinal: input.bundle.messages.length + 1,
-          message: `Moved from ${input.movedFrom}. Its files and diffs stayed there.`,
+          message: `Moved from ${input.movedFrom}. ${threadMoveLeftBehindList(input.leftBehind)} stayed there.`,
         },
       },
     ];
@@ -309,9 +360,15 @@ const make = Effect.gen(function* () {
   const finishMove: ThreadProjectMove["Service"]["finishMove"] = Effect.fn(
     "ThreadProjectMove.finishMove",
   )(function* (input) {
-    const { thread, runs } = yield* threads
-      .getThreadRecords(input.threadId, ["runs"])
+    const records = yield* threads
+      .getThreadRecords(input.threadId, ["runs", "runtimeRequests"])
       .pipe(Effect.mapError(fail("Could not read the thread.")));
+    const { thread, runs } = records;
+    // A run can start between this check and the archive below; that window is a few
+    // milliseconds, while the one this closes spans the whole confirmation and import.
+    if (threadRevision(runs) !== input.revision || threadHasUnfinishedWork(records)) {
+      return yield* new ThreadProjectMoveError({ reason: CHANGED });
+    }
     const lastRun = runs.reduce<(typeof runs)[number] | undefined>(
       (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
       undefined,
