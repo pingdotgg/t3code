@@ -791,7 +791,9 @@ fn run_inner(command: Command) -> Result<(), String> {
             "conn-server {} (T3 server {} contract, contract digest {})\n",
             env!("CARGO_PKG_VERSION"),
             crate::environment::CONTRACT_SERVER_VERSION,
-            conn_contract::contract_digest().get(..12).unwrap_or_default()
+            conn_contract::contract_digest()
+                .get(..12)
+                .unwrap_or_default()
         )),
         Command::Serve(_) => return Err("serve runs from main".into()),
         Command::Thread { .. } | Command::AcpMcpBridge => {
