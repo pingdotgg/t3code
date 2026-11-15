@@ -195,6 +195,7 @@ it.effect("recovers an admitted continuation after another crash before provider
           IdAllocator.layer,
           Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({}),
           Layer.mock(EffectOutbox.EffectOutboxV2)({
+            get: () => Effect.succeedNone,
             reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
           }),
         ),
@@ -203,7 +204,7 @@ it.effect("recovers an admitted continuation after another crash before provider
     yield* recovery.reconcile("startup");
     assert.deepEqual(
       commits.flatMap((commit) => commit.effects.map((effect) => effect.request)),
-      [{ type: "provider-runtime.continue", sourceRunId: runId }],
+      [{ type: "provider-runtime.continue", sourceRunId: runId, processLossCount: 1 }],
     );
   }),
 );
