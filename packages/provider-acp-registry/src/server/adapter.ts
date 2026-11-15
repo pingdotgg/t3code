@@ -191,7 +191,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
-  const isDevin = registryAgentId === "devin";
+  // Local installs launch the `devin` binary directly with no registry id.
+  const isDevin =
+    registryAgentId === "devin" ||
+    (options.settings.source === "local" &&
+      /^devin(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -281,7 +285,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                       Option.match({
                         onNone: () => text,
                         onSome: (commands) =>
-                          rewriteAcpRegistrySkillMention(text, registryAgentId, commands.skills),
+                          rewriteAcpRegistrySkillMention(text, "devin", commands.skills),
                       }),
                     ),
                   ),

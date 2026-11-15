@@ -403,6 +403,9 @@ describe("ACP Registry probe", () => {
       "/research t3 code",
     );
     expect(rewriteAcpRegistrySkillMention("$missing", "devin", skills)).toBe("$missing");
+    expect(rewriteAcpRegistrySkillMention("$research.md notes", "devin", skills)).toBe(
+      "$research.md notes",
+    );
     expect(rewriteAcpRegistrySkillMention("use $research later", "devin", skills)).toBe(
       "use $research later",
     );

@@ -317,7 +317,7 @@ export function normalizeAcpRegistryCommands(
   return { slashCommands, skills };
 }
 
-const LEADING_SKILL_MENTION = /^\s*\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)/;
+const LEADING_SKILL_MENTION = /^\s*\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/;
 
 const ACP_REGISTRY_SKILL_COMMAND_PREFIX: Readonly<Record<string, string>> = {
   // Devin invokes advertised commands as `/name`; skills are plain commands too.
