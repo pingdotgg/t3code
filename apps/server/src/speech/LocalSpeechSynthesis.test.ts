@@ -14,53 +14,126 @@ import * as ServerConfig from "../config.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 
+/**
+ * Runs `body` against the service with an extracted runtime, so installs download only the model.
+ * `checkingRuntime` wraps the service's last file check before it decides whether to install.
+ */
+const withService = <A, E>(
+  store: Partial<SpeechModelStore.SpeechModelStore["Service"]>,
+  body: (
+    service: LocalSpeechSynthesis.LocalSpeechSynthesis["Service"],
+  ) => Effect.Effect<A, E, never>,
+  checkingRuntime: <B, F>(check: Effect.Effect<B, F>) => Effect.Effect<B, F> = (check) => check,
+) =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const runtime = path.join(
+      config.stateDir,
+      "speech",
+      "runtime",
+      `audio-cpp-${AUDIO_CPP_VERSION}-darwin-arm64`,
+      "metal",
+    );
+    yield* fs.makeDirectory(path.join(runtime, "libs"), { recursive: true });
+    yield* fs.writeFileString(path.join(runtime, ".t3-complete"), AUDIO_CPP_VERSION);
+    yield* fs.writeFileString(path.join(runtime, "libs", "libaudiocpp.0.1.0.dylib"), "");
+    return yield* body(yield* LocalSpeechSynthesis.LocalSpeechSynthesis);
+  }).pipe(
+    Effect.provide(
+      LocalSpeechSynthesis.layer.pipe(
+        Layer.provide(
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fs) =>
+              FileSystem.FileSystem.of({
+                ...fs,
+                exists: (path) =>
+                  path.endsWith("libaudiocpp.0.1.0.dylib")
+                    ? checkingRuntime(fs.exists(path))
+                    : fs.exists(path),
+              }),
+            ),
+          ),
+        ),
+        Layer.provide(
+          Layer.mock(SpeechModelStore.SpeechModelStore)({
+            isReady: () => Effect.succeed(false),
+            ...store,
+          }),
+        ),
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-local-speech-" })),
+        Layer.provide(SecureRandom.layerWebCrypto),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+    Effect.provideService(HostProcess.Platform, "darwin"),
+    Effect.provideService(HostProcess.Architecture, "arm64"),
+  );
+
 it.effect("joins a second download of the same model instead of starting another install", () =>
   Effect.gen(function* () {
+    const bothChecking = yield* Deferred.make<void>();
+    const checked = yield* Deferred.make<void>();
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
+    let checking = 0;
     const download = vi.fn(() =>
       Deferred.succeed(started, undefined).pipe(
         Effect.andThen(Deferred.await(release)),
         Effect.as("/unused"),
       ),
     );
-    const layer = LocalSpeechSynthesis.layer.pipe(
-      Layer.provide(
-        Layer.mock(SpeechModelStore.SpeechModelStore)({
-          download,
-          isReady: () => Effect.succeed(false),
+    yield* withService(
+      { download },
+      (service) =>
+        Effect.gen(function* () {
+          const first = yield* Effect.forkChild(service.download("supertonic-3"));
+          const second = yield* Effect.forkChild(service.download("supertonic-3"));
+          // Both are mid-check, the window in which they could both claim the install.
+          yield* Deferred.await(bothChecking);
+          yield* Deferred.succeed(checked, undefined);
+          yield* Deferred.await(started);
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          yield* Fiber.join(second);
+          expect(download).toHaveBeenCalledTimes(1);
         }),
-      ),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-local-speech-" })),
-      Layer.provide(SecureRandom.layerWebCrypto),
-      Layer.provideMerge(NodeServices.layer),
+      // Holds each finished check, so nothing asynchronous separates the gate from the decision.
+      (check) =>
+        check.pipe(
+          Effect.tap(() =>
+            ++checking === 2 ? Deferred.succeed(bothChecking, undefined) : Effect.void,
+          ),
+          Effect.tap(() => Deferred.await(checked)),
+        ),
     );
-    yield* Effect.gen(function* () {
-      const config = yield* ServerConfig.ServerConfig;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      // An extracted runtime, so each install downloads only the model.
-      const runtime = path.join(
-        config.stateDir,
-        "speech",
-        "runtime",
-        `audio-cpp-${AUDIO_CPP_VERSION}-darwin-arm64`,
-        "metal",
-      );
-      yield* fs.makeDirectory(path.join(runtime, "libs"), { recursive: true });
-      yield* fs.writeFileString(path.join(runtime, ".t3-complete"), AUDIO_CPP_VERSION);
-      yield* fs.writeFileString(path.join(runtime, "libs", "libaudiocpp.0.1.0.dylib"), "");
-      const service = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
-      const first = yield* Effect.forkChild(service.download("supertonic-3"));
-      const second = yield* Effect.forkChild(service.download("supertonic-3"));
-      yield* Deferred.await(started);
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(first);
-      yield* Fiber.join(second);
-      expect(download).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layer));
-  }).pipe(
-    Effect.provideService(HostProcess.Platform, "darwin"),
-    Effect.provideService(HostProcess.Architecture, "arm64"),
-  ),
+  }),
+);
+
+it.effect("refuses a download while a removal deletes the shared runtime", () =>
+  Effect.gen(function* () {
+    const removing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const download = vi.fn(() => Effect.succeed("/unused"));
+    yield* withService(
+      {
+        download,
+        remove: () =>
+          Deferred.succeed(removing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const removal = yield* Effect.forkChild(service.remove("supertonic-3"));
+          yield* Deferred.await(removing);
+          expect(yield* Effect.flip(service.download("supertonic-3"))).toMatchObject({
+            reason: "busy",
+          });
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(removal);
+          expect(download).not.toHaveBeenCalled();
+        }),
+    );
+  }),
 );

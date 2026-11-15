@@ -215,6 +215,8 @@ const make = Effect.gen(function* () {
     fiber?: Fiber.Fiber<void, unknown>;
   };
   let transfer: Transfer | undefined;
+  // A removal deletes the shared runtime, so it and an install must not overlap.
+  let removing = false;
 
   const catalog = Effect.gen(function* () {
     const missing = yield* missingRuntimes;
@@ -264,7 +266,7 @@ const make = Effect.gen(function* () {
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
     // Read before the checks below: no yield may separate them from claiming `transfer`.
     const missing = yield* missingRuntimes;
-    if (transfer && transfer.modelId !== modelId)
+    if (removing || (transfer && transfer.modelId !== modelId))
       return yield* new LocalSynthesisInstallError({ reason: "busy" });
     if (!transfer) {
       const state: Transfer = {
@@ -356,20 +358,30 @@ const make = Effect.gen(function* () {
 
   const remove = Effect.fn("LocalSpeechSynthesis.remove")(function* (modelId: string) {
     const model = yield* findModel(modelId);
-    if (transfer?.modelId === modelId)
-      return yield* new LocalSynthesisInstallError({ reason: "busy" });
-    yield* permit.withPermits(1)(
-      Effect.gen(function* () {
-        if (worker?.modelId === modelId) yield* unloadWorker;
-        yield* store.remove(model.file).pipe(Effect.mapError(installFailed));
-        const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
-          store.isReady(entry.file),
-        );
-        if (remaining.length === 0)
-          yield* fs
-            .remove(runtimeRoot, { recursive: true, force: true })
-            .pipe(Effect.mapError(installFailed));
+    yield* Effect.acquireUseRelease(
+      Effect.suspend(() => {
+        if (transfer || removing) return new LocalSynthesisInstallError({ reason: "busy" });
+        removing = true;
+        return Effect.void;
       }),
+      () =>
+        permit.withPermits(1)(
+          Effect.gen(function* () {
+            if (worker?.modelId === modelId) yield* unloadWorker;
+            yield* store.remove(model.file).pipe(Effect.mapError(installFailed));
+            const remaining = yield* Effect.filter(LOCAL_SYNTHESIS_MODELS, (entry) =>
+              store.isReady(entry.file),
+            );
+            if (remaining.length === 0)
+              yield* fs
+                .remove(runtimeRoot, { recursive: true, force: true })
+                .pipe(Effect.mapError(installFailed));
+          }),
+        ),
+      () =>
+        Effect.sync(() => {
+          removing = false;
+        }),
     );
     return yield* catalog;
   });

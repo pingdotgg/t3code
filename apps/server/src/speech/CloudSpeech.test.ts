@@ -157,6 +157,40 @@ it.effect.each([
     }),
 );
 
+it.effect("splits CJK replies below gpt-4o-mini-tts's token limit", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(
+      async () =>
+        new Response(Uint8Array.of(0xff, 0xfb), { headers: { "content-type": "audio/mpeg" } }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(NodeServices.layer),
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    yield* service.setKey("openai", Redacted.make("speech-key"));
+    yield* service
+      .stream("openai", {
+        text: "読み上げのテストです。".repeat(250),
+        model: "gpt-4o-mini-tts",
+        voice: "",
+        speed: 1,
+        language: "ja",
+      })
+      .pipe(Stream.runDrain, Effect.provideService(FetchHttpClient.Fetch, upstream));
+    const inputs = upstream.mock.calls.map(
+      ([, init]) => (JSON.parse(String(init?.body)) as { input: string }).input,
+    );
+    expect(inputs.length).toBeGreaterThan(1);
+    expect(inputs.every((input) => input.length <= 1000)).toBe(true);
+  }),
+);
+
 it.effect("uploads to OpenRouter only for a listed exact model, as zero-retention JSON WAV", () =>
   Effect.gen(function* () {
     const upstream = vi.fn<typeof fetch>(async (input) =>

@@ -166,8 +166,9 @@ type SynthesisBackend = {
   errorReason: (status: number) => SpeechSynthesisError["reason"];
 };
 
-// OpenAI accepts at most 4096 characters per request.
-const CLOUD_SYNTHESIS_TEXT_LIMIT = 4000;
+// gpt-4o-mini-tts accepts 2,000 tokens, which Chinese or Japanese reaches near 2,000 characters,
+// and OpenRouter's Seed Audio accepts 3,000 characters. Pieces stream back to back, so small is cheap.
+const CLOUD_SYNTHESIS_TEXT_LIMIT = 1000;
 const SYNTHESIS_STALL_TIMEOUT = "30 seconds";
 
 function wave(samples: Float32Array) {
