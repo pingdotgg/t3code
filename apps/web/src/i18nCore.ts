@@ -30,6 +30,8 @@ import enGit from "../locales/en/git.json";
 import zhHansGit from "../locales/zh-Hans/git.json";
 import enScripts from "../locales/en/scripts.json";
 import zhHansScripts from "../locales/zh-Hans/scripts.json";
+import enUi from "../locales/en/ui.json";
+import zhHansUi from "../locales/zh-Hans/ui.json";
 import { type UiLocale } from "@t3tools/contracts/settings";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -57,6 +59,7 @@ declare module "i18next" {
       shell: typeof enShell;
       git: typeof enGit;
       scripts: typeof enScripts;
+      ui: typeof enUi;
     };
   }
 }
@@ -107,6 +110,7 @@ if (!i18next.isInitialized) {
         shell: enShell,
         git: enGit,
         scripts: enScripts,
+        ui: enUi,
       },
       "zh-Hans": {
         settings: zhHansSettings,
@@ -125,6 +129,7 @@ if (!i18next.isInitialized) {
         shell: zhHansShell,
         git: zhHansGit,
         scripts: zhHansScripts,
+        ui: zhHansUi,
       },
     },
     // Locale files are bundled per language, so nothing is fetched at runtime.
