@@ -3,8 +3,8 @@
  * and their API keys (`git` clients, `gh`); the engine holds none of it.
  */
 import { BetterAuth } from "@alchemy.run/better-auth";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import { apiKey } from "@better-auth/api-key";
-import * as Cloudflare from "alchemy/Cloudflare";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 
@@ -35,7 +35,6 @@ export class Unauthorized extends Schema.TaggedError<Unauthorized>()(
  * Who is calling: the signed-in user, or `null` on an anonymous read of
  * a public repository. Every route runs with it in context.
  */
-export class Session extends Context.Service<
-  Session,
-  { readonly user: typeof User.Type | null }
->()("app/Session") {}
+export class Session extends Context.Service<Session, { readonly user: typeof User.Type | null }>()(
+  "app/Session",
+) {}

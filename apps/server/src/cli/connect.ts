@@ -15,7 +15,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -30,6 +30,8 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
@@ -48,7 +50,11 @@ import * as RelayTracing from "../cloud/relayTracing.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ExternalLauncher from "../process/externalLauncher.ts";
-import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import {
+  isProcessAlive,
+  readLiveServerRuntimeState,
+  readPersistedServerRuntimeState,
+} from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
 import * as CliService from "./service.ts";
@@ -190,6 +196,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.desired && status.authenticated
         ? "pending server startup"
         : "not provisioned";
+  const publishOnly = status.desired && status.linkMode === "publish_only";
   const nextStep = !status.authenticated
     ? "Run `t3 connect link` to authorize and enable T3 Connect."
     : status.revoked
@@ -197,30 +204,37 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : !status.desired
         ? "Run `t3 connect link` to enable T3 Connect."
         : !status.linked
-          ? "Start T3 to provision the environment link and launch its managed tunnel."
+          ? publishOnly
+            ? "Start T3 to provision the environment link."
+            : "Start T3 to provision the environment link and launch its managed tunnel."
           : undefined;
 
   return [
     "T3 Connect",
-    `  Exposure: ${status.desired ? "enabled" : "disabled"}`,
+    `  Exposure: ${publishOnly ? "publish-only" : status.desired ? "enabled" : "disabled"}`,
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired || status.linkMode !== "managed"
+    ...(!status.desired
       ? []
-      : status.reachability === null
+      : publishOnly
         ? [
             "",
-            "No running server answered, so reachability was not checked. Check the background service with `t3 service status`.",
+            "This link only publishes agent activity. Remote access through T3 Connect is off, so other devices need their own route to this machine, such as LAN or Tailscale.",
           ]
-        : status.reachability.status === "reachable"
+        : status.reachability === null
           ? [
               "",
-              `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              "No running server answered, so reachability was not checked. Check the background service with `t3 service status`.",
             ]
-          : ["", formatReachabilityFailure(status.reachability)]),
+          : status.reachability.status === "reachable"
+            ? [
+                "",
+                `✓ Other devices can reach this machine · ${formatConnectReachable(status.reachability)}`,
+              ]
+            : ["", formatReachabilityFailure(status.reachability)]),
     ...(nextStep ? ["", `Next: ${nextStep}`] : []),
   ].join("\n");
 }
@@ -296,6 +310,7 @@ const withCloudCliSessionToken = <A, E, R>(
 
 type LiveCloudActionResult =
   | { readonly status: "not-running" }
+  | { readonly status: "server-gone" }
   | { readonly status: "succeeded" }
   | { readonly status: "failed"; readonly cause: Cause.Cause<unknown> };
 
@@ -304,6 +319,10 @@ const runLiveCloudUnlink = Effect.fn("cloud.cli.run_live_unlink")(function* () {
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) {
     return { status: "not-running" } satisfies LiveCloudActionResult;
+  }
+  // A killed server leaves its record behind, and another process may own its port by now.
+  if (!isProcessAlive(runtimeState.value.pid)) {
+    return { status: "server-gone" } satisfies LiveCloudActionResult;
   }
 
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -332,7 +351,7 @@ const CLOUD_CLI_REACHABILITY_RETRY = Duration.seconds(5);
 /** Asks the running server to check T3 Connect now. `null` when no server answers. */
 const checkLiveReachability = Effect.fn("cloud.cli.check_live_reachability")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
+  const runtimeState = yield* readLiveServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isNone(runtimeState)) return null;
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   return yield* withCloudCliSessionToken(environmentAuth, AuthRelayReadScope, (token) =>
@@ -456,6 +475,12 @@ const reportCloudDisconnectResults = Effect.fn("cloud.cli.report_disconnect_resu
       );
     } else {
       yield* Console.log("T3 Connect is disabled locally.");
+      // A killed server cannot stop the connector it started, and nothing adopts it on restart.
+      if (input.liveResult.status === "server-gone") {
+        yield* Console.warn(
+          "The server that ran T3 Connect is gone, but its cloudflared process may still be running.\nStop that process if it is.",
+        );
+      }
     }
 
     if (Exit.isFailure(input.relayResult)) {
@@ -516,13 +541,14 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     | RelayClient.RelayClient
     | EnvironmentAuth.EnvironmentAuth
     | BootService.BootService
-    | Crypto.Crypto
+    | SecureRandom.SecureRandom
     | FileSystem.FileSystem
     | Path.Path
     | HttpClient.HttpClient
     | Prompt.Environment
     | ServerConfig.ServerConfig
     | ServerEnvironment.ServerEnvironmentIdentity
+    | ManagedPolicy.ManagedPolicy
   >,
   options?: {
     readonly quietLogs?: boolean;
@@ -540,13 +566,21 @@ export const runCloudCommand = Effect.fn("cloud.cli.run_cloud_command")(function
     RelayClient.layerCloudflared({ baseDir: config.baseDir }),
     EnvironmentAuth.layerRuntime,
     CliService.layer(config),
-    RelayTracing.layerHeadlessRelayClient,
+    RelayTracing.layerHeadlessRelayClient.pipe(Layer.provide(ManagedPolicy.layer)),
   ).pipe(
     Layer.provideMerge(FetchHttpClient.layer),
     Layer.provideMerge(ServerConfig.layer(config)),
     Layer.provide(Layer.succeed(References.MinimumLogLevel, minimumLogLevel)),
   );
   return yield* run.pipe(Effect.provide(layerRuntime));
+});
+
+/** Status, unlink, and logout stay available so a machine can leave Connect the policy turned off. */
+export const requireConnectAllowed = Effect.gen(function* () {
+  const policy = yield* ManagedPolicy.ManagedPolicy;
+  if (!ManagedLimits.allowsConnect(policy)) {
+    return yield* ManagedLimits.refuseConnect(policy);
+  }
 });
 
 const connectedAs = (identity: string | null): string => (identity ? ` as ${identity}` : "");
@@ -605,6 +639,7 @@ const connectLoginCommand = Command.make("login", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* requireConnectAllowed;
         yield* Console.log("T3 Connect\n");
         const identity = yield* authorizeCli(flags);
         yield* Console.log(`✓ Signed in${connectedAs(identity)}`);
@@ -628,6 +663,7 @@ const connectLinkCommand = Command.make("link", {
     runCloudCommand(
       flags,
       Effect.gen(function* () {
+        yield* requireConnectAllowed;
         yield* Console.log("T3 Connect\n");
         const linked = yield* linkEnvironmentForConnect(flags);
         if (linked) {
@@ -722,6 +758,7 @@ const connectPublishCommand = Command.make("publish", {
         const secrets = yield* ServerSecretStore.ServerSecretStore;
         const tokens = yield* CliTokenManager.CloudCliTokenManager;
         const enabled = !flags.disable;
+        if (enabled) yield* requireConnectAllowed;
         yield* secrets.set(
           PUBLISH_AGENT_ACTIVITY_SECRET,
           stringToBytes(enabled ? "true" : "false"),

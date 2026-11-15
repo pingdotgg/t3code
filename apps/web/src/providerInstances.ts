@@ -93,16 +93,21 @@ export function deriveProviderEntriesByEnvironment(
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
-    // The snapshot includes instances enabled by any project; machine settings alone do not.
-    const entries = settings
-      ? derived.map((entry) => applyProviderInstanceBranding(entry, settings))
-      : derived;
+    const entries = settings ? brandProviderInstanceEntries(derived, settings) : derived;
     byEnvironment.set(
       environmentId,
       new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),
     );
   }
   return byEnvironment;
+}
+
+// The snapshot includes instances enabled by any project; machine settings alone do not.
+export function brandProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.map((entry) => applyProviderInstanceBranding(entry, settings));
 }
 
 /** projectId applies project overrides; explicit null uses machine settings. */
