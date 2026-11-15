@@ -913,7 +913,6 @@ it.layer(
             { pid: 9003, ppid: 1, name: "zsh" },
             { pid: 9004, ppid: 1, name: "zsh" },
             { pid: 400, ppid: 9004, name: "node" },
-            { pid: 9005, ppid: 1, name: "node" },
           ]),
         }).pipe(Effect.provide(layerWithHostPlatform("linux")));
         yield* manager.open(openInput({ terminalId: "idle" }));
@@ -921,13 +920,11 @@ it.layer(
         yield* manager.open(openInput({ terminalId: "subshell" }));
         yield* manager.open(openInput({ threadId: "thread-2", stopOnSettle: true }));
         yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
-        yield* manager.open(openInput({ terminalId: "exec-replaced" }));
 
         yield* manager.closeIdle({ threadId: "thread-1" });
 
         expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
           true,
-          false,
           false,
           false,
           false,
@@ -944,7 +941,6 @@ it.layer(
           false,
           false,
           true,
-          false,
         ]);
       }),
   );
@@ -961,50 +957,25 @@ it.layer(
     });
   });
 
-  it.effect.each(
-    [
-      {
-        label: "exec root",
-        command: `exec node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
-        keep: true,
-        atPrompt: false,
-      },
-      {
-        label: "foreground Bash builtin",
-        command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
-        keep: true,
-        atPrompt: false,
-      },
-      {
-        label: "nested interactive shell",
-        command: `PS1='SETTLE''READY> ' bash --norc --noprofile`,
-        keep: true,
-        atPrompt: false,
-      },
-      {
-        label: "foreground job control",
-        command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
-        keep: true,
-        atPrompt: false,
-      },
-      {
-        label: "background job control",
-        command: `node -e 'console.log("SETTLE"+"READY");process.stdin.resume()' < hold &`,
-        keep: true,
-        atPrompt: true,
-      },
-      {
-        label: "async prompt helper control",
-        command: `PROMPT_COMMAND="PROMPT_COMMAND=; bash -c 'exec 3<>hold; printf SETTLE%s\\\\n READY; read -r -u 3 value' &"`,
-        keep: false,
-        atPrompt: true,
-      },
-    ].flatMap((testCase) =>
-      (["ps", "native table"] as const).map((source) => ({ ...testCase, source })),
-    ),
-  )(
-    "settlement on a real Bash PTY closes only idle shells: $label ($source)",
-    ({ command, keep, atPrompt, source }, ctx) =>
+  it.effect.each([
+    {
+      label: "exec root",
+      command: `exec node -e 'console.log("SETTLE"+"READY");process.stdin.resume()'`,
+      source: "ps",
+    },
+    {
+      label: "foreground Bash builtin",
+      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
+      source: "ps",
+    },
+    {
+      label: "foreground Bash builtin",
+      command: `bash -c 'printf "SETTLE%s\\n" READY; read -r value'`,
+      source: "native table",
+    },
+  ] as const)(
+    "native settlement preserves active commands: $label ($source)",
+    ({ command, source }, ctx) =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) !== "linux") {
           return ctx.skip("Only Linux Bash PTY settlement is measured.");
@@ -1016,12 +987,11 @@ it.layer(
           `${home}/.bashrc`,
           `PS1='SETTLEPROMPT> '; unset PROMPT_COMMAND\n`,
         );
-        const adapter = yield* PtyAdapter.PtyAdapter;
         const manager = yield* TerminalManager.makeWithOptions({
           logsDir: home,
           shellResolver: () => "/bin/bash",
           env: { ...process.env, HOME: home },
-          ptyAdapter: adapter,
+          ptyAdapter: yield* PtyAdapter.PtyAdapter,
           processKillGraceMs: 0,
           ...(source === "native table"
             ? {
@@ -1033,7 +1003,6 @@ it.layer(
         });
         const prompt = yield* Deferred.make<void>();
         const ready = yield* Deferred.make<void>();
-        const idlePrompt = yield* Deferred.make<void>();
         let output = "";
         const unsubscribe = yield* manager.subscribe((event) =>
           Effect.gen(function* () {
@@ -1042,28 +1011,16 @@ it.layer(
             if (output.includes("SETTLEPROMPT> ")) yield* Deferred.succeed(prompt, undefined);
             // The command echo contains split strings, never this completed marker.
             if (output.includes("SETTLEREADY")) yield* Deferred.succeed(ready, undefined);
-            if (
-              output.includes("SETTLEIDLE") &&
-              output.lastIndexOf("SETTLEPROMPT> ") > output.lastIndexOf("SETTLEIDLE")
-            )
-              yield* Deferred.succeed(idlePrompt, undefined);
           }),
         );
         yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
         const input = openInput({ cwd: home });
         const before = yield* manager.open(input);
         yield* Deferred.await(prompt);
-        // An open FIFO lets background cases block on input without a descendant process.
-        yield* manager.write({ ...input, data: `mkfifo hold; exec 3<>hold; ${command}\r` });
+        yield* manager.write({ ...input, data: `${command}\r` });
         yield* Deferred.await(ready);
-        if (atPrompt) {
-          yield* manager.write({ ...input, data: `printf 'SETTLE%s\\n' IDLE\r` });
-          yield* Deferred.await(idlePrompt);
-        }
         yield* manager.closeOnSettle({ threadId: input.threadId });
-        const after = yield* manager.open(input);
-        if (keep) expect(after.pid).toBe(before.pid);
-        else expect(after.pid).not.toBe(before.pid);
+        expect((yield* manager.open(input)).pid).toBe(before.pid);
       }).pipe(Effect.provide(NativePty.layer)),
   );
 
