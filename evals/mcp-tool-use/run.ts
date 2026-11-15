@@ -55,6 +55,7 @@ import { withInlineContext } from "../../apps/server/src/orchestration-v2/Contex
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
+import { HTML_PATH_NEEDS_FULL_ACCESS } from "../../apps/server/src/mcp/toolkits/html/handlers.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
@@ -275,6 +276,11 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
+    /**
+     * The thread's runtime mode when it is not Full access: the harness says it is sandboxed and
+     * T3 refuses a page tool's `path`.
+     */
+    runtimeMode: Schema.optional(Schema.Literal("auto")),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -795,6 +801,24 @@ const buildCodexBase = (
     deferred: [...t3],
     codex: { ...template, input, reasoning: { ...template.reasoning, effort } },
   };
+};
+
+// The captures ran in Full access. In Auto, Claude Code drops its bypass section and Codex runs
+// sandboxed with on-request approvals.
+const BYPASS_SECTION =
+  /While bypass permissions mode is active:(?:(?!\\n\\n).)*\\n\\n(?:(?!\\n\\n).)*\\n\\n/;
+const CODEX_FULL_ACCESS =
+  /`sandbox_mode` is `danger-full-access`:(?:(?!<\/permissions).)*(?=\\n<\/permissions instructions>)/;
+const CODEX_AUTO = JSON.stringify(
+  "`sandbox_mode` is `workspace-write`: The sandbox permits reading files, and editing files in `cwd` and `writable_roots`. Editing files in other directories requires approval. Network access is restricted.\nApproval policy is currently on-request.",
+).slice(1, -1);
+
+/** The base as an Auto thread sees it. */
+const inAutoMode = (base: Base): Base => {
+  const json = JSON.stringify(base);
+  const pattern = base.codex ? CODEX_FULL_ACCESS : BYPASS_SECTION;
+  if (!pattern.test(json)) throw new Error("The template's Full access text has changed.");
+  return JSON.parse(json.replace(pattern, () => (base.codex ? CODEX_AUTO : ""))) as Base;
 };
 
 /** Replay prior calls in Codex's wire format, including Claude-shaped file operations. */
@@ -1667,6 +1691,9 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
+  }
+  if (isPageTool(name) && typeof input.path === "string" && testCase.setup.world?.runtimeMode) {
+    return failed(HTML_PATH_NEEDS_FULL_ACCESS);
   }
   const mock = nextMock(sample, name, testCase.setup.mocks?.[name]);
   if (isT3Name(call.name) && PREVIEW_TOOLS.has(name)) {
@@ -2608,7 +2635,10 @@ const main = Effect.gen(function* () {
     ];
     bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
   }
-  const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
+  const baseFor = (testCase: McpToolUseCase) => {
+    const built = bases.get(baseKey(testCase)) ?? base;
+    return testCase.setup.world?.runtimeMode ? inAutoMode(built) : built;
+  };
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
   if (flags["dry-run"]) {
     // One JSON line per case. Without --case this also checks that every case builds.
