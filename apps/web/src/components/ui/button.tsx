@@ -52,7 +52,7 @@ const buttonVariants = cva(
         "ghost-muted":
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-accent-foreground data-pressed:text-accent-foreground",
         "ghost-destructive":
-          "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-accent-foreground data-pressed:text-accent-foreground",
+          "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-destructive",
         glass:
           "surface-glass [--control-icon-color:var(--contrast-muted-foreground)] rounded-full border-border/60 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-border",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
