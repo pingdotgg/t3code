@@ -872,6 +872,19 @@ describe("provider-thread.updated", () => {
       payload: providerThread("provider-thread-next"),
     } as OrchestrationV2DomainEvent);
     expect(next?.thread.activeProviderThreadId).toBe(ProviderThreadId.make("provider-thread-next"));
+
+    // A metadata update planned before the attachment commits after it.
+    const renamed = applyOrchestrationV2ProjectionEvent(next, {
+      id: "event-stale-branch",
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...emptyProjection.thread, branch: "renamed" },
+    } as OrchestrationV2DomainEvent);
+    expect(renamed?.thread.branch).toBe("renamed");
+    expect(renamed?.thread.activeProviderThreadId).toBe(
+      ProviderThreadId.make("provider-thread-next"),
+    );
   });
 
   it("keeps the active provider thread for queued placeholders and other threads", () => {
