@@ -736,10 +736,10 @@ function describeHostAvailability(
     .join(" and ");
   const title = first
     ? host.kind === "eas"
-      ? `${host.label} starts ${cloudDevices} in the cloud with EAS Simulator.`
+      ? `${host.label} starts ${cloudDevices} in the cloud with Expo Simulators.`
       : `${platformToolLabel(first.platform)} are available.`
     : host.kind === "eas"
-      ? "EAS Simulator is unavailable on this host."
+      ? "Expo Simulators is unavailable on this host."
       : "No simulator or emulator tools are available on this host.";
   if (host.kind !== "eas" && ios?.available && android?.available) {
     details.push(`${platformToolLabel("android")} are available too.`);
