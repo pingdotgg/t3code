@@ -353,6 +353,6 @@ it("preserves custom precedence and leaves dialogs alone", async () => {
     </>,
   );
   await userEvent.click(screen.getByLabelText("Chat input"));
-  await userEvent.keyboard("{End}");
+  await userEvent.keyboard("{Control>}{End}{/Control}");
   expect(calls).toEqual([]);
 });
