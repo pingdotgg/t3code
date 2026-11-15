@@ -1,4 +1,9 @@
-import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
+import type {
+  ConfirmDialogOptions,
+  ContextMenuItem,
+  ContextMenuSource,
+  LocalApi,
+} from "@t3tools/contracts";
 
 import { isWebUrl } from "./browser/webUrl";
 import { requestConfirmDialog } from "./confirmDialog";
@@ -45,9 +50,10 @@ export function createLocalApi(): LocalApi {
       show: async <T extends string>(
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
+        source?: ContextMenuSource,
       ): Promise<T | null> => {
         if (window.desktopBridge) {
-          return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
+          return window.desktopBridge.showContextMenu(items, position, source) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },

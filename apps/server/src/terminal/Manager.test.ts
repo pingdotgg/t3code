@@ -1197,6 +1197,37 @@ it.layer(
     }),
   );
 
+  it.effect("clears a terminal that keeps printing while its history is saved", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let printWhileSaving = Effect.void;
+      const printing = FileSystem.FileSystem.of({
+        ...fs,
+        writeFileString: (filePath, data, options) =>
+          printWhileSaving.pipe(Effect.andThen(fs.writeFileString(filePath, data, options))),
+      });
+      const { manager, ptyAdapter, getEvents } = yield* createManager().pipe(
+        Effect.provideService(FileSystem.FileSystem, printing),
+      );
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      // Each save sees fresh output, so the history worker never goes idle.
+      printWhileSaving = Effect.gen(function* () {
+        const printed = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "output" ? Deferred.succeed(printed, undefined) : Effect.void,
+        );
+        process.emitData("tick\n");
+        yield* Deferred.await(printed);
+        unsubscribe();
+      });
+
+      yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+
+      expect((yield* getEvents).map((event) => event.type)).toContain("cleared");
+    }),
+  );
+
   it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1676,6 +1707,28 @@ it.layer(
     }),
   );
 
+  // Case-insensitive filesystems resolve "Terminal_YQ.log" to thread "a"'s "terminal_YQ.log",
+  // so the mixed-case file stands in for that alias on case-sensitive hosts.
+  it.effect.each(["terminal_", "Terminal_"])(
+    "never resolves a %s legacy history name to another thread's history file",
+    (prefix) =>
+      Effect.gen(function* () {
+        const { manager, logsDir } = yield* createManager();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const threadId = `${prefix}${Base64Url.encode("a")}`;
+        const otherThreadPath = path.join(logsDir, `${threadId}.log`);
+        yield* fs.makeDirectory(logsDir, { recursive: true });
+        yield* fs.writeFileString(otherThreadPath, "thread a\n");
+
+        expect((yield* manager.open(openInput({ threadId }))).history).toBe("");
+        yield* manager.close({ threadId, terminalId: DEFAULT_TERMINAL_ID, deleteHistory: true });
+        yield* manager.close({ threadId, deleteHistory: true });
+
+        expect(yield* fs.readFileString(otherThreadPath)).toBe("thread a\n");
+      }),
+  );
+
   it.effect("keeps reading and deleting history at an encoded path that already fit", () =>
     Effect.gen(function* () {
       const threadId = "x".repeat(48);
@@ -1921,6 +1974,32 @@ it.layer(
             .some((input) => input.shell !== "/definitely/missing-shell"),
         ).toBe(true);
       }
+    }),
+  );
+
+  it.effect("starts a $SHELL whose path contains a space", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: "/Users/Jane Doe/.local/bin/fish" },
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+        "/Users/Jane Doe/.local/bin/fish",
+      ]);
+    }),
+  );
+
+  it.effect("starts a quoted $SHELL whose path contains a space and a dash", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: { SHELL: '"/opt/my -shell/fish" -l' },
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+
+      yield* manager.open(openInput());
+
+      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual(["/opt/my -shell/fish"]);
     }),
   );
 

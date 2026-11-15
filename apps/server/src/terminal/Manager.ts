@@ -539,9 +539,11 @@ function normalizeShellCommand(
     return trimmed;
   }
 
-  const firstToken = trimmed.split(/\s+/g)[0]?.trim();
-  if (!firstToken) return null;
-  return firstToken.replace(/^['"]|['"]$/g, "");
+  // A shell path can contain spaces, so only text from the first flag (`bash -l`) is dropped,
+  // and a quoted path is kept whole even when it contains " -".
+  const quoted = /^(['"])(.*?)\1(?:\s|$)/.exec(trimmed);
+  const command = quoted ? quoted[2] : trimmed.split(/\s+(?=-)/)[0]?.replace(/^['"]|['"]$/g, "");
+  return command || null;
 }
 
 function basenameForPlatform(command: string, platform: NodeJS.Platform): string {
@@ -1861,14 +1863,19 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
-  const legacyHistoryPath = (threadId: string) =>
-    path.join(logsDir, `${legacySafeThreadId(threadId)}.log`);
+  const legacyHistoryName = (threadId: string) => `${legacySafeThreadId(threadId)}.log`;
+  // Legacy names in the current "terminal_" namespace would alias another thread's history,
+  // case-insensitively on some filesystems.
+  const hasLegacyHistoryName = (threadId: string) =>
+    !legacySafeThreadId(threadId).toLowerCase().startsWith("terminal_");
 
   const historyPaths = (threadId: string, terminalId: string) => [
     ...new Set([
       historyPath(threadId, terminalId),
       encodedHistoryPath(threadId, terminalId),
-      ...(terminalId === DEFAULT_TERMINAL_ID ? [legacyHistoryPath(threadId)] : []),
+      ...(terminalId === DEFAULT_TERMINAL_ID && hasLegacyHistoryName(threadId)
+        ? [path.join(logsDir, legacyHistoryName(threadId))]
+        : []),
     ]),
   ];
 
@@ -2340,7 +2347,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* Effect.forEach(
       entries.filter(
         (name) =>
-          name === `${legacySafeThreadId(threadId)}.log` ||
+          (hasLegacyHistoryName(threadId) && name === legacyHistoryName(threadId)) ||
           threadParts.some((part) => name === `${part}.log` || name.startsWith(`${part}_`)),
       ),
       (name) =>
@@ -3650,7 +3657,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
-        yield* persistHistory(input.threadId, terminalId, session.history);
+        // A drain waits for the key to go idle, which never happens while the shell keeps
+        // printing; every reader of the file flushes it first.
+        yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
+          history: session.history,
+          immediate: true,
+        });
         yield* publishEvent({
           type: "cleared",
           threadId: input.threadId,
