@@ -147,6 +147,33 @@ Not proven:
   on Beast").
 - Codex on CLI 0.166 or 0.167 (the recordings are from 0.156).
 
+## Release tarball for Orbit (2026-11-15)
+
+**An Orbit Project can get the Conn Server from one tarball, the way it gets `t3`.** Nick
+decided on 2026-11-15: a Project chooses the T3 server or the Conn Server; only the binary
+differs. Details, the recipe entry and the proof: `crates/conn-server/DROP-IN.md`, "Release
+tarball for Orbit".
+
+- `tools/release-tarball.mjs` builds `conn-server-<version>-linux-x64.tar.gz` (Linux
+  x86_64): the musl binary and `sdk-host/` with only the Claude Agent SDK in `node_modules`.
+  10.1 MB; the binary is 23,089,112 bytes. Same input, same bytes.
+- The server now also finds `sdk-host/index.mjs` beside its real binary (after Orbit's `bin`
+  link), and runs it with `node` from `PATH`. A unit test covers the lookup.
+- `.github/workflows/release.yml`: a tag `v<crate version>` builds it and makes a GitHub
+  Release with the `.sha256`. It has not run: no tag is pushed, and Nick has not decided
+  whether the repository goes public (Orbit must be able to fetch the URL).
+- Proven on Beast in the `conn-proof` container, no model: Orbit's unpack, owner and mode
+  steps; `conn-server` as `agent`; `serve` ready; the server's Claude status probe started the
+  bundled SDK host under the runtime folder's Node 24.22.1, which loaded the SDK and started a
+  stub `claude` with the SDK's argv.
+- Node: the T3 release embeds Node 26.12.1 and runs the SDK there; in Orbit our SDK host runs
+  on Node 24.22.1 (its floor is 24.10). CI tests on 26.12.1. A live turn on 24.22.1 is not
+  proven.
+- `tools/check.sh` with `CONN_MONOREPO` (macOS): 44 pass, none skipped, the canary clean
+  (`check exit: 0`). `toolchain pin` now also reads `release.yml`.
+- Not built: the Orbit side (the per-Project choice, the recipe entry, `t3.service` and the
+  CLI calls naming `conn-server`).
+
 ## Proof on Beast (2026-11-15)
 
 **Orbit's container flow and task-turn path work on this server in a container made from

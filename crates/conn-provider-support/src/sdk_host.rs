@@ -58,21 +58,35 @@ impl HelperCommand {
         }
     }
 
-    /// `$CONN_SDK_HOST`, else `conn-sdk-host` next to the running binary, else the checkout's
-    /// `helpers/sdk-host/index.mjs` (development).
+    /// `$CONN_SDK_HOST`, else an SDK host beside the running binary ([`installed_helper`]),
+    /// else the checkout's `helpers/sdk-host/index.mjs` (development).
     pub fn discover() -> Self {
         if let Some(path) = std::env::var_os(HELPER_ENV).filter(|p| !p.is_empty()) {
             return Self::from_path(PathBuf::from(path));
         }
-        if let Some(beside) = std::env::current_exe()
+        // Orbit runs the binary through a link in its `bin` folder: follow it to the release
+        // folder, where the SDK host is.
+        if let Some(found) = std::env::current_exe()
             .ok()
-            .and_then(|exe| exe.parent().map(|dir| dir.join(HELPER_EXECUTABLE)))
-            .filter(|p| p.is_file())
+            .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe))
+            .and_then(|exe| exe.parent().and_then(installed_helper))
         {
-            return Self::from_path(beside);
+            return Self::from_path(found);
         }
         Self::from_path(development_script())
     }
+}
+
+/// The SDK host's script in a release folder (`tools/release-tarball.mjs`), beside the binary.
+pub const INSTALLED_SCRIPT: &str = "sdk-host/index.mjs";
+
+/// The SDK host installed in `dir`, the server binary's folder: the single executable
+/// `conn-sdk-host`, else the release tarball's `sdk-host/index.mjs`, run with `node` from PATH.
+pub fn installed_helper(dir: &Path) -> Option<PathBuf> {
+    [HELPER_EXECUTABLE, INSTALLED_SCRIPT]
+        .into_iter()
+        .map(|name| dir.join(name))
+        .find(|p| p.is_file())
 }
 
 /// `helpers/sdk-host/index.mjs` in this checkout.
@@ -754,6 +768,27 @@ mod tests {
         let sea = HelperCommand::from_path("/x/conn-sdk-host");
         assert_eq!(sea.program, PathBuf::from("/x/conn-sdk-host"));
         assert!(sea.args.is_empty());
+    }
+
+    /// A release folder: the single executable wins, else `sdk-host/index.mjs` under `node`.
+    #[test]
+    fn finds_the_installed_helper_beside_the_binary() {
+        let dir = std::env::temp_dir().join(format!("conn-installed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sdk-host")).unwrap();
+        assert_eq!(installed_helper(&dir), None);
+
+        let script = dir.join(INSTALLED_SCRIPT);
+        std::fs::write(&script, "").unwrap();
+        assert_eq!(installed_helper(&dir), Some(script.clone()));
+        let command = HelperCommand::from_path(installed_helper(&dir).unwrap());
+        assert_eq!(command.program, PathBuf::from("node"));
+        assert_eq!(command.args, [script.to_string_lossy().into_owned()]);
+
+        let sea = dir.join(HELPER_EXECUTABLE);
+        std::fs::write(&sea, "").unwrap();
+        assert_eq!(installed_helper(&dir), Some(sea));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The rule when the host dies: every open session ends with a helper error, and each

@@ -51,8 +51,9 @@ Every command takes --base-dir (or $T3CODE_HOME, default ~/.t3) or --state-dir.
 --session-idle-timeout (or $CONN_SESSION_IDLE_TIMEOUT): minutes before an idle provider
 session and its process close; 0 keeps them open. Default 30, as the T3 server.
 --sdk-host (or $CONN_SDK_HOST): the SDK host that runs Claude's Agent SDK, a single executable or
-an .mjs script run with node. Default: conn-sdk-host beside this binary, else the
-checkout's helpers/sdk-host/index.mjs.
+an .mjs script run with node. Default: conn-sdk-host beside this binary, else
+sdk-host/index.mjs beside it (the release tarball), else the checkout's
+helpers/sdk-host/index.mjs.
 Environment: T3CODE_HOME, T3CODE_PORT, T3CODE_HOST, T3CODE_MODE, T3CODE_BOOTSTRAP_FD.";
 
 pub const DEFAULT_PORT: u16 = 3773;
