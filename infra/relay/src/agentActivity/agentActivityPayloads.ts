@@ -17,9 +17,14 @@ const RUNNING_AGENT_ACTIVITY_ROW_TTL_MS = 2 * 60 * 60 * 1_000;
 const WAITING_AGENT_ACTIVITY_ROW_TTL_MS = 24 * 60 * 60 * 1_000;
 
 export function agentActivityExpiresAt(
-  state: Pick<RelayAgentActivityState, "phase" | "updatedAt">,
+  state: Pick<RelayAgentActivityState, "phase" | "updatedAt" | "heartbeatAt">,
 ): number {
-  const updatedAtMs = Option.match(DateTime.make(state.updatedAt), {
+  // A heartbeat repeats an unchanged state, so it is the newer sign that the environment is alive.
+  const reportedAt =
+    state.heartbeatAt !== undefined && state.heartbeatAt.localeCompare(state.updatedAt) > 0
+      ? state.heartbeatAt
+      : state.updatedAt;
+  const updatedAtMs = Option.match(DateTime.make(reportedAt), {
     onNone: () => Number.NaN,
     onSome: (dt) => dt.epochMilliseconds,
   });

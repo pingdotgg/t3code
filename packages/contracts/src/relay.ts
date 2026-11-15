@@ -126,6 +126,8 @@ export const RelayAgentActivityState = Schema.Struct({
   detail: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
+  /** When the environment last reported this unchanged state; absent from older servers. */
+  heartbeatAt: Schema.optional(TrimmedNonEmptyString),
   deepLink: TrimmedNonEmptyString,
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
@@ -139,6 +141,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   phase: RelayAgentAwarenessPhase,
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
+  heartbeatAt: Schema.optional(TrimmedNonEmptyString),
   deepLink: TrimmedNonEmptyString,
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
