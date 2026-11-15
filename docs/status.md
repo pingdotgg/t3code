@@ -958,16 +958,13 @@ Proven:
 
 Not built, with the reason:
 
-- **The Codex status probe.** T3 starts the instance's `app-server` and asks `initialize`,
-  `account/read`, `skills/list`, models, `config/read` and rate limits. Our entry stays a fixed
-  `ready` one, so a broken Codex binary or home shows only at the first turn. A port of its
-  own, with a probe conformance check like Claude's.
-- `customModels` (both drivers), Claude's `autoCompactWindow`, Codex's `shadowHomePath` and
-  `setupMode` (T3's managed Codex home).
+- **The Codex status probe.** Built on 2026-11-15 (see "Codex: the abandoned start and the
+  status probe"), with Codex's `customModels`.
+- Claude's `customModels` and `autoCompactWindow`, Codex's `shadowHomePath` and `setupMode`
+  (T3's managed Codex home).
 - More than one instance of Grok (its default instance follows its settings as before).
 
-Deliberate differences: an enabled Codex instance whose binary is missing is not listed (T3
-lists it with an error status); it is tried again on each settings change. A launch-argument
+Deliberate differences: a launch-argument
 error text is ours (T3's error classes carry the same facts) and never holds the
 `--settings` text.
 
@@ -1007,8 +1004,9 @@ lane, and a Claude cold start showed "Stopping" for up to about 6.5 minutes.
     1530-1550: prompt stream ended, SIGKILL of the wrapper, whose exit kills the CLI's group,
     up to 10 s for the exit, dispose). The early turn ends `interrupted`.
   - **Codex:** the start stops at the request it waits on (`thread/resume`, `config/read`,
-    `turn/start`) and sends nothing more, as T3's interrupted `startTurn`; a later
-    `turn/started` is no root turn (T3 `rememberSubagentTurnStarted`, ours `child_turn_seen`).
+    `turn/start`) and sends nothing more, as T3's interrupted `startTurn`. Since 2026-11-15 a
+    turn that a written `turn/start` still started gets `turn/interrupt` (Nick's decision; see
+    "Codex: the abandoned start and the status probe").
   - **ACP (Grok):** the start finishes the step it is in (an agent restart is not cut short,
     so no half-started process is left) and sends no `session/prompt`.
 - **Proofs.** Engine tests (fake provider: `coldstart` shows its turn and takes 500 ms,
@@ -1025,7 +1023,8 @@ lane, and a Claude cold start showed "Stopping" for up to about 6.5 minutes.
   2 CLI starts, the first killed with no prompt; with `close` in place of `abort` the scenario
   reports DIFF. The stub now records how each start ended, and `compare.mjs` compares it.
   Codex: `an_abandoned_start_sends_nothing_more` (a fake app-server holds `config/read`, then
-  `turn/start`). ACP: `an_abandoned_start_sends_no_prompt`. `client-check.mjs`: the client's
+  `turn/start`; replaced on 2026-11-15 by the six tests named in "Codex: the abandoned start
+  and the status probe"). ACP: `an_abandoned_start_sends_no_prompt`. `client-check.mjs`: the client's
   reducers show the run interrupted at once and never "Stopping".
 - **Checks** (macOS, 2026-11-14): `tools/check.sh` 36 of 36, none skipped; Claude conformance
   18 of 18 SAME in 5 runs in a row; Codex conformance 0 open differences in 40 scenarios; ACP
@@ -1056,6 +1055,74 @@ instruction texts and still unserved (13): `create_threads`, `device_list`, `dev
 `device_screenshot`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
 other `preview_*`), `request_secret`, `t3_environment_link`, `t3_environment_links`,
 `watch_pull_request`, `unwatch_pull_request`.
+
+## Codex: the abandoned start and the status probe (2026-11-15)
+
+**A Stop that abandons a start stops a turn that still reached Codex** (Nick, 2026-11-15:
+"interrupt it"). Before, a Stop while `turn/start` waited for its answer dropped the answer, as
+T3 does; a turn Codex had started ran on unobserved, and its later `turn/started` was taken
+for a subagent's. Now the answer goes to a watcher: when it, or a `turn/started`, names the
+turn, Codex gets one `turn/interrupt` for it; none of its frames become events; the next start
+on the thread waits (at most 60 s plus 10 s) until that turn ended. A Stop before
+`turn/start` was written still sends nothing. Bound: one abandoned start per session; the
+watcher ends with the answer or its 60 s limit. Tests, on a fake app-server (in
+`crates/conn-provider-codex/src/live_tests.rs`, no CLI, not ignored):
+`an_abandoned_start_before_turn_start_sends_nothing_more`,
+`a_late_answer_to_an_abandoned_start_interrupts_its_turn` (the answer comes late),
+`a_turn_started_for_an_abandoned_start_is_interrupted` (only `turn/started` comes),
+`an_abandoned_start_that_never_answers_sends_nothing_and_ends` (nothing comes; the limit
+shortened to 300 ms), `the_next_turn_waits_for_an_abandoned_start_that_reached_codex` (the
+next turn is sent before the late answer), `closing_the_session_ends_an_abandoned_start`. Four
+of them fail with the tracking switched off. Codex conformance: 0 open differences in 43
+scenarios (the normal paths did not change). A deliberate difference from the T3 server, in
+the crate README and below under "Faults found in the T3 server".
+
+**The Codex status probe, as T3 runs it.** `crates/conn-provider-codex/src/status.rs` ports
+`checkCodexProviderStatus` (`apps/server/src/provider/CodexProvider.ts`): for each Codex
+instance its own `codex app-server` (its binary, launch arguments, home and environment, plus
+`MISE_OFFLINE=1`) in the server's folder; `initialize`, `account/read`, then `skills/list`,
+`model/list` (every page; for ChatGPT again after Codex's cache refresh) and `config/read`
+together, and `account/rateLimits/read` when the config routes to OpenAI; 20 s in all; on a
+failure `codex --version`. The entry has T3's texts for each case, the account status (never
+a token; no credential file is read), the models with their options, `customModels`, the
+catalog from T3's bundled manifest (`gen-model-catalog.mjs`, checked), the skills and the slash
+commands. The README's "Status probe" lists every request, limit and failure.
+
+- **When:** at start, on a settings change, on `server.refreshProviders`, and every 5 minutes
+  only while a foreground client asks (the existing loop in `methods/provider.rs`). An idle
+  container starts no Codex process after the start; the probe's process ends with it.
+- **Listing:** an enabled Codex instance whose binary is missing is now listed, with T3's
+  error entry ("Could not start Codex CLI …"); before, it was left out.
+- **Checks** set `CONN_CODEX_STATUS_PROBE=off` (in `sealed-env.mjs` and every flow that starts
+  a server), so no check runs this machine's `codex`; the entry then stays T3's pending one.
+  `instances-flow.mjs` and `effect-client.mjs` turn it on with stubs only.
+- **Proof:** `crates/conn-provider-codex/tools/probe-conformance/run.mjs` (in `tools/check.sh`):
+  T3's own `checkCodexProviderStatus`, with `CodexDriver`'s settings, environment, home layout,
+  catalog and identity, and ours, against a stub `codex` in 17 scenarios (disabled, missing
+  binary by path and by name, an old CLI, a hang, a failed `initialize`, signed out with and
+  without a home, ChatGPT with and without the cache refresh, an API key with custom models,
+  Orbit's router, a failed `skills/list`, a model list that never answers, a failed usage read,
+  instance settings with a `~` binary and launch arguments from the environment): 17 of 17
+  SAME, entry and every run (argv, environment, folder, stdin lines, end of input and signals).
+  Sealed: T3's side in `sealedNodeEnv` with the fetch guard; both sides probe with
+  `PATH=/usr/bin:/bin` (checked to hold no provider CLI). `instances-flow.mjs`: its Codex
+  instance has a probed `ready` entry, the probe ran with the instance's environment and home,
+  and no probe process is left. `effect-client.mjs`: the real client decodes a probed entry
+  and a missing-binary error entry. `check-copies.mjs`: the plan and effort labels and the
+  preferred default models.
+- **Cost** (macOS, release, stub CLI): about 40 ms per probe; server RSS 11.7 MiB after it
+  against 11.4 MiB with it off; no child process left. With the real CLI: its own start, up
+  to 3 s more for a ChatGPT account's catalog refresh, one `codex app-server` for that time
+  (not measured: no check runs the real CLI).
+- **Not ported, on purpose:** the version advisory, the managed setup mode and shadow homes,
+  the `auth.json` watch (the next probe shows a sign-in done outside). Known differences:
+  T3's client fails the probe on an answer that does not fit Codex's schema, ours tolerates
+  it; our stderr tail is 4 KiB, T3's 8 KiB.
+- **Shared files changed:** `tools/sealed-env.mjs` (the Codex probe off), `tools/served.mjs`,
+  `tools/check.sh`, `tools/check-copies.mjs`, `tools/upkeep/followed-files.txt`, and in
+  `crates/conn-server/tools`: `effect-client.mjs`, `instances-flow.mjs`, `orbit-flow.mjs`,
+  `memory-flow.mjs`, `settings-diff.mjs`, `secrets-interop.mjs`, `thread-cli-diff.mjs`. Not
+  changed: `crates/conn-provider-codex/tools/conformance.mjs`.
 
 ## Faults found in the T3 server
 
@@ -1114,6 +1181,19 @@ T3 Code.
   requeues `provider-thread.rollback` after a process loss
   (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`, line 135), and the effect starts again from
   the provider rollback.
+- **A Stop during a Codex turn start leaves a turn running unobserved.** In
+  `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`, `startTurn` sends
+  `turn/start` (line 7388) and waits for its answer. When the run's worker interrupts that wait
+  (a Stop before the provider accepted the turn), the `Effect.ensuring` at lines 7412-7422 drops
+  the pending turn and nothing more is sent: no `turn/interrupt`. If Codex received the
+  request, it starts the turn. Its `turn/started` finds no pending root turn (lines 4977-4990)
+  and goes to `rememberSubagentTurnStarted` (line 5046), so it is kept as a subagent turn that
+  no subagent claims. Sequence: send a message; press Stop while `turn/start` waits; Codex
+  answers or sends `turn/started`. Effect: Codex works on, and can keep editing files, while
+  the client shows the run stopped; the turn's output is never shown. Our fix
+  (`crates/conn-provider-codex/src/session.rs`, `mapper.rs`): the answer goes to a watcher;
+  when it or a `turn/started` names the turn, it gets `turn/interrupt`; its frames are dropped;
+  the next start waits until it ended (bounded).
 
 
 ## What is left, in the planned order
@@ -1130,9 +1210,9 @@ T3 Code.
 2. **Provider interface.** The server side of the host handle
    (`ProviderHost`: only the trait and a rooted file host exist; no terminals, and the
    server passes none); titles through an agent provider (see
-   "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`; the Codex
-   status probe, `customModels` and Claude's `autoCompactWindow` (see "Provider instance
-   settings for Claude and Codex").
+   "Claude provider: background work, …"); Claude's workflow tasks and `stopTask`; Claude's
+   `customModels` and `autoCompactWindow` (see "Provider instance settings for Claude and
+   Codex"). The Codex status probe and Codex's `customModels` are built (2026-11-15).
 3. **Other providers.** One ACP provider for Grok, Kiro, fx, Antigravity and the ACP registry:
    `crates/conn-provider-acp`. **Grok is offered by the server (2026-11-14):** T3's default
    `grok` instance, off until `providerInstances.grok` enables it, probed as T3 probes the CLI

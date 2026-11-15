@@ -149,10 +149,20 @@ container's settings name did not apply, and the task copies' `claudeLow` … `c
 instances did not exist. They are built now, from the settings written before the first
 start and again on each change, as the T3 server builds them [code,
 `R/crates/conn-server/src/instances.rs`; proof, `R/crates/conn-server/tools/instances-flow.mjs`
-and the Claude and Codex conformance checks]. Left: the Codex status probe (a broken Codex
-shows at the first turn, not in the provider list), `customModels`, Claude's
+and the Claude and Codex conformance checks]. Left: Claude's `customModels` and
 `autoCompactWindow` [docs, `R/docs/status.md`, "Provider instance settings for Claude and
 Codex"].
+
+**Closed on 2026-11-15: the Codex status probe.** Each Codex instance is probed as the T3
+server probes it: its own `codex app-server` with its binary, home and environment, then
+`initialize`, `account/read`, skills, models, config and usage. A missing or broken binary, a
+bad `CODEX_HOME` or a signed-out account now shows in the provider list, not at the first
+turn; in a container the entry is `ready` with the router as its endpoint and no usage. The
+probe's process ends after it; an idle container starts no Codex process [code,
+`R/crates/conn-provider-codex/src/status.rs`; proof,
+`R/crates/conn-provider-codex/tools/probe-conformance/run.mjs`, 17 of 17 equal, and
+`instances-flow.mjs`]. Also on 2026-11-15: a Stop that abandons a Codex start stops the turn
+when its `turn/start` reached Codex anyway (Nick's decision; the T3 server leaves it running).
 
 **The brief's facts, checked against Orbit's code and docs:**
 
@@ -266,7 +276,7 @@ in section 11 agree: an item the list hides or removes is X or U.
 | Item | Served | C | H | Evidence |
 | --- | --- | --- | --- | --- |
 | Claude (Agent SDK through the SDK host) | yes, every `providerInstances` instance | N | N | Every run Orbit has seen uses Claude [brief]; task copies use five instances, `claudeLow` to `claudeMax` |
-| Codex (`codex app-server`) | yes, every instance; no status probe | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
+| Codex (`codex app-server`) | yes, every instance, probed as T3 probes it | U | N | Orbit writes `~/.codex/config.toml` for the router [code, `InstanceContainer.php:422-424`]. No live Codex turn has run here [docs, `R/docs/status.md`]. |
 | Grok (ACP) | yes, off by default | U | U | See section 8 |
 | Kiro, fx, Antigravity, ACP registry (offline part) | no | U | U | Section 8 |
 | Cursor, OpenCode, Muse (SDK) | no | X | U | Not used by Orbit |
