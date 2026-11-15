@@ -287,6 +287,30 @@ describe("acpRegistrySnapshotReadiness", () => {
       switched.models.find((model) => model.slug === "dfmodel")?.capabilities?.optionDescriptors,
     ).toEqual([mode, flashReasoning]);
 
+    const reprobed = {
+      ...switched,
+      models: switched.models.map((model) => ({
+        ...model,
+        capabilities: { optionDescriptors: [mode] },
+      })),
+    };
+    const afterProbe = applyAcpRegistryLiveConfiguration(
+      reprobed,
+      {
+        models: [
+          { id: "auto", name: "Auto", description: null },
+          { id: "dfmodel", name: "DeepSeek-Flash", description: null },
+        ],
+        currentModelId: "auto",
+        configOptions: [mode],
+      },
+      [],
+      switched.models,
+    );
+    expect(
+      afterProbe.models.find((model) => model.slug === "dfmodel")?.capabilities?.optionDescriptors,
+    ).toEqual([mode, flashReasoning]);
+
     const nextReasoning = {
       ...flashReasoning,
       currentValue: "high",
@@ -296,7 +320,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       ],
     };
     const refreshed = applyAcpRegistryLiveConfiguration(
-      switched,
+      afterProbe,
       {
         models: [
           { id: "auto", name: "Auto", description: null },

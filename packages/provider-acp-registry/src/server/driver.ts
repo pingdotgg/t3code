@@ -304,6 +304,7 @@ export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<string>,
+  previousModels: ReadonlyArray<ServerProviderModel> = [],
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
@@ -327,7 +328,12 @@ export function applyAcpRegistryLiveConfiguration(
     models:
       configuration.models.length === 0 && configuration.configOptions.length === 0
         ? provider.models
-        : modelsFromDiscovery(discovery, customModels, provider.models),
+        : modelsFromDiscovery(discovery, customModels, [
+            ...provider.models.filter((model) =>
+              model.capabilities?.optionDescriptors?.some(isPerModelReasoningDescriptor),
+            ),
+            ...previousModels,
+          ]),
   };
 }
 
@@ -596,6 +602,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         processEnvironment,
       });
+    // Readiness checks replace the published snapshot before enrichment runs.
+    const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    const applyRememberedConfiguration = Effect.fn(
+      "AcpRegistryDriver.applyRememberedConfiguration",
+    )(function* (
+      provider: ServerProvider,
+      configuration: Option.Option<AcpRegistryLiveConfiguration>,
+    ) {
+      const previousModels = yield* Ref.get(learnedModels);
+      const next = Option.match(configuration, {
+        onNone: () => provider,
+        onSome: (liveConfiguration) =>
+          applyAcpRegistryLiveConfiguration(
+            provider,
+            liveConfiguration,
+            effectiveConfig.customModels,
+            previousModels,
+          ),
+      });
+      yield* Ref.set(learnedModels, [
+        ...new Map(
+          [...previousModels, ...next.models].map((model) => [model.slug, model]),
+        ).values(),
+      ]);
+      return next;
+    });
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
@@ -614,18 +646,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
             authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
           }).pipe(
-            Effect.map(({ commands, configuration, authAction }) => {
+            Effect.flatMap(({ commands, configuration, authAction }) => {
               const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              const withConfiguration = Option.match(configuration, {
-                onNone: () => withCommands,
-                onSome: (liveConfiguration) =>
-                  applyAcpRegistryLiveConfiguration(
-                    withCommands,
-                    liveConfiguration,
-                    effectiveConfig.customModels,
-                  ),
-              });
-              return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
+              return applyRememberedConfiguration(withCommands, configuration).pipe(
+                Effect.map((withConfiguration) =>
+                  applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
+                ),
+              );
             }),
           );
     });
@@ -753,12 +780,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             liveSnapshotSemaphore.withPermit(
               getSnapshot.pipe(
                 Effect.flatMap((current) =>
-                  publishSnapshot(
-                    applyAcpRegistryLiveConfiguration(
-                      current,
-                      configuration,
-                      effectiveConfig.customModels,
-                    ),
+                  applyRememberedConfiguration(current, Option.some(configuration)).pipe(
+                    Effect.flatMap(publishSnapshot),
                   ),
                 ),
               ),
