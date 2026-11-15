@@ -93,6 +93,19 @@ function scrollsSideways(element: Element): boolean {
   return overflowX === "auto" || overflowX === "scroll";
 }
 
+/** Row controls outside the viewport forward sideways input to their tabs. */
+export function scrollTabStripFromRow(event: WheelEvent, strip: HTMLElement): void {
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+  const delta = event.shiftKey && event.deltaX === 0 ? event.deltaY : event.deltaX;
+  if (!delta || (!event.shiftKey && Math.abs(delta) <= Math.abs(event.deltaY))) return;
+  if (strip.scrollWidth <= strip.clientWidth) return;
+  // Keep native gesture notifications over the viewport for history-swipe navigation.
+  if (event.composedPath().includes(strip) && event.deltaX !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  strip.scrollLeft += wheelDeltaPx(delta, event);
+}
+
 export function sidewaysWheelScrollsStrip(
   path: readonly EventTarget[],
   strip: Element,
