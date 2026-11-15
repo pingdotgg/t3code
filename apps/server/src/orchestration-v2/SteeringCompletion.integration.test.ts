@@ -2836,7 +2836,7 @@ it.effect.each(
               runId: first.runId,
             });
             // Delivering the interrupt stops the run and queues its checkpoint capture behind it.
-            assert.isTrue(yield* worker.runOnce);
+            assert.isTrue(yield* worker.runOnce());
             yield* switchWorktree;
             yield* sendNext;
             yield* worker.drain();
