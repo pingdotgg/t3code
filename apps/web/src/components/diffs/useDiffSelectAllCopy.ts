@@ -63,23 +63,24 @@ interface RowSelection {
   readonly split: boolean;
 }
 
-// The selection's rows in this file, or "moved" when the virtualizer removed an
-// end's row. It fires no selectionchange for that, so copy reads it again.
-function readSelection(root: ShadowRoot): RowSelection | "moved" | null {
+// The selection's ends in this file's rows. An end is null when the virtualizer
+// removed its row; it fires no selectionchange for that, so copy reads it again.
+function readSelection(
+  root: ShadowRoot,
+): { start: DiffTextPoint | null; end: DiffTextPoint | null; split: boolean | null } | null {
   const range = selectedRange(root);
   if (!range) return null;
   const { startContainer, endContainer } = range;
   const start = rowPoint(startContainer, range.startOffset);
   const end = rowPoint(endContainer, range.endOffset);
-  if (start && end) {
-    if (range.collapsed) return null;
-    const split = !!elementOf(startContainer)?.closest("[data-additions], [data-deletions]");
-    return { start, end, split };
-  }
+  if (start && end && range.collapsed) return null;
   // The virtualizer only removes rows, so an end it moved stays in the file's code.
   const kept = (node: Node, point: DiffTextPoint | null) =>
     point !== null || (root.contains(node) && !!elementOf(node)?.closest("pre"));
-  return kept(startContainer, start) && kept(endContainer, end) ? "moved" : null;
+  if (!kept(startContainer, start) || !kept(endContainer, end)) return null;
+  const inRow = start ? startContainer : end ? endContainer : null;
+  const split = inRow && !!elementOf(inRow)?.closest("[data-additions], [data-deletions]");
+  return { start, end, split };
 }
 
 class DiffSelectAll<LAnnotation> {
@@ -113,8 +114,9 @@ class DiffSelectAll<LAnnotation> {
     const dragged = this.dragged;
     if (!dragged) return null;
     const root = this.renderedElement(dragged.itemId)?.shadowRoot;
+    const live = root && readSelection(root);
     // While both ends are mounted the browser copies the selection itself.
-    if (root && readSelection(root) !== "moved") return null;
+    if (root && (!live || (live.start && live.end))) return null;
     const item = this.handle?.getItem(dragged.itemId);
     if (item?.type !== "diff") return null;
     const { start, end, split } = dragged;
@@ -128,9 +130,12 @@ class DiffSelectAll<LAnnotation> {
     if (this.dragged?.itemId !== itemId) this.dragged = null;
     const root = itemId === null ? null : this.renderedElement(itemId)?.shadowRoot;
     if (itemId === null || !root) return;
-    const selection = readSelection(root);
-    if (selection === "moved") return;
-    this.dragged = selection && { itemId, ...selection };
+    const live = readSelection(root);
+    // An end whose row unmounted keeps its recorded point; the other follows the drag.
+    const start = live && (live.start ?? this.dragged?.start);
+    const end = live && (live.end ?? this.dragged?.end);
+    const split = live?.split ?? this.dragged?.split;
+    this.dragged = start && end && split != null ? { itemId, start, end, split } : null;
   }
 
   drawSelection(itemId: string) {

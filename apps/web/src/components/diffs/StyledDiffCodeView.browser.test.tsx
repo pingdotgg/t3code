@@ -238,7 +238,7 @@ describe("StyledDiffCodeView", () => {
     expect(copy()).toBe("");
   });
 
-  it("copies a dragged range after scrolling unmounts its rows", async () => {
+  it("copies a dragged range after scrolling unmounts its rows, following the drag past them", async () => {
     const viewerRef = createRef<CodeViewHandle<undefined, undefined>>();
     await using _screen = await renderBigFile(viewerRef);
     const renderedItem = await waitForRows(viewerRef);
@@ -257,10 +257,26 @@ describe("StyledDiffCodeView", () => {
     await selected;
 
     const scroller = renderedItem()!.closest(".diff-render-surface")!;
-    scroller.scrollTop = scroller.scrollHeight;
-    scroller.dispatchEvent(new Event("scroll"));
-    await vi.waitFor(() => expect(row(1)).toBeNull());
-
+    const scrollTo = async (top: number, unmounted: number) => {
+      scroller.scrollTop = top;
+      scroller.dispatchEvent(new Event("scroll"));
+      await vi.waitFor(() => expect(row(unmounted)).toBeNull());
+    };
+    await scrollTo(first.getBoundingClientRect().height * 100, 1);
     expect(copy()).toBe(lines.slice(0, lastLine).join("\n"));
+
+    // Autoscroll keeps moving the focus after the anchor's row unmounted.
+    const later = renderedItem()!.shadowRoot!.querySelectorAll("[data-line]");
+    const focus = later[later.length - 1]!;
+    const focusLine = Number(focus.getAttribute("data-line"));
+    const extended = new Promise((resolve) =>
+      document.addEventListener("selectionchange", resolve, { once: true }),
+    );
+    document.getSelection()!.extend(focus, focus.childNodes.length);
+    await extended;
+    await scrollTo(scroller.scrollHeight, focusLine);
+
+    expect(focusLine).toBeGreaterThan(lastLine);
+    expect(copy()).toBe(lines.slice(0, focusLine).join("\n"));
   });
 });
