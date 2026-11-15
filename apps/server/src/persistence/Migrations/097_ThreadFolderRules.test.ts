@@ -7,11 +7,11 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
-layer("096_ThreadFolderRules", (it) => {
+layer("097_ThreadFolderRules", (it) => {
   it.effect("keeps existing folder order and marks existing members as placed by hand", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 95 });
+      yield* runMigrations({ toMigrationInclusive: 96 });
       for (const [id, createdAt] of [
         ["newer", "2026-10-02T00:00:00.000Z"],
         ["older", "2026-10-01T00:00:00.000Z"],
