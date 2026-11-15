@@ -3,6 +3,7 @@ import {
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import {
+  COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
@@ -19,6 +20,7 @@ import type {
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
+  ResponseContextRecord,
   ReviewCommentContextRecord,
   TerminalContextRecord,
   ThreadContextRecord,
@@ -47,6 +49,7 @@ import {
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 const PREVIEW_LABEL_MAX_CHARS = 48;
+const RESPONSE_LABEL_MAX_CHARS = 64;
 
 // Truncate selections to wire bounds before persistence to avoid send-time encoding failures.
 const TRUNCATION_MARKER = "\n… truncated …";
@@ -167,6 +170,51 @@ export function threadContextReference(record: ThreadContextRecord): ComposerCon
   return { kind: "thread", contextId: record.contextId, label: record.label };
 }
 
+export function isResponseContextRecord(
+  record: ComposerContextRecord,
+): record is ResponseContextRecord {
+  return record.kind === "response" && "citation" in record;
+}
+
+export function responseContextReference(record: ResponseContextRecord): ComposerContextReference {
+  return { kind: "response", contextId: record.contextId, label: record.label };
+}
+
+function responseContextLabel(text: string): string {
+  const last = text.charCodeAt(RESPONSE_LABEL_MAX_CHARS - 1);
+  const end =
+    last >= 0xd800 && last <= 0xdbff ? RESPONSE_LABEL_MAX_CHARS - 1 : RESPONSE_LABEL_MAX_CHARS;
+  return sanitizeComposerContextLabel(text.slice(0, end), "response");
+}
+
+/** One record per response, so replying to it again reuses the same reference. */
+export function responseContextRecord(
+  input: Pick<ResponseContextRecord, "citation" | "itemId"> & {
+    readonly subagents: ReadonlyArray<{
+      readonly threadId: ThreadId;
+      readonly title: string;
+      readonly environmentId?: EnvironmentId;
+    }>;
+  },
+): ResponseContextRecord {
+  return {
+    version: 1,
+    kind: "response",
+    contextId: toKindScopedComposerContextId("response", input.citation.messageId),
+    label: responseContextLabel(input.citation.text),
+    citation: input.citation,
+    itemId: input.itemId,
+    ...(input.subagents.length > 0
+      ? {
+          subagents: input.subagents.slice(0, 20).map(({ title, ...subagent }) => ({
+            ...subagent,
+            title: sanitizeComposerContextLabel(title, "response"),
+          })),
+        }
+      : {}),
+  };
+}
+
 /** One record per machine: mentioning the same machine twice reuses the chip. */
 export function environmentContextReference(
   record: EnvironmentContextRecord,
@@ -254,7 +302,10 @@ export function previewAnnotationContextRecord(
     annotationId: annotation.id,
     pageUrl: annotation.pageUrl,
     pageTitle: annotation.pageTitle,
-    comment: annotation.comment.trim(),
+    comment: clampContextText(
+      annotation.comment.trim(),
+      COMPOSER_CONTEXT_PREVIEW_COMMENT_MAX_CHARS,
+    ),
     targetSummary: previewAnnotationTargetSummary(annotation),
     styleChanges: annotation.styleChanges.map(
       (change) => `${change.property}: ${change.previousValue || "(unset)"} → ${change.value}`,
@@ -331,6 +382,7 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  replyTo?: ResponseContextRecord | null;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -343,6 +395,7 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.replyTo ? [input.replyTo] : []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

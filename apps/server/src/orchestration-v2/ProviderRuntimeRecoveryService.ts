@@ -16,6 +16,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
@@ -634,6 +635,36 @@ export const make = Effect.gen(function* () {
             payload: cancelledItem(item, now),
           });
         }
+        // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
+        if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
+        events.push({
+          id: yield* allocateEventId(),
+          type: "turn-item.updated",
+          threadId: projection.thread.id,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: ids.derive.runSignalTurnItem({ runId: run.id, signal: "server-recovery" }),
+            threadId: projection.thread.id,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: run.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            // EventSink allocates the real position, after the run's existing items.
+            ordinal: 0,
+            status: "completed",
+            title: trigger === "startup" ? "Server restarted" : "Server shut down",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "system_notice",
+            message: detail,
+          },
+        });
       }
       // Blocking waits die with their turn; let child results wake the parent continuation as async tasks.
       const cutRunIds = new Set(runs.map((run) => run.id));
@@ -809,13 +840,39 @@ export const make = Effect.gen(function* () {
               now,
             )
           : undefined;
+      let processLossCount = 1;
+      // Normal upgrades must not exhaust an unfinished turn's crash allowance.
+      if (
+        continuationRun?.restartContinuationOfRunId !== undefined &&
+        continuationRun.status !== "completed" &&
+        continuationRun.status !== "waiting"
+      ) {
+        const previous = yield* outbox
+          .get(`effect:restart-continuation:${continuationRun.restartContinuationOfRunId}`)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderRuntimeRecoveryError({
+                  operation: "reconcile",
+                  threadId: projection.thread.id,
+                  cause,
+                }),
+            ),
+          );
+        if (Option.isSome(previous) && previous.value.request.type === "provider-runtime.continue")
+          processLossCount += previous.value.request.processLossCount ?? 0;
+      }
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
             {
               id: `effect:restart-continuation:${continuationRun.id}`,
               commandId,
               threadId: projection.thread.id,
-              request: { type: "provider-runtime.continue", sourceRunId: continuationRun.id },
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: continuationRun.id,
+                processLossCount,
+              },
             },
           ]
         : [];
@@ -990,7 +1047,11 @@ export const make = Effect.gen(function* () {
                 id: `effect:restart-continuation:${run.id}`,
                 commandId,
                 threadId,
-                request: { type: "provider-runtime.continue", sourceRunId: run.id },
+                request: {
+                  type: "provider-runtime.continue",
+                  sourceRunId: run.id,
+                  processLossCount: 0,
+                },
               },
             ],
           });
