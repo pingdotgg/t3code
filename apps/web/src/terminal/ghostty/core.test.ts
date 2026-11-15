@@ -248,7 +248,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     ]);
   });
 
-  it("paints ANSI colors from the theme palette and repaints them on theme change", async () => {
+  it("paints ANSI colors from the theme palette and repaints them when the theme or a program changes colors", async () => {
     const core = await createCore();
     const theme = {
       foreground: { r: 255, g: 255, b: 255 },
@@ -266,6 +266,41 @@ describe("GhosttyTerminalCore snapshots", () => {
     cells = core.snapshot().rowData[0]!.cells;
     expect(cells[0]!.foreground).toEqual({ r: 1, g: 9, b: 2 });
     expect(cells[1]!.foreground).toEqual({ r: 255, g: 0, b: 0 });
+
+    // Inverse, default and explicit-background cells, cached before a program sets OSC 10/11.
+    core.resetAndWrite("\x1b[7mI\x1b[0mD\x1b[48;2;9;8;7mB\x1b[0m\r\n");
+    core.snapshot();
+    const colors = () => {
+      const { background, rowData } = core.snapshot();
+      return {
+        background,
+        cells: rowData[0]!.cells
+          .slice(0, 3)
+          .map(({ foreground, background }) => ({ foreground, background })),
+      };
+    };
+    const programForeground = { r: 17, g: 34, b: 51 };
+    const programBackground = { r: 68, g: 85, b: 102 };
+    const explicitBackground = { r: 9, g: 8, b: 7 };
+    core.write("\x1b]10;rgb:11/22/33\x07\x1b]11;rgb:44/55/66\x07");
+    expect(colors()).toEqual({
+      background: programBackground,
+      cells: [
+        { foreground: programBackground, background: programForeground },
+        { foreground: programForeground, background: programBackground },
+        { foreground: programForeground, background: explicitBackground },
+      ],
+    });
+
+    core.write("\x1b]110\x07\x1b]111\x07");
+    expect(colors()).toEqual({
+      background: theme.background,
+      cells: [
+        { foreground: theme.background, background: theme.foreground },
+        { foreground: theme.foreground, background: theme.background },
+        { foreground: theme.foreground, background: explicitBackground },
+      ],
+    });
   });
 
   it("preserves Unicode and split ANSI parser state across batched renderer reads", async () => {
