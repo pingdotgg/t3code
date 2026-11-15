@@ -17,6 +17,8 @@ final class T3NativeImageViewer: NSObject {
   private var placeholders: [UIImage?] = []
   private var loads: [Int: Task<Void, Never>] = [:]
   private var decodes: [Int: Task<Void, Never>] = [:]
+  /// The last queued decode; each one waits for it, so one original decodes at a time.
+  private var decodeQueue: Task<Void, Never>?
   /// Pages showing their decoded original; only the current page and its neighbours keep one.
   private var decoded: Set<Int> = []
   private var currentIndex = 0
@@ -113,10 +115,10 @@ final class T3NativeImageViewer: NSObject {
     currentIndex = index
     for other in decoded where !isNearCurrent(other) {
       decoded.remove(other)
-      decodes[other]?.cancel()
-      decodes[other] = nil
       controller?.release(at: other, placeholder: placeholders[other])
     }
+    // Queued decodes for pages paged past are skipped before they start.
+    for (other, task) in decodes where !isNearCurrent(other) { task.cancel() }
     for near in files.indices where isNearCurrent(near) { decode(near) }
   }
 
@@ -125,8 +127,11 @@ final class T3NativeImageViewer: NSObject {
   private func decode(_ index: Int) {
     guard !finished, let file = file(at: index), !decoded.contains(index), decodes[index] == nil else { return }
     let source = sourceView(index)
-    decodes[index] = Task { @MainActor [self] in
+    let previous = decodeQueue
+    let task = Task { @MainActor [self] in
+      await previous?.value
       defer { decodes[index] = nil }
+      guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       let image = await Task.detached(priority: .userInitiated) { Self.decode(file) }.value
       guard !finished, !Task.isCancelled, isNearCurrent(index), files[index] == file else { return }
       // ImageIO cannot read SVG; the thumbnail is vector, so redraw it at full-screen size.
@@ -144,7 +149,10 @@ final class T3NativeImageViewer: NSObject {
         controller?.setFailed(at: index, retryable: true)
       }
     }
+    decodes[index] = task
+    decodeQueue = task
   }
+
 
   private func finish() {
     guard !finished else { return }
@@ -153,6 +161,7 @@ final class T3NativeImageViewer: NSObject {
     loads.removeAll()
     for task in decodes.values { task.cancel() }
     decodes.removeAll()
+    decodeQueue = nil
     for file in files.compactMap({ $0 }) { Self.remove(file) }
     files.removeAll()
     controller = nil
