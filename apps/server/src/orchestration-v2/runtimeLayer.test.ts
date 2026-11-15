@@ -4642,7 +4642,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         });
       yield* watch(true, "start");
 
-      let remainingStatus: "pending" | "action-required" | "success" = initialStatus;
+      let remainingStatus: "pending" | "action-required" | "success" | "failure" = initialStatus;
       const approval = initialStatus === "action-required";
       const runUrl = "https://github.com/pingdotgg/t3code/actions/runs/123";
       const host = Layer.mergeAll(
@@ -4731,6 +4731,39 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.owedChecks,
         [],
       );
+      remainingStatus = "failure";
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      yield* worker.drain();
+      const failedWatch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(failedWatch);
+      if (failedWatch === undefined) return;
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(`pr-watch-owed-legacy-${initialStatus}`),
+        threadId,
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 12,
+        startedAt: failedWatch.startedAt,
+        watch: { ...failedWatch, reportedFailures: undefined },
+      });
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      yield* worker.drain();
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.reportedFailures,
+        failedWatch.reportedFailures,
+      );
+      remainingStatus = "pending";
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      yield* worker.drain();
+      remainingStatus = "failure";
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      yield* worker.drain();
+      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks failed"]);
       yield* watch(false, "end");
     }),
   );
