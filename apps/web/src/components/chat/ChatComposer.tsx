@@ -133,6 +133,7 @@ import {
 import {
   releaseAttachmentUpload,
   releaseDraftAttachment,
+  retryAttachmentUpload,
   startAttachmentUpload,
   useAttachmentUploadStore,
 } from "../../lib/attachmentUploadQueue";
@@ -718,6 +719,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (preview) onExpandImage(preview);
     },
     openFile: setPreviewFileId,
+    canRetryFileUpload: canOperateThread,
+    retryFileUpload: (fileId: string) => {
+      const file = composerFiles.find((candidate) => candidate.id === fileId);
+      if (file && canOperateThread) {
+        retryAttachmentUpload({ environmentId, image: file, draftTarget: attachmentDraftTarget });
+      }
+    },
     openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
     expandVideo: (fileId: string) => {
       const file = composerFiles.find((candidate) => candidate.id === fileId);
