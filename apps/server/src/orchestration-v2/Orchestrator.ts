@@ -991,27 +991,11 @@ function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   const queued = queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true);
-  const next = queued[0];
-  const previous = latestExecutedRun(projection.runs);
-  if (
-    next === undefined ||
-    previous === null ||
-    next.providerInstanceId === previous.providerInstanceId
-  ) {
-    return next;
-  }
-  // The replaced session stays busy until its already-buffered output is consumed.
+  // Retained sessions stay busy until their buffered output is consumed.
   const bufferedMessageIds = new Set(
     projection.messages.filter(isBufferedProviderNotification).map((message) => message.id),
   );
-  return (
-    queued.find(
-      (run) =>
-        run.providerInstanceId === previous.providerInstanceId &&
-        run.providerThreadId === previous.providerThreadId &&
-        bufferedMessageIds.has(run.userMessageId),
-    ) ?? next
-  );
+  return queued.find((run) => bufferedMessageIds.has(run.userMessageId)) ?? queued[0];
 }
 
 // Delegated completions, monitor notifications and unpinned scheduled deliveries never choose a

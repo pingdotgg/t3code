@@ -3751,10 +3751,12 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
-  it.live.each(["handoff", "fresh", "queued fresh"] as const)(
+  it.live.each(["handoff", "fresh", "queued fresh", "queued fresh before handoff"] as const)(
     "delivers a retained session's buffered continuation on its owner after %s",
     (variant) =>
       Effect.gen(function* () {
+        const laterHandoff = variant === "queued fresh before handoff";
+        const queuedFresh = variant === "queued fresh" || laterHandoff;
         const cwd = yield* checkpointWorkspace(`continuation-owner-${variant}`);
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
@@ -3774,7 +3776,7 @@ describe("orchestration v2 provider switching", () => {
             closedSessions,
             backgroundWork: yield* Ref.make(true),
             nativeThreadGeneration: yield* Ref.make(0),
-            ...(variant === "queued fresh"
+            ...(queuedFresh
               ? { holdFirstTurn: started, releaseFirstTurn: release, holdRunOrdinal: 2 }
               : {}),
           }),
@@ -3827,11 +3829,12 @@ describe("orchestration v2 provider switching", () => {
             (row) => row.id === before.thread.activeProviderThreadId,
           )!;
           yield* send("target", target, variant !== "handoff");
-          if (variant === "queued fresh") yield* Deferred.await(started);
+          if (queuedFresh) yield* Deferred.await(started);
           else {
             yield* worker.drain();
             yield* waitForIdle(threadId);
           }
+          if (laterHandoff) yield* send("later", CODEX_MODEL_SELECTION);
           const beforeWake = yield* orchestrator.getThreadProjection(threadId);
           const selectedRoute = beforeWake.thread.activeProviderThreadId;
           const wakeCreated = yield* orchestrator
@@ -3856,7 +3859,7 @@ describe("orchestration v2 provider switching", () => {
             detail: "Owned buffered output",
           });
           yield* Fiber.join(wakeCreated);
-          if (variant === "queued fresh") {
+          if (queuedFresh) {
             const queued = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(
               queued.runs.find((run) => run.userMessageId === "wake")?.providerThreadId,
@@ -3872,8 +3875,21 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(wake.providerThreadId, owner.id);
           assert.equal(wake.nativeThreadId, owner.nativeThreadRef?.nativeId);
           assert.deepEqual(wake.modelSelection, source);
-          assert.deepEqual(after.thread.modelSelection, target);
-          assert.equal(after.thread.activeProviderThreadId, selectedRoute);
+          assert.deepEqual(
+            after.thread.modelSelection,
+            laterHandoff ? CODEX_MODEL_SELECTION : target,
+          );
+          if (laterHandoff) {
+            assert.isBelow(
+              turns.indexOf(wake),
+              turns.findIndex((turn) => turn.text.endsWith("later")),
+            );
+            assert.equal(
+              after.providerThreads.find((row) => row.id === after.thread.activeProviderThreadId)
+                ?.providerInstanceId,
+              CODEX_MODEL_SELECTION.instanceId,
+            );
+          } else assert.equal(after.thread.activeProviderThreadId, selectedRoute);
           assert.deepEqual(yield* Ref.get(closedSessions), []);
           yield* orchestrator.dispatch({
             type: "provider-session.detach",
