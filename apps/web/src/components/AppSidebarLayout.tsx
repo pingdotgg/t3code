@@ -58,7 +58,7 @@ import { selectFocusedTab } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { isLayoutDragActive } from "../layout/layoutDrag";
 import { isModalDialogOpen } from "../lib/modalDialog";
-import { SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { SidebarChromeBrand, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { WorkspacePlane } from "../layout/WorkspacePlane";
 import { overviewZoomTransition, useOverviewPhase } from "../layout/Overview";
@@ -458,6 +458,27 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
               Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
             </TooltipPopup>
           </Tooltip>
+        </div>
+      ) : null}
+      {showSidebar ? (
+        <div
+          className={cn(
+            "hidden max-w-[calc(var(--sidebar-width)-var(--workspace-controls-left)-var(--workspace-titlebar-control-size)*3-13px)] shrink-0 grid-cols-[0fr] md:grid",
+            "[[data-panel-animations=true]_&]:transition-[grid-template-columns] [[data-panel-animations=true]_&]:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:ease-out",
+            isSidebarVisible && "grid-cols-[1fr]",
+          )}
+          inert={!isSidebarVisible || overviewShown}
+        >
+          <div
+            className="min-w-0 overflow-hidden"
+            style={{
+              ...overviewZoomTransition(),
+              transitionProperty: "opacity",
+              ...(overviewShown && { opacity: 0 }),
+            }}
+          >
+            <SidebarChromeBrand onBackdrop={onStageBackdrop} />
+          </div>
         </div>
       ) : null}
       {/* Phones keep the header for the page; the system back gesture covers them. */}
