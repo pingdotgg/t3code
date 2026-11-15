@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - Hands a real file on disk to a real desktop browser.
 import * as NodeEvents from "node:events";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@t3tools/contracts";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
@@ -12,6 +16,7 @@ const launches = vi.hoisted(() => ({
   mkdir: vi.fn().mockResolvedValue(undefined),
   rm: vi.fn().mockResolvedValue(undefined),
 }));
+const launchPersistentChromium = chromium.launchPersistentContext.bind(chromium);
 vi.spyOn(chromium, "launch").mockImplementation(launches.launch);
 vi.spyOn(chromium, "launchPersistentContext").mockImplementation(launches.persistent);
 vi.mock("node:fs/promises", () => ({ mkdir: launches.mkdir, rm: launches.rm }));
@@ -22,6 +27,8 @@ const makeContext = () => {
   return {
     on: vi.fn((event: string, listener: () => void) => events.on(event, listener)),
     pages: vi.fn(() => []),
+    newPage: vi.fn(async () => ({ once: vi.fn() })),
+    isClosed: () => closed,
     close: vi.fn(async () => {
       if (!closed) {
         closed = true;
@@ -35,7 +42,8 @@ const makeBrowser = () => {
   const events = new NodeEvents.EventEmitter();
   const contexts: ReturnType<typeof makeContext>[] = [];
   return {
-    contexts,
+    created: contexts,
+    contexts: () => contexts.filter((context) => !context.isClosed()),
     on: vi.fn((event: string, listener: () => void) => events.on(event, listener)),
     newContext: vi.fn(async () => {
       const context = makeContext();
@@ -55,6 +63,17 @@ const options = () => ({
   env: {},
 });
 
+const withLauncher = () => {
+  const release = vi.fn(async () => {});
+  return {
+    release,
+    configuration: {
+      ...options(),
+      launcher: vi.fn(async (executable: string) => ({ path: `${executable}-launcher`, release })),
+    },
+  };
+};
+
 beforeEach(() => {
   launches.launch.mockReset();
   launches.persistent.mockReset();
@@ -63,22 +82,83 @@ beforeEach(() => {
 });
 
 describe("ServerBrowserContexts", () => {
+  it("closes the shared browser only after it holds no context for the idle period", async () => {
+    vi.useFakeTimers();
+    try {
+      const first = makeBrowser();
+      const second = makeBrowser();
+      launches.launch
+        .mockResolvedValueOnce(first as unknown as Browser)
+        .mockResolvedValueOnce(second as unknown as Browser);
+      const pool = new ServerBrowserContexts({ ...options(), idleBrowserMs: 10 });
+      const agent = await pool.contextFor("default", "agent");
+      await pool.scratchPage();
+      await agent.close();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).not.toHaveBeenCalled();
+      await first.created[1]!.close();
+      await vi.advanceTimersByTimeAsync(9);
+      const next = await pool.contextFor("default", "next");
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).not.toHaveBeenCalled();
+      await next.close();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(first.close).toHaveBeenCalledOnce();
+      await pool.contextFor("default", "later");
+      expect(launches.launch).toHaveBeenCalledTimes(2);
+      expect(second.newContext).toHaveBeenCalledOnce();
+      await pool.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a scratch context when creating its page fails", async () => {
+    const browser = makeBrowser();
+    launches.launch.mockResolvedValue(browser as unknown as Browser);
+    const pool = new ServerBrowserContexts(options());
+    const peer = await pool.contextFor("default", "peer");
+    const context = await browser.newContext();
+    const failure = new Error("newPage failed");
+    browser.created[1]!.newPage.mockRejectedValueOnce(failure);
+    browser.newContext.mockResolvedValueOnce(context);
+    try {
+      await expect(pool.scratchPage()).rejects.toBe(failure);
+      expect(context.close).toHaveBeenCalledOnce();
+      expect(browser.contexts()).toEqual([peer]);
+      expect(peer.close).not.toHaveBeenCalled();
+      expect(browser.close).not.toHaveBeenCalled();
+    } finally {
+      await pool.close();
+    }
+  });
+
   it("lazily shares one browser across concurrent isolated sessions and reuses each context", async () => {
     const browser = makeBrowser();
     const launch = Promise.withResolvers<Browser>();
-    launches.launch.mockReturnValue(launch.promise);
-    const configuration = options();
+    const started = Promise.withResolvers<void>();
+    launches.launch.mockImplementation(() => {
+      started.resolve();
+      return launch.promise;
+    });
+    const { configuration, release } = withLauncher();
     const pool = new ServerBrowserContexts(configuration);
     expect(configuration.executable).not.toHaveBeenCalled();
     const first = pool.contextFor("default", "agent-a");
     const again = pool.contextFor("default", "agent-a");
     const second = pool.contextFor("default", "agent-b");
     const incognito = pool.contextFor(INCOGNITO_BROWSER_PROFILE_ID);
+    await started.promise;
+    // Playwright may retry the same path until the launch settles.
+    expect(release).not.toHaveBeenCalled();
     launch.resolve(browser as unknown as Browser);
     const [a, reused, b, privateContext] = await Promise.all([first, again, second, incognito]);
+    expect(release).toHaveBeenCalledTimes(1);
     expect(a).toBe(reused);
     expect(new Set([a, b, privateContext]).size).toBe(3);
-    expect(launches.launch).toHaveBeenCalledTimes(1);
+    expect(launches.launch).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ executablePath: "/test/chromium-launcher" }),
+    );
     expect(launches.persistent).not.toHaveBeenCalled();
     expect(browser.newContext).toHaveBeenCalledWith({
       viewport: { width: 1280, height: 800 },
@@ -86,7 +166,7 @@ describe("ServerBrowserContexts", () => {
     });
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
-    for (const context of browser.contexts) expect(context.close).toHaveBeenCalled();
+    for (const context of browser.created) expect(context.close).toHaveBeenCalled();
   });
 
   it("keeps human profiles persistent without sharing their storage with agents", async () => {
@@ -94,17 +174,42 @@ describe("ServerBrowserContexts", () => {
     const browser = makeBrowser();
     launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
     launches.launch.mockResolvedValue(browser as unknown as Browser);
-    const pool = new ServerBrowserContexts(options());
+    const { configuration, release } = withLauncher();
+    const pool = new ServerBrowserContexts(configuration);
     const persistent = await pool.contextFor("work/team");
     expect(await pool.contextFor("work/team")).toBe(persistent);
     expect(await pool.contextFor("work/team", "agent")).not.toBe(persistent);
     expect(launches.persistent).toHaveBeenCalledExactlyOnceWith(
       "/test/profiles/work%2Fteam",
-      expect.objectContaining({ chromiumSandbox: true, executablePath: "/test/chromium" }),
+      expect.objectContaining({ chromiumSandbox: true, executablePath: "/test/chromium-launcher" }),
     );
+    expect(release).toHaveBeenCalledTimes(2);
     expect(launches.mkdir).toHaveBeenCalledWith("/test/profiles/work%2Fteam", { recursive: true });
     await pool.close();
     expect(human.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("diagnoses a launcher failure against the real executable", async () => {
+    const diagnosed = new Error("diagnosed");
+    const diagnose = vi.fn(async () => diagnosed);
+    const pool = new ServerBrowserContexts({
+      ...options(),
+      diagnose,
+      launcher: vi.fn(async () => {
+        throw new Error("EACCES");
+      }),
+    });
+    await expect(pool.contextFor("default", "agent")).rejects.toBe(diagnosed);
+    expect(diagnose).toHaveBeenCalledExactlyOnceWith("/test/chromium", expect.any(Error));
+    expect(launches.launch).not.toHaveBeenCalled();
+  });
+
+  it("creates no launcher for a profile whose storage cannot be created", async () => {
+    launches.mkdir.mockRejectedValueOnce(new Error("EACCES"));
+    const { configuration } = withLauncher();
+    const pool = new ServerBrowserContexts(configuration);
+    await expect(pool.contextFor("work/team")).rejects.toThrow("EACCES");
+    expect(configuration.launcher).not.toHaveBeenCalled();
   });
 
   it("clears a profile by closing its open context before deleting its storage", async () => {
@@ -126,11 +231,34 @@ describe("ServerBrowserContexts", () => {
       force: true,
     });
     expect(await pool.contextFor("work/team", "agent")).toBe(agent);
-    expect(browser.contexts[0]?.close).not.toHaveBeenCalled();
+    expect(browser.created[0]?.close).not.toHaveBeenCalled();
     launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
     expect(await pool.contextFor("work/team")).not.toBe(persistent);
     await pool.clearProfile("never-opened");
     expect(launches.rm).toHaveBeenLastCalledWith("/test/profiles/never-opened", {
+      recursive: true,
+      force: true,
+    });
+    await pool.close();
+  });
+
+  it("waits for the context to close when the same profile is cleared concurrently", async () => {
+    const human = makeContext();
+    const closed = Promise.withResolvers<void>();
+    human.close.mockImplementation(async () => closed.promise);
+    launches.persistent.mockResolvedValue(human as unknown as BrowserContext);
+    const pool = new ServerBrowserContexts(options());
+    await pool.contextFor("work/team");
+
+    const first = pool.clearProfile("work/team");
+    const second = pool.clearProfile("work/team");
+    const deletionsBeforeClose = launches.rm.mock.calls.length;
+    closed.resolve();
+    await Promise.all([first, second]);
+
+    expect(deletionsBeforeClose).toBe(0);
+    expect(human.close).toHaveBeenCalledTimes(1);
+    expect(launches.rm).toHaveBeenCalledExactlyOnceWith("/test/profiles/work%2Fteam", {
       recursive: true,
       force: true,
     });
@@ -222,6 +350,47 @@ describe("ServerBrowserContexts", () => {
     await expect(pool.contextFor("default", "agent")).rejects.toThrow("closed");
     await pool.close();
     expect(browser.close).toHaveBeenCalledTimes(1);
-    expect(browser.contexts[0]?.close).toHaveBeenCalled();
+    expect(browser.created[0]?.close).toHaveBeenCalled();
+  });
+
+  it("uploads a file over 50 MB to a desktop tab, which shares the server's filesystem", async () => {
+    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-upload-"));
+    const userDataDir = NodePath.join(directory, "profile");
+    const pool = new ServerBrowserContexts(options());
+    try {
+      const desktop = await launchPersistentChromium(userDataDir, {
+        headless: true,
+        args: ["--remote-debugging-port=0"],
+      });
+      try {
+        const [port] = NodeFS.readFileSync(
+          NodePath.join(userDataDir, "DevToolsActivePort"),
+          "utf8",
+        ).split("\n");
+        const { browser, page } = await pool.connectDesktopPage(`http://127.0.0.1:${port}`);
+        try {
+          const file = NodePath.join(directory, "large.bin");
+          NodeFS.writeFileSync(file, "");
+          NodeFS.truncateSync(file, 51 * 1024 * 1024);
+          await page.setContent(`<input type="file">`);
+          await page.locator("input").setInputFiles(file);
+          expect(
+            await page.$eval("input", (input) =>
+              Array.from(
+                (input as unknown as { files: ArrayLike<{ name: string; size: number }> }).files,
+                ({ name, size }) => ({ name, size }),
+              ),
+            ),
+          ).toEqual([{ name: "large.bin", size: 51 * 1024 * 1024 }]);
+        } finally {
+          await browser.close();
+        }
+      } finally {
+        await pool.close();
+        await desktop.close();
+      }
+    } finally {
+      NodeFS.rmSync(directory, { recursive: true, force: true });
+    }
   });
 });

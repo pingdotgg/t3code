@@ -13,8 +13,10 @@ export interface FileBreadcrumbChild extends ProjectEntry {
 
 export function fileBreadcrumbs(projectName: string, relativePath: string): FileBreadcrumb[] {
   const hostPath = isHostPath(relativePath);
-  const separator = isWindowsAbsolutePath(relativePath) ? "\\" : "/";
-  const parts = relativePath.split(/[\\/]/).filter(Boolean);
+  const windowsPath = isWindowsAbsolutePath(relativePath);
+  const separator = windowsPath ? "\\" : "/";
+  // `\` is a legal filename character outside Windows paths.
+  const parts = relativePath.split(windowsPath ? /[\\/]/ : "/").filter(Boolean);
   const root = relativePath.startsWith("\\\\") ? "\\\\" : relativePath.startsWith("/") ? "/" : "";
   return [
     ...(hostPath ? [] : [{ label: projectName, path: "", kind: "project" as const }]),
@@ -23,7 +25,8 @@ export function fileBreadcrumbs(projectName: string, relativePath: string): File
       return {
         label: part,
         // A bare drive (`C:`) means the drive's current directory; its root is `C:\`.
-        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : path,
+        // A bare `~` is not a host path; the home folder is `~/`.
+        path: /^[A-Za-z]:$/.test(path) ? `${path}\\` : hostPath && path === "~" ? "~/" : path,
         kind: index === parts.length - 1 ? ("file" as const) : ("directory" as const),
       };
     }),

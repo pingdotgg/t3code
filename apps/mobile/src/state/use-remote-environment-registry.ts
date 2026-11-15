@@ -1,6 +1,7 @@
 import * as Dialog from "../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import { Discovery } from "@t3tools/client-runtime/relay";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -8,6 +9,7 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 
 import { hasCloudPublicConfig } from "../features/cloud/publicConfig";
 import { useConnectionController } from "../features/connection/useConnectionController";
+import { useRetryEnvironment } from "../features/connection/useRetryEnvironment";
 import { environmentPresentations } from "./presentation";
 import { useWorkspaceConnectionState, useWorkspaceEnvironments } from "./workspace";
 import type { SavedRemoteConnection } from "../lib/connection";
@@ -17,7 +19,16 @@ import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
+import { relayEnvironmentDiscovery } from "./relay";
 import { connectPairingUrl as connectPairingUrlCommand } from "../connection/onboarding";
+
+const RELAY_REMOVAL_ACCOUNT_NOTE: Record<Discovery.RelayEnvironmentRegistration, string> = {
+  registered:
+    "It stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.",
+  unregistered: "It's no longer on your T3 Connect account.",
+  unknown:
+    "This doesn't change your T3 Connect account. To deregister it there, use T3 Account → T3 Connect.",
+};
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -90,7 +101,7 @@ const EMPTY_RUNTIME_STATE_ATOM = Atom.make<EnvironmentRuntimeState | null>(null)
   Atom.withLabel("mobile:environment-runtime-state:empty"),
 );
 
-const savedConnectionsByIdAtom = Atom.make((get) => {
+export const savedConnectionsByIdAtom = Atom.make((get) => {
   const catalog = get(environmentCatalog.catalogValueAtom);
   return Object.fromEntries(
     [...catalog.entries.keys()].flatMap((environmentId) => {
@@ -156,8 +167,7 @@ export function useRemoteConnections() {
   const onConnectPress = (pairingUrl?: string, expectedEnvironmentId?: EnvironmentId) =>
     pairEnvironment(pairingUrl ?? connectionPairingUrl, expectedEnvironmentId);
 
-  const onReconnectEnvironment = (environmentId: EnvironmentId) =>
-    controller.retryEnvironment(environmentId);
+  const onReconnectEnvironment = useRetryEnvironment();
   const onSetEnvironmentEnabled = (environmentId: EnvironmentId, enabled: boolean) =>
     controller.setEnvironmentEnabled(environmentId, enabled);
   const onUpdateEnvironment = (
@@ -180,22 +190,20 @@ export function useRemoteConnections() {
       },
     } as const;
     if (environment.isRelayManaged) {
+      const registration = Discovery.relayEnvironmentRegistration(
+        appAtomRegistry.get(relayEnvironmentDiscovery.stateValueAtom),
+        environmentId,
+      );
+      const openAccount = {
+        text: "Open T3 Account",
+        onPress: () => navigation.navigate("SettingsAuth"),
+      };
       Dialog.alert(
         "Remove from this device?",
-        `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          // SettingsAuth renders nothing in builds without cloud config.
-          ...(hasCloudPublicConfig()
-            ? [
-                {
-                  text: "Open T3 Account",
-                  onPress: () => navigation.navigate("SettingsAuth"),
-                },
-              ]
-            : []),
-          remove,
-        ],
+        `Forget ${environment.environmentLabel} and its cached threads on this device.\n\n${RELAY_REMOVAL_ACCOUNT_NOTE[registration]}`,
+        registration === "unregistered" || !hasCloudPublicConfig()
+          ? [{ text: "Cancel", style: "cancel" }, remove]
+          : [{ text: "Cancel", style: "cancel" }, openAccount, remove],
       );
       return;
     }

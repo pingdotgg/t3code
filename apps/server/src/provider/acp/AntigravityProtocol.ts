@@ -12,6 +12,13 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
+import {
+  ANTIGRAVITY_EDIT_DIFF_OMITTED,
+  antigravityEditPatch,
+  isAntigravitySnippetPatch,
+  readAntigravityPreEditFile,
+} from "./AntigravityEditLocation.ts";
+
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
 const QUESTION_LABEL_LIMIT = 512;
@@ -163,6 +170,12 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+/** Keeps the tail of long tool text, as every bounded tool payload does. */
+export { boundText as boundAntigravityToolText };
+
+/** True when bounding cut some of this text. */
+export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEXT_TRUNCATED);
+
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
@@ -239,7 +252,10 @@ function antigravityClientReadPath(update: {
  */
 export function makeAntigravityReadRepair() {
   type Outcome = "served" | "refused";
-  const openReads = new Map<string, { readonly path: string; outcome?: Outcome }>();
+  const openReads = new Map<
+    string,
+    { readonly path: string; readonly sessionId: string; outcome?: Outcome }
+  >();
   // The agent runs a client tool in a background task, so its request can precede the announcement.
   const earlyOutcomes: Array<{ readonly path: string; readonly outcome: Outcome }> = [];
   return {
@@ -248,15 +264,19 @@ export function makeAntigravityReadRepair() {
       openReads.clear();
       earlyOutcomes.length = 0;
     },
-    /** Each `fs/read_text_file` request answers the oldest open read of its path, in order. */
+    /**
+     * Each `fs/read_text_file` request answers the oldest open read of its path, in order.
+     * Returns the call a served read completes, so T3 can report it without waiting.
+     */
     attempted: (path: string, served: boolean) => {
       const outcome = served ? "served" : "refused";
-      for (const read of openReads.values()) {
+      for (const [toolCallId, read] of openReads) {
         if (read.path !== path || read.outcome !== undefined) continue;
         read.outcome = outcome;
-        return;
+        return served ? { sessionId: read.sessionId, toolCallId } : undefined;
       }
       earlyOutcomes.push({ path, outcome });
+      return undefined;
     },
     repair: (
       notification: EffectAcpSchema.SessionNotification,
@@ -269,10 +289,19 @@ export function makeAntigravityReadRepair() {
       if (path !== undefined && !openReads.has(update.toolCallId)) {
         const early = earlyOutcomes.findIndex((entry) => entry.path === path);
         const outcome = early === -1 ? undefined : earlyOutcomes.splice(early, 1)[0]?.outcome;
-        openReads.set(update.toolCallId, outcome === undefined ? { path } : { path, outcome });
+        const sessionId = notification.sessionId;
+        openReads.set(
+          update.toolCallId,
+          outcome === undefined ? { path, sessionId } : { path, sessionId, outcome },
+        );
+      }
+      const read = openReads.get(update.toolCallId);
+      if (update.status === "pending" || update.status === "in_progress") {
+        return read?.outcome === "served"
+          ? { ...notification, update: { ...update, status: "completed" } }
+          : notification;
       }
       if (update.status !== "completed" && update.status !== "failed") return notification;
-      const read = openReads.get(update.toolCallId);
       openReads.delete(update.toolCallId);
       if (update.status === "completed" || read?.outcome !== "served") return notification;
       const { rawOutput: _stepError, ...rest } = update;
@@ -334,7 +363,58 @@ function localImagePath(imagePath: string | undefined): string | undefined {
   return /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path) ? undefined : path;
 }
 
-export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToolCallState {
+function hasTruncatedText(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith(TOOL_TEXT_TRUNCATED);
+  return Predicate.isObject(value) && Object.values(value).some(hasTruncatedText);
+}
+
+/** The ACP adapter renders a diff's `patch.text` ahead of its bare old/new snippets. */
+function withAntigravityEditPatches(
+  content: ReadonlyArray<unknown>,
+  data: Record<string, unknown>,
+  readPreEditFile: ((path: string) => string | undefined) | undefined,
+) {
+  return content.map((entry) => {
+    if (!Predicate.isObject(entry) || entry.type !== "diff" || typeof entry.path !== "string")
+      return entry;
+    // Keep the first patch: once the edit runs, the file no longer holds the old text. A later
+    // update's shared text budget can cut or drop it, and a cut patch would misplace the hunk.
+    if (entry.patch !== undefined) {
+      const patch: unknown = entry.patch;
+      const cut =
+        Predicate.isObject(patch) &&
+        patch.format !== "omitted" &&
+        (typeof patch.text !== "string" || patch.text.startsWith(TOOL_TEXT_TRUNCATED));
+      return cut ? { ...entry, patch: { format: "omitted" } } : entry;
+    }
+    // Bounding keeps only the tail of long text, so a cut snippet cannot be located and a cut
+    // old or new text would render the cut as file content.
+    if ([data.rawInput, entry.oldText, entry.newText].some(hasTruncatedText))
+      return { ...entry, patch: { format: "omitted" } };
+    const text = antigravityEditPatch({
+      path: entry.path,
+      rawInput: data.rawInput,
+      locations: data.locations,
+      readPreEditFile,
+    });
+    // A truncated patch would no longer parse, and bare snippets would render at line 1.
+    if (
+      text === ANTIGRAVITY_EDIT_DIFF_OMITTED ||
+      (text !== undefined && text.length > TOOL_TEXT_LIMIT)
+    )
+      return { ...entry, patch: { format: "omitted" } };
+    if (text === undefined) return entry;
+    return {
+      ...entry,
+      patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
+    };
+  });
+}
+
+export function normalizeAntigravityToolCall(
+  toolCall: AcpToolCallState,
+  readPreEditFile = readAntigravityPreEditFile,
+): AcpToolCallState {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
   const nativeCommand =
@@ -366,6 +446,17 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
   if (imagePath !== undefined) data.imagePath = imagePath;
+  if (kind === "edit") {
+    const content = Array.isArray(data.content) ? data.content : [];
+    // Full-access edits report only a path; without a hunk the checkpoint diff is the review.
+    data.content = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff")
+      ? withAntigravityEditPatches(
+          content,
+          data,
+          toolCall.status === "pending" ? readPreEditFile : undefined,
+        )
+      : [...content, { type: "diff", patch: { format: "omitted" } }];
+  }
   if (kind === "execute") {
     data.item = {
       ...(Predicate.isObject(data.item) ? data.item : {}),

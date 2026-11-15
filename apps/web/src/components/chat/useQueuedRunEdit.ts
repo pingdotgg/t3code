@@ -7,7 +7,9 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type ChatAttachment,
+  type ComposerContextRecord,
   type EnvironmentContextRecord,
+  type ResponseContextRecord,
   type EnvironmentId,
   type MessageId,
   type OrchestrationMessageContext,
@@ -18,12 +20,15 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import {
+  restoreAttachmentOnlyBootstrapPrompt,
+  stripAttachmentOnlyBootstrapPrompt,
+} from "@t3tools/shared/composerContextReferences";
 import { Atom } from "effect/reactivity";
 import type { RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import {
-  DraftId,
+  queuedRunEditDraftId,
   useComposerDraftStore,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
@@ -36,7 +41,11 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
-import { buildMessageContext } from "../../lib/composerContextRecords";
+import { buildMessageContext, isResponseContextRecord } from "../../lib/composerContextRecords";
+import {
+  collectInlineContextIds,
+  removeInlineContextReference,
+} from "../../lib/composerContextReferences";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
@@ -51,7 +60,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
-import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
+import {
+  discardQueuedEditDraft,
+  prepareQueuedEditAttachments,
+  recoverQueuedMessageEdit,
+} from "./queuedMessageEdit";
 import type { EditQueuedRunRequest } from "./QueuedRunsControl";
 
 interface EditingQueuedRun {
@@ -61,6 +74,8 @@ interface EditingQueuedRun {
   readonly originalText: string;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
+  /** Removing a server attachment changes the message even when the draft looks untouched. */
+  readonly removedExistingAttachment?: true;
 }
 
 // Keyed by the route thread, so an edit survives navigating away and back.
@@ -78,11 +93,11 @@ interface QueuedRunEditContent {
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly replyTo?: ResponseContextRecord | null;
 }
 
-function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {
-  return DraftId.make(`queued-edit:${scopedThreadKey(routeThreadRef)}:${runId}`);
-}
+const isDraftOwnedRecord = (record: ComposerContextRecord) =>
+  record.kind === "thread" || record.kind === "environment";
 
 async function submitQueuedRunEdit(input: {
   readonly environmentId: EnvironmentId;
@@ -122,10 +137,12 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
+    // The edit draft owns thread and machine mentions, so a chip removed while editing is dropped.
     const keptRecords = (editing.context?.records ?? []).filter(
       (record) =>
-        !("attachmentId" in record) ||
-        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
+        !isDraftOwnedRecord(record) &&
+        (!("attachmentId" in record) ||
+          editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId)),
     );
     const newRecords =
       buildMessageContext({
@@ -136,6 +153,7 @@ async function submitQueuedRunEdit(input: {
         previewAnnotations: content.previewAnnotations,
         threadContexts: content.threadContexts,
         environmentContexts: content.environmentContexts,
+        replyTo: content.replyTo ?? null,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,
@@ -146,7 +164,7 @@ async function submitQueuedRunEdit(input: {
       input: {
         threadId: editing.threadId,
         runId: editing.runId,
-        text: editText.length === 0 ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT : editText,
+        text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -198,7 +216,7 @@ export function useQueuedRunEdit(input: {
   const editing = activeThreadId === null ? null : storedEdit;
   const isSaving = useAtomValue(queuedRunEdits.savingAtom)[editKey] === true;
   const draftTarget =
-    editing === null ? threadDraftTarget : queuedEditDraftTarget(routeThreadRef, editing.runId);
+    editing === null ? threadDraftTarget : queuedRunEditDraftId(routeThreadRef, editing.runId);
 
   const imageResources = (editing?.existingAttachments ?? [])
     .filter((attachment) => attachment.type === "image")
@@ -218,18 +236,39 @@ export function useQueuedRunEdit(input: {
   const focusComposerSoon = () => {
     window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
   };
-  const clearEditDraft = (runId: RunId) =>
-    useComposerDraftStore
-      .getState()
-      .clearComposerContent(queuedEditDraftTarget(routeThreadRef, runId));
+  const clearEditDraft = (runId: RunId) => {
+    const target = queuedRunEditDraftId(routeThreadRef, runId);
+    // A save in flight still sends these uploads.
+    if (isSaving) useComposerDraftStore.getState().clearComposerContent(target);
+    else discardQueuedEditDraft(target);
+  };
 
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
     if (activeThreadId === null) return;
     if (editing !== null && editing.runId !== request.runId) clearEditDraft(editing.runId);
-    const target = queuedEditDraftTarget(routeThreadRef, request.runId);
+    const target = queuedRunEditDraftId(routeThreadRef, request.runId);
+    const sentText = stripAttachmentOnlyBootstrapPrompt(request.text);
+    const context = serverProjection?.messages.find(
+      (message) => message.id === request.messageId,
+    )?.context;
+    const referenced = new Set(collectInlineContextIds(sentText));
+    const records = (context?.records ?? []).filter((record) => referenced.has(record.contextId));
+    // A reply shows above the composer while its message is edited, not as a chip in the text.
+    // Only the reply the text still points at: a removed or replaced one stays behind as a record.
+    const reply = records.find(isResponseContextRecord);
+    const text = reply ? removeInlineContextReference(sentText, reply.contextId).prompt : sentText;
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
-    store.setPrompt(target, request.text);
+    store.setPrompt(target, text);
+    store.setThreadContexts(
+      target,
+      records.filter((record): record is ThreadContextRecord => record.kind === "thread"),
+    );
+    store.setEnvironmentContexts(
+      target,
+      records.filter((record): record is EnvironmentContextRecord => record.kind === "environment"),
+    );
+    if (reply) store.setReplyTo(target, reply);
     const threadRef = { environmentId, threadId: activeThreadId };
     queuedRunEdits.begin(
       editKey,
@@ -237,10 +276,9 @@ export function useQueuedRunEdit(input: {
         threadId: activeThreadId,
         runId: request.runId,
         messageId: request.messageId,
-        originalText: request.text,
+        originalText: text,
         existingAttachments: request.attachments,
-        context: serverProjection?.messages.find((message) => message.id === request.messageId)
-          ?.context,
+        context,
       },
       {
         runs: makeQueuedRunsAtom({
@@ -258,9 +296,10 @@ export function useQueuedRunEdit(input: {
         // unscoped and names the thread: the user may be anywhere by now.
         onRunLeftQueue: (_, edit) => {
           const recovery = recoverQueuedMessageEdit({
-            editTarget: queuedEditDraftTarget(routeThreadRef, edit.runId),
+            editTarget: queuedRunEditDraftId(routeThreadRef, edit.runId),
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
+            removedExistingAttachment: edit.removedExistingAttachment === true,
           });
           if (recovery === "clean") return;
           const title = appAtomRegistry.get(
@@ -291,6 +330,7 @@ export function useQueuedRunEdit(input: {
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
     queuedRunEdits.update(editKey, (current) => ({
       ...current,
+      removedExistingAttachment: true,
       existingAttachments: current.existingAttachments.filter(
         (attachment) => attachment.id !== attachmentId,
       ),
@@ -332,10 +372,29 @@ export function useQueuedRunEdit(input: {
     });
     setThreadError(editing.threadId, error);
     const current = finishSave(error === null);
+    if (!current) {
+      // A failed save can recover into the thread draft; a newer edit can also retain resources.
+      const drafts = Object.values(useComposerDraftStore.getState().draftsByThreadKey);
+      const retainedIds = new Set(
+        drafts.flatMap((draft) =>
+          [...draft.images, ...draft.files].map((attachment) => attachment.id),
+        ),
+      );
+      releaseDraftAttachments(
+        newAttachments.filter((attachment) => !retainedIds.has(attachment.id)),
+      );
+      const retainedPreviews = new Set(
+        drafts.flatMap((draft) => draft.images.map((image) => image.previewUrl)),
+      );
+      for (const image of content.images) {
+        if (image.previewUrl.startsWith("blob:") && !retainedPreviews.has(image.previewUrl)) {
+          URL.revokeObjectURL(image.previewUrl);
+        }
+      }
+      return;
+    }
     if (error !== null) return;
     releaseDraftAttachments(newAttachments);
-    // The edit was cancelled or begun again while this save ran; its drafts are the newer edit's.
-    if (!current) return;
     promptRef.current = "";
     clearEditDraft(editing.runId);
     composerRef.current?.resetCursorState();

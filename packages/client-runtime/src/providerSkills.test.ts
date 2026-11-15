@@ -12,8 +12,10 @@ import {
   createProviderWorkspaceSnapshotRefreshAtomFamily,
   getProviderSkillsForSlashMenu,
   hasCompleteProviderWorkspaceSnapshot,
+  isProviderWorkspaceSnapshotScanning,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
+  resolveProvidersForCwd,
 } from "./providerSkills.ts";
 
 const provider = {
@@ -39,17 +41,6 @@ const provider = {
 } satisfies ServerProvider;
 
 describe("getProviderSkillsForSlashMenu", () => {
-  it("keeps the skill alias when the provider also exposes it as a slash command", () => {
-    const askMatt = {
-      name: "ask-matt",
-      path: "/Users/matt/.agents/skills/ask-matt/SKILL.md",
-      enabled: true,
-    };
-    expect(getProviderSkillsForSlashMenu([askMatt], true).map((skill) => skill.name)).toEqual([
-      "ask-matt",
-    ]);
-  });
-
   it("shows one row when enabled skills share a name", () => {
     const skills = [
       {
@@ -130,6 +121,30 @@ describe("workspace provider snapshots", () => {
     expect(hasCompleteProviderWorkspaceSnapshot(undefined, "/workspace/project-a")).toBe(false);
     expect(hasCompleteProviderWorkspaceSnapshot(provider, null)).toBe(false);
   });
+
+  it("lists a project's own models only for that project", () => {
+    const projectModel = {
+      slug: "uni/medium-gpt",
+      name: "Medium GPT",
+      isCustom: false,
+      capabilities: null,
+    } satisfies ServerProvider["models"][number];
+    const withProjectModels = {
+      ...provider,
+      workspaceSnapshots: provider.workspaceSnapshots.map((snapshot) => ({
+        ...snapshot,
+        models: [projectModel],
+      })),
+    } satisfies ServerProvider;
+    const providers = [provider, withProjectModels];
+
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a").map((p) => p.models)).toEqual([
+      [],
+      [projectModel],
+    ]);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
+    expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {
@@ -199,6 +214,63 @@ describe("provider workspace snapshot refresh atom", () => {
     unmount();
   });
 
+  it.each(["already expired", "expires during discovery"])(
+    "retries an unchanged catalog that %s after the short cooldown",
+    async (expiry) => {
+      const start = Date.parse("2026-01-01T00:05:00.000Z");
+      vi.useFakeTimers({ now: expiry === "expires during discovery" ? start - 1 : start });
+      const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+      const { registry, atom, responses, run, unmount } = setup(
+        expiry === "expires during discovery"
+          ? withSnapshot("2026-01-01T00:00:00.000Z", true)
+          : stale,
+        [
+          () => {
+            if (expiry === "expires during discovery") vi.setSystemTime(start + 1);
+            return stale;
+          },
+        ],
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(9_999);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(1);
+      responses.push(() => withSnapshot("2026-01-01T00:05:10.000Z"));
+      await vi.advanceTimersByTimeAsync(1);
+      registry.refresh(atom);
+      expect(run).toHaveBeenCalledTimes(2);
+      unmount();
+    },
+  );
+
+  it("keeps the TTL guard for a newly scanned catalog when the client clock is ahead", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T01:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"), [
+      () => withSnapshot("2026-01-01T00:01:00.000Z"),
+    ]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
+  it("bounds retries when discovery repeatedly returns the same expired catalog", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:05:00.000Z") });
+    const stale = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, run, unmount } = setup(stale, [() => stale, () => stale, () => stale]);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    registry.refresh(atom);
+    expect(run).toHaveBeenCalledTimes(3);
+    unmount();
+  });
+
   it("does not rescan a current snapshot, and rescans once it ages past the TTL", () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"));
@@ -226,6 +298,22 @@ describe("provider workspace snapshot refresh atom", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("rescans a current snapshot whose commands are complete but models are pending", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const [current] = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { run, unmount } = setup([
+      {
+        ...current!,
+        workspaceSnapshots: current!.workspaceSnapshots!.map((snapshot) => ({
+          ...snapshot,
+          modelsPending: true,
+        })),
+      },
+    ]);
+    expect(run).toHaveBeenCalledTimes(1);
+    unmount();
+  });
+
   it("stops retrying after three failed scans until the TTL lapses", async () => {
     vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
     const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true));
@@ -238,6 +326,53 @@ describe("provider workspace snapshot refresh atom", () => {
     vi.setSystemTime(Date.parse("2026-01-01T00:10:00.000Z"));
     registry.refresh(atom);
     expect(run).toHaveBeenCalledTimes(4);
+    unmount();
+  });
+
+  it("reports skills loading while a missing snapshot is scanned, until it arrives", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const scanned = withSnapshot("2026-01-01T00:00:00.000Z");
+    const { registry, atom, providersAtom, unmount } = setup(noSnapshot, [() => scanned]);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(true);
+    registry.set(providersAtom, scanned);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    unmount();
+  });
+
+  it("stops reporting skills loading when the scan fails", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, unmount } = setup(noSnapshot);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    unmount();
+  });
+
+  it("keeps reporting skills loading while the scan returns a pending snapshot", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const pending = withSnapshot("2026-01-01T00:00:00.000Z", true);
+    const { registry, atom, providersAtom, unmount } = setup(pending, [() => pending]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(true);
+    registry.set(providersAtom, withSnapshot("2026-01-01T00:00:00.000Z"));
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    unmount();
+  });
+
+  it("stops reporting skills loading once a pending snapshot exhausts its retries", async () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const { registry, atom, run, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z", true));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
+    unmount();
+  });
+
+  it("does not report skills loading for a current snapshot", () => {
+    vi.useFakeTimers({ now: Date.parse("2026-01-01T00:01:00.000Z") });
+    const { registry, atom, unmount } = setup(withSnapshot("2026-01-01T00:00:00.000Z"));
+    expect(isProviderWorkspaceSnapshotScanning(registry.get(atom))).toBe(false);
     unmount();
   });
 

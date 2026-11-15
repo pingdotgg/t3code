@@ -33,7 +33,12 @@ import {
   type ThreadSearchSubject,
 } from "@t3tools/shared/paletteSearch";
 import { threadSearchPullRequests } from "@t3tools/shared/threadPullRequests";
-import { indexedMessageCondition } from "./messageSearchIndex.ts";
+import {
+  foldedMessageSearchText,
+  indexedMessageCondition,
+  messageSearchText,
+  nonPlaceholderMessageCondition,
+} from "./messageSearchIndex.ts";
 import { loadOlderSettledThreadsPage } from "./ShellStream.ts";
 
 // When the user last wrote in the thread aliased `threads`, as the clients
@@ -65,8 +70,12 @@ const TokenList = Schema.fromJsonString(Schema.Array(Schema.String));
 const SearchRequest = Schema.Struct({
   /** The FTS5 query, or null to scan messages instead. */
   match: Schema.NullOr(Schema.String),
-  /** Tokens every hit must contain, checked on the text. */
-  substrings: TokenList,
+  /** Tokens every hit must contain, as typed or as their GLOB folding case and Latin accents. */
+  substrings: Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ token: Schema.String, accentInsensitive: Schema.String })),
+  ),
+  /** For each short word outside ASCII, the spellings a hit must contain one of. */
+  shortSpellings: Schema.fromJsonString(Schema.Array(Schema.Array(Schema.String))),
   projectId: Schema.NullOr(ProjectId),
   /** Threads the caller already lists, left out before the hit limit. */
   excludedThreadIds: TokenList,
@@ -99,6 +108,51 @@ const MESSAGE_HIT_LIMIT = 2000;
 const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
+const NON_ASCII = /[\u0080-\uffff]/;
+
+/** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
+function shortTokenSpellings(token: string): ReadonlyArray<string> {
+  const forms = (char: string) => {
+    const plain = char.normalize("NFD").replace(/\p{M}/gu, "");
+    return [char, char.toUpperCase(), plain, plain.toUpperCase()];
+  };
+  const spellings = Array.from(token).reduce<ReadonlyArray<string>>(
+    (prefixes, char) => prefixes.flatMap((prefix) => forms(char).map((form) => prefix + form)),
+    [""],
+  );
+  return [...new Set(spellings)];
+}
+
+// Latin-1 Supplement and Extended-A/B/Additional letters that fold to ASCII,
+// including Romanian and Vietnamese letters SQLite's lower() leaves alone.
+const accentedForms = Map.groupBy(
+  [
+    ...Array.from({ length: 0x250 - 0xc0 }, (_, offset) => String.fromCharCode(0xc0 + offset)),
+    ...Array.from({ length: 0x1f00 - 0x1e00 }, (_, offset) => String.fromCharCode(0x1e00 + offset)),
+  ].filter((char) => /^[a-z]$/.test(foldSearchQuery(char))),
+  (char) => foldSearchQuery(char),
+);
+// Only text that may hold one of those letters (by UTF-8 lead byte) needs the GLOB:
+// lower() already folds ASCII case.
+const MESSAGE_HOLDS_ACCENTED_LATIN = [
+  ...new Set(
+    [...accentedForms.values()].flat().map((char) => Buffer.from(char).toString("hex", 0, 1)),
+  ),
+]
+  .map((lead) => `instr(CAST(message.text AS BLOB), x'${lead}') > 0`)
+  .join(" OR ");
+
+/** A GLOB pattern for `token` anywhere, in any case and with or without Latin accents. */
+function accentInsensitiveGlob(token: string): string {
+  const pattern = Array.from(token, (char) => {
+    const letter = foldSearchQuery(char);
+    if (/^[a-z]$/.test(letter)) {
+      return `[${letter}${letter.toUpperCase()}${accentedForms.get(letter)?.join("") ?? ""}]`;
+    }
+    return /[*?[]/.test(char) ? `[${char}]` : char;
+  });
+  return `*${pattern.join("")}*`;
+}
 
 /**
  * The SQL inputs for a message search, or null when the query has no token
@@ -114,9 +168,14 @@ function buildMessageSearch(
   if (long.length === 0) return null;
   // Two-character CJK words are too short for trigrams.
   const indexed = hasIndex && long.every((token) => Array.from(token).length >= 3);
+  const narrowing = short.filter((token) => !NON_ASCII.test(token));
   return {
     match: indexed ? long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ") : null,
-    substrings: indexed ? short : [...long, ...short],
+    substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
+      token,
+      accentInsensitive: accentInsensitiveGlob(token),
+    })),
+    shortSpellings: short.filter((token) => NON_ASCII.test(token)).map(shortTokenSpellings),
   };
 }
 
@@ -154,13 +213,13 @@ export function buildSearchSnippet(text: string, matchStart: number): string {
   return `${start > 0 ? "…" : ""}${shown.slice(0, end)}${cut ? "…" : ""}`;
 }
 
-// Hidden subagent threads must be filtered before the hit limit so visible matches aren't lost.
-// Word starts and ranking follow the title rules in JS.
-// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages.
-// The scan folds ASCII case only, so accent variants and non-ASCII case variants may not match.
+// Filter hidden subagents and side chats before the hit limit; JS checks word starts and ranking.
+// Both paths narrow ASCII tokens with Latin-1 and Extended-A/B/Additional accent variants.
+// Without FTS5 trigrams, or for two-character CJK words, scan the same eligible messages;
+// accented queries and non-Latin case can still miss: "fermée"/"fermee", "ОШИБКА"/"ошибка".
 export const messageHitsQuery = (
   sql: SqlClient.SqlClient,
-  { match, substrings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
+  { match, substrings, shortSpellings, projectId, excludedThreadIds }: typeof SearchRequest.Encoded,
 ) => sql`
     WITH eligible AS MATERIALIZED (
       SELECT threads.thread_id, threads.project_id
@@ -174,6 +233,7 @@ export const messageHitsQuery = (
         AND threads.thread_id NOT IN (SELECT value FROM json_each(${excludedThreadIds}))
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
     )
     ${
       match === null
@@ -184,7 +244,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -201,7 +261,7 @@ export const messageHitsQuery = (
             messages.thread_id AS "threadId",
             eligible.project_id AS "projectId",
             messages.role AS source,
-            json_extract(messages.payload_json, '$.text') AS text,
+            ${messageSearchText(sql)} AS text,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -209,19 +269,51 @@ export const messageHitsQuery = (
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
           WHERE orchestration_v2_message_search MATCH ${match}
             AND orchestration_v2_message_search.rowid >= coalesce((
-              SELECT rowid FROM orchestration_v2_message_search
+              SELECT orchestration_v2_message_search.rowid FROM orchestration_v2_message_search
               WHERE orchestration_v2_message_search MATCH ${match}
-              ORDER BY rowid DESC
+              ORDER BY orchestration_v2_message_search.rowid DESC
               LIMIT 1 OFFSET ${MESSAGE_CANDIDATE_LIMIT - 1}
             ), 0)
+            AND ${nonPlaceholderMessageCondition(sql)}
         `
     }
       -- Answers to an agent's question show inside its question card, where
       -- neither find nor a jump can reach them.
       AND messages.message_id NOT LIKE 'async-answer:%'
+      -- Nor can they reach a rolled-back turn, or a message of a stopped turn
+      -- that no shown item carries, such as a queued prompt that never ran.
       AND NOT EXISTS (
-        SELECT 1 FROM json_each(${substrings}) AS token
-        WHERE instr(lower(json_extract(messages.payload_json, '$.text')), token.value) = 0
+        SELECT 1 FROM orchestration_v2_projection_runs AS runs
+        WHERE runs.run_id = messages.run_id
+          AND (
+            runs.status = 'rolled_back'
+            OR (
+              runs.status = 'cancelled'
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items AS items
+                WHERE items.run_id = runs.run_id
+                  AND json_extract(items.payload_json, '$.messageId') = messages.message_id
+                  AND json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+              )
+            )
+          )
+      )
+      AND NOT EXISTS (
+        -- The text read once, not once per check.
+        SELECT 1 FROM (SELECT ${foldedMessageSearchText(sql)} AS text) AS message,
+          json_each(${substrings}) AS substring
+        WHERE instr(lower(message.text), json_extract(substring.value, '$.token')) = 0
+          AND NOT (
+            (${sql.literal(MESSAGE_HOLDS_ACCENTED_LATIN)})
+            AND message.text GLOB json_extract(substring.value, '$.accentInsensitive')
+          )
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM json_each(${shortSpellings}) AS token
+        WHERE NOT EXISTS (
+          SELECT 1 FROM json_each(token.value) AS spelling
+          WHERE instr(${foldedMessageSearchText(sql)}, spelling.value) > 0
+        )
       )
     -- The index's own rowid, so FTS5 returns hits newest first and stops at
     -- the limit; ordering by the messages table's rowid sorts every hit.
@@ -331,6 +423,7 @@ export const make = Effect.gen(function* () {
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND (${projectId} IS NULL OR threads.project_id = ${projectId})
     `,
   });
@@ -361,6 +454,7 @@ export const make = Effect.gen(function* () {
         AND projects.deleted_at IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
@@ -383,6 +477,7 @@ export const make = Effect.gen(function* () {
         AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
         AND json_extract(threads.payload_json, '$.lineage.relationshipToParent')
           IS NOT 'subagent'
+        AND json_extract(threads.payload_json, '$.lineage.sideChat') IS NOT 1
         AND json_extract(threads.payload_json, '$.settledOverride') = 'settled'
         AND json_extract(threads.payload_json, '$.settledAt') < ${before}
         AND (${projectIds} IS NULL
