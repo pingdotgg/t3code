@@ -656,6 +656,7 @@ describe("DesktopUpdates", () => {
           Effect.andThen(
             Effect.fail(
               new ElectronUpdater.ElectronUpdaterPrepareInstallError({
+                reason: "failed",
                 cause: new Error("ditto: No space left on device"),
               }),
             ),
@@ -681,10 +682,40 @@ describe("DesktopUpdates", () => {
           assert.equal(harness.quitAndInstalls(), 0);
           assert.deepEqual(harness.installSteps, ["closeSshTunnels", "startBackend"]);
           assert.equal(startsBeforeStopFinished, 0);
+          assert.equal(harness.installRecords.size, 0);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     },
   );
+
+  it.effect("keeps the install record while Squirrel may still install the update", () => {
+    const harness = makeHarness({
+      nativeInstallVersion: "1.2.4",
+      prepareInstall: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterPrepareInstallError({
+          reason: "timeout",
+          cause: new Error("Squirrel.Mac did not finish preparing the update."),
+        }),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const { state } = yield* updates.install;
+        assert.equal(state.errorContext, "install");
+        assert.include(state.message, "may still install the next time T3 Code quits");
+        assert.deepEqual(
+          [...harness.installRecords.values()].map((record) => JSON.parse(record)),
+          [{ fromVersion: "1.2.3", targetVersion: "1.2.4" }],
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
 
   it.effect("records the version an install hands to the installer", () => {
     let recordsAtStop: ReadonlyArray<string> = [];
