@@ -156,3 +156,39 @@ same environment, language, and dictionary as the composer, but skips transcript
 cleanup even when it is on, so you see what the model heard. Browser recording
 needs HTTPS or localhost and microphone permission; for a remote server over
 plain HTTP, use the desktop app.
+
+## Listen to assistant responses
+
+Choose the speaker action beside a completed assistant response to read it aloud.
+Use the same action to pause or resume, or choose Stop to end playback. Starting
+another response or dictating stops the current reading. Code blocks and images
+are omitted; link labels and inline code are read.
+
+Configure **Settings → Voice → Response playback** on the environment that owns
+the thread. **Local · Piper** is the default. Install the Piper engine on that
+machine, for example:
+
+```sh
+python3 -m venv ~/.local/share/t3-piper
+~/.local/share/t3-piper/bin/pip install piper-tts
+```
+
+Set **Piper executable** to the full path of that installation's `bin/piper`,
+or leave it as `piper` when the executable is on the environment's PATH.
+
+Under **Local voices**, choose a language and voice, then **Download & use voice**.
+T3 Code downloads and verifies the model, configuration, and license together.
+You can follow progress or cancel the download. Once installed, the voice works
+without internet. **Use voice** switches to another installed voice, and **Remove
+voice** deletes its files. Removing the selected voice clears the selection until
+you choose or install another. Use **Voice license** to read the chosen model's
+licensing information.
+
+When connected remotely, synthesis runs on that environment and audio plays on
+the device where you selected the response. The mobile app does not need a Piper
+installation of its own.
+
+To use a service instead, explicitly select **OpenAI** and choose a voice. It
+uses the OpenAI API key saved under Cloud providers in Voice settings, sends the
+response text to OpenAI, and incurs API charges. A local synthesis failure never
+switches to OpenAI automatically.

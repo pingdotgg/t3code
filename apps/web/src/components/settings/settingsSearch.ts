@@ -548,6 +548,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "speech-output",
+    title: "Response playback",
+    to: "/settings/voice",
+    searchTerms: [
+      "tts text to speech read aloud speaker listen piper local output OpenAI voice model",
+    ],
+    environmentOnly: true,
+  },
+  {
     id: "voice-microphone",
     title: "Microphone",
     to: "/settings/voice",

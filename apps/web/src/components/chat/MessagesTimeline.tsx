@@ -1,3 +1,4 @@
+import { ResponseSpeechScope } from "../../speech/ResponseSpeechButton";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
@@ -332,11 +333,13 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
   const find = useContext(ThreadFindTimelineContext);
   const findOpen = find?.findOpen ?? props.findOpen;
   return (
-    <ConversationTimeline
-      {...props}
-      {...find}
-      liveFollowEnabled={!findOpen && props.liveFollowEnabled}
-    />
+    <ResponseSpeechScope owner={props.routeThreadKey}>
+      <ConversationTimeline
+        {...props}
+        {...find}
+        liveFollowEnabled={!findOpen && props.liveFollowEnabled}
+      />
+    </ResponseSpeechScope>
   );
 }
 

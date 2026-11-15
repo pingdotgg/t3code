@@ -355,3 +355,81 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+export const SpeechOutputSettings = Schema.Struct({
+  engine: Schema.Literals(["piper", "openai"]),
+  piperExecutable: Schema.String.check(Schema.isMaxLength(4096)),
+  piperVoiceId: Schema.String.check(Schema.isMaxLength(128)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ),
+  voice: Schema.Literals(["alloy", "coral", "nova", "onyx", "sage", "shimmer"]),
+});
+export type SpeechOutputSettings = typeof SpeechOutputSettings.Type;
+export const DEFAULT_SPEECH_OUTPUT_SETTINGS: SpeechOutputSettings = {
+  engine: "piper",
+  piperExecutable: "piper",
+  piperVoiceId: "",
+  voice: "coral",
+};
+
+export const SpeechSynthesisRequest = Schema.Struct({
+  text: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
+  engine: SpeechOutputSettings.fields.engine,
+});
+export type SpeechSynthesisRequest = typeof SpeechSynthesisRequest.Type;
+
+export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisError>()(
+  "SpeechSynthesisError",
+  {
+    reason: Schema.Literals([
+      "not-configured",
+      "configuration-changed",
+      "invalid-text",
+      "unavailable",
+      "invalid-audio",
+      "voice-not-found",
+      "voice-not-installed",
+      "busy",
+    ]),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "not-configured":
+        return "Configure response playback in Settings → Voice on this environment first.";
+      case "configuration-changed":
+        return "The speech output engine changed. Start playback again.";
+      case "invalid-text":
+        return "This response has no readable text or exceeds the speech limit.";
+      case "invalid-audio":
+        return "The speech engine returned invalid audio.";
+      case "voice-not-found":
+        return "This voice is not in the speech catalog.";
+      case "voice-not-installed":
+        return "Download this voice in Settings → Voice before using it.";
+      case "busy":
+        return "Another voice download or playback operation is running. Try again when it finishes.";
+      case "unavailable":
+        return "Speech synthesis failed. Check the engine and voice in Settings → Voice.";
+    }
+  }
+}
+
+export const SpeechSynthesisVoice = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  language: Schema.String,
+  languageName: Schema.String,
+  quality: Schema.String,
+  size: Schema.Number,
+  modelCardUrl: Schema.String,
+  active: Schema.Boolean,
+  state: Schema.Literals(["downloadable", "downloading", "verifying", "installed"]),
+  downloaded: Schema.optionalKey(Schema.Number),
+});
+export type SpeechSynthesisVoice = typeof SpeechSynthesisVoice.Type;
+export const SpeechSynthesisVoices = Schema.Struct({ voices: Schema.Array(SpeechSynthesisVoice) });
+export type SpeechSynthesisVoices = typeof SpeechSynthesisVoices.Type;
+export const SpeechSynthesisVoiceRequest = Schema.Struct({
+  voiceId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+});

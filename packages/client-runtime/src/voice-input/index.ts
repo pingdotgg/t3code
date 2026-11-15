@@ -11,6 +11,12 @@ export {
   type VoiceRecorderStatus,
 } from "./controller.ts";
 export {
+  synthesizeEnvironmentSpeech,
+  getEnvironmentSpeechVoices,
+  downloadEnvironmentSpeechVoice,
+  cancelEnvironmentSpeechVoiceDownload,
+  selectEnvironmentSpeechVoice,
+  removeEnvironmentSpeechVoice,
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,

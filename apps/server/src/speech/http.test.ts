@@ -27,6 +27,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
+import * as SpeechSynthesisService from "./SpeechSynthesisService.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -48,6 +49,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
   );
 
 const dependencies = Layer.mergeAll(
+  Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({}),
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({
@@ -362,4 +364,99 @@ effectIt.effect.each([
         reason,
       });
     }),
+);
+
+effectIt.effect.each([false, true])(
+  "authorizes synthesis and returns binary audio (operate=%s)",
+  (operate) =>
+    Effect.gen(function* () {
+      const audio = new Uint8Array([1, 2, 3, 4]);
+      const synthesize = vi.fn(() => Effect.succeed(audio));
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(principal(...(operate ? [AuthOrchestrationOperateScope] : []))),
+          Layer.provide(Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({ synthesize })),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const call = (text: string) =>
+        Effect.promise(() =>
+          handler(
+            new Request("http://localhost/api/voice/synthesize", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text, engine: "piper" }),
+            }),
+            context,
+          ),
+        );
+      const response = yield* call("Olá");
+      expect(response.status).toBe(operate ? 200 : 403);
+      if (operate) {
+        expect(response.headers.get("content-type")).toContain("audio/wav");
+        expect(new Uint8Array(yield* Effect.promise(() => response.arrayBuffer()))).toEqual(audio);
+        expect(synthesize).toHaveBeenCalledOnce();
+        synthesize.mockClear();
+        expect((yield* call("a".repeat(2001))).status).toBe(400);
+      }
+      expect(synthesize).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+);
+
+effectIt.effect.each([false, true])(
+  "guards voice management with settings permission (write=%s)",
+  (write) =>
+    Effect.gen(function* () {
+      const voices = { voices: [] };
+      const mutation = vi.fn(() => Effect.succeed(voices));
+      const { handler, dispose } = HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
+          Layer.provide(speechHttpApiLayer),
+          Layer.provide(
+            principal(AuthOrchestrationOperateScope, ...(write ? [AuthSettingsWriteScope] : [])),
+          ),
+          Layer.provide(
+            Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
+              voices: Effect.succeed(voices),
+              downloadVoice: mutation,
+              selectVoice: mutation,
+              removeVoice: mutation,
+              cancelVoiceDownload: mutation,
+            }),
+          ),
+          Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+          Layer.provide(NodeServices.layer),
+        ),
+        { disableLogger: true },
+      );
+      yield* Effect.addFinalizer(() => Effect.promise(dispose));
+      const context = yield* Layer.build(NodeServices.layer);
+      const listing = yield* Effect.promise(() =>
+        handler(new Request("http://localhost/api/voice/synthesis/voices"), context),
+      );
+      expect(listing.status).toBe(200);
+      for (const action of ["download", "select", "remove", "cancel-download"]) {
+        const response = yield* Effect.promise(() =>
+          handler(
+            new Request(`http://localhost/api/voice/synthesis/voices/${action}`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ voiceId: "pt_BR-faber-medium" }),
+            }),
+            context,
+          ),
+        );
+        expect(response.status).toBe(write ? 200 : 403);
+      }
+      if (!write) expect(mutation).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
 );

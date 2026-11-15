@@ -1,3 +1,4 @@
+import { voiceOutput } from "../voice-output/voiceOutput";
 import { useAtomValue } from "@effect/atom-react";
 import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
 import { File } from "expo-file-system";
@@ -128,6 +129,7 @@ const voiceInputAtom = Atom.make((get) => {
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
+      voiceOutput.stop();
       const token = acquireAudioSession("recording");
       audioToken = token;
       try {

@@ -1,0 +1,333 @@
+import {
+  SpeechSynthesisError,
+  type SpeechSynthesisRequest,
+  type SpeechSynthesisVoices,
+  SettingsSecretValue,
+  isSecretReference,
+} from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ByteSize from "effect/ByteSize";
+import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import * as SpeechModelStore from "./SpeechModelStore.ts";
+import { SPEECH_VOICES } from "./voices.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
+
+const MAX_AUDIO_BYTES = 32 * 1024 * 1024;
+const sameCredential = Schema.toEquivalence(SettingsSecretValue);
+
+export class SpeechSynthesisOperationError extends Schema.TaggedError<SpeechSynthesisOperationError>()(
+  "SpeechSynthesisOperationError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Speech synthesis failed.";
+  }
+
+  static fromCause(cause: unknown) {
+    return new SpeechSynthesisOperationError({ cause });
+  }
+}
+
+export class SpeechSynthesisService extends Context.Service<
+  SpeechSynthesisService,
+  {
+    readonly voices: Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
+    readonly downloadVoice: (
+      voiceId: string,
+    ) => Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisError | SpeechSynthesisOperationError>;
+    readonly cancelVoiceDownload: (
+      voiceId: string,
+    ) => Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
+    readonly selectVoice: (
+      voiceId: string,
+    ) => Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisError | SpeechSynthesisOperationError>;
+    readonly removeVoice: (
+      voiceId: string,
+    ) => Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisError | SpeechSynthesisOperationError>;
+    readonly synthesize: (
+      input: SpeechSynthesisRequest,
+    ) => Effect.Effect<Uint8Array, SpeechSynthesisError | SpeechSynthesisOperationError>;
+  }
+>()("t3/speech/SpeechSynthesisService") {}
+
+const make = Effect.gen(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const process = yield* ProcessRunner.ProcessRunner;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const http = yield* HttpClient.HttpClient;
+  const resolver = yield* SecretResolver.SecretResolver;
+  const synthesis = yield* Semaphore.make(1);
+  const store = yield* SpeechModelStore.SpeechModelStore;
+  const scope = yield* Effect.scope;
+  let downloading:
+    | {
+        voiceId: string;
+        downloaded: number;
+        verifying: boolean;
+        fiber: Deferred.Deferred<Fiber.Fiber<void, SpeechSynthesisOperationError>>;
+      }
+    | undefined;
+
+  const definition = Effect.fn("SpeechSynthesisService.voice")(function* (voiceId: string) {
+    const voice = SPEECH_VOICES.find((voice) => voice.id === voiceId);
+    if (!voice) return yield* new SpeechSynthesisError({ reason: "voice-not-found" });
+    return voice;
+  });
+  const installedVoicePath = Effect.fn("SpeechSynthesisService.installedVoicePath")(function* (
+    voiceId: string,
+  ) {
+    const voice = yield* definition(voiceId);
+    const paths = yield* Effect.forEach(voice.files, (file) => store.installedPath(file));
+    if (paths.some((path) => path === undefined))
+      return yield* new SpeechSynthesisError({ reason: "voice-not-installed" });
+    return paths[voice.files.findIndex((file) => file.filename.endsWith(".onnx"))]!;
+  });
+  const voices = Effect.gen(function* () {
+    const snapshot = yield* settings.getSettings.pipe(
+      Effect.mapError(SpeechSynthesisOperationError.fromCause),
+    );
+    return {
+      voices: yield* Effect.forEach(
+        SPEECH_VOICES,
+        (voice) =>
+          Effect.gen(function* () {
+            const ready = (yield* Effect.forEach(voice.files, (file) => store.isReady(file))).every(
+              Boolean,
+            );
+            const transfer = downloading?.voiceId === voice.id ? downloading : undefined;
+            return {
+              id: voice.id,
+              name: voice.name,
+              language: voice.language,
+              languageName: voice.languageName,
+              quality: voice.quality,
+              size: voice.size,
+              modelCardUrl: voice.modelCardUrl,
+              active: snapshot.speechOutput.piperVoiceId === voice.id,
+              state: transfer
+                ? transfer.verifying
+                  ? ("verifying" as const)
+                  : ("downloading" as const)
+                : ready
+                  ? ("installed" as const)
+                  : ("downloadable" as const),
+              ...(transfer ? { downloaded: transfer.downloaded } : {}),
+            };
+          }),
+        { concurrency: 8 },
+      ),
+    };
+  }).pipe(Effect.withSpan("SpeechSynthesisService.voices"));
+
+  const downloadFiber = Effect.fn("SpeechSynthesisService.downloadFiber")(
+    function* (voiceId: string) {
+      const voice = yield* definition(voiceId);
+      if (downloading?.voiceId === voiceId) return yield* Deferred.await(downloading.fiber);
+      if (downloading) return yield* new SpeechSynthesisError({ reason: "busy" });
+      const transfer = {
+        voiceId,
+        downloaded: 0,
+        verifying: false,
+        fiber: Deferred.makeUnsafe<Fiber.Fiber<void, SpeechSynthesisOperationError>>(),
+      };
+      downloading = transfer;
+      const fiber = yield* Effect.gen(function* () {
+        let completed = 0;
+        for (const file of voice.files) {
+          yield* store
+            .download(file, {
+              onProgress: (downloaded) => {
+                transfer.downloaded = completed + downloaded;
+                transfer.verifying = false;
+              },
+              onVerificationStart: () => {
+                transfer.verifying = true;
+              },
+            })
+            .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+          completed += file.size;
+          transfer.downloaded = completed;
+        }
+      }).pipe(
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : Effect.forEach(voice.files, (file) => store.remove(file).pipe(Effect.ignore)),
+        ),
+        Effect.forkIn(scope),
+      );
+      fiber.addObserver(() => {
+        if (downloading === transfer) downloading = undefined;
+      });
+      yield* Deferred.succeed(transfer.fiber, fiber);
+      return fiber;
+    },
+    Effect.uninterruptible,
+    synthesis.withPermits(1),
+  );
+  const downloadVoice = Effect.fn("SpeechSynthesisService.downloadVoice")(function* (
+    voiceId: string,
+  ) {
+    const exit = yield* Fiber.await(yield* downloadFiber(voiceId));
+    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause))
+      return yield* Effect.failCause(exit.cause);
+    return yield* voices;
+  });
+  const cancelVoiceDownload = Effect.fn("SpeechSynthesisService.cancelVoiceDownload")(function* (
+    voiceId: string,
+  ) {
+    if (downloading?.voiceId === voiceId)
+      yield* Fiber.interrupt(yield* Deferred.await(downloading.fiber));
+    return yield* voices;
+  });
+  const selectVoice = Effect.fn("SpeechSynthesisService.selectVoice")(function* (voiceId: string) {
+    if (downloading?.voiceId === voiceId)
+      return yield* new SpeechSynthesisError({ reason: "busy" });
+    yield* installedVoicePath(voiceId);
+    const snapshot = yield* settings.getSettings.pipe(
+      Effect.mapError(SpeechSynthesisOperationError.fromCause),
+    );
+    yield* settings
+      .updateSettings({ speechOutput: { ...snapshot.speechOutput, piperVoiceId: voiceId } })
+      .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+    return yield* voices;
+  }, synthesis.withPermits(1));
+  const removeVoice = Effect.fn("SpeechSynthesisService.removeVoice")(function* (voiceId: string) {
+    const voice = yield* definition(voiceId);
+    if (downloading?.voiceId === voiceId)
+      return yield* new SpeechSynthesisError({ reason: "busy" });
+    for (const file of voice.files)
+      yield* store.remove(file).pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+    const snapshot = yield* settings.getSettings.pipe(
+      Effect.mapError(SpeechSynthesisOperationError.fromCause),
+    );
+    if (snapshot.speechOutput.piperVoiceId === voiceId)
+      yield* settings
+        .updateSettings({ speechOutput: { ...snapshot.speechOutput, piperVoiceId: "" } })
+        .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+    return yield* voices;
+  }, synthesis.withPermits(1));
+
+  const synthesize = Effect.fn("SpeechSynthesisService.synthesize")(
+    function* (input: SpeechSynthesisRequest) {
+      const text = input.text.trim();
+      if (!text || text.length > 2000)
+        return yield* new SpeechSynthesisError({ reason: "invalid-text" });
+      const snapshot = yield* settings.getSettings.pipe(
+        Effect.mapError(SpeechSynthesisOperationError.fromCause),
+      );
+      const config = snapshot.speechOutput;
+      if (input.engine !== config.engine)
+        return yield* new SpeechSynthesisError({ reason: "configuration-changed" });
+      let audio: Uint8Array;
+      if (config.engine === "piper") {
+        if (!config.piperExecutable.trim() || !config.piperVoiceId)
+          return yield* new SpeechSynthesisError({ reason: "not-configured" });
+        const modelPath = yield* installedVoicePath(config.piperVoiceId);
+        const directory = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-tts-" })
+          .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+        const output = path.join(directory, "speech.wav");
+        const result = yield* process
+          .run({
+            command: config.piperExecutable,
+            args: ["--model", modelPath, "--output_file", output],
+            stdin: `${text}\n`,
+            timeout: "2 minutes",
+            maxOutputBytes: 64 * 1024,
+          })
+          .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+        if (result.code !== 0) return yield* new SpeechSynthesisError({ reason: "unavailable" });
+        const info = yield* fs
+          .stat(output)
+          .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+        if (Number(info.size) > MAX_AUDIO_BYTES)
+          return yield* new SpeechSynthesisError({ reason: "invalid-audio" });
+        audio = yield* fs
+          .readFile(output)
+          .pipe(Effect.mapError(SpeechSynthesisOperationError.fromCause));
+      } else {
+        const source = snapshot.cloudSpeechCredentials.openai;
+        if (!source) return yield* new SpeechSynthesisError({ reason: "not-configured" });
+        if (isSecretReference(source)) yield* resolver.invalidate([source]);
+        const key = yield* requireSettingsSecret(resolver, source).pipe(
+          Effect.mapError(SpeechSynthesisOperationError.fromCause),
+        );
+        const current = yield* settings.getSettings.pipe(
+          Effect.mapError(SpeechSynthesisOperationError.fromCause),
+        );
+        if (
+          current.speechOutput.engine !== config.engine ||
+          !sameCredential(current.cloudSpeechCredentials.openai, source)
+        )
+          return yield* new SpeechSynthesisError({ reason: "configuration-changed" });
+        const response = yield* http
+          .execute(
+            HttpClientRequest.post("https://api.openai.com/v1/audio/speech").pipe(
+              HttpClientRequest.bearerToken(Redacted.make(key)),
+              HttpClientRequest.setHeader("content-type", "application/json"),
+              HttpClientRequest.bodyJsonUnsafe({
+                model: "gpt-4o-mini-tts",
+                input: text,
+                voice: config.voice,
+                response_format: "wav",
+              }),
+            ),
+          )
+          .pipe(
+            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+            Effect.mapError(SpeechSynthesisOperationError.fromCause),
+          );
+        if (response.status !== 200)
+          return yield* new SpeechSynthesisError({ reason: "unavailable" });
+        audio = new Uint8Array(
+          yield* response.arrayBuffer.pipe(
+            Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_AUDIO_BYTES)),
+            Effect.mapError(SpeechSynthesisOperationError.fromCause),
+          ),
+        );
+      }
+      if (
+        audio.length < 44 ||
+        audio.length > MAX_AUDIO_BYTES ||
+        new TextDecoder().decode(audio.subarray(0, 4)) !== "RIFF" ||
+        new TextDecoder().decode(audio.subarray(8, 12)) !== "WAVE"
+      )
+        return yield* new SpeechSynthesisError({ reason: "invalid-audio" });
+      return audio;
+    },
+    Effect.scoped,
+    Effect.timeoutOrElse({
+      duration: "2 minutes",
+      orElse: () => Effect.fail(new SpeechSynthesisError({ reason: "unavailable" })),
+    }),
+    synthesis.withPermits(1),
+  );
+  return SpeechSynthesisService.of({
+    synthesize,
+    voices,
+    downloadVoice,
+    cancelVoiceDownload,
+    selectVoice,
+    removeVoice,
+  });
+});
+
+export const layer = Layer.effect(SpeechSynthesisService, make);

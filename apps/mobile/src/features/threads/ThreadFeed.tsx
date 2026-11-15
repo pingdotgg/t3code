@@ -1,3 +1,4 @@
+import { ResponseSpeechButton, useResponseSpeechScope } from "../voice-output/ResponseSpeechButton";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -2391,6 +2392,16 @@ function renderFeedEntry(
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}
             />
+            {!message.streaming ? (
+              <ResponseSpeechButton
+                environmentId={props.environmentId}
+                owner={`${props.environmentId}:${props.threadId}:${message.id}`}
+                text={renderedText}
+                tintColor={iconSubtleColor}
+                buttonSize={props.replyActionSize.button}
+                iconSize={props.replyActionSize.icon}
+              />
+            ) : null}
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
@@ -2792,6 +2803,7 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
 } as const;
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  useResponseSpeechScope(`${props.environmentId}:${props.threadId}`);
   const formatMessageTime = useMessageTimeFormatter();
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);

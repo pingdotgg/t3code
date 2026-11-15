@@ -1,0 +1,3624 @@
+{
+  "repository": "rhasspy/piper-voices",
+  "revision": "e9ab671f2a0e50a701b34361136ba3e6a3a9eb0c",
+  "voices": [
+    {
+      "id": "ar_JO-kareem-medium",
+      "name": "kareem",
+      "language": "ar-JO",
+      "languageName": "Arabic (Jordan)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ar_JO-kareem-medium.onnx",
+          "sourceFilename": "ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx",
+          "size": 63201294,
+          "sha256": "9e95cab07b679da603bba17c4dec7ab3111320571964ee95c0379603c086491e"
+        },
+        {
+          "filename": "piper-ar_JO-kareem-medium.onnx.json",
+          "sourceFilename": "ar/ar_JO/kareem/medium/ar_JO-kareem-medium.onnx.json",
+          "size": 5024,
+          "sha256": "ea6d9b9d9076dbdb6bf5c98c6a141ef154959d2359709b37855727964e7d6c4d"
+        },
+        {
+          "filename": "piper-ar_JO-kareem-medium.modelcard",
+          "sourceFilename": "ar/ar_JO/kareem/medium/MODEL_CARD",
+          "size": 283,
+          "sha256": "38e1e4f94c4cb9eda041a639096763a8c5681d0be5a5b3e22f990aed6bb4b86e"
+        }
+      ]
+    },
+    {
+      "id": "bg_BG-dimitar-medium",
+      "name": "dimitar",
+      "language": "bg-BG",
+      "languageName": "Bulgarian (Bulgaria)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-bg_BG-dimitar-medium.onnx",
+          "sourceFilename": "bg/bg_BG/dimitar/medium/bg_BG-dimitar-medium.onnx",
+          "size": 63221984,
+          "sha256": "2305bc55def71c799fbfc866d15415f57a3465097b7bf9be41a14a26574ad6f3"
+        },
+        {
+          "filename": "piper-bg_BG-dimitar-medium.onnx.json",
+          "sourceFilename": "bg/bg_BG/dimitar/medium/bg_BG-dimitar-medium.onnx.json",
+          "size": 5474,
+          "sha256": "aa3b0cf8236c205ce953d449e112e184ebde325e7db82e769cfcf2926c375631"
+        },
+        {
+          "filename": "piper-bg_BG-dimitar-medium.modelcard",
+          "sourceFilename": "bg/bg_BG/dimitar/medium/MODEL_CARD",
+          "size": 425,
+          "sha256": "88fd2a9181a24bb4dbd21b76e2f8aad9eafb43fd1d78cd1ef4a5bbd0ac2eb6f8"
+        }
+      ]
+    },
+    {
+      "id": "ca_ES-upc_ona-medium",
+      "name": "upc_ona",
+      "language": "ca-ES",
+      "languageName": "Catalan (Spain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ca_ES-upc_ona-medium.onnx",
+          "sourceFilename": "ca/ca_ES/upc_ona/medium/ca_ES-upc_ona-medium.onnx",
+          "size": 63201294,
+          "sha256": "fdb652db8c11a4475527346cf3241cb064d1ba393cf370f3f2ec09a872d118fd"
+        },
+        {
+          "filename": "piper-ca_ES-upc_ona-medium.onnx.json",
+          "sourceFilename": "ca/ca_ES/upc_ona/medium/ca_ES-upc_ona-medium.onnx.json",
+          "size": 4875,
+          "sha256": "7f76acc9c06f4eda9e6aef2997b75782d97855aab48d4b401eb956a6e655eddc"
+        },
+        {
+          "filename": "piper-ca_ES-upc_ona-medium.modelcard",
+          "sourceFilename": "ca/ca_ES/upc_ona/medium/MODEL_CARD",
+          "size": 296,
+          "sha256": "2961b53af17c66971b3ebe3b174566a16ae6e9302997eed111a7d2b1954d31fd"
+        }
+      ]
+    },
+    {
+      "id": "ca_ES-upc_pau-x_low",
+      "name": "upc_pau",
+      "language": "ca-ES",
+      "languageName": "Catalan (Spain)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-ca_ES-upc_pau-x_low.onnx",
+          "sourceFilename": "ca/ca_ES/upc_pau/x_low/ca_ES-upc_pau-x_low.onnx",
+          "size": 28130791,
+          "sha256": "c936a1a78b0a795af3c2422a0f2edb26303c389ff961616902ba12e26b489071"
+        },
+        {
+          "filename": "piper-ca_ES-upc_pau-x_low.onnx.json",
+          "sourceFilename": "ca/ca_ES/upc_pau/x_low/ca_ES-upc_pau-x_low.onnx.json",
+          "size": 4159,
+          "sha256": "f3e76f0640c73a0a87482b37e5c85dd93532127f81e37ea2875e0dace28bb1e2"
+        },
+        {
+          "filename": "piper-ca_ES-upc_pau-x_low.modelcard",
+          "sourceFilename": "ca/ca_ES/upc_pau/x_low/MODEL_CARD",
+          "size": 258,
+          "sha256": "82d24aa9943e3b2f7303ef863fefb31a95c270ad62083ee37af77a92c74e918e"
+        }
+      ]
+    },
+    {
+      "id": "cs_CZ-jirka-medium",
+      "name": "jirka",
+      "language": "cs-CZ",
+      "languageName": "Czech (Czech Republic)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-cs_CZ-jirka-medium.onnx",
+          "sourceFilename": "cs/cs_CZ/jirka/medium/cs_CZ-jirka-medium.onnx",
+          "size": 63221984,
+          "sha256": "9bc0b76bb8f26e1d542bf7ed2ce8a6c764605a5f6edcc7663bd637d0b684c5d9"
+        },
+        {
+          "filename": "piper-cs_CZ-jirka-medium.onnx.json",
+          "sourceFilename": "cs/cs_CZ/jirka/medium/cs_CZ-jirka-medium.onnx.json",
+          "size": 5465,
+          "sha256": "4486971d79354d2f6d376fdd74f90acc6beb4308ba64083cfb03765e2c25cec1"
+        },
+        {
+          "filename": "piper-cs_CZ-jirka-medium.modelcard",
+          "sourceFilename": "cs/cs_CZ/jirka/medium/MODEL_CARD",
+          "size": 459,
+          "sha256": "c78a2da422eef121685d066d7c3b0ad1ce28394ba279dbd7b8c2e02b6e6ac74d"
+        }
+      ]
+    },
+    {
+      "id": "cs_CZ-kasandra-medium",
+      "name": "kasandra",
+      "language": "cs-CZ",
+      "languageName": "Czech (Czech Republic)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-cs_CZ-kasandra-medium.onnx",
+          "sourceFilename": "cs/cs_CZ/kasandra/medium/cs_CZ-kasandra-medium.onnx",
+          "size": 63511038,
+          "sha256": "09d08aa23691ed2d53fb3db242cfe82b189adf9c1812dd5fe928b5789ed76df7"
+        },
+        {
+          "filename": "piper-cs_CZ-kasandra-medium.onnx.json",
+          "sourceFilename": "cs/cs_CZ/kasandra/medium/cs_CZ-kasandra-medium.onnx.json",
+          "size": 3232,
+          "sha256": "5039f9e49def4f4f8438db031868800a13bf4c6246b62afdb0947f4c5478770e"
+        },
+        {
+          "filename": "piper-cs_CZ-kasandra-medium.modelcard",
+          "sourceFilename": "cs/cs_CZ/kasandra/medium/MODEL_CARD",
+          "size": 424,
+          "sha256": "328794737f2a0d0f8111f5c628a9965e9924712e55a0e9f50100f9dd3c34f639"
+        }
+      ]
+    },
+    {
+      "id": "cy_GB-gwryw_gogleddol-medium",
+      "name": "gwryw_gogleddol",
+      "language": "cy-GB",
+      "languageName": "Welsh (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-cy_GB-gwryw_gogleddol-medium.onnx",
+          "sourceFilename": "cy/cy_GB/gwryw_gogleddol/medium/cy_GB-gwryw_gogleddol-medium.onnx",
+          "size": 63511038,
+          "sha256": "a7d87df65e2c67ddee49829906ec51982fe123d418472731dab696f4dcefe8c6"
+        },
+        {
+          "filename": "piper-cy_GB-gwryw_gogleddol-medium.onnx.json",
+          "sourceFilename": "cy/cy_GB/gwryw_gogleddol/medium/cy_GB-gwryw_gogleddol-medium.onnx.json",
+          "size": 4975,
+          "sha256": "b31d2cfa51cd5709371a2346860b409b24eceec1a290235cb9299cff8a9c34c0"
+        },
+        {
+          "filename": "piper-cy_GB-gwryw_gogleddol-medium.modelcard",
+          "sourceFilename": "cy/cy_GB/gwryw_gogleddol/medium/MODEL_CARD",
+          "size": 337,
+          "sha256": "0528d8184faf7c0b4ab5ba7418a73a0a2109aeccb9d82136952c1618d5be9588"
+        }
+      ]
+    },
+    {
+      "id": "da_DK-talesyntese-medium",
+      "name": "talesyntese",
+      "language": "da-DK",
+      "languageName": "Danish (Denmark)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-da_DK-talesyntese-medium.onnx",
+          "sourceFilename": "da/da_DK/talesyntese/medium/da_DK-talesyntese-medium.onnx",
+          "size": 63201294,
+          "sha256": "b9271efd25f7b8494bbd28d48dd675c8c119daa284f3ee488008935f515f1241"
+        },
+        {
+          "filename": "piper-da_DK-talesyntese-medium.onnx.json",
+          "sourceFilename": "da/da_DK/talesyntese/medium/da_DK-talesyntese-medium.onnx.json",
+          "size": 4878,
+          "sha256": "89fe13bd251406cc0088570d103ea7ac35823211d8466faf913268ab8506f41b"
+        },
+        {
+          "filename": "piper-da_DK-talesyntese-medium.modelcard",
+          "sourceFilename": "da/da_DK/talesyntese/medium/MODEL_CARD",
+          "size": 308,
+          "sha256": "b5b7a51d4d815a307594619a519eb389b2e17839b30c0eb69a39d3ade5b1ed65"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-eva_k-x_low",
+      "name": "eva_k",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-de_DE-eva_k-x_low.onnx",
+          "sourceFilename": "de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx",
+          "size": 20628813,
+          "sha256": "e88cf290fbfb768bf111330d2e8a46e376b0d85e3423a28bfebbc863a260dad8"
+        },
+        {
+          "filename": "piper-de_DE-eva_k-x_low.onnx.json",
+          "sourceFilename": "de/de_DE/eva_k/x_low/de_DE-eva_k-x_low.onnx.json",
+          "size": 4158,
+          "sha256": "ef14b3dcb279ab4b18422a7a132877bee7a148821bd91152fb7ae9c4b3d79625"
+        },
+        {
+          "filename": "piper-de_DE-eva_k-x_low.modelcard",
+          "sourceFilename": "de/de_DE/eva_k/x_low/MODEL_CARD",
+          "size": 246,
+          "sha256": "187741f947241c18a8d8cdf773fcec75325172628442a866c2da44a5f23e590f"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-karlsson-low",
+      "name": "karlsson",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-de_DE-karlsson-low.onnx",
+          "sourceFilename": "de/de_DE/karlsson/low/de_DE-karlsson-low.onnx",
+          "size": 63104526,
+          "sha256": "f9793bf7e461a472b3916cf260774bfc9812e9eb72601b147ed649d01064e8fe"
+        },
+        {
+          "filename": "piper-de_DE-karlsson-low.onnx.json",
+          "sourceFilename": "de/de_DE/karlsson/low/de_DE-karlsson-low.onnx.json",
+          "size": 4159,
+          "sha256": "3b2095adbfeede316f22007a0a09d4bfc25514b7189850740b06800a6cfb9838"
+        },
+        {
+          "filename": "piper-de_DE-karlsson-low.modelcard",
+          "sourceFilename": "de/de_DE/karlsson/low/MODEL_CARD",
+          "size": 289,
+          "sha256": "bf2374f1a9b25b4357f3a9b4ab064c55b06c5e9af35250428ec835df9d349b3d"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-kerstin-medium",
+      "name": "kerstin",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-de_DE-kerstin-medium.onnx",
+          "sourceFilename": "de/de_DE/kerstin/medium/de_DE-kerstin-medium.onnx",
+          "size": 63221984,
+          "sha256": "c56d70475fb99248a20e60dafbcd107475e60d7e01deec18ba65201d288d015d"
+        },
+        {
+          "filename": "piper-de_DE-kerstin-medium.onnx.json",
+          "sourceFilename": "de/de_DE/kerstin/medium/de_DE-kerstin-medium.onnx.json",
+          "size": 5459,
+          "sha256": "8e86846ab0c5c5403c25125e3a505841eec4a52eed7d2babf904990883f7e83d"
+        },
+        {
+          "filename": "piper-de_DE-kerstin-medium.modelcard",
+          "sourceFilename": "de/de_DE/kerstin/medium/MODEL_CARD",
+          "size": 388,
+          "sha256": "839e83403012b52b1507510f28da2e782654b25d618aa99cabae5ae1a5e1a3b3"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-pavoque-low",
+      "name": "pavoque",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-de_DE-pavoque-low.onnx",
+          "sourceFilename": "de/de_DE/pavoque/low/de_DE-pavoque-low.onnx",
+          "size": 63104526,
+          "sha256": "96cd41fe2303dfe4745422a2580658bdbc5f935b7ee67640a94da7435a502a26"
+        },
+        {
+          "filename": "piper-de_DE-pavoque-low.onnx.json",
+          "sourceFilename": "de/de_DE/pavoque/low/de_DE-pavoque-low.onnx.json",
+          "size": 4158,
+          "sha256": "07d43d8946e869209a12d9b4fd780e3f277fe9afb305c21491a68bd97e01b74f"
+        },
+        {
+          "filename": "piper-de_DE-pavoque-low.modelcard",
+          "sourceFilename": "de/de_DE/pavoque/low/MODEL_CARD",
+          "size": 309,
+          "sha256": "c28ca951bc48c69f4a33c2166ac6356ac3f0d5e4efb9bb57ef41f6d306f7ff8b"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-ramona-low",
+      "name": "ramona",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-de_DE-ramona-low.onnx",
+          "sourceFilename": "de/de_DE/ramona/low/de_DE-ramona-low.onnx",
+          "size": 63104526,
+          "sha256": "a1068592532aad8c49bf3d1a01b8749c11d7dba726689ee28ad64e7b627ae4c5"
+        },
+        {
+          "filename": "piper-de_DE-ramona-low.onnx.json",
+          "sourceFilename": "de/de_DE/ramona/low/de_DE-ramona-low.onnx.json",
+          "size": 4157,
+          "sha256": "64906ab7a050ac685fa3dcea044baa798f67ed77be164f9c668a69298c6487d2"
+        },
+        {
+          "filename": "piper-de_DE-ramona-low.modelcard",
+          "sourceFilename": "de/de_DE/ramona/low/MODEL_CARD",
+          "size": 255,
+          "sha256": "3b6dbf2cde464e35cbdd3c06fccb34bf8cd590878c251391e9fd0a6f1bb993da"
+        }
+      ]
+    },
+    {
+      "id": "de_DE-thorsten-medium",
+      "name": "thorsten",
+      "language": "de-DE",
+      "languageName": "German (Germany)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-de_DE-thorsten-medium.onnx",
+          "sourceFilename": "de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx",
+          "size": 63221984,
+          "sha256": "fd270eb3d1ebf91d763f8a0f949b1b1bebdfefaea18c3aaf8577dd34536e064f"
+        },
+        {
+          "filename": "piper-de_DE-thorsten-medium.onnx.json",
+          "sourceFilename": "de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx.json",
+          "size": 5460,
+          "sha256": "cf245c91668e74cb6716f38647ae3d6d9bac42965872596f65f9ab2b7d7221ed"
+        },
+        {
+          "filename": "piper-de_DE-thorsten-medium.modelcard",
+          "sourceFilename": "de/de_DE/thorsten/medium/MODEL_CARD",
+          "size": 427,
+          "sha256": "c638118fb06eb07d59e60270097c250cf2de81a037320a8a6306fec652ad13b0"
+        }
+      ]
+    },
+    {
+      "id": "el_GR-joy-medium",
+      "name": "joy",
+      "language": "el-GR",
+      "languageName": "Greek (Greece)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-el_GR-joy-medium.onnx",
+          "sourceFilename": "el/el_GR/joy/medium/el_GR-joy-medium.onnx",
+          "size": 63516050,
+          "sha256": "31b1d51dc72dd43a5429b67798e27599f8cdcfce8a80265bc6f50d932bf144bc"
+        },
+        {
+          "filename": "piper-el_GR-joy-medium.onnx.json",
+          "sourceFilename": "el/el_GR/joy/medium/el_GR-joy-medium.onnx.json",
+          "size": 7367,
+          "sha256": "451a8885a0ea72e4432fffe22e65a75bbd2e65f6757273d1a5a9ed8a3419852e"
+        },
+        {
+          "filename": "piper-el_GR-joy-medium.modelcard",
+          "sourceFilename": "el/el_GR/joy/medium/MODEL_CARD",
+          "size": 349,
+          "sha256": "a38d735f47d9c520ce067fa72645fae16caa8b60fcf20e7207ea2f6c289dc80e"
+        }
+      ]
+    },
+    {
+      "id": "el_GR-rapunzelina-medium",
+      "name": "rapunzelina",
+      "language": "el-GR",
+      "languageName": "Greek (Greece)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-el_GR-rapunzelina-medium.onnx",
+          "sourceFilename": "el/el_GR/rapunzelina/medium/el_GR-rapunzelina-medium.onnx",
+          "size": 62950044,
+          "sha256": "3ca9fb3092215ee92edfc019b43feb0115ff4dfe638eb34474833ab1de840952"
+        },
+        {
+          "filename": "piper-el_GR-rapunzelina-medium.onnx.json",
+          "sourceFilename": "el/el_GR/rapunzelina/medium/el_GR-rapunzelina-medium.onnx.json",
+          "size": 4973,
+          "sha256": "3a6182ec7c7550e14ef15e5d9badbb18f973a434086ac9658a1b10991fd192f8"
+        },
+        {
+          "filename": "piper-el_GR-rapunzelina-medium.modelcard",
+          "sourceFilename": "el/el_GR/rapunzelina/medium/MODEL_CARD",
+          "size": 276,
+          "sha256": "dc69f15382dabed061fa8d31b65c14e5c4b57ba2fe6906012c756478da156b50"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-alan-medium",
+      "name": "alan",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_GB-alan-medium.onnx",
+          "sourceFilename": "en/en_GB/alan/medium/en_GB-alan-medium.onnx",
+          "size": 63201294,
+          "sha256": "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330"
+        },
+        {
+          "filename": "piper-en_GB-alan-medium.onnx.json",
+          "sourceFilename": "en/en_GB/alan/medium/en_GB-alan-medium.onnx.json",
+          "size": 4888,
+          "sha256": "c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e"
+        },
+        {
+          "filename": "piper-en_GB-alan-medium.modelcard",
+          "sourceFilename": "en/en_GB/alan/medium/MODEL_CARD",
+          "size": 320,
+          "sha256": "abcbc3e961124398911436acd9eaaa0ab167cdf221d5a24146aa08732c52630f"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-alba-medium",
+      "name": "alba",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_GB-alba-medium.onnx",
+          "sourceFilename": "en/en_GB/alba/medium/en_GB-alba-medium.onnx",
+          "size": 63221984,
+          "sha256": "1f9da809b6da1ef4190bb5dd6cce4f4af803274539e9cf9e0693085150bac3d7"
+        },
+        {
+          "filename": "piper-en_GB-alba-medium.onnx.json",
+          "sourceFilename": "en/en_GB/alba/medium/en_GB-alba-medium.onnx.json",
+          "size": 5471,
+          "sha256": "6214603a0dd60e9dcd05502e23ef07fbe3d9af36d3189c8cc3eb129e1a099d6f"
+        },
+        {
+          "filename": "piper-en_GB-alba-medium.modelcard",
+          "sourceFilename": "en/en_GB/alba/medium/MODEL_CARD",
+          "size": 501,
+          "sha256": "0190e1016a03c46c23f8e920f395a83fc82705ed1b49ba1ded185d7d8357dd6a"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-cori-medium",
+      "name": "cori",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_GB-cori-medium.onnx",
+          "sourceFilename": "en/en_GB/cori/medium/en_GB-cori-medium.onnx",
+          "size": 63221984,
+          "sha256": "2e0a55e140de672aa19b182602b407607bd2e6c35fc6020c0b1516053c02e995"
+        },
+        {
+          "filename": "piper-en_GB-cori-medium.onnx.json",
+          "sourceFilename": "en/en_GB/cori/medium/en_GB-cori-medium.onnx.json",
+          "size": 5471,
+          "sha256": "f89b01c5e483c75ce9085ff89c79446c1a95a1cb4a362f629dac3b5a4b5dde75"
+        },
+        {
+          "filename": "piper-en_GB-cori-medium.modelcard",
+          "sourceFilename": "en/en_GB/cori/medium/MODEL_CARD",
+          "size": 1171,
+          "sha256": "b1cdf93d1b0586941518677eb69c4ebd2db65573c57daeb7e45d3a658aae6cb8"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-jenny_dioco-medium",
+      "name": "jenny_dioco",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_GB-jenny_dioco-medium.onnx",
+          "sourceFilename": "en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx",
+          "size": 63221984,
+          "sha256": "62ba183a504cfcd8816ec1b50ee856ed318ccc9dd22fd0bedd7d839c95dfa20e"
+        },
+        {
+          "filename": "piper-en_GB-jenny_dioco-medium.onnx.json",
+          "sourceFilename": "en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx.json",
+          "size": 5478,
+          "sha256": "e489b3990e455d6378f12dbb4afa11e8e692a0168f1ed8e5c285dd2f08547567"
+        },
+        {
+          "filename": "piper-en_GB-jenny_dioco-medium.modelcard",
+          "sourceFilename": "en/en_GB/jenny_dioco/medium/MODEL_CARD",
+          "size": 475,
+          "sha256": "851f5b7ffe4b50ff3235192baef96a1943cda6b4bfa1c9badcf6cf78b6ffc292"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-northern_english_male-medium",
+      "name": "northern_english_male",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_GB-northern_english_male-medium.onnx",
+          "sourceFilename": "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx",
+          "size": 63201294,
+          "sha256": "57a219ae8e638873db7d18893304be5069c42868f392bb95c3ff17f0690d0689"
+        },
+        {
+          "filename": "piper-en_GB-northern_english_male-medium.onnx.json",
+          "sourceFilename": "en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json",
+          "size": 4847,
+          "sha256": "69557ed3d974463453e9b0c09dd99a7ed0e52b8b87b64b357dbeeb2540a97d47"
+        },
+        {
+          "filename": "piper-en_GB-northern_english_male-medium.modelcard",
+          "sourceFilename": "en/en_GB/northern_english_male/medium/MODEL_CARD",
+          "size": 305,
+          "sha256": "75661c3a50c0ba82b32b3a438e54103d8dfe5bbe8fbb864ac687a040e79948bb"
+        }
+      ]
+    },
+    {
+      "id": "en_GB-southern_english_female-low",
+      "name": "southern_english_female",
+      "language": "en-GB",
+      "languageName": "English (Great Britain)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-en_GB-southern_english_female-low.onnx",
+          "sourceFilename": "en/en_GB/southern_english_female/low/en_GB-southern_english_female-low.onnx",
+          "size": 63104526,
+          "sha256": "f2f37aed1b3a093476f719d1379ba0c0b1b1cf6f1ef99288e2ebf502971a07c3"
+        },
+        {
+          "filename": "piper-en_GB-southern_english_female-low.onnx.json",
+          "sourceFilename": "en/en_GB/southern_english_female/low/en_GB-southern_english_female-low.onnx.json",
+          "size": 4189,
+          "sha256": "a1af43310f8756161506e849a2863d342a98b0853af9e2437581d39e9922d0e5"
+        },
+        {
+          "filename": "piper-en_GB-southern_english_female-low.modelcard",
+          "sourceFilename": "en/en_GB/southern_english_female/low/MODEL_CARD",
+          "size": 296,
+          "sha256": "41a64585a49d46362042b1a01b0a4b54127518eb50063c45846e2703e5790260"
+        }
+      ]
+    },
+    {
+      "id": "en_US-amy-medium",
+      "name": "amy",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-amy-medium.onnx",
+          "sourceFilename": "en/en_US/amy/medium/en_US-amy-medium.onnx",
+          "size": 63221984,
+          "sha256": "cf9ccdec59f05adee47173f6fb4d89e8b0c5f30c178748d2572fe4efd1d2724c"
+        },
+        {
+          "filename": "piper-en_US-amy-medium.onnx.json",
+          "sourceFilename": "en/en_US/amy/medium/en_US-amy-medium.onnx.json",
+          "size": 5465,
+          "sha256": "8c9b8aa3ee122c6a63678bd68e586a067c6775116d32e13b7ec919520d8948bf"
+        },
+        {
+          "filename": "piper-en_US-amy-medium.modelcard",
+          "sourceFilename": "en/en_US/amy/medium/MODEL_CARD",
+          "size": 461,
+          "sha256": "01937275ee0231667fdfb8eec381948acdc9ace98d4bab625dd30dc55c0f3cfe"
+        }
+      ]
+    },
+    {
+      "id": "en_US-bryce-medium",
+      "name": "bryce",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-bryce-medium.onnx",
+          "sourceFilename": "en/en_US/bryce/medium/en_US-bryce-medium.onnx",
+          "size": 63531379,
+          "sha256": "dc9caa6c313199ffb5ac698b6e542fa6cba388aeaf2731e25262e33b9810aef1"
+        },
+        {
+          "filename": "piper-en_US-bryce-medium.onnx.json",
+          "sourceFilename": "en/en_US/bryce/medium/en_US-bryce-medium.onnx.json",
+          "size": 4966,
+          "sha256": "7ceb1bc4af6d4e41b6d1edbb86c67e91e01eaa71f66db4cd0ae92ac704d415be"
+        },
+        {
+          "filename": "piper-en_US-bryce-medium.modelcard",
+          "sourceFilename": "en/en_US/bryce/medium/MODEL_CARD",
+          "size": 405,
+          "sha256": "96042c4ddbd405f6e40e2938b069987f4016a35832114bbefed1ed04242ee532"
+        }
+      ]
+    },
+    {
+      "id": "en_US-danny-low",
+      "name": "danny",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-en_US-danny-low.onnx",
+          "sourceFilename": "en/en_US/danny/low/en_US-danny-low.onnx",
+          "size": 63104526,
+          "sha256": "56a9ae9499e961514f060aac2866cb323a21e5989592fc4f208e56fdc323ab64"
+        },
+        {
+          "filename": "piper-en_US-danny-low.onnx.json",
+          "sourceFilename": "en/en_US/danny/low/en_US-danny-low.onnx.json",
+          "size": 4166,
+          "sha256": "191dea1ba9863199d8ca2e9048f83b219219fb450f62767ee02f1bc4568ce4f4"
+        },
+        {
+          "filename": "piper-en_US-danny-low.modelcard",
+          "sourceFilename": "en/en_US/danny/low/MODEL_CARD",
+          "size": 275,
+          "sha256": "28a96e3a87f774b964f9b8ce21d9a504dc2fd1c685ab7992ba2487a8a883f5f7"
+        }
+      ]
+    },
+    {
+      "id": "en_US-hfc_female-medium",
+      "name": "hfc_female",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-hfc_female-medium.onnx",
+          "sourceFilename": "en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
+          "size": 63221984,
+          "sha256": "5b3d6e36a33a1eb0e50b54900c229127e3059400885eb5e8f128ff04b31cd73c"
+        },
+        {
+          "filename": "piper-en_US-hfc_female-medium.onnx.json",
+          "sourceFilename": "en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
+          "size": 5472,
+          "sha256": "b87a53db0f6b15c0d00e960efc0546f8cf57e103e6ccba7bc41b33beb4572556"
+        },
+        {
+          "filename": "piper-en_US-hfc_female-medium.modelcard",
+          "sourceFilename": "en/en_US/hfc_female/medium/MODEL_CARD",
+          "size": 531,
+          "sha256": "0e2c236f7572782e38b58f6ded23d8df231a71483cab2dd9eeae4cafcd1e354a"
+        }
+      ]
+    },
+    {
+      "id": "en_US-hfc_male-medium",
+      "name": "hfc_male",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-hfc_male-medium.onnx",
+          "sourceFilename": "en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx",
+          "size": 63201294,
+          "sha256": "d11e403a02bdf5a670c877b3dc56e0e1c8cece6fb30289586314dffdc0a78cb0"
+        },
+        {
+          "filename": "piper-en_US-hfc_male-medium.onnx.json",
+          "sourceFilename": "en/en_US/hfc_male/medium/en_US-hfc_male-medium.onnx.json",
+          "size": 5033,
+          "sha256": "f66847424aed0bf99ecbb5d7cfde47c0a906f426a0daf7c46f305e7d21afd886"
+        },
+        {
+          "filename": "piper-en_US-hfc_male-medium.modelcard",
+          "sourceFilename": "en/en_US/hfc_male/medium/MODEL_CARD",
+          "size": 352,
+          "sha256": "acd9f3607969454dead836c1939d4906a7b7b618f38dfd2c282856d13e4e968c"
+        }
+      ]
+    },
+    {
+      "id": "en_US-hifi_tts_92-medium",
+      "name": "hifi_tts_92",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-hifi_tts_92-medium.onnx",
+          "sourceFilename": "en/en_US/hifi_tts_92/medium/en_US-hifi_tts_92-medium.onnx",
+          "size": 63221984,
+          "sha256": "14d19c09e5b08c9416ef856fd669118f91813b0772714e3d989adbd70f05ff91"
+        },
+        {
+          "filename": "piper-en_US-hifi_tts_92-medium.onnx.json",
+          "sourceFilename": "en/en_US/hifi_tts_92/medium/en_US-hifi_tts_92-medium.onnx.json",
+          "size": 5473,
+          "sha256": "b21f81aea9870e24198645738bd5b95591982ceece2d240fb8eddc59ed50d73f"
+        },
+        {
+          "filename": "piper-en_US-hifi_tts_92-medium.modelcard",
+          "sourceFilename": "en/en_US/hifi_tts_92/medium/MODEL_CARD",
+          "size": 1422,
+          "sha256": "62cafa98605100626d876aadcfd3dfa961cac263fa338b1fe17fe0989545e700"
+        }
+      ]
+    },
+    {
+      "id": "en_US-joe-medium",
+      "name": "joe",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-joe-medium.onnx",
+          "sourceFilename": "en/en_US/joe/medium/en_US-joe-medium.onnx",
+          "size": 63221984,
+          "sha256": "abf4b998e34045cbd00eaf050de2de620f81ded6eb8b85a24b022a1c2b3f08d2"
+        },
+        {
+          "filename": "piper-en_US-joe-medium.onnx.json",
+          "sourceFilename": "en/en_US/joe/medium/en_US-joe-medium.onnx.json",
+          "size": 5465,
+          "sha256": "7b5f0293c0bf5bda8e377be1696da84af798befeef31038e43beefc01fe858da"
+        },
+        {
+          "filename": "piper-en_US-joe-medium.modelcard",
+          "sourceFilename": "en/en_US/joe/medium/MODEL_CARD",
+          "size": 423,
+          "sha256": "4b319248135916e8f5433ce7a9fe5271026b05cb598bab05807b22cb17fd129b"
+        }
+      ]
+    },
+    {
+      "id": "en_US-john-medium",
+      "name": "john",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-john-medium.onnx",
+          "sourceFilename": "en/en_US/john/medium/en_US-john-medium.onnx",
+          "size": 63531379,
+          "sha256": "789c6c875726e627ddee93d51d8727859abe9c091c3d141591f4b83c2072e988"
+        },
+        {
+          "filename": "piper-en_US-john-medium.onnx.json",
+          "sourceFilename": "en/en_US/john/medium/en_US-john-medium.onnx.json",
+          "size": 4965,
+          "sha256": "af60f177b6b550f3d7a302720c0fb89e7f94a82b5dca464775ef63b1c69ba09a"
+        },
+        {
+          "filename": "piper-en_US-john-medium.modelcard",
+          "sourceFilename": "en/en_US/john/medium/MODEL_CARD",
+          "size": 498,
+          "sha256": "a056da65cd70dcbda96fc3420fe8d3442dbf3c8b75f49cdf800a715b42e299d1"
+        }
+      ]
+    },
+    {
+      "id": "en_US-kathleen-medium",
+      "name": "kathleen",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-kathleen-medium.onnx",
+          "sourceFilename": "en/en_US/kathleen/medium/en_US-kathleen-medium.onnx",
+          "size": 63221984,
+          "sha256": "173115e17ff8efb7aa895a4957fb0bccf7c6d9048d82f8c5821902a68f959cc3"
+        },
+        {
+          "filename": "piper-en_US-kathleen-medium.onnx.json",
+          "sourceFilename": "en/en_US/kathleen/medium/en_US-kathleen-medium.onnx.json",
+          "size": 5470,
+          "sha256": "912b873d778a72bdc09cc11352093d262d596a09fe91467fd818ff4c1c836231"
+        },
+        {
+          "filename": "piper-en_US-kathleen-medium.modelcard",
+          "sourceFilename": "en/en_US/kathleen/medium/MODEL_CARD",
+          "size": 463,
+          "sha256": "d3b55579642e55fede59e8ba0c5c6463d0ce09841fbffad4f657b77db8f11320"
+        }
+      ]
+    },
+    {
+      "id": "en_US-kristin-medium",
+      "name": "kristin",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-kristin-medium.onnx",
+          "sourceFilename": "en/en_US/kristin/medium/en_US-kristin-medium.onnx",
+          "size": 63531379,
+          "sha256": "5849957f929cbf720c258f8458692d6103fff2f0e3d3b19c8259474bb06a18d4"
+        },
+        {
+          "filename": "piper-en_US-kristin-medium.onnx.json",
+          "sourceFilename": "en/en_US/kristin/medium/en_US-kristin-medium.onnx.json",
+          "size": 4968,
+          "sha256": "5681426d4aead22195de70531eeeeddb46493cfaffc5764b2ea3db73428b651c"
+        },
+        {
+          "filename": "piper-en_US-kristin-medium.modelcard",
+          "sourceFilename": "en/en_US/kristin/medium/MODEL_CARD",
+          "size": 479,
+          "sha256": "8c181b1d5f7d8152b914faab941fcbe6b8f0495e63e5189d6f27b8c68c8393fc"
+        }
+      ]
+    },
+    {
+      "id": "en_US-kusal-medium",
+      "name": "kusal",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-kusal-medium.onnx",
+          "sourceFilename": "en/en_US/kusal/medium/en_US-kusal-medium.onnx",
+          "size": 63201294,
+          "sha256": "438ae25bb305b2a7f6d632327d6102df25011f793e8222fa9db876e7321df8f3"
+        },
+        {
+          "filename": "piper-en_US-kusal-medium.onnx.json",
+          "sourceFilename": "en/en_US/kusal/medium/en_US-kusal-medium.onnx.json",
+          "size": 4884,
+          "sha256": "ddd3c4dfd8b4f568150c934fb94912dd788d44db87f4f0a328c469d7a6761f41"
+        },
+        {
+          "filename": "piper-en_US-kusal-medium.modelcard",
+          "sourceFilename": "en/en_US/kusal/medium/MODEL_CARD",
+          "size": 279,
+          "sha256": "a454839f8e027b64aa4be40edb33d7fb4dd17cb9cab6d406a872c130f35ba763"
+        }
+      ]
+    },
+    {
+      "id": "en_US-lessac-medium",
+      "name": "lessac",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-lessac-medium.onnx",
+          "sourceFilename": "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
+          "size": 63201294,
+          "sha256": "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f"
+        },
+        {
+          "filename": "piper-en_US-lessac-medium.onnx.json",
+          "sourceFilename": "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
+          "size": 4885,
+          "sha256": "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0"
+        },
+        {
+          "filename": "piper-en_US-lessac-medium.modelcard",
+          "sourceFilename": "en/en_US/lessac/medium/MODEL_CARD",
+          "size": 351,
+          "sha256": "ce49eb457742208166d399a40cdec2c7fa9db77960930031564ab56f12882645"
+        }
+      ]
+    },
+    {
+      "id": "en_US-ljspeech-medium",
+      "name": "ljspeech",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-ljspeech-medium.onnx",
+          "sourceFilename": "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx",
+          "size": 63531379,
+          "sha256": "6f52a751e2349abe7a76735eb09dc1875298c77ea2342ffd2fef79ff81b87f22"
+        },
+        {
+          "filename": "piper-en_US-ljspeech-medium.onnx.json",
+          "sourceFilename": "en/en_US/ljspeech/medium/en_US-ljspeech-medium.onnx.json",
+          "size": 4972,
+          "sha256": "141d612cc0a95ed7efc1ca936b845c2364967f2e9217c5dbfcf69fc4d6c65860"
+        },
+        {
+          "filename": "piper-en_US-ljspeech-medium.modelcard",
+          "sourceFilename": "en/en_US/ljspeech/medium/MODEL_CARD",
+          "size": 517,
+          "sha256": "fbee1529c89d36b3fe76d7e9f3f832dce17f44900a52d76a9bda735654766b4d"
+        }
+      ]
+    },
+    {
+      "id": "en_US-mike-medium",
+      "name": "mike",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-mike-medium.onnx",
+          "sourceFilename": "en/en_US/mike/medium/en_US-mike-medium.onnx",
+          "size": 63221984,
+          "sha256": "6876866e3dfadc7f044bc5e4fbac16c47b5a1e79eaec04e3bb0c2c6e9da8a857"
+        },
+        {
+          "filename": "piper-en_US-mike-medium.onnx.json",
+          "sourceFilename": "en/en_US/mike/medium/en_US-mike-medium.onnx.json",
+          "size": 5466,
+          "sha256": "57893c9e492cc6650e2a91e26ec7aa3bf23c267c080649f7cfb6aa1843fcd6ed"
+        },
+        {
+          "filename": "piper-en_US-mike-medium.modelcard",
+          "sourceFilename": "en/en_US/mike/medium/MODEL_CARD",
+          "size": 424,
+          "sha256": "ea592884aef014bdb262cd40f8dc1bbdfa34872de4c444b3c3a56c4cdaa8dcb2"
+        }
+      ]
+    },
+    {
+      "id": "en_US-norman-medium",
+      "name": "norman",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-norman-medium.onnx",
+          "sourceFilename": "en/en_US/norman/medium/en_US-norman-medium.onnx",
+          "size": 63531379,
+          "sha256": "b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71"
+        },
+        {
+          "filename": "piper-en_US-norman-medium.onnx.json",
+          "sourceFilename": "en/en_US/norman/medium/en_US-norman-medium.onnx.json",
+          "size": 4968,
+          "sha256": "6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d"
+        },
+        {
+          "filename": "piper-en_US-norman-medium.modelcard",
+          "sourceFilename": "en/en_US/norman/medium/MODEL_CARD",
+          "size": 528,
+          "sha256": "60eaf4d10009d1bd4a1aa555d337dae00f60421d72fee415b9139a021e7cb5d0"
+        }
+      ]
+    },
+    {
+      "id": "en_US-reza_ibrahim-medium",
+      "name": "reza_ibrahim",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-reza_ibrahim-medium.onnx",
+          "sourceFilename": "en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx",
+          "size": 63511038,
+          "sha256": "99f0c31464a2120831ca87d079e10a9a2b3e426cc1ee662d80ff9042df15cd3c"
+        },
+        {
+          "filename": "piper-en_US-reza_ibrahim-medium.onnx.json",
+          "sourceFilename": "en/en_US/reza_ibrahim/medium/en_US-reza_ibrahim-medium.onnx.json",
+          "size": 4976,
+          "sha256": "465ddf1702917fe617b7d69ed81301d6a2f39f083a754bd1cf6db8955d09a381"
+        },
+        {
+          "filename": "piper-en_US-reza_ibrahim-medium.modelcard",
+          "sourceFilename": "en/en_US/reza_ibrahim/medium/MODEL_CARD",
+          "size": 635,
+          "sha256": "eec97d7df2143f981debaa929fced55086667e5ff1f61a3e1eda7b7f51f89a53"
+        }
+      ]
+    },
+    {
+      "id": "en_US-ryan-medium",
+      "name": "ryan",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-ryan-medium.onnx",
+          "sourceFilename": "en/en_US/ryan/medium/en_US-ryan-medium.onnx",
+          "size": 63221984,
+          "sha256": "33b53106e049f68a51f014e4fa10bf5a04e0f7d6668692dc05228cc4554c1d71"
+        },
+        {
+          "filename": "piper-en_US-ryan-medium.onnx.json",
+          "sourceFilename": "en/en_US/ryan/medium/en_US-ryan-medium.onnx.json",
+          "size": 5466,
+          "sha256": "774482143a035ce5ec26e3546b50f079de282b27eb3f8498b8a03906edbfe564"
+        },
+        {
+          "filename": "piper-en_US-ryan-medium.modelcard",
+          "sourceFilename": "en/en_US/ryan/medium/MODEL_CARD",
+          "size": 448,
+          "sha256": "3dcd92adffd6e36fcace3f0bdd1052bdf9d2489f82e45e7fb30f479c34d33608"
+        }
+      ]
+    },
+    {
+      "id": "en_US-sam-medium",
+      "name": "sam",
+      "language": "en-US",
+      "languageName": "English (United States)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-en_US-sam-medium.onnx",
+          "sourceFilename": "en/en_US/sam/medium/en_US-sam-medium.onnx",
+          "size": 62950044,
+          "sha256": "56417b3b4afe8ec6bb4cabf06e17d67261fdd5bf334592abcfc80052fba11163"
+        },
+        {
+          "filename": "piper-en_US-sam-medium.onnx.json",
+          "sourceFilename": "en/en_US/sam/medium/en_US-sam-medium.onnx.json",
+          "size": 5040,
+          "sha256": "8c7fb47f19683b0b81037c5564f9a5ad4699a9da685e0e5da0a72fd3c3f5c1c4"
+        },
+        {
+          "filename": "piper-en_US-sam-medium.modelcard",
+          "sourceFilename": "en/en_US/sam/medium/MODEL_CARD",
+          "size": 354,
+          "sha256": "37dd0ccae2a39c9ad24ed43d277b71826b4f221f212a3f6754d3a960530450b5"
+        }
+      ]
+    },
+    {
+      "id": "es_AR-daniela-high",
+      "name": "daniela",
+      "language": "es-AR",
+      "languageName": "Spanish (Argentina)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-es_AR-daniela-high.onnx",
+          "sourceFilename": "es/es_AR/daniela/high/es_AR-daniela-high.onnx",
+          "size": 114199011,
+          "sha256": "7ceb1fc0dab349418c5b54a639ae9ee595212d7c9ea422220d8419163d5cc985"
+        },
+        {
+          "filename": "piper-es_AR-daniela-high.onnx.json",
+          "sourceFilename": "es/es_AR/daniela/high/es_AR-daniela-high.onnx.json",
+          "size": 7248,
+          "sha256": "aedbf69647e1d754c62ecf8e0366ca5f16af3e768e3c6b5329af6eb6bde3852b"
+        },
+        {
+          "filename": "piper-es_AR-daniela-high.modelcard",
+          "sourceFilename": "es/es_AR/daniela/high/MODEL_CARD",
+          "size": 353,
+          "sha256": "39fda44bb85009b0bd7aabb455b113e50abf1f2a2013f3264c482691105e4e3b"
+        }
+      ]
+    },
+    {
+      "id": "es_ES-carlfm-x_low",
+      "name": "carlfm",
+      "language": "es-ES",
+      "languageName": "Spanish (Spain)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-es_ES-carlfm-x_low.onnx",
+          "sourceFilename": "es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx",
+          "size": 28130791,
+          "sha256": "d69677323a907cd4963f42b29c20a98b5d6bfa7f3e64df339915e4650c00d125"
+        },
+        {
+          "filename": "piper-es_ES-carlfm-x_low.onnx.json",
+          "sourceFilename": "es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx.json",
+          "size": 4159,
+          "sha256": "d9bdfa9ff01eb2bc9e62e7d2593939d1e4c4d8eb7cf75f972731539d12399966"
+        },
+        {
+          "filename": "piper-es_ES-carlfm-x_low.modelcard",
+          "sourceFilename": "es/es_ES/carlfm/x_low/MODEL_CARD",
+          "size": 250,
+          "sha256": "a6e62a3d36c37c7702d877f784001208b952e2bf4d17c72a6b5da442fbefb4b3"
+        }
+      ]
+    },
+    {
+      "id": "es_ES-davefx-medium",
+      "name": "davefx",
+      "language": "es-ES",
+      "languageName": "Spanish (Spain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-es_ES-davefx-medium.onnx",
+          "sourceFilename": "es/es_ES/davefx/medium/es_ES-davefx-medium.onnx",
+          "size": 63221984,
+          "sha256": "d2c9224e122321aac3c33343957fff4d0f465226cb74c66b0f520ca3f8c0dd07"
+        },
+        {
+          "filename": "piper-es_ES-davefx-medium.onnx.json",
+          "sourceFilename": "es/es_ES/davefx/medium/es_ES-davefx-medium.onnx.json",
+          "size": 5458,
+          "sha256": "531c4051502e1acbc10b42437f11679bfce9e3919e1796e51fabd73e01e7fd2e"
+        },
+        {
+          "filename": "piper-es_ES-davefx-medium.modelcard",
+          "sourceFilename": "es/es_ES/davefx/medium/MODEL_CARD",
+          "size": 418,
+          "sha256": "2d55d0d84100cde9d9ed88866c2625c89d333a45507d88aa8bae40f6de94c134"
+        }
+      ]
+    },
+    {
+      "id": "es_ES-mls_10246-low",
+      "name": "mls_10246",
+      "language": "es-ES",
+      "languageName": "Spanish (Spain)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-es_ES-mls_10246-low.onnx",
+          "sourceFilename": "es/es_ES/mls_10246/low/es_ES-mls_10246-low.onnx",
+          "size": 63104526,
+          "sha256": "3f9d76d2778778942297aab052aa7b2e67248d3f43614c889ee82901a230e197"
+        },
+        {
+          "filename": "piper-es_ES-mls_10246-low.onnx.json",
+          "sourceFilename": "es/es_ES/mls_10246/low/es_ES-mls_10246-low.onnx.json",
+          "size": 4160,
+          "sha256": "a865944d7f6972af347263b0b8152466dabba3b78b8fe5a6985f7d3b19fd06a1"
+        },
+        {
+          "filename": "piper-es_ES-mls_10246-low.modelcard",
+          "sourceFilename": "es/es_ES/mls_10246/low/MODEL_CARD",
+          "size": 257,
+          "sha256": "fa4273e09b6814c17cacd4d509d62392c31db877e23a1661166886896aa461a6"
+        }
+      ]
+    },
+    {
+      "id": "es_ES-mls_9972-low",
+      "name": "mls_9972",
+      "language": "es-ES",
+      "languageName": "Spanish (Spain)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-es_ES-mls_9972-low.onnx",
+          "sourceFilename": "es/es_ES/mls_9972/low/es_ES-mls_9972-low.onnx",
+          "size": 63104526,
+          "sha256": "afdd61beb26d3aba18245c0352a8173e7f96196fbe4979e115590e8f775c95f0"
+        },
+        {
+          "filename": "piper-es_ES-mls_9972-low.onnx.json",
+          "sourceFilename": "es/es_ES/mls_9972/low/es_ES-mls_9972-low.onnx.json",
+          "size": 4159,
+          "sha256": "32234a0701c480bb6ba62d4f05d0c03a95369f2133aa655370db1c00b2193340"
+        },
+        {
+          "filename": "piper-es_ES-mls_9972-low.modelcard",
+          "sourceFilename": "es/es_ES/mls_9972/low/MODEL_CARD",
+          "size": 256,
+          "sha256": "6b56ddebd760bf25091b5c0f52da28f89da9d0cf97e30fc29027a0fa95979f2c"
+        }
+      ]
+    },
+    {
+      "id": "es_MX-ald-medium",
+      "name": "ald",
+      "language": "es-MX",
+      "languageName": "Spanish (Mexico)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-es_MX-ald-medium.onnx",
+          "sourceFilename": "es/es_MX/ald/medium/es_MX-ald-medium.onnx",
+          "size": 63201294,
+          "sha256": "019b3803293c93e34a206dd2e53a3889209a514e786fd7144f7b70196c579b63"
+        },
+        {
+          "filename": "piper-es_MX-ald-medium.onnx.json",
+          "sourceFilename": "es/es_MX/ald/medium/es_MX-ald-medium.onnx.json",
+          "size": 4878,
+          "sha256": "5a71498158e04afc8099bfd019c7e87c68eb9d042505a2b1a87e5c1ac2b1a61d"
+        },
+        {
+          "filename": "piper-es_MX-ald-medium.modelcard",
+          "sourceFilename": "es/es_MX/ald/medium/MODEL_CARD",
+          "size": 320,
+          "sha256": "1f0694ceb3f1e78c1e2ee0e2d5da40f19f965bc638e1b4fb4fca9bdca420d713"
+        }
+      ]
+    },
+    {
+      "id": "es_MX-claude-high",
+      "name": "claude",
+      "language": "es-MX",
+      "languageName": "Spanish (Mexico)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-es_MX-claude-high.onnx",
+          "sourceFilename": "es/es_MX/claude/high/es_MX-claude-high.onnx",
+          "size": 63122309,
+          "sha256": "3ef40a71ea63852cd8ab7e6fa7d2ecdcfa67a0b47c9c48e3f10e02ee02083ea0"
+        },
+        {
+          "filename": "piper-es_MX-claude-high.onnx.json",
+          "sourceFilename": "es/es_MX/claude/high/es_MX-claude-high.onnx.json",
+          "size": 4963,
+          "sha256": "1afc81f703c0e4cb3b4d7c0dca096b8b54a98806807f0170cf5eb5557723c12d"
+        },
+        {
+          "filename": "piper-es_MX-claude-high.modelcard",
+          "sourceFilename": "es/es_MX/claude/high/MODEL_CARD",
+          "size": 247,
+          "sha256": "f03da57c1e945f6d709b01e7699d26018e145570139de52ac7569aaa8962a174"
+        }
+      ]
+    },
+    {
+      "id": "eu_ES-antton-medium",
+      "name": "antton",
+      "language": "eu-ES",
+      "languageName": "Basque (Spain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-eu_ES-antton-medium.onnx",
+          "sourceFilename": "eu/eu_ES/antton/medium/eu_ES-antton-medium.onnx",
+          "size": 63531379,
+          "sha256": "dc8305fda17b22e922f011cd7450c50c76b2f2630c2cfa5c35564326daef1454"
+        },
+        {
+          "filename": "piper-eu_ES-antton-medium.onnx.json",
+          "sourceFilename": "eu/eu_ES/antton/medium/eu_ES-antton-medium.onnx.json",
+          "size": 5076,
+          "sha256": "bc26d21295427594330bb8ea579c8b922d1d1f9dde1b51dc9949fbf3f559dcea"
+        },
+        {
+          "filename": "piper-eu_ES-antton-medium.modelcard",
+          "sourceFilename": "eu/eu_ES/antton/medium/MODEL_CARD",
+          "size": 310,
+          "sha256": "61e1cf7bba48a290be225a1afb3167094fc16c479cea655b11c8ff87e9245264"
+        }
+      ]
+    },
+    {
+      "id": "eu_ES-maider-medium",
+      "name": "maider",
+      "language": "eu-ES",
+      "languageName": "Basque (Spain)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-eu_ES-maider-medium.onnx",
+          "sourceFilename": "eu/eu_ES/maider/medium/eu_ES-maider-medium.onnx",
+          "size": 63531379,
+          "sha256": "a36ac807ad130dc192b74d738e39552f9be704f069c405dbf4abd358b014a39a"
+        },
+        {
+          "filename": "piper-eu_ES-maider-medium.onnx.json",
+          "sourceFilename": "eu/eu_ES/maider/medium/eu_ES-maider-medium.onnx.json",
+          "size": 5076,
+          "sha256": "d8526770ee8a765bb9bcabc98f1e03d8ab95f1c6ebdaa47e8cbf74e2f9e9bf28"
+        },
+        {
+          "filename": "piper-eu_ES-maider-medium.modelcard",
+          "sourceFilename": "eu/eu_ES/maider/medium/MODEL_CARD",
+          "size": 310,
+          "sha256": "bb7f284582ddd497f500b5275e2bd4f06031f483a63b0f5367dae18c9ae214ff"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-amir-medium",
+      "name": "amir",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-amir-medium.onnx",
+          "sourceFilename": "fa/fa_IR/amir/medium/fa_IR-amir-medium.onnx",
+          "size": 63531379,
+          "sha256": "fb815380d969ea372b0b21b0de14421f58fe481047e153e69685d079b6e1a9d1"
+        },
+        {
+          "filename": "piper-fa_IR-amir-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/amir/medium/fa_IR-amir-medium.onnx.json",
+          "size": 4958,
+          "sha256": "75f918a3bf0f57a9179abe725af529f2a5c79d6c899e2a84aec76c685d5dfb9a"
+        },
+        {
+          "filename": "piper-fa_IR-amir-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/amir/medium/MODEL_CARD",
+          "size": 264,
+          "sha256": "0d7d315699945ac830162f82d485d79af51a33081a7649e8992726bd4bba2384"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-ganji_adabi-medium",
+      "name": "ganji_adabi",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-ganji_adabi-medium.onnx",
+          "sourceFilename": "fa/fa_IR/ganji_adabi/medium/fa_IR-ganji_adabi-medium.onnx",
+          "size": 63516050,
+          "sha256": "e9073b41ae65759dcf95778e569c8f3780406dac99549436f6ab8e7d2336ed72"
+        },
+        {
+          "filename": "piper-fa_IR-ganji_adabi-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/ganji_adabi/medium/fa_IR-ganji_adabi-medium.onnx.json",
+          "size": 4964,
+          "sha256": "aa430ceebaa7c96d9cd6b1e73231a393901cabb23a1b7f53e8d85178a5ae70c9"
+        },
+        {
+          "filename": "piper-fa_IR-ganji_adabi-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/ganji_adabi/medium/MODEL_CARD",
+          "size": 253,
+          "sha256": "9d4b44c97de206ab47d770ea6f3bbea3963a72c2b1b4306630aa88312a6ad575"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-ganji-medium",
+      "name": "ganji",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-ganji-medium.onnx",
+          "sourceFilename": "fa/fa_IR/ganji/medium/fa_IR-ganji-medium.onnx",
+          "size": 63516050,
+          "sha256": "6a98504bb77dc2fd3a863c977d37e67a6a525fdf661917385d569a3ff78e6cae"
+        },
+        {
+          "filename": "piper-fa_IR-ganji-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/ganji/medium/fa_IR-ganji-medium.onnx.json",
+          "size": 4958,
+          "sha256": "9d3e0c0cf00156d8bf38fb7f96bdfbcb21911b37e062a328da0632e3c2cbc465"
+        },
+        {
+          "filename": "piper-fa_IR-ganji-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/ganji/medium/MODEL_CARD",
+          "size": 247,
+          "sha256": "8ad13000ccc8fa6e249b00659aa5b4a938661fa4ac272baf3a2d50faa2504c69"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-gyro-medium",
+      "name": "gyro",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-gyro-medium.onnx",
+          "sourceFilename": "fa/fa_IR/gyro/medium/fa_IR-gyro-medium.onnx",
+          "size": 63122309,
+          "sha256": "37dfae43c82ee38ca9e6aac4ffef76a74d6b282ccbc397b27761f35d355c99ba"
+        },
+        {
+          "filename": "piper-fa_IR-gyro-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/gyro/medium/fa_IR-gyro-medium.onnx.json",
+          "size": 7210,
+          "sha256": "4cd0ca01824b460f490224e284f9b68ecf07f91f3c654ba3bce59d4eb7646082"
+        },
+        {
+          "filename": "piper-fa_IR-gyro-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/gyro/medium/MODEL_CARD",
+          "size": 262,
+          "sha256": "a51ac7671fae4cf3f4e2448328ca192d934a9057ceb2fda60c4378dc80067778"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-magnoliasis-medium",
+      "name": "magnoliasis",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-magnoliasis-medium.onnx",
+          "sourceFilename": "fa/fa_IR/magnoliasis/medium/fa_IR-magnoliasis-medium.onnx",
+          "size": 63221984,
+          "sha256": "856025b3c16402e035daae3cd2a82ce36ad9c80f8a8f3d90fd101c6b6622cdec"
+        },
+        {
+          "filename": "piper-fa_IR-magnoliasis-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/magnoliasis/medium/fa_IR-magnoliasis-medium.onnx.json",
+          "size": 5462,
+          "sha256": "f2bf33ec8b298231e524e8dd475c45f57a12e112c308260ec6688b3be5bdfd29"
+        },
+        {
+          "filename": "piper-fa_IR-magnoliasis-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/magnoliasis/medium/MODEL_CARD",
+          "size": 1013,
+          "sha256": "eebc8160ccff8a64b83355d462af2ddd9470cebe8469b6127d313738fcadc201"
+        }
+      ]
+    },
+    {
+      "id": "fa_IR-reza_ibrahim-medium",
+      "name": "reza_ibrahim",
+      "language": "fa-IR",
+      "languageName": "Farsi (Iran)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fa_IR-reza_ibrahim-medium.onnx",
+          "sourceFilename": "fa/fa_IR/reza_ibrahim/medium/fa_IR-reza_ibrahim-medium.onnx",
+          "size": 63511038,
+          "sha256": "99f0c31464a2120831ca87d079e10a9a2b3e426cc1ee662d80ff9042df15cd3c"
+        },
+        {
+          "filename": "piper-fa_IR-reza_ibrahim-medium.onnx.json",
+          "sourceFilename": "fa/fa_IR/reza_ibrahim/medium/fa_IR-reza_ibrahim-medium.onnx.json",
+          "size": 4967,
+          "sha256": "e9866c88c16245f8b8f4d0eaeaa6eab4f2e193db69a2ab4683d83fe78a30b6ca"
+        },
+        {
+          "filename": "piper-fa_IR-reza_ibrahim-medium.modelcard",
+          "sourceFilename": "fa/fa_IR/reza_ibrahim/medium/MODEL_CARD",
+          "size": 635,
+          "sha256": "eec97d7df2143f981debaa929fced55086667e5ff1f61a3e1eda7b7f51f89a53"
+        }
+      ]
+    },
+    {
+      "id": "fi_FI-harri-medium",
+      "name": "harri",
+      "language": "fi-FI",
+      "languageName": "Finnish (Finland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fi_FI-harri-medium.onnx",
+          "sourceFilename": "fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx",
+          "size": 63221984,
+          "sha256": "315cd970fc5e3dbae98998cbe9926527196c0a3ebdc7e02e21bd9e7325fd085b"
+        },
+        {
+          "filename": "piper-fi_FI-harri-medium.onnx.json",
+          "sourceFilename": "fi/fi_FI/harri/medium/fi_FI-harri-medium.onnx.json",
+          "size": 5456,
+          "sha256": "b1ed2261d1778ed9aa036cee0ef2811dfe01e8bd44cc2a9804063c7930097d04"
+        },
+        {
+          "filename": "piper-fi_FI-harri-medium.modelcard",
+          "sourceFilename": "fi/fi_FI/harri/medium/MODEL_CARD",
+          "size": 446,
+          "sha256": "49561a63fbbe0bf678a84102617615e2aa7b0b2396417e21773ba795dedd74f5"
+        }
+      ]
+    },
+    {
+      "id": "fr_FR-gilles-low",
+      "name": "gilles",
+      "language": "fr-FR",
+      "languageName": "French (France)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-fr_FR-gilles-low.onnx",
+          "sourceFilename": "fr/fr_FR/gilles/low/fr_FR-gilles-low.onnx",
+          "size": 63104526,
+          "sha256": "5cd711846720e261c2a176f6924c198a7424d0a75dd4b0a5357a5fb9cb739285"
+        },
+        {
+          "filename": "piper-fr_FR-gilles-low.onnx.json",
+          "sourceFilename": "fr/fr_FR/gilles/low/fr_FR-gilles-low.onnx.json",
+          "size": 4158,
+          "sha256": "5a47cc0789e91267d17666bbec842dd92950669271a09023eb6970ee364cf88a"
+        },
+        {
+          "filename": "piper-fr_FR-gilles-low.modelcard",
+          "sourceFilename": "fr/fr_FR/gilles/low/MODEL_CARD",
+          "size": 300,
+          "sha256": "29d0964475ce042f5cd59c46bbd996fac785a84476c09d0973295d3528456974"
+        }
+      ]
+    },
+    {
+      "id": "fr_FR-mls_1840-low",
+      "name": "mls_1840",
+      "language": "fr-FR",
+      "languageName": "French (France)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-fr_FR-mls_1840-low.onnx",
+          "sourceFilename": "fr/fr_FR/mls_1840/low/fr_FR-mls_1840-low.onnx",
+          "size": 63104526,
+          "sha256": "dcea3d495b760f168179b6bd27c7daefa1d8304ce6ec48867e42bae7cb2e507a"
+        },
+        {
+          "filename": "piper-fr_FR-mls_1840-low.onnx.json",
+          "sourceFilename": "fr/fr_FR/mls_1840/low/fr_FR-mls_1840-low.onnx.json",
+          "size": 4160,
+          "sha256": "294a643de0ae6a4a885d841d9b74470263efe35c81e7cf37dd43e2d663fbd8b3"
+        },
+        {
+          "filename": "piper-fr_FR-mls_1840-low.modelcard",
+          "sourceFilename": "fr/fr_FR/mls_1840/low/MODEL_CARD",
+          "size": 257,
+          "sha256": "2816c84deb72d3a46c0a6588852f7d4be16e8b76cac48c8d807c77f1a0df9044"
+        }
+      ]
+    },
+    {
+      "id": "fr_FR-siwis-medium",
+      "name": "siwis",
+      "language": "fr-FR",
+      "languageName": "French (France)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fr_FR-siwis-medium.onnx",
+          "sourceFilename": "fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx",
+          "size": 63221984,
+          "sha256": "b1d946fd68d0347155fa59bce0a018924abbef3c1561181db45ca463d83963ef"
+        },
+        {
+          "filename": "piper-fr_FR-siwis-medium.onnx.json",
+          "sourceFilename": "fr/fr_FR/siwis/medium/fr_FR-siwis-medium.onnx.json",
+          "size": 5458,
+          "sha256": "df814aa3dfedd00510a07144442cc0a220ff21e43d03c3b078444fc0be68fc37"
+        },
+        {
+          "filename": "piper-fr_FR-siwis-medium.modelcard",
+          "sourceFilename": "fr/fr_FR/siwis/medium/MODEL_CARD",
+          "size": 502,
+          "sha256": "f75d76ec577b5e7a49a7462883d31ef65383022387818a9a0b75bdaf90b9010c"
+        }
+      ]
+    },
+    {
+      "id": "fr_FR-tom-medium",
+      "name": "tom",
+      "language": "fr-FR",
+      "languageName": "French (France)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-fr_FR-tom-medium.onnx",
+          "sourceFilename": "fr/fr_FR/tom/medium/fr_FR-tom-medium.onnx",
+          "size": 63511038,
+          "sha256": "bf65074ccdeeeeaa832e75edb1c0a513c01c9a972bdf085ff8a6e71ea234fd41"
+        },
+        {
+          "filename": "piper-fr_FR-tom-medium.onnx.json",
+          "sourceFilename": "fr/fr_FR/tom/medium/fr_FR-tom-medium.onnx.json",
+          "size": 4959,
+          "sha256": "2f7f885ad5a0aad802e3cc24e4f57239febdcb142b4876de5d238094674361cc"
+        },
+        {
+          "filename": "piper-fr_FR-tom-medium.modelcard",
+          "sourceFilename": "fr/fr_FR/tom/medium/MODEL_CARD",
+          "size": 233,
+          "sha256": "ece4132df4a1ae2f90e22c9f01539aec14acb7f8dc8ded64edd2051945d0f1e9"
+        }
+      ]
+    },
+    {
+      "id": "he_IL-saspeech-medium",
+      "name": "saspeech",
+      "language": "he-IL",
+      "languageName": "Hebrew (Israel)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-he_IL-saspeech-medium.onnx",
+          "sourceFilename": "he/he_IL/saspeech/medium/he_IL-saspeech-medium.onnx",
+          "size": 63221984,
+          "sha256": "3dc067debc9e782a8a0d095dbb58786648743d406366dcc2aa81009660873b4d"
+        },
+        {
+          "filename": "piper-he_IL-saspeech-medium.onnx.json",
+          "sourceFilename": "he/he_IL/saspeech/medium/he_IL-saspeech-medium.onnx.json",
+          "size": 5269,
+          "sha256": "e9800a282a6cf2e44b3ad97f640b38e35ed246dfe070458d13bfcf206befc5bf"
+        },
+        {
+          "filename": "piper-he_IL-saspeech-medium.modelcard",
+          "sourceFilename": "he/he_IL/saspeech/medium/MODEL_CARD",
+          "size": 269,
+          "sha256": "78846f04e22c2912a1af332026cff9063b711dd7c9bb7c0c8c505e6c2e984ba6"
+        }
+      ]
+    },
+    {
+      "id": "hi_IN-pratham-medium",
+      "name": "pratham",
+      "language": "hi-IN",
+      "languageName": "Hindi (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hi_IN-pratham-medium.onnx",
+          "sourceFilename": "hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx",
+          "size": 63516050,
+          "sha256": "169964b0871667f6793416d4b35e97357a68ba1ad01df8580c28048989ee7693"
+        },
+        {
+          "filename": "piper-hi_IN-pratham-medium.onnx.json",
+          "sourceFilename": "hi/hi_IN/pratham/medium/hi_IN-pratham-medium.onnx.json",
+          "size": 4970,
+          "sha256": "b68edd2cd7950dd436314013b7cd12e9699e5a3f6fe5af5af94294cf6aa7b9fd"
+        },
+        {
+          "filename": "piper-hi_IN-pratham-medium.modelcard",
+          "sourceFilename": "hi/hi_IN/pratham/medium/MODEL_CARD",
+          "size": 304,
+          "sha256": "89cf491ea99e69b27c94599cecea3f0fc6aeacb30f4ccdb12897f659868df29e"
+        }
+      ]
+    },
+    {
+      "id": "hi_IN-priyamvada-medium",
+      "name": "priyamvada",
+      "language": "hi-IN",
+      "languageName": "Hindi (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hi_IN-priyamvada-medium.onnx",
+          "sourceFilename": "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium.onnx",
+          "size": 63516050,
+          "sha256": "aa63bcf2cd493b55a450f280e23cf77f03afc9af7015e6e5acd43b652f166c88"
+        },
+        {
+          "filename": "piper-hi_IN-priyamvada-medium.onnx.json",
+          "sourceFilename": "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium.onnx.json",
+          "size": 4973,
+          "sha256": "5efc0ccf7529f3528996d46e0fac1f969f681d44a8e55bfa6236ff8841b5d52d"
+        },
+        {
+          "filename": "piper-hi_IN-priyamvada-medium.modelcard",
+          "sourceFilename": "hi/hi_IN/priyamvada/medium/MODEL_CARD",
+          "size": 307,
+          "sha256": "8ce0324466010a59127fe8cab16416befcca136abf4b57ebd8ad5a2033c2021e"
+        }
+      ]
+    },
+    {
+      "id": "hi_IN-rohan-medium",
+      "name": "rohan",
+      "language": "hi-IN",
+      "languageName": "Hindi (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hi_IN-rohan-medium.onnx",
+          "sourceFilename": "hi/hi_IN/rohan/medium/hi_IN-rohan-medium.onnx",
+          "size": 62950044,
+          "sha256": "b65dc80fb34d9dcd1cf684cb297966a34983bbc93bb1696fe207f32b0b33a091"
+        },
+        {
+          "filename": "piper-hi_IN-rohan-medium.onnx.json",
+          "sourceFilename": "hi/hi_IN/rohan/medium/hi_IN-rohan-medium.onnx.json",
+          "size": 5041,
+          "sha256": "07b9ae19bd0bac7fbbc99f7ee69c91245eb5470e926632c31fc0c50ba653c817"
+        },
+        {
+          "filename": "piper-hi_IN-rohan-medium.modelcard",
+          "sourceFilename": "hi/hi_IN/rohan/medium/MODEL_CARD",
+          "size": 359,
+          "sha256": "231592a0c299bacae6e5945ee27d5a36204e14ee9d83f01ee15e34a26810651e"
+        }
+      ]
+    },
+    {
+      "id": "hu_HU-anna-medium",
+      "name": "anna",
+      "language": "hu-HU",
+      "languageName": "Hungarian (Hungary)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hu_HU-anna-medium.onnx",
+          "sourceFilename": "hu/hu_HU/anna/medium/hu_HU-anna-medium.onnx",
+          "size": 63221984,
+          "sha256": "134086669d0c0565672a4d9db812d8a8578d8dfc8f675a3f730456cf535bd1f2"
+        },
+        {
+          "filename": "piper-hu_HU-anna-medium.onnx.json",
+          "sourceFilename": "hu/hu_HU/anna/medium/hu_HU-anna-medium.onnx.json",
+          "size": 5458,
+          "sha256": "0595e717aa44867bde68434052496d8ee2f47db93d7eeb566d56338c4d3fd80a"
+        },
+        {
+          "filename": "piper-hu_HU-anna-medium.modelcard",
+          "sourceFilename": "hu/hu_HU/anna/medium/MODEL_CARD",
+          "size": 455,
+          "sha256": "c72c488c237fbcf0c931cd6011da3ea55f3ced967811ba4d9e905a9b91a428af"
+        }
+      ]
+    },
+    {
+      "id": "hu_HU-berta-medium",
+      "name": "berta",
+      "language": "hu-HU",
+      "languageName": "Hungarian (Hungary)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hu_HU-berta-medium.onnx",
+          "sourceFilename": "hu/hu_HU/berta/medium/hu_HU-berta-medium.onnx",
+          "size": 63221984,
+          "sha256": "dfab34c778ca19b3c8aa9a87dc1f542def96810419920f51330567093068478b"
+        },
+        {
+          "filename": "piper-hu_HU-berta-medium.onnx.json",
+          "sourceFilename": "hu/hu_HU/berta/medium/hu_HU-berta-medium.onnx.json",
+          "size": 5459,
+          "sha256": "6a9e18cd7320f2f078ecb42ac75ee0213de13142e3c4813e7165a9c3528ae9fa"
+        },
+        {
+          "filename": "piper-hu_HU-berta-medium.modelcard",
+          "sourceFilename": "hu/hu_HU/berta/medium/MODEL_CARD",
+          "size": 456,
+          "sha256": "e2bc213dc52236ed55f88b164991ee9c0741b0f382473b5e241d2065f06f64c9"
+        }
+      ]
+    },
+    {
+      "id": "hu_HU-imre-medium",
+      "name": "imre",
+      "language": "hu-HU",
+      "languageName": "Hungarian (Hungary)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hu_HU-imre-medium.onnx",
+          "sourceFilename": "hu/hu_HU/imre/medium/hu_HU-imre-medium.onnx",
+          "size": 63221984,
+          "sha256": "bcec8e6e5404baca0fcaf2895da4d02d414d3340b9f80bd94a2112b5c67061ae"
+        },
+        {
+          "filename": "piper-hu_HU-imre-medium.onnx.json",
+          "sourceFilename": "hu/hu_HU/imre/medium/hu_HU-imre-medium.onnx.json",
+          "size": 5458,
+          "sha256": "760857edbd31947a853842df5833bd16aa1f660feabe11fbebb0a378bf8328c5"
+        },
+        {
+          "filename": "piper-hu_HU-imre-medium.modelcard",
+          "sourceFilename": "hu/hu_HU/imre/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "948c1d744bfe1431ad06bcc3aa1e8be2ff275b46c80dda7e8c5d05ae4722bf4c"
+        }
+      ]
+    },
+    {
+      "id": "hy_AM-gor-medium",
+      "name": "gor",
+      "language": "hy-AM",
+      "languageName": "Armenian (Armenia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-hy_AM-gor-medium.onnx",
+          "sourceFilename": "hy/hy_AM/gor/medium/hy_AM-gor-medium.onnx",
+          "size": 63511038,
+          "sha256": "1c91fc33fecbbfc6b7921f9d11fd7487a859053a3a1987147f5c361155b89e7c"
+        },
+        {
+          "filename": "piper-hy_AM-gor-medium.onnx.json",
+          "sourceFilename": "hy/hy_AM/gor/medium/hy_AM-gor-medium.onnx.json",
+          "size": 4967,
+          "sha256": "01a8458d4ff226fac1b7dc7b1f619851fdbc8a9bd09d6a604e65e304c9600c2e"
+        },
+        {
+          "filename": "piper-hy_AM-gor-medium.modelcard",
+          "sourceFilename": "hy/hy_AM/gor/medium/MODEL_CARD",
+          "size": 269,
+          "sha256": "8aa657540385acbc6e651185eb60f162a9317ab1cce1d50ab08f9604975c401b"
+        }
+      ]
+    },
+    {
+      "id": "id_ID-news_tts-medium",
+      "name": "news_tts",
+      "language": "id-ID",
+      "languageName": "Indonesian (Indonesia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-id_ID-news_tts-medium.onnx",
+          "sourceFilename": "id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx",
+          "size": 62950044,
+          "sha256": "ed8f02aa593f7af6b19acbdb8142e0da0dd72f46194eb33d38e0eb10a52597e8"
+        },
+        {
+          "filename": "piper-id_ID-news_tts-medium.onnx.json",
+          "sourceFilename": "id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx.json",
+          "size": 5050,
+          "sha256": "1ef677072668a5e172e0759b1d3871f129009d1167f093325a17607f7add5ad7"
+        },
+        {
+          "filename": "piper-id_ID-news_tts-medium.modelcard",
+          "sourceFilename": "id/id_ID/news_tts/medium/MODEL_CARD",
+          "size": 316,
+          "sha256": "cc134d8c8fce95d2486a0e5ae60b40c17451a876cf7d36df0f4110589fc40538"
+        }
+      ]
+    },
+    {
+      "id": "is_IS-bui-medium",
+      "name": "bui",
+      "language": "is-IS",
+      "languageName": "Icelandic (Iceland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-is_IS-bui-medium.onnx",
+          "sourceFilename": "is/is_IS/bui/medium/is_IS-bui-medium.onnx",
+          "size": 76495465,
+          "sha256": "3a645b2d2850e4098f01f3765cece931836c03741e01a5cc514d09d39d37c05c"
+        },
+        {
+          "filename": "piper-is_IS-bui-medium.onnx.json",
+          "sourceFilename": "is/is_IS/bui/medium/is_IS-bui-medium.onnx.json",
+          "size": 4162,
+          "sha256": "3cae728572fbb397713d047f2299247bb76b62639d9dfdcd65b26c578b8aba45"
+        },
+        {
+          "filename": "piper-is_IS-bui-medium.modelcard",
+          "sourceFilename": "is/is_IS/bui/medium/MODEL_CARD",
+          "size": 246,
+          "sha256": "b01efb62ec770a1c1ebe2015d8f9985e6e1bf43fd72a42a6710d142e93752ce3"
+        }
+      ]
+    },
+    {
+      "id": "is_IS-salka-medium",
+      "name": "salka",
+      "language": "is-IS",
+      "languageName": "Icelandic (Iceland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-is_IS-salka-medium.onnx",
+          "sourceFilename": "is/is_IS/salka/medium/is_IS-salka-medium.onnx",
+          "size": 76495465,
+          "sha256": "392a8e033772de8f7d4afa3258580f0fd509678b55014c3dc1a0d3e231475d0e"
+        },
+        {
+          "filename": "piper-is_IS-salka-medium.onnx.json",
+          "sourceFilename": "is/is_IS/salka/medium/is_IS-salka-medium.onnx.json",
+          "size": 4164,
+          "sha256": "e4290b7c398b956871fec6a5029e5d1511b44be80452511087d0d3b6408c293a"
+        },
+        {
+          "filename": "piper-is_IS-salka-medium.modelcard",
+          "sourceFilename": "is/is_IS/salka/medium/MODEL_CARD",
+          "size": 241,
+          "sha256": "38f98bebab87c693a99382d48d538f9b7d741d9d41ef9135dbd8eb5f7c23348a"
+        }
+      ]
+    },
+    {
+      "id": "is_IS-steinn-medium",
+      "name": "steinn",
+      "language": "is-IS",
+      "languageName": "Icelandic (Iceland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-is_IS-steinn-medium.onnx",
+          "sourceFilename": "is/is_IS/steinn/medium/is_IS-steinn-medium.onnx",
+          "size": 76495465,
+          "sha256": "f10fa173c46fb9b9b683066e3198f61716ab8ab310ffce67004ba25d86bb74b1"
+        },
+        {
+          "filename": "piper-is_IS-steinn-medium.onnx.json",
+          "sourceFilename": "is/is_IS/steinn/medium/is_IS-steinn-medium.onnx.json",
+          "size": 4165,
+          "sha256": "28e889a03ad606f2574d196849220fdf76a82713a111a4ee5c120e6c74ecb205"
+        },
+        {
+          "filename": "piper-is_IS-steinn-medium.modelcard",
+          "sourceFilename": "is/is_IS/steinn/medium/MODEL_CARD",
+          "size": 242,
+          "sha256": "245e1fe50676587d9a0f1b4219ee076722b5f0287f8aa0c83be84bd75e40fe46"
+        }
+      ]
+    },
+    {
+      "id": "is_IS-ugla-medium",
+      "name": "ugla",
+      "language": "is-IS",
+      "languageName": "Icelandic (Iceland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-is_IS-ugla-medium.onnx",
+          "sourceFilename": "is/is_IS/ugla/medium/is_IS-ugla-medium.onnx",
+          "size": 76495465,
+          "sha256": "b43aef7648d13f68b6db0032d85716b82ca78716218a68442fd7f12444a73b24"
+        },
+        {
+          "filename": "piper-is_IS-ugla-medium.onnx.json",
+          "sourceFilename": "is/is_IS/ugla/medium/is_IS-ugla-medium.onnx.json",
+          "size": 4163,
+          "sha256": "0d7c1b26cdc54042c98a75ccc9d4e3528077178c56ad029b321944b6178f3277"
+        },
+        {
+          "filename": "piper-is_IS-ugla-medium.modelcard",
+          "sourceFilename": "is/is_IS/ugla/medium/MODEL_CARD",
+          "size": 240,
+          "sha256": "7ebe554f5261950caa98624a3758a3b37371a8101ec532836e99018925c6ddca"
+        }
+      ]
+    },
+    {
+      "id": "it_IT-paola-medium",
+      "name": "paola",
+      "language": "it-IT",
+      "languageName": "Italian (Italy)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-it_IT-paola-medium.onnx",
+          "sourceFilename": "it/it_IT/paola/medium/it_IT-paola-medium.onnx",
+          "size": 63221984,
+          "sha256": "f9b8658aa8c01f8280aa88488f6e7643a639b6225a81514c40440a01f6364a20"
+        },
+        {
+          "filename": "piper-it_IT-paola-medium.onnx.json",
+          "sourceFilename": "it/it_IT/paola/medium/it_IT-paola-medium.onnx.json",
+          "size": 5457,
+          "sha256": "41c062de55b3410bcc01e456ba6d037d56669ecbb68849ab8b330e30fc475c6e"
+        },
+        {
+          "filename": "piper-it_IT-paola-medium.modelcard",
+          "sourceFilename": "it/it_IT/paola/medium/MODEL_CARD",
+          "size": 452,
+          "sha256": "5213acedfdf04bacd511b8635697741a753aac40b769e64d9c52a58b56f78950"
+        }
+      ]
+    },
+    {
+      "id": "it_IT-riccardo-x_low",
+      "name": "riccardo",
+      "language": "it-IT",
+      "languageName": "Italian (Italy)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-it_IT-riccardo-x_low.onnx",
+          "sourceFilename": "it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx",
+          "size": 28130791,
+          "sha256": "1368de15f123275a7ef951c9e5e30be0f58a032daa14a0da44037443c1d1d21b"
+        },
+        {
+          "filename": "piper-it_IT-riccardo-x_low.onnx.json",
+          "sourceFilename": "it/it_IT/riccardo/x_low/it_IT-riccardo-x_low.onnx.json",
+          "size": 4161,
+          "sha256": "146ab9c634afe524e9fb7530f2510df7a42fb1db56b52658ca1fb3d98001a62a"
+        },
+        {
+          "filename": "piper-it_IT-riccardo-x_low.modelcard",
+          "sourceFilename": "it/it_IT/riccardo/x_low/MODEL_CARD",
+          "size": 260,
+          "sha256": "7ce3b2fc4f454c84936887971574e436cc2154049b427a530f70bee050b2fdc6"
+        }
+      ]
+    },
+    {
+      "id": "it_IT-serena-medium",
+      "name": "serena",
+      "language": "it-IT",
+      "languageName": "Italian (Italy)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-it_IT-serena-medium.onnx",
+          "sourceFilename": "it/it_IT/serena/medium/it_IT-serena-medium.onnx",
+          "size": 63516051,
+          "sha256": "fe4e26b2c1236e2a44d2e295cad564d94a0d8b0a9fca1ccdfd70dd4af3116eb5"
+        },
+        {
+          "filename": "piper-it_IT-serena-medium.onnx.json",
+          "sourceFilename": "it/it_IT/serena/medium/it_IT-serena-medium.onnx.json",
+          "size": 5254,
+          "sha256": "14cb4995874138b2792ae07753b5540942124761af9ae6609f9b520f28837881"
+        },
+        {
+          "filename": "piper-it_IT-serena-medium.modelcard",
+          "sourceFilename": "it/it_IT/serena/medium/MODEL_CARD",
+          "size": 266,
+          "sha256": "1d0dbdc0182d19f6510fd3dcd2893587912a65f8cafe6da57754863f168bbe7e"
+        }
+      ]
+    },
+    {
+      "id": "ka_GE-natia-medium",
+      "name": "natia",
+      "language": "ka-GE",
+      "languageName": "Georgian (Georgia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ka_GE-natia-medium.onnx",
+          "sourceFilename": "ka/ka_GE/natia/medium/ka_GE-natia-medium.onnx",
+          "size": 63201294,
+          "sha256": "04bdacf188fa24499885f9109b395fe8561a05ec2cd90d55453ec5beed7af460"
+        },
+        {
+          "filename": "piper-ka_GE-natia-medium.onnx.json",
+          "sourceFilename": "ka/ka_GE/natia/medium/ka_GE-natia-medium.onnx.json",
+          "size": 4842,
+          "sha256": "906436d0f8de79fcd65576470b10c7ea937c750f9b6b6dafc72a27cebd4a88f6"
+        },
+        {
+          "filename": "piper-ka_GE-natia-medium.modelcard",
+          "sourceFilename": "ka/ka_GE/natia/medium/MODEL_CARD",
+          "size": 288,
+          "sha256": "67224b9fa87999fc78c8289305f40348941423c5ad3fd1f1baefb2be0b8a6c18"
+        }
+      ]
+    },
+    {
+      "id": "kk_KZ-iseke-x_low",
+      "name": "iseke",
+      "language": "kk-KZ",
+      "languageName": "Kazakh (Kazakhstan)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-kk_KZ-iseke-x_low.onnx",
+          "sourceFilename": "kk/kk_KZ/iseke/x_low/kk_KZ-iseke-x_low.onnx",
+          "size": 28130791,
+          "sha256": "dcf526e1c089823c9f896f8f7fddd9b05d538752e139c8a2b4cf4fba41c9715c"
+        },
+        {
+          "filename": "piper-kk_KZ-iseke-x_low.onnx.json",
+          "sourceFilename": "kk/kk_KZ/iseke/x_low/kk_KZ-iseke-x_low.onnx.json",
+          "size": 4168,
+          "sha256": "7af909edcbec3d595cb8cfb810dbf19ea3d6bed5edc18ed9e5ed80631fd5e3a9"
+        },
+        {
+          "filename": "piper-kk_KZ-iseke-x_low.modelcard",
+          "sourceFilename": "kk/kk_KZ/iseke/x_low/MODEL_CARD",
+          "size": 239,
+          "sha256": "331b0fc4cd0fa5f35fd84d4e6952840322f1e98b4de3b67ae235ba9165eb97f8"
+        }
+      ]
+    },
+    {
+      "id": "kk_KZ-raya-x_low",
+      "name": "raya",
+      "language": "kk-KZ",
+      "languageName": "Kazakh (Kazakhstan)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-kk_KZ-raya-x_low.onnx",
+          "sourceFilename": "kk/kk_KZ/raya/x_low/kk_KZ-raya-x_low.onnx",
+          "size": 28130791,
+          "sha256": "75552af00254baee9f85b976877e039f9530ea86ddb83d70262b72925785a0aa"
+        },
+        {
+          "filename": "piper-kk_KZ-raya-x_low.onnx.json",
+          "sourceFilename": "kk/kk_KZ/raya/x_low/kk_KZ-raya-x_low.onnx.json",
+          "size": 4167,
+          "sha256": "b8a239282afd4094e19a1aab0d44623e3bc4c7b4150d57c39ce972193c9e70e3"
+        },
+        {
+          "filename": "piper-kk_KZ-raya-x_low.modelcard",
+          "sourceFilename": "kk/kk_KZ/raya/x_low/MODEL_CARD",
+          "size": 238,
+          "sha256": "e71341b5c00109f19061694306ce84d95de4cec4e403916397ba7d1147dbc87b"
+        }
+      ]
+    },
+    {
+      "id": "ko_KR-kss-medium",
+      "name": "kss",
+      "language": "ko-KR",
+      "languageName": "Korean (South Korea)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ko_KR-kss-medium.onnx",
+          "sourceFilename": "ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx",
+          "size": 63221984,
+          "sha256": "624fd774e26895f24bebae1bd9a3379e3394baeade4b584924f83e414096e2c9"
+        },
+        {
+          "filename": "piper-ko_KR-kss-medium.onnx.json",
+          "sourceFilename": "ko/ko_KR/kss/medium/ko_KR-kss-medium.onnx.json",
+          "size": 5232,
+          "sha256": "153b5619d0580f824a59108d83ca19434de410eb8e4fe80325b58684fdc8a1df"
+        },
+        {
+          "filename": "piper-ko_KR-kss-medium.modelcard",
+          "sourceFilename": "ko/ko_KR/kss/medium/MODEL_CARD",
+          "size": 333,
+          "sha256": "792db9e4889b69bf56bf49ed584809292110e16bf1fc904ff2b99faf8f778d6d"
+        }
+      ]
+    },
+    {
+      "id": "lb_LU-marylux-medium",
+      "name": "marylux",
+      "language": "lb-LU",
+      "languageName": "Luxembourgish (Luxembourg)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-lb_LU-marylux-medium.onnx",
+          "sourceFilename": "lb/lb_LU/marylux/medium/lb_LU-marylux-medium.onnx",
+          "size": 63201294,
+          "sha256": "4147ecacdd98932951d0f956555542de358d3ccff708d4996e305c3ce287097a"
+        },
+        {
+          "filename": "piper-lb_LU-marylux-medium.onnx.json",
+          "sourceFilename": "lb/lb_LU/marylux/medium/lb_LU-marylux-medium.onnx.json",
+          "size": 4979,
+          "sha256": "e5c5dec5433d33ff573e76fa567e80dcf636d05de5dcc817b273963f0733d742"
+        },
+        {
+          "filename": "piper-lb_LU-marylux-medium.modelcard",
+          "sourceFilename": "lb/lb_LU/marylux/medium/MODEL_CARD",
+          "size": 330,
+          "sha256": "613dc86e24d7ebd06ca1a91b04584636528a25fad1ba62318ff5622211b1dc10"
+        }
+      ]
+    },
+    {
+      "id": "lt_LT-ingute-medium",
+      "name": "ingute",
+      "language": "lt-LT",
+      "languageName": "Lithuanian (Lithuania)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-lt_LT-ingute-medium.onnx",
+          "sourceFilename": "lt/lt_LT/ingute/medium/lt_LT-ingute-medium.onnx",
+          "size": 63516051,
+          "sha256": "31bdf1df5339e7da0e0f8c8e847e0f9e720bb732c0ffc7fb3d81970844b441d8"
+        },
+        {
+          "filename": "piper-lt_LT-ingute-medium.onnx.json",
+          "sourceFilename": "lt/lt_LT/ingute/medium/lt_LT-ingute-medium.onnx.json",
+          "size": 5272,
+          "sha256": "cb6bf9b42cf203a54d4a87ab7ea6a44e49286da78fa813db5f6d6f7de5034602"
+        },
+        {
+          "filename": "piper-lt_LT-ingute-medium.modelcard",
+          "sourceFilename": "lt/lt_LT/ingute/medium/MODEL_CARD",
+          "size": 11822,
+          "sha256": "04e1199e78bbae049a659836c5a74a2cf8e44ac25c2acdb7a9859d543d66c077"
+        }
+      ]
+    },
+    {
+      "id": "lt_LT-reginute1-medium",
+      "name": "reginute1",
+      "language": "lt-LT",
+      "languageName": "Lithuanian (Lithuania)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-lt_LT-reginute1-medium.onnx",
+          "sourceFilename": "lt/lt_LT/reginute1/medium/lt_LT-reginute1-medium.onnx",
+          "size": 63516051,
+          "sha256": "0417c4ef351686ec0b0e7bf63426aefc72faea4a7693cfcb2f01ea8f6ee986ee"
+        },
+        {
+          "filename": "piper-lt_LT-reginute1-medium.onnx.json",
+          "sourceFilename": "lt/lt_LT/reginute1/medium/lt_LT-reginute1-medium.onnx.json",
+          "size": 5274,
+          "sha256": "a0b3634fd41c4d2805a65605980471785b0894e7a8f8ee7597a90ce9dbc7a5a8"
+        },
+        {
+          "filename": "piper-lt_LT-reginute1-medium.modelcard",
+          "sourceFilename": "lt/lt_LT/reginute1/medium/MODEL_CARD",
+          "size": 6136,
+          "sha256": "e2b99fd22e7bb3d3cc9e72d0fe577f795bd91402de141ebd2f6472af8fb872b1"
+        }
+      ]
+    },
+    {
+      "id": "lv_LV-aivars-medium",
+      "name": "aivars",
+      "language": "lv-LV",
+      "languageName": "Latvian (Latvia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-lv_LV-aivars-medium.onnx",
+          "sourceFilename": "lv/lv_LV/aivars/medium/lv_LV-aivars-medium.onnx",
+          "size": 63511038,
+          "sha256": "9d855a47c22e2b94795be9e0eb9e8c4c02ce251dc89461dede94de20ff08bd8e"
+        },
+        {
+          "filename": "piper-lv_LV-aivars-medium.onnx.json",
+          "sourceFilename": "lv/lv_LV/aivars/medium/lv_LV-aivars-medium.onnx.json",
+          "size": 7242,
+          "sha256": "08ae2c297be8aa04f15f3f97b7ffeae0146b30b0bd8f7baebcdc46bc2c2f33dc"
+        },
+        {
+          "filename": "piper-lv_LV-aivars-medium.modelcard",
+          "sourceFilename": "lv/lv_LV/aivars/medium/MODEL_CARD",
+          "size": 257,
+          "sha256": "6a950a9f9c95b893b7fd3553f5b42f5b1025fb5fbc004d3924d99e92250b69cf"
+        }
+      ]
+    },
+    {
+      "id": "ml_IN-arjun-medium",
+      "name": "arjun",
+      "language": "ml-IN",
+      "languageName": "Malayalam (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ml_IN-arjun-medium.onnx",
+          "sourceFilename": "ml/ml_IN/arjun/medium/ml_IN-arjun-medium.onnx",
+          "size": 62950044,
+          "sha256": "e881130516a874306972a07dcf262e6900140430c5658131121744a80ef3f11b"
+        },
+        {
+          "filename": "piper-ml_IN-arjun-medium.onnx.json",
+          "sourceFilename": "ml/ml_IN/arjun/medium/ml_IN-arjun-medium.onnx.json",
+          "size": 5044,
+          "sha256": "2804f070954e56545e88101b70331d444402187899d0a6ff03e5d44bee813245"
+        },
+        {
+          "filename": "piper-ml_IN-arjun-medium.modelcard",
+          "sourceFilename": "ml/ml_IN/arjun/medium/MODEL_CARD",
+          "size": 308,
+          "sha256": "0115bfc12e2b7d9cc28b43e2ebc746e402b6ed867c619ae61bc80d0427a95c83"
+        }
+      ]
+    },
+    {
+      "id": "ml_IN-meera-medium",
+      "name": "meera",
+      "language": "ml-IN",
+      "languageName": "Malayalam (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ml_IN-meera-medium.onnx",
+          "sourceFilename": "ml/ml_IN/meera/medium/ml_IN-meera-medium.onnx",
+          "size": 62950044,
+          "sha256": "0c3e730f8294286694cac5d33f4c94d050ed8ea74c5fd6d0d492d38cb57b5102"
+        },
+        {
+          "filename": "piper-ml_IN-meera-medium.onnx.json",
+          "sourceFilename": "ml/ml_IN/meera/medium/ml_IN-meera-medium.onnx.json",
+          "size": 5045,
+          "sha256": "ad51935143f548d139a84c6ad1702b757cbceb52701167c0c1c98bebda7203e6"
+        },
+        {
+          "filename": "piper-ml_IN-meera-medium.modelcard",
+          "sourceFilename": "ml/ml_IN/meera/medium/MODEL_CARD",
+          "size": 308,
+          "sha256": "a1aea09d7a2b82180f2833cc07495f9d1d4999c9fa937f0f1756d38b1474f80c"
+        }
+      ]
+    },
+    {
+      "id": "ne_NP-chitwan-medium",
+      "name": "chitwan",
+      "language": "ne-NP",
+      "languageName": "Nepali (Nepal)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ne_NP-chitwan-medium.onnx",
+          "sourceFilename": "ne/ne_NP/chitwan/medium/ne_NP-chitwan-medium.onnx",
+          "size": 63221984,
+          "sha256": "093c497b0cbe9385bb3af2f2cf3fbc400fe1e07803b2ab43e369c49991ba7e82"
+        },
+        {
+          "filename": "piper-ne_NP-chitwan-medium.onnx.json",
+          "sourceFilename": "ne/ne_NP/chitwan/medium/ne_NP-chitwan-medium.onnx.json",
+          "size": 5468,
+          "sha256": "7ff3e502f1af02880e54753e04e1d8bda5905c8d981e3763b4688d12994339e6"
+        },
+        {
+          "filename": "piper-ne_NP-chitwan-medium.modelcard",
+          "sourceFilename": "ne/ne_NP/chitwan/medium/MODEL_CARD",
+          "size": 419,
+          "sha256": "dbc908356b71858b89020de9aa81e5f35456f9d8ecdc417ced4712e27b708bb7"
+        }
+      ]
+    },
+    {
+      "id": "nl_BE-flemishguy-medium",
+      "name": "flemishguy",
+      "language": "nl-BE",
+      "languageName": "Dutch (Belgium)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_BE-flemishguy-medium.onnx",
+          "sourceFilename": "nl/nl_BE/flemishguy/medium/nl_BE-flemishguy-medium.onnx",
+          "size": 63221984,
+          "sha256": "09bdb83402af60c587dbb672cbca7d60d5c7911e2105d41d5beb9532c2b5e2c4"
+        },
+        {
+          "filename": "piper-nl_BE-flemishguy-medium.onnx.json",
+          "sourceFilename": "nl/nl_BE/flemishguy/medium/nl_BE-flemishguy-medium.onnx.json",
+          "size": 5464,
+          "sha256": "3025f4b6b9737b352e3e89b1dc40916f7b55fda049b21e521a40585c7c877a91"
+        },
+        {
+          "filename": "piper-nl_BE-flemishguy-medium.modelcard",
+          "sourceFilename": "nl/nl_BE/flemishguy/medium/MODEL_CARD",
+          "size": 422,
+          "sha256": "15308ef2d6d84033a0269cab826191f4776ad6208b4ff7fd9bb80a78283b8af5"
+        }
+      ]
+    },
+    {
+      "id": "nl_BE-nathalie-medium",
+      "name": "nathalie",
+      "language": "nl-BE",
+      "languageName": "Dutch (Belgium)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_BE-nathalie-medium.onnx",
+          "sourceFilename": "nl/nl_BE/nathalie/medium/nl_BE-nathalie-medium.onnx",
+          "size": 63221984,
+          "sha256": "2f12aea027806c24a0e9fb00080d2ee4cb0954604cc74e2fcdfe40b5d1015a09"
+        },
+        {
+          "filename": "piper-nl_BE-nathalie-medium.onnx.json",
+          "sourceFilename": "nl/nl_BE/nathalie/medium/nl_BE-nathalie-medium.onnx.json",
+          "size": 5462,
+          "sha256": "862b19c3386b929624169146c3811e643f22e942e15beb2895110af219d9c6fa"
+        },
+        {
+          "filename": "piper-nl_BE-nathalie-medium.modelcard",
+          "sourceFilename": "nl/nl_BE/nathalie/medium/MODEL_CARD",
+          "size": 455,
+          "sha256": "f3a3d03509b055f587999b26a78813859c926a0a7da67dcc42bf02552ee7b9b4"
+        }
+      ]
+    },
+    {
+      "id": "nl_BE-rdh-medium",
+      "name": "rdh",
+      "language": "nl-BE",
+      "languageName": "Dutch (Belgium)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_BE-rdh-medium.onnx",
+          "sourceFilename": "nl/nl_BE/rdh/medium/nl_BE-rdh-medium.onnx",
+          "size": 63221984,
+          "sha256": "59fcf2d6037e1c12386e3d2cf6721c727f286cfeec9db5617407d3bfb4c32559"
+        },
+        {
+          "filename": "piper-nl_BE-rdh-medium.onnx.json",
+          "sourceFilename": "nl/nl_BE/rdh/medium/nl_BE-rdh-medium.onnx.json",
+          "size": 5457,
+          "sha256": "83a5719c3cf138cc5fd4a9ad7d6752982a7fb5ccf94b6b6d4a9637bcee1b5d46"
+        },
+        {
+          "filename": "piper-nl_BE-rdh-medium.modelcard",
+          "sourceFilename": "nl/nl_BE/rdh/medium/MODEL_CARD",
+          "size": 462,
+          "sha256": "f1d4eccf1292d42057550d5261e4d39959c02a7c509d8516da9f2ffd661ab8d6"
+        }
+      ]
+    },
+    {
+      "id": "nl_NL-alex-medium",
+      "name": "alex",
+      "language": "nl-NL",
+      "languageName": "Dutch (Netherlands)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_NL-alex-medium.onnx",
+          "sourceFilename": "nl/nl_NL/alex/medium/nl_NL-alex-medium.onnx",
+          "size": 63221984,
+          "sha256": "758fa64ec461545972fc3e509511b48849c6f3f5c821ad55c71d9741d4352bdc"
+        },
+        {
+          "filename": "piper-nl_NL-alex-medium.onnx.json",
+          "sourceFilename": "nl/nl_NL/alex/medium/nl_NL-alex-medium.onnx.json",
+          "size": 5462,
+          "sha256": "886f7c17c6bf4e81818c76d349cbaa447f5f87e06e7c60f714bd37612c11bc3c"
+        },
+        {
+          "filename": "piper-nl_NL-alex-medium.modelcard",
+          "sourceFilename": "nl/nl_NL/alex/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "07138cae7ed81849738f51254f648438f2f3e00bf3133d3b3024de2d04140bdb"
+        }
+      ]
+    },
+    {
+      "id": "nl_NL-mls_5809-low",
+      "name": "mls_5809",
+      "language": "nl-NL",
+      "languageName": "Dutch (Netherlands)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-nl_NL-mls_5809-low.onnx",
+          "sourceFilename": "nl/nl_NL/mls_5809/low/nl_NL-mls_5809-low.onnx",
+          "size": 63104526,
+          "sha256": "b7860ada7fa27e5e29b08e7531b0e0d74b3f0602e466a22ff95f59f80a0c4327"
+        },
+        {
+          "filename": "piper-nl_NL-mls_5809-low.onnx.json",
+          "sourceFilename": "nl/nl_NL/mls_5809/low/nl_NL-mls_5809-low.onnx.json",
+          "size": 4165,
+          "sha256": "d2192a4ed90b26166243be2cef9d71bcc4fbbbaa9461c413050bac758fafc1c3"
+        },
+        {
+          "filename": "piper-nl_NL-mls_5809-low.modelcard",
+          "sourceFilename": "nl/nl_NL/mls_5809/low/MODEL_CARD",
+          "size": 261,
+          "sha256": "eb1b0778b69163ecfc73c5d82d344de31392ef5a4b7fb7c232edaec8af9485ad"
+        }
+      ]
+    },
+    {
+      "id": "nl_NL-mls_7432-low",
+      "name": "mls_7432",
+      "language": "nl-NL",
+      "languageName": "Dutch (Netherlands)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-nl_NL-mls_7432-low.onnx",
+          "sourceFilename": "nl/nl_NL/mls_7432/low/nl_NL-mls_7432-low.onnx",
+          "size": 63104526,
+          "sha256": "02feb278732c77f34c4e106d0cdc446e7e577ce29c5d7051da85a9c241ee42f0"
+        },
+        {
+          "filename": "piper-nl_NL-mls_7432-low.onnx.json",
+          "sourceFilename": "nl/nl_NL/mls_7432/low/nl_NL-mls_7432-low.onnx.json",
+          "size": 4165,
+          "sha256": "450d6d809962943e0b88e18da142fba32011ea5e326a627c64a87ec94144185b"
+        },
+        {
+          "filename": "piper-nl_NL-mls_7432-low.modelcard",
+          "sourceFilename": "nl/nl_NL/mls_7432/low/MODEL_CARD",
+          "size": 260,
+          "sha256": "f5f450c09037a6093a74672078aafd0aad7c9cb56899fd13da6bd00068a87cf1"
+        }
+      ]
+    },
+    {
+      "id": "nl_NL-pim-medium",
+      "name": "pim",
+      "language": "nl-NL",
+      "languageName": "Dutch (Netherlands)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_NL-pim-medium.onnx",
+          "sourceFilename": "nl/nl_NL/pim/medium/nl_NL-pim-medium.onnx",
+          "size": 63221984,
+          "sha256": "1e1ed370c3b60ca734e525bdcd1f05f71b42bfb0a15693f1e89c012d72052d2a"
+        },
+        {
+          "filename": "piper-nl_NL-pim-medium.onnx.json",
+          "sourceFilename": "nl/nl_NL/pim/medium/nl_NL-pim-medium.onnx.json",
+          "size": 5461,
+          "sha256": "30e5689c492f27d9c6cb8e23de78087162d3205fa8e169c33fd80bd80cbb133b"
+        },
+        {
+          "filename": "piper-nl_NL-pim-medium.modelcard",
+          "sourceFilename": "nl/nl_NL/pim/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "3f7439321a995ecd70fdf480d4702147abb06fc9deca6d195fe5b339fb2b6d15"
+        }
+      ]
+    },
+    {
+      "id": "nl_NL-ronnie-medium",
+      "name": "ronnie",
+      "language": "nl-NL",
+      "languageName": "Dutch (Netherlands)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-nl_NL-ronnie-medium.onnx",
+          "sourceFilename": "nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx",
+          "size": 63221984,
+          "sha256": "c6b69203247c9ff9aaadf59ec51147fffb16bb2c2892eb92d5b75d2f9d096622"
+        },
+        {
+          "filename": "piper-nl_NL-ronnie-medium.onnx.json",
+          "sourceFilename": "nl/nl_NL/ronnie/medium/nl_NL-ronnie-medium.onnx.json",
+          "size": 5464,
+          "sha256": "65561cb497fde442608abad1f4eb6d7193e53edbc9ad374a5ae9ee4914fe2586"
+        },
+        {
+          "filename": "piper-nl_NL-ronnie-medium.modelcard",
+          "sourceFilename": "nl/nl_NL/ronnie/medium/MODEL_CARD",
+          "size": 423,
+          "sha256": "2077f51d464729bea701f602b84dbf364f9ca0b27041b434edd44fddc4e4798e"
+        }
+      ]
+    },
+    {
+      "id": "no_NO-talesyntese-medium",
+      "name": "talesyntese",
+      "language": "no-NO",
+      "languageName": "Norwegian (Norway)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-no_NO-talesyntese-medium.onnx",
+          "sourceFilename": "no/no_NO/talesyntese/medium/no_NO-talesyntese-medium.onnx",
+          "size": 63221984,
+          "sha256": "f5f33d4e2a67cbef7cc5bab6d4b773a815e6a5cb02438509ea9b7493696f539f"
+        },
+        {
+          "filename": "piper-no_NO-talesyntese-medium.onnx.json",
+          "sourceFilename": "no/no_NO/talesyntese/medium/no_NO-talesyntese-medium.onnx.json",
+          "size": 5463,
+          "sha256": "48a75caac2cd2515e85aa4bc3fbf6c2c5f3b663b811291ca0a71628a51b05865"
+        },
+        {
+          "filename": "piper-no_NO-talesyntese-medium.modelcard",
+          "sourceFilename": "no/no_NO/talesyntese/medium/MODEL_CARD",
+          "size": 453,
+          "sha256": "d728ecea4943d315ee7e4cd5de00f425a40b79c691e01f72062f4c9ebaaa8bb6"
+        }
+      ]
+    },
+    {
+      "id": "pl_PL-bass-high",
+      "name": "bass",
+      "language": "pl-PL",
+      "languageName": "Polish (Poland)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-pl_PL-bass-high.onnx",
+          "sourceFilename": "pl/pl_PL/bass/high/pl_PL-bass-high.onnx",
+          "size": 114204024,
+          "sha256": "73b8408967c58118700f21eb2413cd8b666c7844c6136cf674bf5dd56bde72c2"
+        },
+        {
+          "filename": "piper-pl_PL-bass-high.onnx.json",
+          "sourceFilename": "pl/pl_PL/bass/high/pl_PL-bass-high.onnx.json",
+          "size": 4954,
+          "sha256": "7bb41aa14fee87a31cc32264119c09e3553335196d3db15b39b1c18790e13c59"
+        },
+        {
+          "filename": "piper-pl_PL-bass-high.modelcard",
+          "sourceFilename": "pl/pl_PL/bass/high/MODEL_CARD",
+          "size": 289,
+          "sha256": "208d244b9aa23500595aeffe011f065cfa57f7de82bb17052d1b505a1d8e5658"
+        }
+      ]
+    },
+    {
+      "id": "pl_PL-darkman-medium",
+      "name": "darkman",
+      "language": "pl-PL",
+      "languageName": "Polish (Poland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pl_PL-darkman-medium.onnx",
+          "sourceFilename": "pl/pl_PL/darkman/medium/pl_PL-darkman-medium.onnx",
+          "size": 63221984,
+          "sha256": "cf757ee307e3a7c23d5d8f69934deab51683d01c1c6be376d3e13146020f1530"
+        },
+        {
+          "filename": "piper-pl_PL-darkman-medium.onnx.json",
+          "sourceFilename": "pl/pl_PL/darkman/medium/pl_PL-darkman-medium.onnx.json",
+          "size": 5457,
+          "sha256": "0d98a67829a1b7ffbce7faacf4ea7bb7a7ce2ebc1598ad0289c0f6c1f352dbd0"
+        },
+        {
+          "filename": "piper-pl_PL-darkman-medium.modelcard",
+          "sourceFilename": "pl/pl_PL/darkman/medium/MODEL_CARD",
+          "size": 419,
+          "sha256": "a2c89d3059a830d47fb0159973088c02ae3a4c7e56235a3abe63b9507340bdab"
+        }
+      ]
+    },
+    {
+      "id": "pl_PL-gosia-medium",
+      "name": "gosia",
+      "language": "pl-PL",
+      "languageName": "Polish (Poland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pl_PL-gosia-medium.onnx",
+          "sourceFilename": "pl/pl_PL/gosia/medium/pl_PL-gosia-medium.onnx",
+          "size": 63201294,
+          "sha256": "38f66464240ed74f186e6b7dc13c6e3b22e023426299f25c2b3cc9dfa9373fbc"
+        },
+        {
+          "filename": "piper-pl_PL-gosia-medium.onnx.json",
+          "sourceFilename": "pl/pl_PL/gosia/medium/pl_PL-gosia-medium.onnx.json",
+          "size": 4814,
+          "sha256": "1aefb31a9d53ffe44a8163ff73ec833acb7a6253848f6bb0403d8a66f9c7510d"
+        },
+        {
+          "filename": "piper-pl_PL-gosia-medium.modelcard",
+          "sourceFilename": "pl/pl_PL/gosia/medium/MODEL_CARD",
+          "size": 275,
+          "sha256": "6b4de033dfff0da758bbe4d438fd87fbd917ab843bdd83f591fa0f32b8eb5780"
+        }
+      ]
+    },
+    {
+      "id": "pl_PL-mc_speech-medium",
+      "name": "mc_speech",
+      "language": "pl-PL",
+      "languageName": "Polish (Poland)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pl_PL-mc_speech-medium.onnx",
+          "sourceFilename": "pl/pl_PL/mc_speech/medium/pl_PL-mc_speech-medium.onnx",
+          "size": 63201294,
+          "sha256": "a6b043358bc81e6c111a5140606a21959ce7f34969b8b7207f62869787cc3907"
+        },
+        {
+          "filename": "piper-pl_PL-mc_speech-medium.onnx.json",
+          "sourceFilename": "pl/pl_PL/mc_speech/medium/pl_PL-mc_speech-medium.onnx.json",
+          "size": 4961,
+          "sha256": "b8bb11228e15c505219846a88fdc129e93f57e774ed7f9bac263156d1aa3d324"
+        },
+        {
+          "filename": "piper-pl_PL-mc_speech-medium.modelcard",
+          "sourceFilename": "pl/pl_PL/mc_speech/medium/MODEL_CARD",
+          "size": 296,
+          "sha256": "defd8213e3a438ebb80130dc1db17b6995bf5bf8d57fdee7b5b74a5a69c2c0d2"
+        }
+      ]
+    },
+    {
+      "id": "pl_PL-mls_6892-low",
+      "name": "mls_6892",
+      "language": "pl-PL",
+      "languageName": "Polish (Poland)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-pl_PL-mls_6892-low.onnx",
+          "sourceFilename": "pl/pl_PL/mls_6892/low/pl_PL-mls_6892-low.onnx",
+          "size": 63104526,
+          "sha256": "b572ab1a0f1d3b722b2a545e0b38834e6f932852cd0f11a44c022baa8f104c10"
+        },
+        {
+          "filename": "piper-pl_PL-mls_6892-low.onnx.json",
+          "sourceFilename": "pl/pl_PL/mls_6892/low/pl_PL-mls_6892-low.onnx.json",
+          "size": 4157,
+          "sha256": "52f7b16a1590277028fce10a259c41d755c3d565c6f4eff9806e1c1d433ea7a2"
+        },
+        {
+          "filename": "piper-pl_PL-mls_6892-low.modelcard",
+          "sourceFilename": "pl/pl_PL/mls_6892/low/MODEL_CARD",
+          "size": 257,
+          "sha256": "19990928dfd1f571f399bd227f9fa74c38617d7d181ee1478f84df9deecf1e4c"
+        }
+      ]
+    },
+    {
+      "id": "pt_BR-cadu-medium",
+      "name": "cadu",
+      "language": "pt-BR",
+      "languageName": "Portuguese (Brazil)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pt_BR-cadu-medium.onnx",
+          "sourceFilename": "pt/pt_BR/cadu/medium/pt_BR-cadu-medium.onnx",
+          "size": 63221984,
+          "sha256": "d5a662e3f606d5a49dd29ba9ce90c304ae45dd9543f8b0c773bcb0de282499de"
+        },
+        {
+          "filename": "piper-pt_BR-cadu-medium.onnx.json",
+          "sourceFilename": "pt/pt_BR/cadu/medium/pt_BR-cadu-medium.onnx.json",
+          "size": 5465,
+          "sha256": "9fa837b7c1237ea5978bcd7be38c130798e8faa064f754873bb4ce5fc498bd88"
+        },
+        {
+          "filename": "piper-pt_BR-cadu-medium.modelcard",
+          "sourceFilename": "pt/pt_BR/cadu/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "ccd97b4369f50e6fba3a4fb730643ef2675f87b43c5d22298404c58f8204a375"
+        }
+      ]
+    },
+    {
+      "id": "pt_BR-edresson-low",
+      "name": "edresson",
+      "language": "pt-BR",
+      "languageName": "Portuguese (Brazil)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-pt_BR-edresson-low.onnx",
+          "sourceFilename": "pt/pt_BR/edresson/low/pt_BR-edresson-low.onnx",
+          "size": 63104526,
+          "sha256": "de4cecee38b30bb1a6378a337af605d59f0c377df702c6a6752870db8991cd84"
+        },
+        {
+          "filename": "piper-pt_BR-edresson-low.onnx.json",
+          "sourceFilename": "pt/pt_BR/edresson/low/pt_BR-edresson-low.onnx.json",
+          "size": 4168,
+          "sha256": "f138992d2e777d1e3aa0bbb14c2d324307b0f342c1bcf20978765b3bea506c56"
+        },
+        {
+          "filename": "piper-pt_BR-edresson-low.modelcard",
+          "sourceFilename": "pt/pt_BR/edresson/low/MODEL_CARD",
+          "size": 283,
+          "sha256": "d8fb0dab2d61ad9796904836fb2fc0ac7e324d89e80bc9ef14e328b77e5cb66f"
+        }
+      ]
+    },
+    {
+      "id": "pt_BR-faber-medium",
+      "name": "faber",
+      "language": "pt-BR",
+      "languageName": "Portuguese (Brazil)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pt_BR-faber-medium.onnx",
+          "sourceFilename": "pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx",
+          "size": 63221984,
+          "sha256": "75e913eb463db0b6ac7ddf68d3e4c9ac19ace36dc3b710a81039b448352b8ffc"
+        },
+        {
+          "filename": "piper-pt_BR-faber-medium.onnx.json",
+          "sourceFilename": "pt/pt_BR/faber/medium/pt_BR-faber-medium.onnx.json",
+          "size": 5466,
+          "sha256": "fa8a8fecb01ae198bc416381e368d3206f85bad1449a0f11e1f6a9edf85a32f1"
+        },
+        {
+          "filename": "piper-pt_BR-faber-medium.modelcard",
+          "sourceFilename": "pt/pt_BR/faber/medium/MODEL_CARD",
+          "size": 456,
+          "sha256": "a99caaa7e04fea58294ba4dea46a7ba07fa1f7902c6dff65b6ea2be0e98c5132"
+        }
+      ]
+    },
+    {
+      "id": "pt_BR-jeff-medium",
+      "name": "jeff",
+      "language": "pt-BR",
+      "languageName": "Portuguese (Brazil)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pt_BR-jeff-medium.onnx",
+          "sourceFilename": "pt/pt_BR/jeff/medium/pt_BR-jeff-medium.onnx",
+          "size": 63221984,
+          "sha256": "82ddcdb01a0342f078bd89ce2815eda27185818d15e15f06fb9a72ac3bce94e1"
+        },
+        {
+          "filename": "piper-pt_BR-jeff-medium.onnx.json",
+          "sourceFilename": "pt/pt_BR/jeff/medium/pt_BR-jeff-medium.onnx.json",
+          "size": 5465,
+          "sha256": "078ea4e42a680ca3cb662a8929237c32e2c0d581f5363f2f55f09bc266497bf6"
+        },
+        {
+          "filename": "piper-pt_BR-jeff-medium.modelcard",
+          "sourceFilename": "pt/pt_BR/jeff/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "a81ea309434fe2fa23ed89c8ae270bc8aa40908b14e182fae54c021cc368f7a8"
+        }
+      ]
+    },
+    {
+      "id": "pt_PT-tugão-medium",
+      "name": "tugão",
+      "language": "pt-PT",
+      "languageName": "Portuguese (Portugal)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-pt_PT-tugão-medium.onnx",
+          "sourceFilename": "pt/pt_PT/tugão/medium/pt_PT-tugão-medium.onnx",
+          "size": 63221984,
+          "sha256": "f90d87efaa88ba0d24018f7e74a0ea3feeddeb407bf46332322a3824e9451219"
+        },
+        {
+          "filename": "piper-pt_PT-tugão-medium.onnx.json",
+          "sourceFilename": "pt/pt_PT/tugão/medium/pt_PT-tugão-medium.onnx.json",
+          "size": 5466,
+          "sha256": "bfb193603c4f1454284bd1074060b0dd525f93b9d3e35bcffc1458ae7d48786e"
+        },
+        {
+          "filename": "piper-pt_PT-tugão-medium.modelcard",
+          "sourceFilename": "pt/pt_PT/tugão/medium/MODEL_CARD",
+          "size": 459,
+          "sha256": "81ef346f74b0f33b176435437bc345ab22efde5dccd87acf6f44afc0bc7a034d"
+        }
+      ]
+    },
+    {
+      "id": "ro_RO-mihai-medium",
+      "name": "mihai",
+      "language": "ro-RO",
+      "languageName": "Romanian (Romania)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ro_RO-mihai-medium.onnx",
+          "sourceFilename": "ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx",
+          "size": 63221984,
+          "sha256": "ac9e1be65c059279c53500f11e8c276657c7e48a2d33b733add35dbe75748e29"
+        },
+        {
+          "filename": "piper-ro_RO-mihai-medium.onnx.json",
+          "sourceFilename": "ro/ro_RO/mihai/medium/ro_RO-mihai-medium.onnx.json",
+          "size": 5460,
+          "sha256": "9fbd3514535fa11fe01c41f0b7277ac6a32e08b2580c799c4f1fc86bb9c30841"
+        },
+        {
+          "filename": "piper-ro_RO-mihai-medium.modelcard",
+          "sourceFilename": "ro/ro_RO/mihai/medium/MODEL_CARD",
+          "size": 420,
+          "sha256": "40fc63296c26be3d826390102a39e6e90b299b6431210c33a368338a3f9f2a8b"
+        }
+      ]
+    },
+    {
+      "id": "ru_RU-denis-medium",
+      "name": "denis",
+      "language": "ru-RU",
+      "languageName": "Russian (Russia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ru_RU-denis-medium.onnx",
+          "sourceFilename": "ru/ru_RU/denis/medium/ru_RU-denis-medium.onnx",
+          "size": 63221984,
+          "sha256": "879bc365cb14d1380e3f5ed6044162ccf54c99f6161871569b7f830aec3ce841"
+        },
+        {
+          "filename": "piper-ru_RU-denis-medium.onnx.json",
+          "sourceFilename": "ru/ru_RU/denis/medium/ru_RU-denis-medium.onnx.json",
+          "size": 5464,
+          "sha256": "e4fb4ab60262d1ab802c8c39301976c4135e545bc834a33c6eedc1f764df3bd6"
+        },
+        {
+          "filename": "piper-ru_RU-denis-medium.modelcard",
+          "sourceFilename": "ru/ru_RU/denis/medium/MODEL_CARD",
+          "size": 418,
+          "sha256": "917110d5056810771fd3daea2644bbadf1341816b7631f2043b33be245903432"
+        }
+      ]
+    },
+    {
+      "id": "ru_RU-dmitri-medium",
+      "name": "dmitri",
+      "language": "ru-RU",
+      "languageName": "Russian (Russia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ru_RU-dmitri-medium.onnx",
+          "sourceFilename": "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx",
+          "size": 63221984,
+          "sha256": "9ed9941bac7373f2ec1be36627e0e71a349a59ca5522d4363fd50701db05193a"
+        },
+        {
+          "filename": "piper-ru_RU-dmitri-medium.onnx.json",
+          "sourceFilename": "ru/ru_RU/dmitri/medium/ru_RU-dmitri-medium.onnx.json",
+          "size": 5465,
+          "sha256": "b7ed744f65ec73deb57fc8e419a5db5c0c5532026cf1cd21247f75937b6fbee2"
+        },
+        {
+          "filename": "piper-ru_RU-dmitri-medium.modelcard",
+          "sourceFilename": "ru/ru_RU/dmitri/medium/MODEL_CARD",
+          "size": 454,
+          "sha256": "4da875aca6642bd96f0327705e874cbbcc44bc1790ee1d08b3fc0eb266523e5d"
+        }
+      ]
+    },
+    {
+      "id": "ru_RU-irina-medium",
+      "name": "irina",
+      "language": "ru-RU",
+      "languageName": "Russian (Russia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ru_RU-irina-medium.onnx",
+          "sourceFilename": "ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx",
+          "size": 63201294,
+          "sha256": "8ff38212d23da300bbe3705c645e6e5b9475f0bfde01558eb17813e22acaaaaa"
+        },
+        {
+          "filename": "piper-ru_RU-irina-medium.onnx.json",
+          "sourceFilename": "ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json",
+          "size": 4765,
+          "sha256": "c2ec28bb38e2b59e93b959b3e40348c1afebbd272f30fed5d41205d08e98a9d7"
+        },
+        {
+          "filename": "piper-ru_RU-irina-medium.modelcard",
+          "sourceFilename": "ru/ru_RU/irina/medium/MODEL_CARD",
+          "size": 271,
+          "sha256": "f4fc2deb0e8c6219f29202b8dd06c9638c5ffd50ad5c6b2c90cf1aa59d507593"
+        }
+      ]
+    },
+    {
+      "id": "ru_RU-ruslan-medium",
+      "name": "ruslan",
+      "language": "ru-RU",
+      "languageName": "Russian (Russia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ru_RU-ruslan-medium.onnx",
+          "sourceFilename": "ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx",
+          "size": 63201294,
+          "sha256": "72a5f88e0b20928064eb45d88e1daa21f8af62d18613580d32cbb4aed48dcf7f"
+        },
+        {
+          "filename": "piper-ru_RU-ruslan-medium.onnx.json",
+          "sourceFilename": "ru/ru_RU/ruslan/medium/ru_RU-ruslan-medium.onnx.json",
+          "size": 4882,
+          "sha256": "706a4fb17bc304abd07809b552deae615e64dcbffbfbd09854ba37ca59e88117"
+        },
+        {
+          "filename": "piper-ru_RU-ruslan-medium.modelcard",
+          "sourceFilename": "ru/ru_RU/ruslan/medium/MODEL_CARD",
+          "size": 313,
+          "sha256": "28f5c0381c1234eb17bfd77e77f893b008948c29bc351fb811abd2d6a69e7662"
+        }
+      ]
+    },
+    {
+      "id": "sk_SK-lili-medium",
+      "name": "lili",
+      "language": "sk-SK",
+      "languageName": "Slovak (Slovakia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sk_SK-lili-medium.onnx",
+          "sourceFilename": "sk/sk_SK/lili/medium/sk_SK-lili-medium.onnx",
+          "size": 63221984,
+          "sha256": "5e157712483b66d99289e663ca5728bceb4b4e48d84d837c58796b2f9690de16"
+        },
+        {
+          "filename": "piper-sk_SK-lili-medium.onnx.json",
+          "sourceFilename": "sk/sk_SK/lili/medium/sk_SK-lili-medium.onnx.json",
+          "size": 5461,
+          "sha256": "2287d57aa421572639d49da68aaa645534e4dc9ae052b0b62f3b6098440c73c7"
+        },
+        {
+          "filename": "piper-sk_SK-lili-medium.modelcard",
+          "sourceFilename": "sk/sk_SK/lili/medium/MODEL_CARD",
+          "size": 453,
+          "sha256": "adabb92f43f3a02b2312e328731cd2d0161126c028988fa77cd4939cf91253d1"
+        }
+      ]
+    },
+    {
+      "id": "sl_SI-artur-medium",
+      "name": "artur",
+      "language": "sl-SI",
+      "languageName": "Slovenian (Slovenia)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sl_SI-artur-medium.onnx",
+          "sourceFilename": "sl/sl_SI/artur/medium/sl_SI-artur-medium.onnx",
+          "size": 63200492,
+          "sha256": "9222ed93ef425524ad4be0b083369af8ea8db18455576a6016b154192f4ed38c"
+        },
+        {
+          "filename": "piper-sl_SI-artur-medium.onnx.json",
+          "sourceFilename": "sl/sl_SI/artur/medium/sl_SI-artur-medium.onnx.json",
+          "size": 4970,
+          "sha256": "741283430f1fa2be5c61717c6f1fe795a7b9f537491927340dd12f90f3b3cc04"
+        },
+        {
+          "filename": "piper-sl_SI-artur-medium.modelcard",
+          "sourceFilename": "sl/sl_SI/artur/medium/MODEL_CARD",
+          "size": 329,
+          "sha256": "fe8431d0830a41260379ba7f8813e3dfb515c02684a0663702f45e047e31bba9"
+        }
+      ]
+    },
+    {
+      "id": "sq_AL-edon-medium",
+      "name": "edon",
+      "language": "sq-AL",
+      "languageName": "Albanian (Albania)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sq_AL-edon-medium.onnx",
+          "sourceFilename": "sq/sq_AL/edon/medium/sq_AL-edon-medium.onnx",
+          "size": 63511038,
+          "sha256": "5d0ae8af36a00ac6813517b2af47bc4cda42e88ece04f6076ae3b0f5479c57c8"
+        },
+        {
+          "filename": "piper-sq_AL-edon-medium.onnx.json",
+          "sourceFilename": "sq/sq_AL/edon/medium/sq_AL-edon-medium.onnx.json",
+          "size": 4961,
+          "sha256": "e9ee77beea52d8042bca589448bb48033ac0f7c1d86daee84ad1d5692d1270f7"
+        },
+        {
+          "filename": "piper-sq_AL-edon-medium.modelcard",
+          "sourceFilename": "sq/sq_AL/edon/medium/MODEL_CARD",
+          "size": 280,
+          "sha256": "3849de03579aaeabf996ca2e08792ee457f8d55bd473332cd0d7684fc728cfb0"
+        }
+      ]
+    },
+    {
+      "id": "sv_SE-alma-medium",
+      "name": "alma",
+      "language": "sv-SE",
+      "languageName": "Swedish (Sweden)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sv_SE-alma-medium.onnx",
+          "sourceFilename": "sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx",
+          "size": 63434611,
+          "sha256": "f75455eb6afeb1db9e2905d5bd7e4115afcd3710e0d399b6a40981766d32fedc"
+        },
+        {
+          "filename": "piper-sv_SE-alma-medium.onnx.json",
+          "sourceFilename": "sv/sv_SE/alma/medium/sv_SE-alma-medium.onnx.json",
+          "size": 6059,
+          "sha256": "6924380892f769afa92fc6b28ff91d558690d7fb4e3ef8cbf821cefadc8f38fe"
+        },
+        {
+          "filename": "piper-sv_SE-alma-medium.modelcard",
+          "sourceFilename": "sv/sv_SE/alma/medium/MODEL_CARD",
+          "size": 462,
+          "sha256": "3e4347b72a1d396ca0905470094331fee8dd3a9a641a834466cdbf7812df9396"
+        }
+      ]
+    },
+    {
+      "id": "sv_SE-lisa-medium",
+      "name": "lisa",
+      "language": "sv-SE",
+      "languageName": "Swedish (Sweden)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sv_SE-lisa-medium.onnx",
+          "sourceFilename": "sv/sv_SE/lisa/medium/sv_SE-lisa-medium.onnx",
+          "size": 63511038,
+          "sha256": "94cae912b31d6e9140d3f5160f1815951588600c7a9e43d539ba1e81a110d131"
+        },
+        {
+          "filename": "piper-sv_SE-lisa-medium.onnx.json",
+          "sourceFilename": "sv/sv_SE/lisa/medium/sv_SE-lisa-medium.onnx.json",
+          "size": 7239,
+          "sha256": "51e48b65d7427aee9e8e736b370ff4fe6e3e45e47a56e5d8819647b7076ffb0a"
+        },
+        {
+          "filename": "piper-sv_SE-lisa-medium.modelcard",
+          "sourceFilename": "sv/sv_SE/lisa/medium/MODEL_CARD",
+          "size": 198,
+          "sha256": "952c05227c175d48aafe40eb73935d8cf6b7a214ad4f9772b4180c084e5094c3"
+        }
+      ]
+    },
+    {
+      "id": "sv_SE-nst-medium",
+      "name": "nst",
+      "language": "sv-SE",
+      "languageName": "Swedish (Sweden)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sv_SE-nst-medium.onnx",
+          "sourceFilename": "sv/sv_SE/nst/medium/sv_SE-nst-medium.onnx",
+          "size": 63104526,
+          "sha256": "df011f56825a59dd1efc080c38a65a1ef70407e60f63050e9246f43a3d7e471e"
+        },
+        {
+          "filename": "piper-sv_SE-nst-medium.onnx.json",
+          "sourceFilename": "sv/sv_SE/nst/medium/sv_SE-nst-medium.onnx.json",
+          "size": 4157,
+          "sha256": "d45dd74cbb4eca58694bf04a97e243044092476f28a55ae26424f0653086980a"
+        },
+        {
+          "filename": "piper-sv_SE-nst-medium.modelcard",
+          "sourceFilename": "sv/sv_SE/nst/medium/MODEL_CARD",
+          "size": 306,
+          "sha256": "c85d3e26e47d93e9d9b8572d3c89537c3f8ff212595cb9a3fbd2e07c19432317"
+        }
+      ]
+    },
+    {
+      "id": "sw_CD-lanfrica-medium",
+      "name": "lanfrica",
+      "language": "sw-CD",
+      "languageName": "Swahili (Democratic Republic of the Congo)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-sw_CD-lanfrica-medium.onnx",
+          "sourceFilename": "sw/sw_CD/lanfrica/medium/sw_CD-lanfrica-medium.onnx",
+          "size": 63221984,
+          "sha256": "24c66f055c046d9c6ca550178aecfec016259a5b9c64d4c56724efeeea4b2ed5"
+        },
+        {
+          "filename": "piper-sw_CD-lanfrica-medium.onnx.json",
+          "sourceFilename": "sw/sw_CD/lanfrica/medium/sw_CD-lanfrica-medium.onnx.json",
+          "size": 5488,
+          "sha256": "663c10fce960ecd5d60d9ed5979099113ebe1353b1290f76d9d0ea44e015387c"
+        },
+        {
+          "filename": "piper-sw_CD-lanfrica-medium.modelcard",
+          "sourceFilename": "sw/sw_CD/lanfrica/medium/MODEL_CARD",
+          "size": 457,
+          "sha256": "4fa8b4d86cb86f45c9c33b46c2b8da76270140675a526f2136d2080bcac55820"
+        }
+      ]
+    },
+    {
+      "id": "te_IN-maya-medium",
+      "name": "maya",
+      "language": "te-IN",
+      "languageName": "Telugu (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-te_IN-maya-medium.onnx",
+          "sourceFilename": "te/te_IN/maya/medium/te_IN-maya-medium.onnx",
+          "size": 62950044,
+          "sha256": "c3518ad4e3ca8ea6059c1e002f3772068f634960f58b237a96ff629db1c6200e"
+        },
+        {
+          "filename": "piper-te_IN-maya-medium.onnx.json",
+          "sourceFilename": "te/te_IN/maya/medium/te_IN-maya-medium.onnx.json",
+          "size": 5040,
+          "sha256": "c07074aadf0a33e230647611af9041e1fb6609b995d017ee95009586a491508f"
+        },
+        {
+          "filename": "piper-te_IN-maya-medium.modelcard",
+          "sourceFilename": "te/te_IN/maya/medium/MODEL_CARD",
+          "size": 318,
+          "sha256": "fe0a4b70db1f6c952df23492ed1fe6c09a85a2b0df3df5f8975dbf2d84f07992"
+        }
+      ]
+    },
+    {
+      "id": "te_IN-padmavathi-medium",
+      "name": "padmavathi",
+      "language": "te-IN",
+      "languageName": "Telugu (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-te_IN-padmavathi-medium.onnx",
+          "sourceFilename": "te/te_IN/padmavathi/medium/te_IN-padmavathi-medium.onnx",
+          "size": 63516050,
+          "sha256": "414aa5960d91ceb6e45bbdf8c27fdc71af09f205130d7be4e99470f3c2cfa57d"
+        },
+        {
+          "filename": "piper-te_IN-padmavathi-medium.onnx.json",
+          "sourceFilename": "te/te_IN/padmavathi/medium/te_IN-padmavathi-medium.onnx.json",
+          "size": 4974,
+          "sha256": "6c86e4ee99d379815f78a75f23cdad62ccf50370062dd915c233d6e22de7109f"
+        },
+        {
+          "filename": "piper-te_IN-padmavathi-medium.modelcard",
+          "sourceFilename": "te/te_IN/padmavathi/medium/MODEL_CARD",
+          "size": 278,
+          "sha256": "8cdccd0ca4c26d1e949431f03180bcf9eaeb3c013f627087c6a806a3f7487b07"
+        }
+      ]
+    },
+    {
+      "id": "te_IN-venkatesh-medium",
+      "name": "venkatesh",
+      "language": "te-IN",
+      "languageName": "Telugu (India)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-te_IN-venkatesh-medium.onnx",
+          "sourceFilename": "te/te_IN/venkatesh/medium/te_IN-venkatesh-medium.onnx",
+          "size": 63516050,
+          "sha256": "dfaa5b7833cd48d946f3fe18c9c934aaa4e8590aac6922fddf34783a694c3c87"
+        },
+        {
+          "filename": "piper-te_IN-venkatesh-medium.onnx.json",
+          "sourceFilename": "te/te_IN/venkatesh/medium/te_IN-venkatesh-medium.onnx.json",
+          "size": 4973,
+          "sha256": "59bad556763d1f24b3434201d7bdee275bb1a70db3e1c65d38e6c3d39b224343"
+        },
+        {
+          "filename": "piper-te_IN-venkatesh-medium.modelcard",
+          "sourceFilename": "te/te_IN/venkatesh/medium/MODEL_CARD",
+          "size": 277,
+          "sha256": "1e72b79b6453653bd6c43722f80fb34f429dbeccaf18116480d6faa20b01e685"
+        }
+      ]
+    },
+    {
+      "id": "th_TH-tsync2-medium",
+      "name": "tsync2",
+      "language": "th-TH",
+      "languageName": "Thai (Thailand)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-th_TH-tsync2-medium.onnx",
+          "sourceFilename": "th/th_TH/tsync2/medium/th_TH-tsync2-medium.onnx",
+          "size": 63221984,
+          "sha256": "136669378ee72dd27012604994099ca3c833e625c7cfdff05ccdf468a1a2115f"
+        },
+        {
+          "filename": "piper-th_TH-tsync2-medium.onnx.json",
+          "sourceFilename": "th/th_TH/tsync2/medium/th_TH-tsync2-medium.onnx.json",
+          "size": 5255,
+          "sha256": "212aff35b8beed828a5f2af33b3cfc7744f4fac3c3dc7e6a2f464692e8257bb7"
+        },
+        {
+          "filename": "piper-th_TH-tsync2-medium.modelcard",
+          "sourceFilename": "th/th_TH/tsync2/medium/MODEL_CARD",
+          "size": 467,
+          "sha256": "b980358b9a6055eff8006f12ee929e67882c4451eb8e9b2c34cf022fa025b4b2"
+        }
+      ]
+    },
+    {
+      "id": "tr_TR-dfki-medium",
+      "name": "dfki",
+      "language": "tr-TR",
+      "languageName": "Turkish (Turkey)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-tr_TR-dfki-medium.onnx",
+          "sourceFilename": "tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx",
+          "size": 63201294,
+          "sha256": "2844717f524ab965d3fe86e60562cbb601d3e456836efcc2196cc3a14112a8fb"
+        },
+        {
+          "filename": "piper-tr_TR-dfki-medium.onnx.json",
+          "sourceFilename": "tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx.json",
+          "size": 4960,
+          "sha256": "13ebd7810f1b61b5027583cf3131a0a233b6ea81c38f2200ebc4ff41c3cca039"
+        },
+        {
+          "filename": "piper-tr_TR-dfki-medium.modelcard",
+          "sourceFilename": "tr/tr_TR/dfki/medium/MODEL_CARD",
+          "size": 319,
+          "sha256": "a3e08c57b9c6d428f8e4fb146512c8b1fb96a68c99d43820ed1dfea6d39cb35f"
+        }
+      ]
+    },
+    {
+      "id": "uk_UA-lada-x_low",
+      "name": "lada",
+      "language": "uk-UA",
+      "languageName": "Ukrainian (Ukraine)",
+      "quality": "x_low",
+      "files": [
+        {
+          "filename": "piper-uk_UA-lada-x_low.onnx",
+          "sourceFilename": "uk/uk_UA/lada/x_low/uk_UA-lada-x_low.onnx",
+          "size": 20628813,
+          "sha256": "f8d015d3fc19ea6bd8ac3ca1fd0c0fbac5054c609599ee73799235fd2cf5c786"
+        },
+        {
+          "filename": "piper-uk_UA-lada-x_low.onnx.json",
+          "sourceFilename": "uk/uk_UA/lada/x_low/uk_UA-lada-x_low.onnx.json",
+          "size": 4186,
+          "sha256": "2df74b622e78930e8a62432d1cc8380f79f34f02c8c58ebd68e6ccbc857d80aa"
+        },
+        {
+          "filename": "piper-uk_UA-lada-x_low.modelcard",
+          "sourceFilename": "uk/uk_UA/lada/x_low/MODEL_CARD",
+          "size": 267,
+          "sha256": "e573364d00e4497e2aa96475d785887eb3ce901b3af9fda49f7f772c3cc5ff4a"
+        }
+      ]
+    },
+    {
+      "id": "uk_UA-mykyta-high",
+      "name": "mykyta",
+      "language": "uk-UA",
+      "languageName": "Ukrainian (Ukraine)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-uk_UA-mykyta-high.onnx",
+          "sourceFilename": "uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx",
+          "size": 114204024,
+          "sha256": "081d253cd246d7d4d698c6dd147b74cad498dafd213527887a3a490519138243"
+        },
+        {
+          "filename": "piper-uk_UA-mykyta-high.onnx.json",
+          "sourceFilename": "uk/uk_UA/mykyta/high/uk_UA-mykyta-high.onnx.json",
+          "size": 4904,
+          "sha256": "b5db6b4efb02d4a0e8f128253fd64e82dfa72d1105e9060b0c6fd9610eec6a4f"
+        },
+        {
+          "filename": "piper-uk_UA-mykyta-high.modelcard",
+          "sourceFilename": "uk/uk_UA/mykyta/high/MODEL_CARD",
+          "size": 292,
+          "sha256": "2fb2c84c0e89b91f3e69bdc94dedc07c60f2b95d51ae6e4245942c65d4c06b61"
+        }
+      ]
+    },
+    {
+      "id": "uk_UA-oleksa-high",
+      "name": "oleksa",
+      "language": "uk-UA",
+      "languageName": "Ukrainian (Ukraine)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-uk_UA-oleksa-high.onnx",
+          "sourceFilename": "uk/uk_UA/oleksa/high/uk_UA-oleksa-high.onnx",
+          "size": 114204024,
+          "sha256": "e5524d8d6b3685abd6daa616edae22c782b1eaa1541c0e5922183cf5f2d155b7"
+        },
+        {
+          "filename": "piper-uk_UA-oleksa-high.onnx.json",
+          "sourceFilename": "uk/uk_UA/oleksa/high/uk_UA-oleksa-high.onnx.json",
+          "size": 4904,
+          "sha256": "296374263ad11d2c6c187a9e4cedf72a5b7ba3ddfc438da5eb8bf32fda3ede42"
+        },
+        {
+          "filename": "piper-uk_UA-oleksa-high.modelcard",
+          "sourceFilename": "uk/uk_UA/oleksa/high/MODEL_CARD",
+          "size": 292,
+          "sha256": "38740dbed053f7e944332b06d47c0f231e174032a4beb973e0abae5be5649057"
+        }
+      ]
+    },
+    {
+      "id": "uk_UA-tetiana-high",
+      "name": "tetiana",
+      "language": "uk-UA",
+      "languageName": "Ukrainian (Ukraine)",
+      "quality": "high",
+      "files": [
+        {
+          "filename": "piper-uk_UA-tetiana-high.onnx",
+          "sourceFilename": "uk/uk_UA/tetiana/high/uk_UA-tetiana-high.onnx",
+          "size": 114204024,
+          "sha256": "1206d8447b99632badeb63d6132241f76cf551874e5254eb8836db36aed7c85c"
+        },
+        {
+          "filename": "piper-uk_UA-tetiana-high.onnx.json",
+          "sourceFilename": "uk/uk_UA/tetiana/high/uk_UA-tetiana-high.onnx.json",
+          "size": 4905,
+          "sha256": "c96a051028976afc74269f73470651384deb6872431f890cad3b6424d09e812b"
+        },
+        {
+          "filename": "piper-uk_UA-tetiana-high.modelcard",
+          "sourceFilename": "uk/uk_UA/tetiana/high/MODEL_CARD",
+          "size": 294,
+          "sha256": "78aa34be26a6b2bc087767f28d824831f1e8614dcbc92f2d80fd745011fffdcc"
+        }
+      ]
+    },
+    {
+      "id": "ur_PK-aegis_female-medium",
+      "name": "aegis_female",
+      "language": "ur-PK",
+      "languageName": "Urdu (Pakistan)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ur_PK-aegis_female-medium.onnx",
+          "sourceFilename": "ur/ur_PK/aegis_female/medium/ur_PK-aegis_female-medium.onnx",
+          "size": 63515589,
+          "sha256": "3ec306035cfd0bbc22342fee5890450708a16dd231809522731678aa583c961f"
+        },
+        {
+          "filename": "piper-ur_PK-aegis_female-medium.onnx.json",
+          "sourceFilename": "ur/ur_PK/aegis_female/medium/ur_PK-aegis_female-medium.onnx.json",
+          "size": 5236,
+          "sha256": "a8385c217a7e276acf5234bf01dbd0adb007a57c32ffbcc57d2db7eac3979bb6"
+        },
+        {
+          "filename": "piper-ur_PK-aegis_female-medium.modelcard",
+          "sourceFilename": "ur/ur_PK/aegis_female/medium/MODEL_CARD",
+          "size": 611,
+          "sha256": "f9f16fbcfeec2c233be21c734125d6c1ada7ac0037c6ffd7751065f566b53b6e"
+        }
+      ]
+    },
+    {
+      "id": "ur_PK-fasih-medium",
+      "name": "fasih",
+      "language": "ur-PK",
+      "languageName": "Urdu (Pakistan)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-ur_PK-fasih-medium.onnx",
+          "sourceFilename": "ur/ur_PK/fasih/medium/ur_PK-fasih-medium.onnx",
+          "size": 64832023,
+          "sha256": "dd90575d8729222b1a90b3fc7137118588f7e3c89c41e4b88dfc8e4194313522"
+        },
+        {
+          "filename": "piper-ur_PK-fasih-medium.onnx.json",
+          "sourceFilename": "ur/ur_PK/fasih/medium/ur_PK-fasih-medium.onnx.json",
+          "size": 3237,
+          "sha256": "05709bd87f1b619e4d359a7d731246d09686dc11c3adce23b09ea9faa4fd4a62"
+        },
+        {
+          "filename": "piper-ur_PK-fasih-medium.modelcard",
+          "sourceFilename": "ur/ur_PK/fasih/medium/MODEL_CARD",
+          "size": 3739,
+          "sha256": "566fe43bd32599cb26f691f2e6e52705020e692a1b76b963f058adb1fa248151"
+        }
+      ]
+    },
+    {
+      "id": "vi_VN-25hours_single-low",
+      "name": "25hours_single",
+      "language": "vi-VN",
+      "languageName": "Vietnamese (Vietnam)",
+      "quality": "low",
+      "files": [
+        {
+          "filename": "piper-vi_VN-25hours_single-low.onnx",
+          "sourceFilename": "vi/vi_VN/25hours_single/low/vi_VN-25hours_single-low.onnx",
+          "size": 63104526,
+          "sha256": "266945c4a80cb3301450c8ba6fcf6ba3542c56cf952a08a8ff3d2d4ff0ab5609"
+        },
+        {
+          "filename": "piper-vi_VN-25hours_single-low.onnx.json",
+          "sourceFilename": "vi/vi_VN/25hours_single/low/vi_VN-25hours_single-low.onnx.json",
+          "size": 4176,
+          "sha256": "344b5849f5bc585031a63b9cc75f96e2c469f3d98879d8d3acbc2fce6d470064"
+        },
+        {
+          "filename": "piper-vi_VN-25hours_single-low.modelcard",
+          "sourceFilename": "vi/vi_VN/25hours_single/low/MODEL_CARD",
+          "size": 343,
+          "sha256": "ff9abd90c4f33fb318ce2bfa97fa94abe36683216fe8f091c552e6d71ab4ec16"
+        }
+      ]
+    },
+    {
+      "id": "vi_VN-vais1000-medium",
+      "name": "vais1000",
+      "language": "vi-VN",
+      "languageName": "Vietnamese (Vietnam)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-vi_VN-vais1000-medium.onnx",
+          "sourceFilename": "vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx",
+          "size": 63201294,
+          "sha256": "ec7c89e2c85f4d1edc24b6120c18aaf1bda614f06b511567eb9c7c0de15e2dab"
+        },
+        {
+          "filename": "piper-vi_VN-vais1000-medium.onnx.json",
+          "sourceFilename": "vi/vi_VN/vais1000/medium/vi_VN-vais1000-medium.onnx.json",
+          "size": 4860,
+          "sha256": "fafb9da1354ed4b77c31af228ed41fb41cd825c14cffa105454b25e6ae751ee0"
+        },
+        {
+          "filename": "piper-vi_VN-vais1000-medium.modelcard",
+          "sourceFilename": "vi/vi_VN/vais1000/medium/MODEL_CARD",
+          "size": 361,
+          "sha256": "302db8a930ffc2b1c2181db26deaf8272116eca2b08b8f80da6375b0a994af7b"
+        }
+      ]
+    },
+    {
+      "id": "zh_CN-chaowen-medium",
+      "name": "chaowen",
+      "language": "zh-CN",
+      "languageName": "Chinese (China)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-zh_CN-chaowen-medium.onnx",
+          "sourceFilename": "zh/zh_CN/chaowen/medium/zh_CN-chaowen-medium.onnx",
+          "size": 63221984,
+          "sha256": "83a5268616ad0aa2d3e2b67158824b5e23b24e0973473ce28859c059457b824e"
+        },
+        {
+          "filename": "piper-zh_CN-chaowen-medium.onnx.json",
+          "sourceFilename": "zh/zh_CN/chaowen/medium/zh_CN-chaowen-medium.onnx.json",
+          "size": 3157,
+          "sha256": "57cf9bf947aa74a4e2ba41e5653b80564061c2f2d47525e8aa28c24817c19f75"
+        },
+        {
+          "filename": "piper-zh_CN-chaowen-medium.modelcard",
+          "sourceFilename": "zh/zh_CN/chaowen/medium/MODEL_CARD",
+          "size": 472,
+          "sha256": "4f9386b738601ccfdcca09ba34deef9b976e60930a010c7d5444716d3cfdb0ef"
+        }
+      ]
+    },
+    {
+      "id": "zh_CN-huayan-medium",
+      "name": "huayan",
+      "language": "zh-CN",
+      "languageName": "Chinese (China)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-zh_CN-huayan-medium.onnx",
+          "sourceFilename": "zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx",
+          "size": 63201294,
+          "sha256": "9929917bf8cabb26fd528ea44d3a6699c11e87317a14765312420be230be0f3d"
+        },
+        {
+          "filename": "piper-zh_CN-huayan-medium.onnx.json",
+          "sourceFilename": "zh/zh_CN/huayan/medium/zh_CN-huayan-medium.onnx.json",
+          "size": 4822,
+          "sha256": "d521dc45504a8ccc99e325822b35946dd701840bfb07e3dbb31a40929ed6a82b"
+        },
+        {
+          "filename": "piper-zh_CN-huayan-medium.modelcard",
+          "sourceFilename": "zh/zh_CN/huayan/medium/MODEL_CARD",
+          "size": 276,
+          "sha256": "25d7d8f7a03e9382e629c5c4f074176e7ca84e08be12a873022e91fcac98c2c7"
+        }
+      ]
+    },
+    {
+      "id": "zh_CN-xiao_ya-medium",
+      "name": "xiao_ya",
+      "language": "zh-CN",
+      "languageName": "Chinese (China)",
+      "quality": "medium",
+      "files": [
+        {
+          "filename": "piper-zh_CN-xiao_ya-medium.onnx",
+          "sourceFilename": "zh/zh_CN/xiao_ya/medium/zh_CN-xiao_ya-medium.onnx",
+          "size": 63221984,
+          "sha256": "cb2ce4ca1f5a36a7b23ae48f0651ce2c854c331ef7a804e5c5dc643d0f74f0e2"
+        },
+        {
+          "filename": "piper-zh_CN-xiao_ya-medium.onnx.json",
+          "sourceFilename": "zh/zh_CN/xiao_ya/medium/zh_CN-xiao_ya-medium.onnx.json",
+          "size": 2927,
+          "sha256": "e1ec027b7065959643c1463705398d413ed4fdaa626d7d8ef1d12ab87e9a0320"
+        },
+        {
+          "filename": "piper-zh_CN-xiao_ya-medium.modelcard",
+          "sourceFilename": "zh/zh_CN/xiao_ya/medium/MODEL_CARD",
+          "size": 434,
+          "sha256": "5720e170d3872dcea10803c77a4a6b4424a9af366431fdc5668adafd95e33f42"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+import { useState } from "react";
+import { Linking, ScrollView, View } from "react-native";
+import type { EnvironmentPresentation } from "../../state/environments";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ListActionRow } from "../../components/ui/ListActionRow";
+import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
+import { ListSection } from "../../components/ui/ListSection";
+import { Progress } from "../../components/ui/Progress";
+import { Sheet } from "../../components/ui/Sheet";
+import { formatBytes } from "../../lib/formatBytes";
+import { useSpeechVoiceCatalog } from "../voice-output/useSpeechVoiceCatalog";
+
+export function LocalSpeechVoices({ environment }: { environment: EnvironmentPresentation }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <ListActionRow
+        label="Local voice"
+        description={
+          environment.serverConfig?.settings.speechOutput.piperVoiceId ||
+          "Choose language and voice"
+        }
+        onPress={() => setOpen(true)}
+      />
+      {open ? <VoicePicker environment={environment} onClose={() => setOpen(false)} /> : null}
+    </>
+  );
+}
+
+function VoicePicker({
+  environment,
+  onClose,
+}: {
+  environment: EnvironmentPresentation;
+  onClose: () => void;
+}) {
+  const catalog = useSpeechVoiceCatalog(environment.environmentId);
+  const [choice, setChoice] = useState<{ language: string; voiceId: string } | null>(null);
+  const [choosingLanguage, setChoosingLanguage] = useState(false);
+  const languages = [
+    ...new Map(catalog.voices.map((voice) => [voice.language, voice.languageName])).entries(),
+  ].sort((a, b) => a[1].localeCompare(b[1]));
+  const active = catalog.voices.find((voice) => voice.active);
+  const language =
+    choice?.language ??
+    active?.language ??
+    languages.find(([code]) => code === Intl.DateTimeFormat().resolvedOptions().locale)?.[0] ??
+    languages[0]?.[0];
+  const options = catalog.voices.filter((voice) => voice.language === language);
+  const selected =
+    options.find((voice) => voice.id === choice?.voiceId) ??
+    options.find((voice) => voice.active) ??
+    options[0];
+  const disabled = !catalog.canManage || catalog.busy || catalog.downloading;
+  return (
+    <Sheet title={`Local voices · ${environment.label}`} onClose={onClose}>
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        contentContainerClassName="gap-3 p-4 pb-10"
+      >
+        <Text className="px-2 text-sm text-foreground-muted">
+          {active
+            ? `Selected: ${active.name} · ${active.languageName}.`
+            : "Download a voice to start listening."}{" "}
+          Voices are stored on this environment.
+        </Text>
+        {catalog.error ? (
+          <ListSection footer={catalog.error}>
+            <ListActionRow label="Try again" onPress={() => void catalog.refresh()} />
+          </ListSection>
+        ) : null}
+        {!catalog.connected ? (
+          <Text className="text-foreground-muted">
+            Connect to this environment to manage local voices.
+          </Text>
+        ) : null}
+        {catalog.loading ? <Text className="text-foreground-muted">Loading voices…</Text> : null}
+        {catalog.transfer ? (
+          <ListSection
+            title={`${catalog.transfer.state === "verifying" ? "Verifying" : "Downloading"} ${catalog.transfer.name}`}
+          >
+            <View className="p-4">
+              <Progress
+                label="Voice download progress"
+                value={(catalog.transfer.downloaded ?? 0) / catalog.transfer.size}
+              />
+              <Text className="mt-2 text-sm text-foreground-muted">
+                {formatBytes(catalog.transfer.downloaded ?? 0)} /{" "}
+                {formatBytes(catalog.transfer.size)}
+              </Text>
+            </View>
+            <ListActionRow
+              label="Cancel download"
+              disabled={
+                !catalog.canManage ||
+                catalog.busy ||
+                !["downloading", "verifying"].includes(catalog.transfer.state)
+              }
+              onPress={() => void catalog.run(catalog.transfer!.id, "cancel")}
+            />
+          </ListSection>
+        ) : null}
+        {selected ? (
+          <>
+            <ListSection title="Language">
+              <ListActionRow
+                label={languages.find(([code]) => code === language)?.[1] ?? "Choose language"}
+                onPress={() => setChoosingLanguage(!choosingLanguage)}
+              />
+              {choosingLanguage
+                ? languages.map(([code, name]) => (
+                    <ListChoiceRow
+                      key={code}
+                      label={name}
+                      selected={language === code}
+                      separated
+                      onPress={() => {
+                        setChoice({ language: code, voiceId: "" });
+                        setChoosingLanguage(false);
+                      }}
+                    />
+                  ))
+                : null}
+            </ListSection>
+            <ListSection title="Voice">
+              {options.map((voice) => (
+                <ListChoiceRow
+                  key={voice.id}
+                  label={voice.name}
+                  description={`${voice.quality} · ${formatBytes(voice.size)}${voice.state === "installed" ? " · Installed" : ""}`}
+                  selected={selected.id === voice.id}
+                  separated
+                  onPress={() => setChoice({ language: voice.language, voiceId: voice.id })}
+                />
+              ))}
+            </ListSection>
+            <ListSection>
+              {selected.state === "installed" ? (
+                <>
+                  <ListActionRow
+                    label={selected.active ? "Selected" : "Use voice"}
+                    disabled={disabled || selected.active}
+                    onPress={() => void catalog.run(selected.id, "select")}
+                  />
+                  <ListActionRow
+                    label="Remove voice"
+                    tone="danger"
+                    disabled={disabled}
+                    onPress={() => void catalog.run(selected.id, "remove")}
+                  />
+                </>
+              ) : (
+                <ListActionRow
+                  label="Download & use voice"
+                  disabled={disabled}
+                  loading={Boolean(catalog.transfer?.id === selected.id)}
+                  onPress={() => void catalog.run(selected.id, "download")}
+                />
+              )}
+              <ListActionRow
+                label="Voice license"
+                onPress={() => void Linking.openURL(selected.modelCardUrl)}
+              />
+            </ListSection>
+          </>
+        ) : null}
+      </ScrollView>
+    </Sheet>
+  );
+}

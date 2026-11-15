@@ -1,3 +1,4 @@
+import { SpeechOutputSettings } from "./SpeechOutputSettings";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -1286,6 +1287,7 @@ export function VoiceSettingsPanel() {
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
       }}
     >
+      <SpeechOutputSettings />
       <SettingsSection id="voice-input" title="Input">
         <SettingsRow
           {...searchableSetting("voice-microphone")}

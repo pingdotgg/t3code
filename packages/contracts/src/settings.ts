@@ -62,6 +62,8 @@ import {
   SpeechLanguage,
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
+  SpeechOutputSettings,
+  DEFAULT_SPEECH_OUTPUT_SETTINGS,
 } from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -1392,6 +1394,9 @@ export const ServerSettings = Schema.Struct({
   cloudSpeechCredentials: CloudSpeechCredentials.pipe(
     Schema.withDecodingDefault(Effect.succeed({ openai: "", xai: "", openrouter: "" })),
   ),
+  speechOutput: SpeechOutputSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPEECH_OUTPUT_SETTINGS)),
+  ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
@@ -1854,6 +1859,7 @@ export const ServerSettingsPatch = Schema.Struct({
       openrouter: Schema.optionalKey(SettingsSecretValue),
     }),
   ),
+  speechOutput: Schema.optionalKey(SpeechOutputSettings),
   speechModelId: Schema.optionalKey(Schema.String),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),

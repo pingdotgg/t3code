@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SPEECH_OUTPUT_SETTINGS,
   globalIdleCompaction,
   type ManagedPolicyDocument,
   ModelSelection,
@@ -177,6 +178,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const fs = yield* FileSystem.FileSystem;
         const provider = ProviderInstanceId.make("codex_work");
         const patch = {
+          speechOutput: { ...DEFAULT_SPEECH_OUTPUT_SETTINGS, piperVoiceId: "pt_BR-faber-medium" },
           favorites: [{ provider, model: "sol" }],
           providerModelPreferences: {
             [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
@@ -191,6 +193,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           yield* fs.readFileString(config.settingsPath),
         );
         assert.deepEqual(saved.favorites, patch.favorites);
+        assert.deepEqual(saved.speechOutput, patch.speechOutput);
         assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
         const hidden = yield* service.updateSettings({
           setModelsHidden: [{ provider, model: "sol", hidden: true }],

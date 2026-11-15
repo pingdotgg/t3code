@@ -1,3 +1,4 @@
+import { setVoiceRecordingActive } from "./voiceOutput";
 import type {
   PreparedVoiceTranscription,
   VoiceRecorder,
@@ -33,6 +34,7 @@ export function createBrowserPcmCapture(
     | undefined;
 
   const cleanupCapture = () => {
+    setVoiceRecordingActive(false);
     if (durationTimer) clearTimeout(durationTimer);
     durationTimer = undefined;
     worklet?.disconnect();
@@ -128,6 +130,7 @@ export function createBrowserPcmCapture(
       }
     },
     record: ({ forDuration }) => {
+      setVoiceRecordingActive(true);
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- AudioWorklet MessagePorts do not accept a target origin
       worklet?.port.postMessage("start");
       durationTimer = setTimeout(input.onDurationLimit, forDuration * 1_000);
