@@ -442,16 +442,17 @@ private final class T3ImageViewerNavigation: UINavigationController {
     modalPresentationCapturesStatusBarAppearance = true
     overrideUserInterfaceStyle = .dark
     view.backgroundColor = .clear
-    let bar = UINavigationBarAppearance()
-    bar.configureWithDefaultBackground()
-    navigationBar.standardAppearance = bar
-    navigationBar.compactAppearance = bar
-    navigationBar.scrollEdgeAppearance = bar
-    let tools = UIToolbarAppearance()
-    tools.configureWithDefaultBackground()
-    toolbar.standardAppearance = tools
-    toolbar.compactAppearance = tools
-    toolbar.scrollEdgeAppearance = tools
+    if #unavailable(iOS 26.0) {
+      // Before iOS 26 bars at the scroll edge are transparent; iOS 26 gives them its edge blur instead.
+      let bar = UINavigationBarAppearance()
+      bar.configureWithDefaultBackground()
+      navigationBar.scrollEdgeAppearance = bar
+      navigationBar.compactScrollEdgeAppearance = bar
+      let tools = UIToolbarAppearance()
+      tools.configureWithDefaultBackground()
+      toolbar.scrollEdgeAppearance = tools
+      toolbar.compactScrollEdgeAppearance = tools
+    }
     setNavigationBarHidden(true, animated: false)
     setToolbarHidden(true, animated: false)
   }
