@@ -41,6 +41,7 @@ import { environmentThreadDetails } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { timelineGapDevApi } from "./TimelineGapRecorder";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../../lib/workspaceFocus";
 import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
@@ -968,6 +969,45 @@ describe("MessagesTimeline messages", () => {
     await expectHeadingInView("First turn", "Turn 1:");
     expect(headingFor("Last turn")).toBeDefined();
     await expectHeadingInView("Last turn", "Turn 118:");
+  });
+
+  it("reports missing slots even when no buffered rows remain mounted", async () => {
+    setup();
+    const props = baseProps();
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      message(`Turn ${index}:\n\n${"x ".repeat(200)}`, {}, `gap-${index}`),
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+    );
+    const snapshot = () =>
+      timelineGapDevApi.checkGapsNow().find((report) => report.threadKey === props.routeThreadKey)!;
+    await vi.waitFor(() => expect(screen.text()).toContain("Turn 119:"));
+    const state = props.listRef.current!.getState();
+    const slots = Array.from({ length: state.endBuffered - state.startBuffered + 1 }, (_, i) => {
+      const index = state.startBuffered + i;
+      const slot = state.elementAtIndex(index)!;
+      return { index, slot, parent: slot.parentNode!, next: slot.nextSibling };
+    });
+    expect(snapshot().findings).toEqual([]);
+    try {
+      for (const { slot } of slots) slot.remove();
+      const report = snapshot();
+      expect(report.rows).toEqual([]);
+      expect(report.findings!.filter((finding) => finding.type === "missing-slot")).toHaveLength(
+        slots.length,
+      );
+      expect(report.missingRows!.map((row) => row.index)).toEqual(slots.map(({ index }) => index));
+      expect(report.missingRows![0]).toMatchObject({
+        reason: "no slot mounted for a row in range",
+        inBufferedRange: true,
+        key: state.data[state.startBuffered].id,
+      });
+      expect(report.slots!.some((slot) => slot.key === state.data[0].id)).toBe(true);
+    } finally {
+      for (const { slot, parent, next } of slots.toReversed()) parent.insertBefore(slot, next);
+    }
+    expect(snapshot().findings).toEqual([]);
   });
 
   it("scrolls from the keyboard once F6 moves into the conversation", async () => {
