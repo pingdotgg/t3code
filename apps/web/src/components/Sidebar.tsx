@@ -942,13 +942,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reportFailure: false,
   });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
-    onCopy: ({ path }) => {
-      toastManager.add({
-        type: "success",
-        title: "Path copied",
-        description: path,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -961,13 +954,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const { copyToClipboard: copyBranchToClipboard } = useCopyToClipboard<{ branch: string }>({
     target: "branch name",
-    onCopy: ({ branch }) => {
-      toastManager.add({
-        type: "success",
-        title: "Branch copied",
-        description: branch,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -979,13 +965,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   });
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onCopy: ({ threadId }) => {
-      toastManager.add({
-        type: "success",
-        title: "Thread ID copied",
-        description: threadId,
-      });
-    },
     onError: (error) => {
       toastManager.add(
         stackedThreadToast({
@@ -1545,12 +1524,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
   };
 
-  const startThreadRename = (threadRef: ScopedThreadRef, title: string) => {
+  // The ref write stops the compiler memoizing this, and every row receives it.
+  const startThreadRename = useStableCallback((threadRef: ScopedThreadRef, title: string) => {
     if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
     setRenamingThreadRef(threadRef);
     setRenamingTitle(title);
     renamingOriginalTitleRef.current = title;
-  };
+  });
   const cancelThreadRename = () => setRenamingThreadRef(null);
   const commitThreadRename = (threadRef: ScopedThreadRef, title: string) => {
     const originalTitle = renamingOriginalTitleRef.current;
@@ -1580,6 +1560,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
 
+  const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
   const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
     if (isSidebarNestedLinkClick(event.target)) return;
     const isMac = isMacPlatform(navigator.platform);
@@ -1782,7 +1763,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
-    const contextDrag = pointerOutsideThreadList(point);
+    // Search results cannot reorder, so their context preview starts inside the list.
+    const contextDrag = searchResultsListRef.current !== null || pointerOutsideThreadList(point);
     setDragState((current) =>
       current === null || current.contextDrag === contextDrag
         ? current
@@ -3441,7 +3423,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               routeRowThreadKey === threadKey ? revealActiveRow : undefined
                             }
                             isRouteThread={routeThreadKey === threadKey}
-                            openPullRequestsInRightPanel={routeThreadRef !== null}
+                            readOpensPullRequestsInRightPanel={readOpensPullRequestsInRightPanel}
                             jumpLabel={
                               showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
                             }

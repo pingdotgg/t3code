@@ -224,6 +224,9 @@ export class PullRequestService extends Context.Service<
       input: PullRequestReportStateInput,
     ) => Effect.Effect<void, PullRequestError>;
     readonly subscribeRefreshes: Stream.Stream<number>;
+    readonly subscribeLinkedThreadRefreshes: Stream.Stream<number>;
+    /** Wakes linked-thread readers only; other pull request reads don't depend on thread links. */
+    readonly notifyLinkedThreadsChanged: Effect.Effect<void>;
     readonly refreshAfterTurn: (
       projectId: ProjectId,
       options?: { readonly pushed?: boolean },
@@ -738,6 +741,7 @@ export const make = Effect.gen(function* () {
   const mergedPullRequests = yield* PubSub.sliding<PullRequestMergeEvent>(64);
   const stateChanges = yield* PubSub.sliding<ThreadPullRequestKey>(64);
   const pullRequestRefreshes = yield* SubscriptionRef.make(0);
+  const linkedThreadRefreshes = yield* SubscriptionRef.make(0);
   const registry = yield* PullRequestProviderRegistry.PullRequestProviderRegistry;
   const requirementOf: UnavailableRequirementOf = (kind) =>
     registry.get(kind)?.unavailableRequirement;
@@ -1305,6 +1309,9 @@ export const make = Effect.gen(function* () {
       state: input.item.state,
       isDraft: input.item.isDraft,
       mergeability: input.item.mergeability,
+      ...(input.item.rebaseRequired === undefined
+        ? {}
+        : { rebaseRequired: input.item.rebaseRequired }),
       additions: input.item.additions,
       deletions: input.item.deletions,
       createdAt: input.item.createdAt,
@@ -1546,7 +1553,18 @@ export const make = Effect.gen(function* () {
         filters: input.filters,
         ...(cursor === undefined
           ? {}
-          : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
+          : {
+              cursor: {
+                updatedBefore: cursor.updatedBefore,
+                delivered: cursor.delivered,
+                seenAt: chunk.flatMap((project) =>
+                  (cursorOf(project)?.seenAt ?? []).map((number) => ({
+                    repository: project.repository,
+                    number,
+                  })),
+                ),
+              },
+            }),
       }).pipe(
         observeRead,
         Effect.flatMap(({ value: page, observedAt }) => {
@@ -1777,6 +1795,9 @@ export const make = Effect.gen(function* () {
     ...(changeRequest.mergeability === undefined
       ? {}
       : { mergeability: changeRequest.mergeability }),
+    ...(changeRequest.rebaseRequired === undefined
+      ? {}
+      : { rebaseRequired: changeRequest.rebaseRequired }),
     ...(changeRequest.stack === undefined ? {} : { stack: changeRequest.stack }),
     ...(changeRequest.headSha?.trim() ? { headSha: changeRequest.headSha.trim() } : {}),
     ...(changeRequest.autoMergeEnabled === undefined
@@ -1876,6 +1897,9 @@ export const make = Effect.gen(function* () {
             state: changeRequest.state,
             isDraft: changeRequest.isDraft,
             mergeability: changeRequest.mergeability,
+            ...(changeRequest.rebaseRequired === undefined
+              ? {}
+              : { rebaseRequired: changeRequest.rebaseRequired }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
@@ -2081,7 +2105,14 @@ export const make = Effect.gen(function* () {
           // Deliberately not `invalidatedByMutation`: ticking a file off says nothing about the
           // change request, and dropping a 300-file diff on every checkbox is the whole cost of
           // the feature.
-          Effect.ensuring(Effect.sync(() => bumpFilesViewedEpoch(ref))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              bumpFilesViewedEpoch(ref);
+              if (input.files.some((file) => file.viewed && file.revision !== undefined)) {
+                bumpEpoch(fileRevisionEpochs, ref);
+              }
+            }),
+          ),
         ),
       ),
     );
@@ -2997,6 +3028,7 @@ export const make = Effect.gen(function* () {
   const filesViewedEpoch = (ref: PullRequestRef) => filesViewedEpochs.get(refScope(ref)) ?? 0;
   const bumpFilesViewedEpoch = (ref: PullRequestRef) => bumpEpoch(filesViewedEpochs, ref);
 
+  const fileRevisionEpochs = new Map<string, number>();
   let everyFileRevisionEpoch = 0;
   const viewedFiles = ViewedFiles.make({
     filesViewedStore,
@@ -3005,7 +3037,8 @@ export const make = Effect.gen(function* () {
     toPullRequestError,
     runFork,
     refEpoch,
-    fileRevisionsEpoch: () => everyFileRevisionEpoch,
+    fileRevisionsEpoch: (ref) =>
+      `${everyFileRevisionEpoch}:${fileRevisionEpochs.get(refScope(ref)) ?? 0}`,
   });
 
   const filtersOfKey = (
@@ -3252,9 +3285,11 @@ export const make = Effect.gen(function* () {
       return detailUncached(refOfCacheKey(key)).pipe(
         Effect.tap(
           Effect.fn("PullRequestService.recordDetailStats")(function* (value: PullRequestDetail) {
-            // GitHub detail includes the same checks; the checks TTL counts from their observation.
+            // GitHub and Azure detail include the same checks; the checks TTL counts from their observation.
+            // Azure detail answers a failed policy read with no checks, which must not be cached.
             if (
-              value.provider === "github" &&
+              (value.provider === "github" ||
+                (value.provider === "azure-devops" && value.checks.length > 0)) &&
               value.observedAt !== undefined &&
               !(yield* Cache.has(checksCache, key))
             ) {
@@ -3304,6 +3339,7 @@ export const make = Effect.gen(function* () {
     deletions: detail.deletions,
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
+    ...(detail.rebaseRequired === undefined ? {} : { rebaseRequired: detail.rebaseRequired }),
     headBranch: detail.headBranch,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,
@@ -3687,6 +3723,11 @@ export const make = Effect.gen(function* () {
     yield* SubscriptionRef.set(pullRequestRefreshes, epoch);
   });
 
+  const notifyLinkedThreadsChanged = SubscriptionRef.update(
+    linkedThreadRefreshes,
+    (revision) => revision + 1,
+  );
+
   const invalidatedByMutation =
     <I extends PullRequestRef>(
       method: (input: I) => Effect.Effect<void, PullRequestError>,
@@ -3886,6 +3927,10 @@ export const make = Effect.gen(function* () {
     subscribeRefreshes: SubscriptionRef.changes(pullRequestRefreshes).pipe(
       Stream.filter((revision) => revision > 0),
     ),
+    subscribeLinkedThreadRefreshes: SubscriptionRef.changes(linkedThreadRefreshes).pipe(
+      Stream.filter((revision) => revision > 0),
+    ),
+    notifyLinkedThreadsChanged,
     refreshAfterTurn,
     detail: credentialCached(detail),
     checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),

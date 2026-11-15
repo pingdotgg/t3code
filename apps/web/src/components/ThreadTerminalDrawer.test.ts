@@ -73,8 +73,10 @@ it("retains visible output and selection until a replacement subscription receiv
     threadId: "thread",
     terminalId: "term-1",
   });
+  terminal.resetAndWrite.mockClear();
   synchronizeTerminalOutput(terminal, cleared, observedCursor);
-  expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
+  expect(terminal.resetAndWrite).not.toHaveBeenCalled();
+  expect(terminal.write).toHaveBeenLastCalledWith("\u001b[H\u001b[2J\u001b[3J");
 });
 
 it("reports an attach failure that leaves the output unchanged", () => {

@@ -78,7 +78,6 @@ function Attachment({ className, ...props }: ComponentProps<"div">) {
       className={cn(
         "mx-auto -mb-[calc(1rem+1px)] w-[calc(100%-2*var(--chat-composer-drawer-inset))]",
         "[&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:rounded-none [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:before:border-t-0 [&+[data-slot=composer-banner-attachment]_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
-        "[&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:rounded-none [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:before:border-t-0 [&+*_[data-chat-composer-form]>[data-slot=composer-banner-attachment]:first-child_[data-composer-banner-surface=attached]]:[--composer-banner-corner-top:var(--control-radius)]",
         className,
       )}
       {...props}

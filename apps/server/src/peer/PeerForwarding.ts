@@ -25,14 +25,9 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
-/**
- * A peer's `/mcp` holds a wait open for its whole timeout without sending
- * anything, and T3 Connect's edge drops a request idle for about 100 s, so a
- * forwarded wait goes out in pieces no longer than this.
- */
-export const FORWARDED_WAIT_CHUNK_MS = 50_000;
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
-const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
+// Match local waits: return before MCP client timeouts and T3 Connect's ~100 s idle drop.
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+const MAX_WAIT_TIMEOUT_MS = 45_000;
 
 type Scope = McpInvocationContext.McpInvocationScope;
 
@@ -67,7 +62,7 @@ export class PeerForwarding extends Context.Service<
       environmentId: EnvironmentId,
       input: OrchestratorMcpThreadInterruptInput,
     ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
-    /** `t3_thread_wait` there, in pieces short enough to survive any route. */
+    /** `t3_thread_wait` there, bounded like a local wait. */
     readonly waitForThread: (
       scope: Scope,
       environmentId: EnvironmentId,
@@ -188,37 +183,21 @@ const make = Effect.gen(function* () {
       input,
     );
 
-  const waitForThread: PeerForwarding["Service"]["waitForThread"] = Effect.fn(
-    "PeerForwarding.waitForThread",
-  )(function* (scope, environmentId, input) {
-    let remaining = Math.min(
-      MAX_WAIT_TIMEOUT_MS,
-      Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+  const waitForThread: PeerForwarding["Service"]["waitForThread"] = (scope, environmentId, input) =>
+    forward<OrchestratorMcpThreadWaitResult>(
+      scope,
+      "t3_thread_wait",
+      OrchestratorMcpThreadWaitInput,
+      OrchestratorMcpThreadWaitResult,
+      environmentId,
+      {
+        ...input,
+        timeoutMs: Math.min(
+          MAX_WAIT_TIMEOUT_MS,
+          Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+        ),
+      },
     );
-    let runId = input.runId;
-    while (true) {
-      const chunk = Math.min(remaining, FORWARDED_WAIT_CHUNK_MS);
-      const result = yield* forward<OrchestratorMcpThreadWaitResult>(
-        scope,
-        "t3_thread_wait",
-        OrchestratorMcpThreadWaitInput,
-        OrchestratorMcpThreadWaitResult,
-        environmentId,
-        {
-          threadId: input.threadId,
-          ...(runId === undefined ? {} : { runId }),
-          timeoutMs: chunk,
-          ...(input.untilDelegatedWorkSettled === undefined
-            ? {}
-            : { untilDelegatedWorkSettled: input.untilDelegatedWorkSettled }),
-        },
-      );
-      remaining -= chunk;
-      if (!result.timedOut || remaining <= 0) return result;
-      // Later pieces wait for the run the first one picked, not a newer one.
-      runId = result.runId ?? undefined;
-    }
-  });
 
   // While the beta is off, agents start nothing over links. Tasks already running there keep
   // following through readThread, waitForThread and interruptThread, so they still finish.

@@ -54,7 +54,13 @@ export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 
-export const PullRequestMergeMethod = Schema.Literals(["merge", "squash", "rebase"]);
+/** `fast-forward` refuses unless the head contains the base, where `rebase` rewrites the branch onto it. */
+export const PullRequestMergeMethod = Schema.Literals([
+  "merge",
+  "squash",
+  "rebase",
+  "fast-forward",
+]);
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type;
 
 export const PullRequestAction = Schema.Literals([
@@ -335,6 +341,8 @@ export const PullRequestMergeCapabilities = Schema.Struct({
   merge: Schema.Boolean,
   squash: Schema.Boolean,
   rebase: Schema.Boolean,
+  /** Optional so servers that predate it still decode; absent means not allowed. */
+  "fast-forward": Schema.optional(Schema.Boolean),
 });
 export type PullRequestMergeCapabilities = typeof PullRequestMergeCapabilities.Type;
 
@@ -362,6 +370,7 @@ export const PullRequestListEntry = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Zero until fetched through `PullRequestListStatsInput`; GitHub listings omit counts. */
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
@@ -520,6 +529,7 @@ export const PullRequestSummary = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  rebaseRequired: Schema.optional(Schema.Boolean),
   /** Null when the host says the pull request is in no stack; absent when the read did not ask. */
   stack: Schema.optional(Schema.NullOr(PullRequestStackMembership)),
   headSha: Schema.optional(TrimmedNonEmptyString),
@@ -643,6 +653,7 @@ export const PullRequestDetail = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
+  rebaseRequired: Schema.optional(Schema.Boolean),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,

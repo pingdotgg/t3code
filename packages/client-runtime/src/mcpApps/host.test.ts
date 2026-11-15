@@ -387,5 +387,24 @@ describe("makeMcpAppHost", () => {
     expect(sent.find((m) => m.id === 2)?.result).toEqual({});
     expect(sent.find((m) => m.id === 3)?.result).toEqual({ isError: true });
     expect(sent.find((m) => m.id === 4)?.error).toMatchObject({ code: -32602 });
+
+    const unnamedUris = [
+      "https://example.invalid/report.csv?version=2",
+      "https://example.invalid/report.csv#page=2",
+      "https://example.invalid/report.csv?next=/noise.json#page=3",
+    ];
+    for (const [index, uri] of unnamedUris.entries()) {
+      const id = `download-${index}`;
+      const downloadIndex = downloads.length;
+      host.receive({
+        jsonrpc: "2.0",
+        id,
+        method: "ui/download-file",
+        params: { contents: [{ ...embedded, resource: { ...embedded.resource, uri } }] },
+      });
+      await flush();
+      expect(downloads[downloadIndex]?.[0]).toMatchObject({ _tag: "embedded", name: "report.csv" });
+      expect(sent.find((m) => m.id === id)?.result).toEqual({});
+    }
   });
 });

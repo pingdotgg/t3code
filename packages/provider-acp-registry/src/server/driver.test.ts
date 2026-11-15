@@ -271,6 +271,44 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(afterOpus.find((model) => model.slug === "opus")).toMatchObject({
       capabilities: { optionDescriptors: [{ id: "thinking" }, { id: "mode" }] },
     });
+
+    // Other models take the levels they advertise in `_meta`.
+    const effort = {
+      id: "effort",
+      name: "Effort",
+      category: "thought_level",
+      type: "select" as const,
+      currentValue: "high",
+      options: [{ value: "high", name: "High" }],
+    };
+    const advertised = applyAcpRegistryLiveConfiguration(
+      provider,
+      normalizeAcpRegistryLiveConfiguration([effort], undefined, {
+        currentModelId: "opus",
+        availableModels: [
+          { modelId: "opus", name: "Opus" },
+          {
+            modelId: "haiku",
+            name: "Haiku",
+            _meta: { reasoningEfforts: [{ value: "low", label: "Low" }], reasoningEffort: "low" },
+          },
+          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
+        ],
+      }),
+      [],
+    ).models.map((model) => model.capabilities?.optionDescriptors ?? []);
+    expect(advertised).toEqual([
+      [{ ...liveOptions[0]!, role: "reasoning" }],
+      [
+        {
+          ...liveOptions[0]!,
+          role: "reasoning",
+          options: [{ id: "low", label: "Low" }],
+          currentValue: "low",
+        },
+      ],
+      [],
+    ]);
   });
 
   it("projects discovery without claiming authentication when no login methods are advertised", () => {

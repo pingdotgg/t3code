@@ -125,7 +125,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("checks for newer releases after an update has been downloaded", () => {
+  it.effect("re-checks an offered update without announcing it again", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -138,14 +138,23 @@ describe("DesktopUpdates", () => {
           releaseNotes: "## What's changed\n- fix: queued update",
         });
         yield* flushCallbacks;
+        const offeredStates = harness.sentStates.length;
+
+        yield* updates.check("poll");
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, offeredStates);
+
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
+        const downloadedStates = harness.sentStates.length;
 
         const result = yield* updates.check("poll");
         assert.isTrue(result.checked);
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, downloadedStates);
 
         const unchangedState = yield* updates.getState;
         assert.equal(unchangedState.status, "downloaded");
@@ -267,15 +276,26 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect(
-    "rejects install while a refresh check is in progress and releases the reservation",
-    () =>
+  it.effect.each([
+    { action: "download", offer: "update-available", found: null, accepted: true },
+    { action: "install", offer: "update-downloaded", found: null, accepted: true },
+    { action: "download", offer: "update-available", found: "1.2.5", accepted: true },
+    { action: "install", offer: "update-downloaded", found: "1.2.5", accepted: false },
+  ] as const)(
+    "a $action waiting out a refresh check acts on what it found ($found)",
+    ({ action, offer, found, accepted }) =>
       Effect.gen(function* () {
         const checkStarted = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const harness = makeHarness({
           checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseCheck)),
+            // electron-updater emits the check's outcome before its promise resolves.
+            Effect.andThen(
+              Effect.sync(() => {
+                if (found !== null) harness.emit("update-available", { version: found });
+              }),
+            ),
           ),
         });
 
@@ -283,22 +303,20 @@ describe("DesktopUpdates", () => {
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
-            harness.emit("update-downloaded", { version: "1.2.4" });
+            harness.emit(offer, { version: "1.2.4" });
             yield* flushCallbacks;
 
-            const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+            const checkFiber = yield* updates.check("poll").pipe(Effect.forkScoped);
             yield* Deferred.await(checkStarted);
-
-            const installResult = yield* updates.install;
-            assert.isFalse(installResult.accepted);
+            const actionFiber = yield* updates[action].pipe(Effect.forkScoped);
+            yield* flushCallbacks;
 
             yield* Deferred.succeed(releaseCheck, undefined);
-            const checkResult = yield* Fiber.join(checkFiber);
-            assert.isTrue(checkResult.checked);
-
-            const followUpCheck = yield* updates.check("manual");
-            assert.isTrue(followUpCheck.checked);
-            assert.equal(harness.checkCount(), 2);
+            assert.isTrue((yield* Fiber.join(checkFiber)).checked);
+            assert.equal((yield* Fiber.join(actionFiber)).accepted, accepted);
+            const state = yield* updates.getState;
+            assert.equal(state.availableVersion, found ?? "1.2.4");
+            if (action === "download") assert.equal(state.status, "downloading");
           }),
         ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
       }),
@@ -544,14 +562,17 @@ describe("DesktopUpdates", () => {
 
   it.effect("marks the backend stop for an install as an update restart", () => {
     let markersAtStop: ReadonlyArray<string> = [];
+    let inProgressAtStop: string | undefined;
     const harness = makeHarness({
       stopBackend: Effect.sync(() => {
         markersAtStop = [...harness.updateRestartMarkers];
+        inProgressAtStop = harness.updateInProgressMarker();
       }),
     });
 
     return Effect.scoped(
       Effect.gen(function* () {
+        yield* TestClock.setTime(1_000);
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
@@ -562,6 +583,12 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(markersAtStop, [
           environment.path.join(environment.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE),
         ]);
+        // SSH launchers wait on this until the replacement backend publishes its runtime.
+        assert.deepEqual(JSON.parse(inProgressAtStop ?? "null"), {
+          startedAt: 1_000,
+          expiresAt: 61_000,
+        });
+        assert.isDefined(harness.updateInProgressMarker());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -644,9 +671,11 @@ describe("DesktopUpdates", () => {
           const installFiber = yield* updates.install.pipe(Effect.forkScoped);
           yield* Deferred.await(stopping);
           assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.isDefined(harness.updateInProgressMarker());
 
           yield* Fiber.interrupt(installFiber);
           assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.isUndefined(harness.updateInProgressMarker());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -681,6 +710,7 @@ describe("DesktopUpdates", () => {
           "startBackend",
         ]);
         assert.equal(harness.updateRestartMarkers.size, 0);
+        assert.isUndefined(harness.updateInProgressMarker());
         assert.equal(harness.installRecords.size, 0);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));

@@ -1,6 +1,7 @@
 import {
   CommandId,
   type OrchestrationProjectShell,
+  type PullRequestState,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadPullRequestLink,
@@ -72,18 +73,39 @@ function entryOf(
   };
 }
 
+const PULL_REQUEST_LIST_PAGE_SIZE = 50;
+
+// A total order that survives unlinking: the cursor names a position, not an index, so removing
+// PRs already returned cannot skip later ones. PRs linked in one call share `linkedAt`.
+function pullRequestListPosition(link: ThreadPullRequestLink): string {
+  return [link.linkedAt, link.host, link.repository, String(link.number).padStart(10, "0")].join(
+    " ",
+  );
+}
+
 export function listThreadPullRequests(
   thread: Pick<OrchestrationV2ThreadShell, "pullRequests">,
+  cursor?: string,
+  states?: ReadonlyArray<PullRequestState>,
 ): ListThreadPullRequestsResult {
   const chains = resolveThreadPullRequestChains(thread.pullRequests ?? []);
+  const after = visibleThreadPullRequests(thread.pullRequests ?? [])
+    .filter((link) => states === undefined || states.includes(link.snapshot?.state ?? "open"))
+    .map((link) => ({ link, position: pullRequestListPosition(link) }))
+    .filter(({ position }) => cursor === undefined || position > cursor)
+    .toSorted((left, right) => (left.position < right.position ? -1 : 1));
+  const page = after.slice(0, PULL_REQUEST_LIST_PAGE_SIZE);
+  const pageKeys = new Set(page.map(({ link }) => threadPullRequestKeyOf(link)));
   return {
-    pullRequests: visibleThreadPullRequests(thread.pullRequests ?? []).map((link) =>
-      entryOf(link, chains),
-    ),
-    chains: chains.map((chain) => ({
-      kind: chain.kind,
-      numbers: chain.layers.map((layer) => layer.number),
-    })),
+    pullRequests: page.map(({ link }) => entryOf(link, chains)),
+    // Stacks with a pull request on this page, whole.
+    chains: chains
+      .filter((chain) => chain.layers.some((layer) => pageKeys.has(threadPullRequestKeyOf(layer))))
+      .map((chain) => ({
+        kind: chain.kind,
+        numbers: chain.layers.map((layer) => layer.number),
+      })),
+    nextCursor: after.length > page.length ? page.at(-1)!.position : null,
   };
 }
 
@@ -407,7 +429,7 @@ const make = Effect.gen(function* () {
     ),
     list_thread_pull_requests: McpToolAccess.reads((input) =>
       requireThread(PullRequestListFailedError, input.threadId).pipe(
-        Effect.map(listThreadPullRequests),
+        Effect.map((thread) => listThreadPullRequests(thread, input.cursor, input.states)),
       ),
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),

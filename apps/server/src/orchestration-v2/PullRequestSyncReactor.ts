@@ -42,8 +42,8 @@ const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 // Every server polls every open linked pull request, and most of them sit untouched for days.
 // One nobody has updated for QUIET_AFTER_MS is read on the quiet cadence instead of each sweep;
 // requested refreshes, watches and a host CLI's merge command still read it at once.
-const QUIET_AFTER_MS = 30 * 60 * 1_000;
-const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
+export const QUIET_AFTER_MS = 30 * 60 * 1_000;
+export const QUIET_SYNC_INTERVAL_MS = 5 * 60 * 1_000;
 // A pull request closed this long ago is rarely reopened, so the sweep stops reading it, as it
 // does merged ones. A reader that sees it open, or a requested refresh, still reads it at once.
 const CLOSED_FINAL_AFTER_MS = 24 * 60 * 60 * 1_000;
@@ -72,6 +72,11 @@ const CREATE_COMMANDS = sourceControlDefinitions.definitions.flatMap(
 );
 const createCommandCount = (code: string) =>
   CREATE_COMMANDS.reduce((count, { run }) => count + [...code.matchAll(run)].length, 0);
+// A push, directly or through a stack tool, that can start checks on a linked pull request.
+const PUSH_COMMAND = new RegExp(
+  `${COMMAND_START}(?:git(?:\\s+-[cC]\\s+\\S+)*\\s+push|gh\\s+stack\\s+(?:push|submit)|cafe\\s+stack\\s+submit|jj\\s+git\\s+push)(?=$|[\\s;&|)])`,
+  "u",
+);
 
 // Codex runs each command as `/bin/zsh -lc <script>`, quoting the script in pieces such as
 // `"a "'`b`'" c"`.
@@ -133,6 +138,8 @@ function shellSegments(script: string): ReadonlyArray<string> {
 /** The commands a script runs, without the text it carries. */
 const shellCode = (script: string) =>
   script.replace(HEREDOC_BODY, "<<").replace(QUOTED_OR_COMMENT, "''");
+
+const isPushCommand = (input: string) => PUSH_COMMAND.test(shellCode(shellScript(input)));
 
 type CommandExecution = Extract<OrchestrationV2TurnItem, { readonly type: "command_execution" }>;
 
@@ -227,6 +234,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     ...(summary.reviewDecision === undefined ? {} : { reviewDecision: summary.reviewDecision }),
     ...(summary.checksState === undefined ? {} : { checksState: summary.checksState }),
     ...(summary.mergeability === undefined ? {} : { mergeability: summary.mergeability }),
+    ...(summary.rebaseRequired === undefined ? {} : { rebaseRequired: summary.rebaseRequired }),
   };
 }
 
@@ -275,7 +283,8 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.changedFiles === right.changedFiles &&
     (left.reviewDecision ?? null) === (right.reviewDecision ?? null) &&
     (left.checksState ?? null) === (right.checksState ?? null) &&
-    left.mergeability === right.mergeability
+    left.mergeability === right.mergeability &&
+    left.rebaseRequired === right.rebaseRequired
   );
 }
 
@@ -359,7 +368,8 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
-  // Group keys the host answered not-found for; they are read on the slow cadence until found.
+  // Group keys the host answered not-found for, or this server cannot read (no CLI, signed out,
+  // unsupported host); they are read on the slow cadence until a read succeeds.
   const missing = new Set<string>();
   // Pause per project and host because credentials are project-specific; leave paused PRs due until reset.
   const pausedUntil = new Map<string, number>();
@@ -503,9 +513,10 @@ export const make = Effect.gen(function* () {
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
         Effect.tapError((error) =>
-          error.reason === "not-found"
+          error.reason === "not-found" || error._tag === "PullRequestUnavailableError"
             ? Effect.sync(() => {
-                // Not-found is a host answer: it consumes the refresh and starts the backoff.
+                // Not-found, or a host this server cannot read, won't change by asking again
+                // next sweep: it consumes the refresh and starts the backoff.
                 missing.add(key);
                 lastSyncedAt.set(key, nowMs);
                 requested.delete(key);
@@ -757,6 +768,32 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // A push can start new checks, so the thread's watches forget whether checks were running and
+  // hold the thread until they read the pull request again. The run is still going, so the
+  // thread never shows as done in between.
+  const reopenWatchedChecks = Effect.fn("PullRequestSyncReactor.reopenWatchedChecks")(
+    function* (threadId: ThreadId, item: CommandExecution) {
+      if (isOrchestrationV2WorkActive(item.status) || !isPushCommand(item.input)) return;
+      const threads = yield* projections.getThreadsWithPullRequests(threadId);
+      const answered = threads.some((thread) =>
+        (thread.pullRequests ?? []).some((link) => link.watch?.checksPending !== undefined),
+      );
+      if (!answered) return;
+      yield* engine.dispatch({
+        type: "thread.pull-request-watch.checks-reopen",
+        // Stable per command, so a repeated settlement clears an answer read since only once.
+        commandId: CommandId.make(`server:pr-push-checks:${threadId}:${item.id}`),
+        threadId,
+      });
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catchCause(
+          logSkipped("reopening a watch's checks after a push failed", { threadId }),
+        ),
+      ),
+  );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
@@ -787,7 +824,10 @@ export const make = Effect.gen(function* () {
           case "turn-item.updated": {
             const item = event.payload;
             if (item.type !== "command_execution") return Effect.void;
-            const linked = linkCreatedChangeRequests(event.threadId, item);
+            const linked = Effect.andThen(
+              linkCreatedChangeRequests(event.threadId, item),
+              reopenWatchedChecks(event.threadId, item),
+            );
             if (!isChangeRequestCloseCommand(item.input)) return linked;
             const ended = closeCommands.get(event.threadId) ?? new Set<string>();
             closeCommands.set(event.threadId, ended);

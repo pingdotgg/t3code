@@ -81,6 +81,45 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it.each(["pending", "success"] as const)(
+    "reports a required rebase once with %s CI",
+    (status) => {
+      const blocked = detail({
+        mergeability: "unknown",
+        rebaseRequired: true,
+        checks: [check("test", status)],
+      });
+      const first = evaluatePullRequestWatch(watch(), blocked, noRemarks);
+      assert.include(
+        first.changes.map((change) => change.kind),
+        "needs-rebase",
+      );
+      assert.deepEqual(evaluatePullRequestWatch(first.next, blocked, noRemarks).changes, []);
+      const unknown = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: undefined },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(unknown.next, blocked, noRemarks).changes, []);
+      const clean = evaluatePullRequestWatch(
+        first.next,
+        { ...blocked, rebaseRequired: false },
+        noRemarks,
+      );
+      assert.deepEqual(evaluatePullRequestWatch(clean.next, blocked, noRemarks).changes, [
+        { kind: "needs-rebase" },
+      ]);
+      assert.include(
+        evaluatePullRequestWatch(
+          first.next,
+          { ...blocked, headSha: "bbbbbbbbbb" },
+          noRemarks,
+        ).changes.map((change) => change.kind),
+        "needs-rebase",
+      );
+    },
+  );
+
   it.each([false, true])("baselines already-passed checks (required: %s)", (required) => {
     const green = detail({ checks: [{ ...check("test", "success"), required }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), green, noRemarks);
@@ -115,6 +154,7 @@ describe("evaluatePullRequestWatch", () => {
     const broken = detail({
       checks: [check("lint", "failure"), check("test", "pending")],
       mergeability: "conflicting",
+      rebaseRequired: true,
     });
     const baseline = evaluatePullRequestWatch(
       watch({ awaitingBaseline: "all" }),
@@ -125,6 +165,7 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(baseline.next.failedChecks, ["lint"]);
     assert.isFalse(baseline.next.passed);
     assert.isTrue(baseline.next.conflicting);
+    assert.isTrue(baseline.next.rebaseRequired);
     assert.deepEqual(evaluatePullRequestWatch(baseline.next, broken, noRemarks).changes, []);
 
     const failed = evaluatePullRequestWatch(
@@ -135,11 +176,16 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(failed.changes, [
       { kind: "checks-failed", failed: [check("test", "failure")] },
     ]);
-    const clean = evaluatePullRequestWatch(failed.next, detail(), noRemarks);
+    const clean = evaluatePullRequestWatch(
+      failed.next,
+      detail({ rebaseRequired: false }),
+      noRemarks,
+    );
     assert.deepEqual(clean.changes, []);
     assert.deepEqual(evaluatePullRequestWatch(clean.next, broken, noRemarks).changes, [
       { kind: "checks-failed", failed: [check("lint", "failure")] },
       { kind: "conflicting" },
+      { kind: "needs-rebase" },
     ]);
   });
 
@@ -217,6 +263,7 @@ describe("evaluatePullRequestWatch", () => {
       );
       assert.deepEqual(empty.changes, []);
       assert.isUndefined(empty.next.awaitingBaseline);
+      assert.isTrue(empty.next.checksPending);
       assert.deepEqual(
         evaluatePullRequestWatch(empty.next, detail({ checks: [check("test", status)] }), noRemarks)
           .changes,
@@ -861,5 +908,62 @@ describe("evaluatePullRequestWatch", () => {
   it("never reports missing checks on a host where an empty list says nothing", () => {
     const silent = detail({ capabilities: capabilities(false), checks: [] });
     assert.isTrue(anHourLater(watch(), silent).every((kinds) => kinds.length === 0));
+  });
+
+  it("counts checks as pending until every one, a review bot's included, has finished", () => {
+    const pending = (checks: ReadonlyArray<PullRequestCheck>, from = watch()) =>
+      evaluatePullRequestWatch(from, detail({ checks }), noRemarks).next.checksPending;
+    const ci = { ...check("test", "success"), required: true };
+    assert.isTrue(pending([ci, check("CodeRabbit", "pending")]));
+    assert.isFalse(pending([ci, check("CodeRabbit", "success")]));
+    assert.isFalse(pending([ci, check("CodeRabbit", "failure")]));
+    assert.isFalse(pending([ci, check("deploy", "action-required")]));
+    // A failed read keeps the last answer, as does one with only an unreadable approval check.
+    assert.isFalse(pending([], watch({ headSha: "aaaaaaaaaa", checksPending: false })));
+    const unreadable = { ...check("approvals", "action-required"), placeholder: true };
+    assert.isTrue(pending([unreadable], watch({ headSha: "aaaaaaaaaa", checksPending: true })));
+  });
+
+  it("waits a while for a new head's checks on every host", () => {
+    const pushed = (checksAlwaysReport: boolean) =>
+      evaluatePullRequestWatch(
+        watch({ headSha: "aaaaaaaaaa", checksPending: false }),
+        detail({
+          headSha: "bbbbbbbbbb",
+          capabilities: capabilities(checksAlwaysReport),
+          checks: [],
+        }),
+        noRemarks,
+      ).next.checksPending;
+    assert.isTrue(pushed(true));
+    assert.isTrue(pushed(false));
+
+    // Once the no-checks window passes, the watch stops waiting for them.
+    for (const checksAlwaysReport of [true, false]) {
+      let current = watch({ headSha: "aaaaaaaaaa" });
+      for (const minute of [0, 20]) {
+        current = evaluate(
+          current,
+          detail({
+            headSha: "bbbbbbbbbb",
+            capabilities: capabilities(checksAlwaysReport),
+            checks: [],
+          }),
+          noRemarks,
+          minute * 60_000,
+        ).next;
+      }
+      assert.isFalse(current.checksPending);
+    }
+
+    // A watch with no answer waits on an empty list only while the no-checks clock runs.
+    const unanswered = (checksAwaitedSince: string | null) =>
+      evaluatePullRequestWatch(
+        watch({ headSha: "bbbbbbbbbb", checksAwaitedSince }),
+        detail({ headSha: "bbbbbbbbbb", checks: [] }),
+        noRemarks,
+      ).next.checksPending;
+    assert.isFalse(unanswered(null));
+    assert.isTrue(unanswered(STARTED));
   });
 });

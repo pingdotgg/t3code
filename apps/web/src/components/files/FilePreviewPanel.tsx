@@ -76,7 +76,7 @@ import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { buildFileReviewComment } from "~/reviewCommentContext";
+import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
 import { assetEnvironment } from "~/state/assets";
 import { usePreviewAvailable } from "~/browser/previewRuntime";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironmentId } from "~/state/environments";
@@ -105,6 +105,7 @@ import {
   nextFileCommentId,
   normalizeFileCommentRange,
   remapFileCommentAnnotations,
+  promptFileCommentEntries,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
 import {
@@ -249,13 +250,20 @@ export function WorkspaceBrowserPreview(props: {
     workspaceRoot: props.workspaceRoot,
     absolutePath: props.absolutePath,
   });
-  const assetUrl = useAssetUrlState(
-    props.environmentId,
-    resource,
-    pdf ? props.workspaceMutationId : undefined,
-  );
+  // Each workspace mutation re-mints the URL: a file outside the workspace is signed by its
+  // inode, which an atomic replace changes.
+  const assetUrl = useAssetUrlState(props.environmentId, resource, props.workspaceMutationId);
+  // The HTML frame keeps its first URL per key, so the key moves only once the re-minted URL arrives.
+  const [settledMutationId, setSettledMutationId] = useState(props.workspaceMutationId);
+  if (
+    assetUrl._tag === "Success" &&
+    !assetUrl.waiting &&
+    settledMutationId !== props.workspaceMutationId
+  ) {
+    setSettledMutationId(props.workspaceMutationId);
+  }
   const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
-  const revision = fileRevision ?? props.workspaceMutationId;
+  const revision = fileRevision ?? (pdf ? props.workspaceMutationId : settledMutationId);
   const revisionSuffix =
     revision === null
       ? ""
@@ -394,6 +402,64 @@ function WorkspaceAudioPreview(props: {
       name={props.name}
       revision={revision}
       onError={() => setFailedUrl(url)}
+    />
+  );
+}
+
+function WorkspaceDocumentPreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly document: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly workspaceMutationId: string | null;
+  readonly refreshRevision: number;
+}) {
+  const resource =
+    props.draft && props.document
+      ? {
+          _tag: "draft-workspace-file" as const,
+          cwd: props.workspaceRoot,
+          path: props.absolutePath,
+        }
+      : {
+          _tag: "media-file" as const,
+          threadId: props.threadRef.threadId,
+          path: props.absolutePath,
+          ...(props.document ? {} : { disposition: "attachment" as const }),
+        };
+  // Drafts keep reloading on every workspace mutation, as before.
+  const revisioned = resource._tag === "media-file";
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    revisioned ? resource : null,
+    props.workspaceMutationId ?? undefined,
+  );
+  const resolved =
+    assetUrl._tag === "Success" ? (assetUrl.fileRevision ?? props.workspaceMutationId) : undefined;
+  // A reconnect reports Loading and keeps the last revision, so the open file stays loaded;
+  // a failure (say the file was deleted) remounts so the preview shows its error.
+  const [shown, setShown] = useState(resolved);
+  if (resolved !== undefined && resolved !== shown) setShown(resolved);
+  const revision = !revisioned
+    ? props.workspaceMutationId
+    : assetUrl._tag === "Failure"
+      ? `failure:${props.workspaceMutationId}`
+      : (resolved ?? shown);
+  // Waiting on the first revision keeps the preview from mounting twice when it opens.
+  if (revisioned && revision === undefined && assetUrl._tag === "Loading") {
+    return <FileSurfaceLoading />;
+  }
+  return (
+    <AttachmentFilePreview
+      key={`${revision}:${props.refreshRevision}`}
+      name={props.name}
+      mimeType="application/octet-stream"
+      sizeBytes={0}
+      asset={{ environmentId: props.environmentId, resource }}
+      origin="File"
     />
   );
 }
@@ -602,6 +668,8 @@ function useFileLineReveal(
   };
 }
 
+const EMPTY_REVIEW_COMMENTS: ReadonlyArray<ReviewCommentContext> = [];
+
 const createFileEditor: EditorFactory<FileCommentAnnotationGroup, undefined> = (
   editorType,
   options,
@@ -695,6 +763,12 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
+  const promptCommentIds = new Set(
+    useComposerDraftStore(
+      (store) =>
+        store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+    ).map((comment) => comment.id),
+  );
   const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
@@ -743,7 +817,7 @@ function EditableFileSurface({
     setLineAnnotations((current) => (current === nextLineAnnotations ? current : remapped));
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
-        if (entry.kind !== "comment") continue;
+        if (entry.kind !== "comment" || !promptCommentIds.has(entry.id)) continue;
         addReviewComment(
           composerDraftTarget,
           buildFileReviewComment({
@@ -909,29 +983,37 @@ function EditableFileSurface({
             }}
             selectedLines={selectedRange}
             lineAnnotations={lineAnnotations}
-            renderAnnotation={(annotation) => (
-              <div className="py-1">
-                {annotation.metadata.entries.map((entry) => (
-                  <DiffCommentAnnotation
-                    key={entry.id}
-                    environmentId={environmentId}
-                    projectId={projectId}
-                    ownerKey={JSON.stringify([
-                      environmentId,
-                      composerDraftTarget,
-                      relativePath,
-                      entry.id,
-                    ])}
-                    kind={entry.kind}
-                    rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
-                    text={entry.text}
-                    onCancel={() => removeAnnotationEntry(entry.id)}
-                    onComment={(text) => submitAnnotationEntry(entry.id, text)}
-                    onDelete={() => removeAnnotationEntry(entry.id)}
-                  />
-                ))}
-              </div>
-            )}
+            renderAnnotation={(annotation) => {
+              // Sent comments stay annotated so a failed send can restore them at remapped lines.
+              const entries = promptFileCommentEntries(
+                annotation.metadata.entries,
+                promptCommentIds,
+              );
+              if (entries.length === 0) return null;
+              return (
+                <div className="py-1">
+                  {entries.map((entry) => (
+                    <DiffCommentAnnotation
+                      key={entry.id}
+                      environmentId={environmentId}
+                      projectId={projectId}
+                      ownerKey={JSON.stringify([
+                        environmentId,
+                        composerDraftTarget,
+                        relativePath,
+                        entry.id,
+                      ])}
+                      kind={entry.kind}
+                      rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine)}
+                      text={entry.text}
+                      onCancel={() => removeAnnotationEntry(entry.id)}
+                      onComment={(text) => submitAnnotationEntry(entry.id, text)}
+                      onDelete={() => removeAnnotationEntry(entry.id)}
+                    />
+                  ))}
+                </div>
+              );
+            }}
             className="min-h-full"
           />
         </Virtualizer>
@@ -1538,24 +1620,17 @@ export default function FilePreviewPanel({
           ) : relativePath &&
             absolutePath &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            <AttachmentFilePreview
-              key={`${environmentId}:${absolutePath}:${workspaceMutationId}:${fileRefreshRevision}`}
+            <WorkspaceDocumentPreview
+              key={`${environmentId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              document={isDocument}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-              mimeType="application/octet-stream"
-              sizeBytes={0}
-              asset={{
-                environmentId,
-                resource:
-                  draft && isDocument
-                    ? { _tag: "draft-workspace-file", cwd, path: absolutePath }
-                    : {
-                        _tag: "media-file",
-                        threadId: threadRef.threadId,
-                        path: absolutePath,
-                        ...(isDocument ? {} : { disposition: "attachment" as const }),
-                      },
-              }}
-              origin="File"
+              workspaceMutationId={workspaceMutationId}
+              refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && file.error && file.data === null ? (
             <div
