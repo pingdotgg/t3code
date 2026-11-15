@@ -19,6 +19,7 @@ import {
   ProjectionStoreThreadNotFoundError,
   type ProjectionStoreV2Error,
 } from "./ProjectionStore.ts";
+import { EVENT_LOG_PRUNED_THROUGH } from "../persistence/OrchestrationEventStore.ts";
 
 type IndexItem = Pick<OrchestrationV2TurnItem, "type" | "runId" | "nodeId" | "ordinal"> & {
   readonly inputIntent?: string | undefined;
@@ -211,6 +212,7 @@ function resultForSelection(
 
 export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
   readIndex: (threadId: ThreadId) => Effect.Effect<readonly IndexRow[], ProjectionStoreV2Error>,
+  corpusCharBudget = CORPUS_CHAR_BUDGET,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const encodeCorpusKey = Schema.encodeEffect(
@@ -359,7 +361,17 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
         return { result: resultForSelection(selected, scan.documents, scan.sequence) };
       }
 
-      const previous = corpora.get(corpusKey);
+      const cached = corpora.get(corpusKey);
+      // A corpus older than the prune boundary cannot see the edits pruning removed.
+      const prunedThrough =
+        cached === undefined
+          ? 0
+          : ((yield* sql<{ last_sequence: number }>`
+              SELECT last_sequence FROM orchestration_v2_projection_metadata
+              WHERE projection_name = ${EVENT_LOG_PRUNED_THROUGH}
+            `)[0]?.last_sequence ?? 0);
+      const previous =
+        cached !== undefined && cached.sequence >= prunedThrough ? cached : undefined;
       let sequence = previous === undefined ? 0 : yield* readRevision(previous.sourceThreadIds);
       const changes =
         previous === undefined
@@ -429,11 +441,12 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
     const current = corpora.get(corpusKey);
     if (current !== undefined && current.sequence > corpus.sequence) return;
     corpora.delete(corpusKey);
+    if (corpus.chars > corpusCharBudget) return;
     corpora.set(corpusKey, corpus);
     let chars = 0;
     for (const entry of corpora.values()) chars += entry.chars;
     for (const [key, entry] of corpora) {
-      if (key === corpusKey || (corpora.size <= CORPUS_LIMIT && chars <= CORPUS_CHAR_BUDGET)) break;
+      if (key === corpusKey || (corpora.size <= CORPUS_LIMIT && chars <= corpusCharBudget)) break;
       corpora.delete(key);
       chars -= entry.chars;
     }

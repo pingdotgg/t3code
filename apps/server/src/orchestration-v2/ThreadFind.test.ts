@@ -27,6 +27,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as EventStore from "./EventStore.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import { makeThreadFind } from "./ThreadFind.ts";
 import {
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
@@ -752,6 +754,44 @@ describe("V2 thread find", () => {
       const updated = yield* projection.searchThread({ threadId, query: "needle" });
       assert.equal(updated.totalMatches, 2);
       assert.equal(updated.match?.entryId, "inherited");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rebuilds a cached corpus whose missed edits were pruned from the event log", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("changed", 1, "needle"), item("head", 2, "nothing")]);
+      assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 1);
+      yield* putItems([item("changed", 1, "gone")], "edit");
+      yield* putItems([item("head", 2, "still nothing")], "new-head");
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`UPDATE orchestration_v2_projection_metadata
+        SET last_sequence = (SELECT MAX(sequence) FROM orchestration_events)
+        WHERE projection_name = 'thread-projections'`;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* maintenance.pruneEventStore();
+      yield* TestClock.adjust("2 days");
+      assert.isAbove((yield* maintenance.pruneEventStore()).deletedEventCount, 0);
+      assert.equal((yield* projection.searchThread({ threadId, query: "needle" })).totalMatches, 0);
+    }).pipe(Effect.provide(ProjectionMaintenance.layer.pipe(Layer.provideMerge(layerTest)))),
+  );
+
+  it.effect("does not cache a corpus larger than the whole budget", () =>
+    Effect.gen(function* () {
+      const projection = yield* setup;
+      yield* putItems([item("small", 1, "huge needle"), item("big", 2, "huge needle needle")]);
+      const find = yield* makeThreadFind(
+        (id) => projection.getThreadProjection(id).pipe(Effect.map((p) => p.visibleTurnItems)),
+        20,
+      );
+      const parses = () =>
+        vi
+          .mocked(searchableMessageSegments)
+          .mock.calls.filter(([message]) => message.text.startsWith("huge")).length;
+      assert.equal((yield* find.searchThread({ threadId, query: "needle" })).totalMatches, 3);
+      assert.equal(parses(), 2);
+      assert.equal((yield* find.searchThread({ threadId, query: "huge" })).totalMatches, 2);
+      assert.equal(parses(), 4);
     }).pipe(Effect.provide(layerTest)),
   );
 });
