@@ -1,4 +1,3 @@
-import { OpenAI } from "../Icons";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -141,13 +140,11 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 
 const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
-  if (provider === "openai")
-    return <OpenAI aria-hidden className="size-4 shrink-0 text-foreground" />;
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
   return (
     <ProviderInstanceIcon
-      driverKind={ProviderDriverKind.make("grok")}
+      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
       displayName={CLOUD_SPEECH_LABELS[provider]}
       iconClassName="size-4"
     />
