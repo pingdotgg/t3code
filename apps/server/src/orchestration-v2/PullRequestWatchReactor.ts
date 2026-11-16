@@ -90,6 +90,8 @@ interface LastRead {
   readonly at: number;
   readonly fingerprint: string;
   readonly inFlight: boolean;
+  /** Some watch still waits on checks, including a head whose checks have not registered yet. */
+  readonly checksPending: boolean;
   readonly remarksComplete: boolean;
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
@@ -683,6 +685,12 @@ export const make = Effect.gen(function* () {
           fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
         )
       : null;
+    const reports = new Map(
+      group.targets.map((target) => [
+        target,
+        evaluatePullRequestWatch(target.watch, detail, remarks, now),
+      ]),
+    );
     lastReads.set(group.key, {
       at:
         plan.activity || last === undefined
@@ -692,13 +700,14 @@ export const make = Effect.gen(function* () {
       inFlight:
         detail.mergeability === "unknown" ||
         detail.checks.some((check) => check.status === "pending"),
+      checksPending: [...reports.values()].some((report) => report.next.checksPending === true),
       remarksComplete: plan.activity ? remarks !== null : (last?.remarksComplete ?? false),
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
+      const report = reports.get(target)!;
       if (report.changes.length > 0) {
         const wake = {
           ...pullRequestWatchMessage({
@@ -848,7 +857,7 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       currentGroups.filter((group) => {
         const last = lastReads.get(group.key);
-        return last?.inFlight === true && last.status !== null;
+        return last !== undefined && (last.inFlight || last.checksPending) && last.status !== null;
       }),
       (group) =>
         fingerprintOf(group).pipe(
