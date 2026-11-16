@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
+import { act, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
@@ -245,12 +245,13 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean) {
+    async render(active: boolean, children?: ReactNode) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
             <NewTaskFlowProvider active={active} flowKey="test-flow">
               <Probe />
+              {children}
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
         ),
@@ -370,6 +371,29 @@ it("uses cached repository capability and branch defaults while offline", async 
 
 const playbookPrompt = (machine: string) =>
   `Read [triage-playbook.md](/${machine}/triage-playbook.md) and follow it. `;
+
+it("keeps the project a draft screen picks on mount for the draft it writes into", async () => {
+  using screen = setup();
+  const picked = screen.projects[1]!;
+  function PicksOnMount() {
+    const { setProject } = useNewTaskFlow();
+    const pickedRef = useRef(false);
+    useEffect(() => {
+      if (pickedRef.current) return;
+      pickedRef.current = true;
+      setProject(picked);
+    }, [setProject]);
+    return null;
+  }
+
+  await screen.render(true, <PicksOnMount />);
+
+  expect(screen.current.selectedProject).toEqual(picked);
+  expect(screen.snapshot(screen.current.draftKey).project).toEqual({
+    environmentId: picked.environmentId,
+    projectId: picked.id,
+  });
+});
 
 /** A triage draft on machine one's No project home; machine two opens its own. */
 async function renderTriageDraft(screen: ReturnType<typeof setup>) {

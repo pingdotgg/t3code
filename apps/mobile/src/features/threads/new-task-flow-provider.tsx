@@ -340,7 +340,9 @@ export function NewTaskFlowProvider(
       props.active === false ||
       props.routeDraftId !== undefined ||
       activeDraftKey !== null ||
-      selectedProject === null
+      selectedProject === null ||
+      // A child's mount effect (the route project) may already have bound a draft this commit.
+      readNewTaskFlowState(flowKey).draftKey !== null
     ) {
       return;
     }
