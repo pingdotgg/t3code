@@ -4254,6 +4254,43 @@ it.layer(
       ),
     );
 
+    it.effect("offers Ultracode on a Claude 5 model only Claude Code reports (#37486)", () =>
+      Effect.gen(function* () {
+        const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            models: [
+              {
+                value: "claude-mythos-5-2",
+                resolvedModel: "claude-mythos-5-2",
+                displayName: "Claude Mythos 5.2",
+                description: "",
+                supportsEffort: true,
+                supportedEffortLevels: [...efforts],
+              },
+            ],
+          }),
+        );
+        const ultracode = (slug: string) =>
+          status.models
+            .find((model) => model.slug === slug)
+            ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "ultracode")
+            ?.type;
+
+        assert.equal(ultracode("claude-fable-5-2"), "boolean");
+        assert.equal(ultracode("claude-mythos-5-2"), "boolean");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.325\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("does not let a lazy mise shim install Claude during a status check (#33415)", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
