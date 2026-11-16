@@ -182,26 +182,13 @@ fn with_stub(scratch: &Scratch, stubs: &StubDir) -> Vec<(&'static str, OsString)
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn tells_the_user_a_hosts_fixed_explanation_of_a_failed_lookup() {
+async fn keeps_host_errors_out_of_a_failed_lookup() {
     let scratch = Scratch::new("lookup");
     let input = SourceControlRepositoryLookupInput {
-        provider: "bitbucket".into(),
+        provider: "github".into(),
         repository: "x".into(),
         cwd: None,
     };
-    let fixed = FakeHosts {
-        failure: Some(HostFailure::user_facing(
-            "Repositories are named workspace/repository.",
-        )),
-        ..FakeHosts::default()
-    };
-    let error = lookup(&fixed, scratch.ctx(), &input)
-        .await
-        .expect_err("fails");
-    assert_eq!(error.detail, "Repositories are named workspace/repository.");
-    assert_eq!(error.operation, "lookupRepository");
-
-    // "keeps a host's raw response text out of a failed repository lookup"
     let raw = FakeHosts {
         failure: Some(HostFailure::new("<html>internal token=abc</html>")),
         ..FakeHosts::default()
@@ -512,7 +499,7 @@ async fn publish_without_commits_only_adds_the_remote() {
     ));
     let input = SourceControlPublishRepositoryInput {
         cwd: work.to_string_lossy().into_owned(),
-        provider: "gitlab".into(),
+        provider: "github".into(),
         repository: "group/project".into(),
         visibility: SourceControlRepositoryVisibility::Public,
         remote_name: Some("  ".into()),
@@ -529,7 +516,7 @@ async fn publish_without_commits_only_adds_the_remote() {
     );
     assert_eq!(
         hosts.calls.lock().map(|c| c.clone()).unwrap_or_default(),
-        ["create gitlab group/project Public"]
+        ["create github group/project Public"]
     );
 }
 

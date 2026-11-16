@@ -28,8 +28,8 @@
 //   node tools/canary.mjs watch <root>       scans <root>/tmp until <root>/stop exists
 //   node tools/canary.mjs mark <root> <check> after each check: names the decoy files it read
 //   node tools/canary.mjs verify <root> <output log> [more folders to scan]
-// Outside calls and real CLIs: marker executables named claude, codex, grok, gh, glab, fj, tea,
-// az and cafe go first on PATH and log each run; every Node process loads a hook
+// Provider and host CLI marker executables go first on PATH and log each run, including
+// the upstream hosts: comparison checks still start the full T3 server. Every Node process loads a hook
 // (NODE_OPTIONS=--import) that refuses and logs a socket or DNS lookup outside loopback; our
 // server refuses and logs one when CONN_NETWORK_LOG is set (conn_source_control::http). A
 // program that is none of these (git, cargo, a CLI found before the markers on a tool's own

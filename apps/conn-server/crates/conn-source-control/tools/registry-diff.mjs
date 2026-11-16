@@ -1,9 +1,10 @@
-// Registry differential check: T3's host definition registry and ours answer the same cases,
+// Registry differential check: T3's GitHub definition and unknown-host fallback match ours.
+// Out-of-scope host packages are never imported or harvested. Both registries answer the same cases,
 // and every answer must be equal.
 //
 //   node crates/conn-source-control/tools/registry-diff.mjs <examples/registry_cases binary>
 //
-// T3's side is `builtInSourceControlDefinitions` (packages/source-control-definitions) and
+// T3's side is `makeSourceControlDefinitionRegistry([github])` and
 // `makeThreadPullRequests` bound to it, loaded from the monorepo. Ours is
 // `examples/registry_cases.rs`. The inputs are every string literal in T3's own definition
 // tests (so a new upstream case is tried at once) plus a fixed grid of hosts, paths, remotes
@@ -17,8 +18,13 @@ import { sealedEnvTemp } from "../../../tools/sealed-env.mjs";
 const [binary] = process.argv.slice(2);
 if (!binary) throw new Error("usage: registry-diff.mjs <examples/registry_cases binary>");
 
-const { builtInSourceControlDefinitions: registry, canonicalizeGitCafePullRequestUrl } =
-  await importSource("packages/source-control-definitions/src/registry.ts");
+const { makeSourceControlDefinitionRegistry } = await importSource(
+  "packages/source-control-core/src/shared/definition.ts",
+);
+const { definition: github } = await importSource(
+  "packages/source-control-github/src/shared/definition.ts",
+);
+const registry = makeSourceControlDefinitionRegistry([github]);
 const { makeThreadPullRequests } = await importSource(
   "packages/source-control-core/src/shared/threadPullRequests.ts",
 );
@@ -26,22 +32,14 @@ const threadKeys = makeThreadPullRequests(registry);
 
 // ---- Inputs ------------------------------------------------------------------------------
 
-const TEST_FILES = [
-  "github",
-  "gitlab",
-  "gitcafe",
-  "forgejo",
-  "bitbucket",
-  "azure-devops",
-  "cursor-origin",
-].map((host) => `packages/source-control-${host}/src/shared/definition.test.ts`);
+const TEST_FILES = ["packages/source-control-github/src/shared/definition.test.ts"];
 
 /** Every quoted literal in T3's definition tests that could be a URL, remote or key. */
 function harvested() {
   const out = new Set();
   for (const file of TEST_FILES) {
     const path = inMonorepo(file);
-    if (!NodeFS.existsSync(path)) continue;
+    if (!NodeFS.existsSync(path)) throw new Error(`missing GitHub definition tests: ${path}`);
     const source = NodeFS.readFileSync(path, "utf8");
     for (const match of source.matchAll(/"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`([^`$\\\n]*)`/g)) {
       const text = match[1] ?? match[2] ?? match[3];
@@ -160,7 +158,6 @@ const literals = harvested();
 const cases = [];
 for (const value of [...literals, ...urls]) {
   cases.push({ op: "parseChangeRequestUrl", url: value });
-  cases.push({ op: "canonicalizeGitCafe", url: value });
 }
 for (const value of [...literals, ...remotes]) {
   cases.push({ op: "recognizeRemote", remote: value });
@@ -253,8 +250,6 @@ function t3(c) {
       return definition(c.kind).changeRequestHeadRef?.(c.number) ?? null;
     case "isSameChangeRequest":
       return registry.isSameChangeRequest(c.left, c.right);
-    case "canonicalizeGitCafe":
-      return canonicalizeGitCafePullRequestUrl(c.url);
     case "normalizeThreadKey":
       return threadKeys.normalizeThreadPullRequestKey(c.key);
     case "legacyThreadKey":
@@ -292,6 +287,8 @@ const ours = JSON.parse(
     env: sealedEnvTemp(),
   }),
 ).map(canonical);
+
+if (ours.length !== cases.length) throw new Error(`expected ${cases.length} answers, got ${ours.length}`);
 
 let differences = 0;
 const byOp = new Map();
