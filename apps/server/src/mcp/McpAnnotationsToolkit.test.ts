@@ -126,6 +126,7 @@ describe("annotations MCP tools", () => {
       yield* store.create(projectId, { id: "only", comment: "Fix the header" });
       const conflict = yield* call("annotations_complete", { id: "only", summary: "Done" });
       expect(conflict.isError).toBe(true);
+      // A client outside a thread is not offered thread-bound tools at all.
       const outside = yield* call(
         "annotations_claim",
         {},
@@ -134,8 +135,8 @@ describe("annotations MCP tools", () => {
           thread: undefined,
           client: { sessionId: "client", label: "Client", access: "full-access" },
         },
-      );
-      expect(outside.isError).toBe(true);
+      ).pipe(Effect.flip);
+      expect(outside.message).toContain("Tool 'annotations_claim' not found");
       // Still todo: the refused caller claimed nothing.
       expect(Option.isSome(yield* store.claim(projectId, "only"))).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(layer)),

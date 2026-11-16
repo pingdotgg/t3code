@@ -14,7 +14,7 @@ import {
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as AnnotationStore from "../../../annotations/AnnotationStore.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -46,7 +46,8 @@ const ListAnnotationsTool = Tool.make("annotations_list", {
   .annotate(Tool.Title, "List annotations")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ClaimAnnotationTool = Tool.make("annotations_claim", {
   description: [
@@ -61,7 +62,8 @@ const ClaimAnnotationTool = Tool.make("annotations_claim", {
   dependencies,
 })
   .annotate(Tool.Title, "Claim annotation")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const CompleteAnnotationTool = Tool.make("annotations_complete", {
   description:
@@ -73,7 +75,8 @@ const CompleteAnnotationTool = Tool.make("annotations_complete", {
 })
   .annotate(Tool.Title, "Complete annotation")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const ReleaseAnnotationTool = Tool.make("annotations_release", {
   description: [
@@ -87,7 +90,8 @@ const ReleaseAnnotationTool = Tool.make("annotations_release", {
 })
   .annotate(Tool.Title, "Release annotation")
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const AnnotationsToolkit = Toolkit.make(
   ListAnnotationsTool,

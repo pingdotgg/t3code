@@ -12,7 +12,7 @@ import {
   PreviewAutomationError,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -44,7 +44,8 @@ const PanelOpenTool = Tool.make("panel_open", {
   ],
 })
   .annotate(Tool.Title, "Open panel")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const actionDependencies = () => [
   McpInvocationContext.McpInvocationContext,
@@ -64,7 +65,8 @@ const DatabaseQueryTool = Tool.make("database_query", {
 })
   .annotate(Tool.Title, "Query database in panel")
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const McpConnectTool = Tool.make("mcp_connect", {
   description: [
@@ -77,7 +79,8 @@ const McpConnectTool = Tool.make("mcp_connect", {
   dependencies: actionDependencies(),
 })
   .annotate(Tool.Title, "Connect MCP server in panel")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const McpCallTool = Tool.make("mcp_call", {
   description: [
@@ -90,7 +93,8 @@ const McpCallTool = Tool.make("mcp_call", {
   dependencies: actionDependencies(),
 })
   .annotate(Tool.Title, "Call MCP tool in panel")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const PanelsToolkit = Toolkit.make(
   PanelOpenTool,

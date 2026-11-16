@@ -10,7 +10,7 @@ import {
   TestLoginSummary,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as CredentialAutofill from "../../../credentials/CredentialAutofill.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -40,7 +40,8 @@ const RequestCredentialsTool = Tool.make("request_credentials", {
   .annotate(Tool.Title, "Find saved logins")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const FillCredentialTool = Tool.make("fill_credential", {
   description:
@@ -52,7 +53,8 @@ const FillCredentialTool = Tool.make("fill_credential", {
 })
   .annotate(Tool.Title, "Fill saved login")
   .annotate(Tool.OpenWorld, true)
-  .annotate(Tool.Destructive, true);
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const SaveTestLoginTool = Tool.make("save_test_login", {
   description:
@@ -63,7 +65,8 @@ const SaveTestLoginTool = Tool.make("save_test_login", {
   dependencies,
 })
   .annotate(Tool.Title, "Save test login")
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const CredentialsToolkit = Toolkit.make(
   RequestCredentialsTool,
