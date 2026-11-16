@@ -396,6 +396,7 @@
     "untitledThread": "未命名线程"
   },
   "list": {
+    "all": "全部",
     "allHosts": "全部",
     "allProjects": "全部项目",
     "allServers": "全部服务器",

@@ -401,6 +401,7 @@
     "untitledThread": "Untitled thread"
   },
   "list": {
+    "all": "All",
     "allHosts": "All",
     "allProjects": "All projects",
     "allServers": "All servers",
