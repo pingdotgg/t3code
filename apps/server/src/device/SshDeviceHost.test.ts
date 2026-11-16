@@ -313,7 +313,8 @@ it.effect("lists Android devices without probing the host again once it reports 
                 )
               : "";
           const mode = /const mode = "([^"]+)"/.exec(script)?.[1] ?? "";
-          modes.push(mode);
+          // Only Android probes and AVD listings count; iOS listings also read simctl.
+          if (!command.args.join(" ").includes("simctl")) modes.push(mode);
           output =
             mode === ""
               ? "Pixel_8\n"

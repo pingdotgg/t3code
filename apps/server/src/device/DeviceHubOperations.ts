@@ -50,6 +50,46 @@ const HubActionResult = Schema.Struct({
   ),
 });
 
+const SimctlDeviceList = Schema.fromJsonString(
+  Schema.Struct({
+    devices: Schema.Record(
+      Schema.String,
+      Schema.Array(
+        Schema.Struct({
+          udid: Schema.String,
+          name: Schema.String,
+          state: Schema.String,
+          isAvailable: Schema.optional(Schema.Boolean),
+        }),
+      ),
+    ),
+  }),
+);
+const decodeSimctlDeviceList = Schema.decodeUnknownOption(SimctlDeviceList);
+const IOS_RUNTIME = /\.SimRuntime\.iOS-(\d+(?:-\d+)*)$/;
+
+// expo-device-hub drops simulators that were never booted, so a fresh runtime
+// install lists none; simctl's inventory fills them in.
+const installedIosSimulators = (stdout: string): Array<HostDevice> =>
+  Option.match(decodeSimctlDeviceList(stdout), {
+    onNone: () => [],
+    onSome: ({ devices }) =>
+      Object.entries(devices).flatMap(([runtime, simulators]) => {
+        const version = IOS_RUNTIME.exec(runtime)?.[1];
+        if (version === undefined) return [];
+        return simulators
+          .filter((simulator) => simulator.isAvailable !== false)
+          .map((simulator) => ({
+            id: simulator.udid,
+            name: simulator.name,
+            version: `iOS ${version.replaceAll("-", ".")}`,
+            platform: "ios" as const,
+            booted: simulator.state.toLowerCase() === "booted",
+            physical: false,
+          }));
+      }),
+  });
+
 // Hub diagnostics can carry a whole stderr dump.
 const boundDiagnostics = (text: string) =>
   text.length > 2_000 ? `${text.slice(0, 1_999)}…` : text;
@@ -159,6 +199,14 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    if (yield* options.platformAvailable("ios")) {
+      const simctl = yield* run("xcrun", ["simctl", "list", "devices", "available", "--json"]);
+      if (simctl.code === 0) {
+        for (const simulator of installedIosSimulators(simctl.stdout)) {
+          if (!devices.some((device) => device.id === simulator.id)) devices.push(simulator);
+        }
+      }
+    }
     let androidDiscoveryIncomplete = false;
     if (androidAvailable) {
       const avds = yield* run("emulator", ["-list-avds"]);
