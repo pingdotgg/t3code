@@ -798,7 +798,13 @@ export function createThreadOutboxDelivery(): {
     );
     if (!serverConfig) return false;
     const settings = resolveQueuedThreadSettings(queuedMessage, thread, serverConfig.providers);
-    if (isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)) {
+    // Without a pick the server delivers on the thread's own model, which this client's copy
+    // of the thread can misreport right after reconnecting; the server checks that one itself.
+    const picked = queuedMessage.modelSelection !== undefined;
+    if (
+      picked &&
+      isModelSelectionUnavailable(serverConfig, settings.modelSelection, thread.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         serverConfig,
         settings.modelSelection,
@@ -883,7 +889,10 @@ export function createThreadOutboxDelivery(): {
       serverEnvironment.configValueAtom(queuedMessage.environmentId),
     );
     if (!currentConfig) return false;
-    if (isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)) {
+    if (
+      picked &&
+      isModelSelectionUnavailable(currentConfig, settings.modelSelection, thread.projectId)
+    ) {
       const { title, detail } = describeUnavailableModelSelection(
         currentConfig,
         settings.modelSelection,
@@ -948,7 +957,7 @@ export function createThreadOutboxDelivery(): {
           ),
           attachments: prepared.attachments,
         },
-        modelSelection: sendSettings.modelSelection,
+        ...(picked ? { modelSelection: sendSettings.modelSelection } : {}),
         titleSeed: deriveThreadTitleSeed({
           text: queuedMessage.text,
           attachments: queuedMessage.attachments,
