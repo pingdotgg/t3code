@@ -6,12 +6,12 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-16T17:33:52+00:00
+  at: 2026-11-16T18:12:49+00:00
 verified:
   - by: opencode/gpt-6.1-sol
-    at: 2026-11-16T17:33:52+00:00
+    at: 2026-11-16T18:12:49+00:00
 snapshot:
-  at: 2026-11-16T17:33:52+00:00
+  at: 2026-11-16T18:12:49+00:00
   fork_main: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
   upstream_main: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
   shared_baseline: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
@@ -21,12 +21,18 @@ snapshot:
   missing_upstream_at_integrated_tip: 0
   branch_integration: b20d057b87353167849d02e1031a334a91298dd7
   branch_parent: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
-  branch_code_tip: b20d057b87353167849d02e1031a334a91298dd7
+  branch_code_tip: 85f0a6c418ecdfe82fdbe713055a706c9a782ca3
   missing_upstream_on_branch: 0
 sources:
   - id: november-16-candidate
-    resource: "Local revision verification at 2026-11-16T17:33:52+00:00: initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411 has parents freshly fetched fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and upstream 6f5838f9bcdaf31864b93694c5935c93f9532e06. Follow-up merge b20d057b87353167849d02e1031a334a91298dd7 retains it and incorporates upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541. All 967 incoming commits are ancestors of the candidate, with zero branch gap; fork main still lacks them. Of 1763 incoming paths without prior fork changes, 1762 match upstream exactly; ThreadFeed passes Jujutsu terminology to the new preparing header. No push, PR, main integration, or live deployment has occurred. Verification is in progress."
-    title: November 16 local candidate, distinct from unchanged fork main
+    resource: "Local candidate verification at 2026-11-16T18:12:49+00:00: initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411 has parents freshly fetched fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and upstream 6f5838f9bcdaf31864b93694c5935c93f9532e06. Follow-up merge b20d057b87353167849d02e1031a334a91298dd7 retains it and incorporates upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541. Code tip 85f0a6c418ecdfe82fdbe713055a706c9a782ca3 retains both merges and all 967 incoming commits, with zero branch gap; fork main still lacks them. Of 1763 incoming paths without prior fork changes, 1760 match upstream exactly. ThreadFeed passes Jujutsu terminology to the preparing header; two composer/shortcut fixtures supply retained fork dependencies and registration scopes. All reference repositories match upstream. PR 81 is open; the candidate has not reached main and no live deployment has occurred."
+    title: Validated November 16 candidate, distinct from unchanged fork main
+  - id: november-16-verification
+    resource: "Verification at 2026-11-16T18:12:49+00:00: production web/server/desktop builds pass 5/5; all 41 affected-package typechecks and final scoped server/OpenCode checks pass. Changed-file static checks, frozen dependency/patch checks, 515 selected React Compiler cases and seven Node script cases pass. Partitioning the timed-out 838-file selection and adding fork regressions yields 17582 passing tests after fixture repairs, with 16 inherited skips. All 17 remaining browser failures reproduce on pristine upstream c8c51af4e3 with frozen dependencies; both SSH launch-process timeouts reproduce on fork main 863c2620ff with frozen baseline dependencies. The final repair check passes format, lint, both knip passes, GraphQL generation, four package typechecks and all 162 selected tests. No tests were weakened or newly skipped. The real isolated web client completes free Replay approval, persists/inserts saved prompts, finds settings and supports Vim delete/undo. Android boot and its suggested diagnostic fail; iOS is unavailable. GitHub has no checks, workflow runs or pending reviewers; Actions is enabled and CI is active, but no runs were created. Paid model evals, signed native packaging and live deployment were not performed."
+    title: Final candidate verification and reproduced baseline limitations
+  - id: november-16-pr
+    resource: https://github.com/NicholasZolton/t3code/pull/81
+    title: November 16 integration PR and client evidence
   - id: november-16-upstream
     resource: https://github.com/pingdotgg/t3code/commit/c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
     title: Pinned upstream tip for the November 16 candidate
@@ -416,10 +422,10 @@ Refresh it after the next review or integration using the
 
 Merge `933b5c5f29` combines fresh fork `main` `863c2620ff` and upstream
 `6f5838f9bc`; follow-up merge `b20d057b87` adds the two upstream fixes fetched
-during verification. The initial audit found that 1,762 of 1,763 incoming paths
-without prior fork changes matched upstream exactly; `ThreadFeed` carries
-Jujutsu terminology into the new mobile preparing header. Verification also
-requires the upstream composer fixture to mock the retained prompt command.
+during verification. Of 1,763 incoming paths without prior fork changes, 1,760
+match upstream exactly. `ThreadFeed` carries Jujutsu terminology into the new
+mobile preparing header; two upstream fixtures supply the retained prompt command
+and find preview commands across the fork's separate registration scopes.
 [^november-16-candidate][^november-16-upstream]
 
 Adopt upstream's folder-picker fuzzy and Unicode matching instead of maintaining
@@ -429,6 +435,12 @@ cannot certify a Jujutsu status read; return no snapshot so the broadcaster keep
 its full reconciliation. OpenCode's upstream run attribution remains alongside
 the fork's input-delivery safeguards: an undelivered continuation must not finish
 from an older child report.[^november-16-candidate][^opencode-child-tracking][^shared-pr-workflow]
+
+The partitioned selection passes 17,582 tests after fixture repairs. All 17
+remaining browser failures reproduce on pristine pinned upstream, and the two
+SSH process timeouts reproduce on fork `main`. The final repair check passes all
+162 cases. Native verification remains blocked; no live deployment occurred.
+[^november-16-verification][^november-16-pr]
 
 ## Completed November 13 sync
 
@@ -1158,6 +1170,10 @@ git log --reverse --oneline origin/main..upstream/main
 [^november-16-candidate]: Local November 16 ancestry and incoming-path verification, recorded in frontmatter.
 
 [^november-16-upstream]: Pinned upstream revision for the November 16 integration.
+
+[^november-16-verification]: Final local verification and baseline reproductions recorded in frontmatter.
+
+[^november-16-pr]: PR evidence and final compatibility decisions.
 
 [^november-13-candidate]: Exact November 13 merge and compatibility resolutions.
 
