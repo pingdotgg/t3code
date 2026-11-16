@@ -47,9 +47,8 @@ export function useGuideDiffFiles({
   const pageAtom = (cursor: string | null) =>
     pullRequestEnvironment.diff({
       environmentId,
-      input: { ...reference, ...(cursor === null ? {} : { cursor }) },
+      input: { ...reference, cacheHeadSha: headSha, ...(cursor === null ? {} : { cursor }) },
     });
-  // Pages are not keyed by head, so a new guide head can fold the previous push's cached diff.
   // A settled first page other than the one folded means the diff was refreshed: start over.
   const firstPage = useEnvironmentQuery(pageAtom(null));
   const firstData = firstPage.isPending ? null : firstPage.data;
