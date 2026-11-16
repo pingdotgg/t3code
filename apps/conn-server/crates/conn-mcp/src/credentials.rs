@@ -19,6 +19,7 @@ const MAX_RECORDS: usize = 1024;
 pub struct ThreadCredentialRequest {
     pub thread_id: String,
     pub provider_instance_id: String,
+    pub preview: bool,
     /// A delegated child task.
     pub subagent: bool,
 }
@@ -58,6 +59,7 @@ impl Credentials {
             provider_session_id: conn_support::uuid_v4(),
             provider_instance_id: request.provider_instance_id,
             subagent: request.subagent,
+            preview: request.preview,
         };
         self.records.insert(
             hash(&token),

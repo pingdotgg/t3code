@@ -61,7 +61,11 @@ export function fileText(file) {
   return untilFile(path.dirname(file), () => fs.existsSync(file) ? fs.readFileSync(file,"utf8") : undefined);
 }
 
-export async function projectProviderPolicy(server, projectId, enabled, scripts) {
+export function projectProviderPolicy(server, projectId, enabled, scripts) {
+  return updateSettings(server,{projectSettingsOverrides:{[projectId]:{providerInstances:{claudeAgent:{enabled}},defaultProjectScripts:scripts}}});
+}
+
+export async function updateSettings(server, patch) {
   const response = await fetch(`${server.origin}/api/auth/websocket-ticket`, {
     method: "POST", headers: {authorization:`Bearer ${server.bearer}`},
   });
@@ -77,7 +81,7 @@ export async function projectProviderPolicy(server, projectId, enabled, scripts)
       const timer = setTimeout(() => reject(new Error("No policy RPC response in 30 s")),30_000);
       const finish = (error) => { clearTimeout(timer); error ? reject(error) : resolve(); };
       socket.onerror = () => finish(new Error("Policy RPC socket failed"));
-      socket.onopen = () => socket.send(JSON.stringify({_tag:"Request",id:"1",tag:"server.updateSettings",headers:[],payload:{patch:{projectSettingsOverrides:{[projectId]:{providerInstances:{claudeAgent:{enabled}},defaultProjectScripts:scripts}}}}}));
+      socket.onopen = () => socket.send(JSON.stringify({_tag:"Request",id:"1",tag:"server.updateSettings",headers:[],payload:{patch}}));
       socket.onmessage = ({data}) => {
         for (const line of String(data).split("\n").filter(Boolean)) {
           const parsed = JSON.parse(line);

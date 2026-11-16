@@ -35,8 +35,8 @@ struct RawLimit {
     variants: HashMap<String, RawLimit>,
     #[serde(default)]
     non_blank: bool,
-    max_length: Option<usize>,
     min_length: Option<usize>,
+    max_length: Option<usize>,
     items: Option<Box<RawLimit>>,
     pattern: Option<String>,
     max_properties: Option<usize>,
@@ -52,8 +52,8 @@ struct Limit {
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
     non_blank: bool,
-    max_length: Option<usize>,
     min_length: Option<usize>,
+    max_length: Option<usize>,
     items: Option<Box<Limit>>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
@@ -91,8 +91,8 @@ impl Limit {
             values: raw.values.map(|v| Box::new(Self::build(*v))),
             variants,
             non_blank: raw.non_blank,
-            max_length: raw.max_length,
             min_length: raw.min_length,
+            max_length: raw.max_length,
             items: raw.items.map(|i| Box::new(Self::build(*i))),
             pattern,
             max_properties: raw.max_properties,
@@ -184,17 +184,10 @@ impl Limit {
         if self.non_blank && text.is_empty() {
             return Some(at("a non-blank string".to_owned(), path));
         }
-        if self
-            .min_length
-            .is_some_and(|min| text.encode_utf16().count() < min)
+        if let Some(min) = self.min_length
+            && text.encode_utf16().count() < min
         {
-            return Some(at(
-                format!(
-                    "a value with a length of at least {}",
-                    self.min_length.unwrap_or_default()
-                ),
-                path,
-            ));
+            return Some(at(format!("a value with a length of at least {min}"), path));
         }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();
@@ -291,6 +284,7 @@ mod tests {
             limit.variants.values().for_each(walk);
             limit.keys.iter().for_each(|k| walk(k));
             limit.values.iter().for_each(|v| walk(v));
+            limit.items.iter().for_each(|item| walk(item));
         }
         raw.values().for_each(walk);
         assert!(raw.contains_key("terminal.open") && raw.contains_key("assets.createUrl"));
@@ -342,6 +336,12 @@ mod tests {
             text,
             r#"expected a value with a length of at most 1024, got 1025 at ["resource"]["path"]"#
         );
+        let text = problem(
+            "git.resolvePullRequest",
+            json!({"cwd":"/repo","reference":"  "}),
+        )
+        .expect("blank reference");
+        assert_eq!(text, r#"expected a non-blank string at ["reference"]"#);
         let env = json!({ "threadId": "t", "terminalId": "d", "cwd": "/", "env": { "A": "v".repeat(8193) } });
         let text = problem("terminal.open", env).expect("over the limit");
         assert!(text.ends_with(r#"at ["env"]["A"]"#), "{text}");

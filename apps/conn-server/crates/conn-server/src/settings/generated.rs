@@ -3,6 +3,8 @@
 // Source: apps/server/src/settingsSecrets.ts (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,
 // secrets/secretProviderDefinitions.ts.
 
+pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = true;
+
 /// Secret fields of `providerInstances.*.config`, by the instance's `driver`.
 pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[
     ("acpRegistry", &[]),

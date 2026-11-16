@@ -72,6 +72,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
         scheduled_tasks: deps.scheduled_tasks.clone(),
         annotations: deps.annotations.clone(),
         secrets: deps.secrets.clone(),
+        test_logins: deps.test_logins.clone(),
         panels: deps.panels.clone(),
     }))
 }
