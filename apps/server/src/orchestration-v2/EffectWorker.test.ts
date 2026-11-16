@@ -51,6 +51,7 @@ import { modelEvaluationEffects } from "../modelEvaluations/modelEvaluationSched
 import {
   ConversationSummaryPassError,
   ConversationSummaryRuntime,
+  conversationSummaryEffect,
 } from "../project/conversationSummaries/conversationSummarySchedule.ts";
 import {
   DeliveryScrubRunner,
@@ -197,6 +198,93 @@ it.effect("retries a failed summary pass before scheduling its continuation", ()
       yield* TestClock.adjust(100);
       assert.equal(yield* worker.drain(), 2);
       assert.equal(yield* Ref.get(calls), 3);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("keeps at most one pending summary pass per thread", () =>
+  Effect.gen(function* () {
+    const threadA = ThreadId.make("thread:summary-one-pending");
+    const threadB = ThreadId.make("thread:summary-other");
+    const first = conversationSummaryEffect({
+      threadId: threadA,
+      runId: RunId.make("run:summary-one-pending-a"),
+    });
+    const second = conversationSummaryEffect({
+      threadId: threadA,
+      runId: RunId.make("run:summary-one-pending-b"),
+    });
+    const other = conversationSummaryEffect({
+      threadId: threadB,
+      runId: RunId.make("run:summary-one-pending-c"),
+    });
+    const layer = EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
+    yield* Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      yield* outbox.enqueue([first, second, other]);
+      assert.isTrue(Option.isSome(yield* outbox.get(first.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(second.id)));
+      assert.isTrue(Option.isSome(yield* outbox.get(other.id)));
+
+      const workerId = "summary-dedupe";
+      const claimed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(claimed, (effect) => effect.id),
+        Option.some(first.id),
+      );
+      const otherClaimed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(otherClaimed, (effect) => effect.id),
+        Option.some(other.id),
+      );
+      assert.isTrue(yield* outbox.succeed({ effectId: other.id, workerId }));
+
+      const continuation = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-a"),
+        pass: 1,
+      });
+      const third = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-d"),
+      });
+      yield* outbox.enqueue([continuation, third]);
+      assert.isTrue(Option.isSome(yield* outbox.get(continuation.id)));
+      assert.isTrue(Option.isNone(yield* outbox.get(third.id)));
+
+      const retried = yield* outbox.retry({
+        effectId: first.id,
+        workerId,
+        error: "OpenCode did not finish generating in time.",
+        delayMs: 0,
+      });
+      assert.isTrue(retried);
+      const settled = yield* outbox.get(first.id);
+      assert.isTrue(Option.isSome(settled));
+      if (Option.isSome(settled)) assert.notEqual(settled.value.status, "pending");
+      const pendingContinuation = yield* outbox.get(continuation.id);
+      assert.isTrue(Option.isSome(pendingContinuation));
+      if (Option.isSome(pendingContinuation))
+        assert.equal(pendingContinuation.value.status, "pending");
+
+      const resumed = yield* outbox.claimNext({ workerId, lane: "maintenance" });
+      assert.deepEqual(
+        Option.map(resumed, (effect) => effect.id),
+        Option.some(continuation.id),
+      );
+      const successor = conversationSummaryEffect({
+        threadId: threadA,
+        runId: RunId.make("run:summary-one-pending-a"),
+        pass: 2,
+      });
+      yield* outbox.enqueue([successor]);
+      assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 0 });
+      const restarted = yield* outbox.get(continuation.id);
+      assert.isTrue(Option.isSome(restarted));
+      if (Option.isSome(restarted)) assert.notEqual(restarted.value.status, "pending");
+      const pendingSuccessor = yield* outbox.get(successor.id);
+      assert.isTrue(Option.isSome(pendingSuccessor));
+      if (Option.isSome(pendingSuccessor)) assert.equal(pendingSuccessor.value.status, "pending");
     }).pipe(Effect.provide(layer));
   }),
 );
