@@ -7,6 +7,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -134,6 +135,75 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
     title: `Thread ${index}`,
   });
 }
+
+describe("sidebar status shelf collapse", () => {
+  it.each(["working", "input"] as const)(
+    "hides the open thread when its %s shelf is collapsed and restores it on expansion",
+    async (section) => {
+      using stack = new DisposableStack();
+      const previousSettings = getClientSettings();
+      stack.defer(() => __setClientSettingsForTests(previousSettings));
+      __setClientSettingsForTests({
+        ...DEFAULT_CLIENT_SETTINGS,
+        boringSidebarEnabled: false,
+        sidebarWorkingShelfEnabled: true,
+      });
+      const activeProject = project("collapse-project");
+      const thread = makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make(`collapse-${section}`),
+        title: `Open ${section} thread`,
+        hasPendingUserInput: section === "input",
+        runtime: {
+          status: "running",
+          activeRunId: null,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: null,
+          lastError: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+      const routeThreadRef = { environmentId: thread.environmentId, threadId: thread.id };
+      vi.mocked(useProjects).mockReturnValue([activeProject]);
+      vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+      vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
+      vi.mocked(useThreadRouteTarget).mockReturnValue({
+        kind: "server",
+        threadRef: routeThreadRef,
+      });
+      vi.mocked(useHandleNewThread).mockReturnValue({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultProjectRef: {
+          environmentId: activeProject.environmentId,
+          projectId: activeProject.id,
+        },
+        defaultProjectFallbackReady: true,
+        handleNewThread: vi.fn().mockResolvedValue(null),
+        routeDraftId: null,
+        routeThreadRef,
+      });
+      await using screen = await render(
+        <SidebarProvider>
+          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        </SidebarProvider>,
+      );
+      const toggle = screen.getByTestId(`sidebar-${section}-shelf-toggle`);
+      toggle.element().focus();
+      await userEvent.keyboard("{ArrowRight}");
+      await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+      const row = screen.getByText(thread.title, { exact: true });
+      await expect.element(row).toBeInTheDocument();
+      await userEvent.keyboard("{ArrowLeft}");
+      await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+      await expect.element(row).not.toBeInTheDocument();
+      await userEvent.keyboard("{ArrowRight}");
+      await expect.element(row).toBeInTheDocument();
+      await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    },
+  );
+});
 
 describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads

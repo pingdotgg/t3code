@@ -543,12 +543,8 @@ function useSidebarThreads(input: {
   const visibleSnoozedThreads = snoozedShelfExpanded
     ? snoozedThreads
     : routeThreadOnly(snoozedThreads, routeRowThreadKey);
-  const visibleInputThreads = inputShelfExpanded
-    ? inputThreads
-    : routeThreadOnly(inputThreads, routeRowThreadKey);
-  const visibleWorkingThreads = workingShelfExpanded
-    ? workingThreads
-    : routeThreadOnly(workingThreads, routeRowThreadKey);
+  const visibleInputThreads = inputShelfExpanded ? inputThreads : EMPTY_THREADS;
+  const visibleWorkingThreads = workingShelfExpanded ? workingThreads : EMPTY_THREADS;
   const projectFolders =
     folderGroups === null
       ? null
