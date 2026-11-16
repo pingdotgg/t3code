@@ -285,19 +285,33 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         home: ServerConfig.ServerConfig["Service"],
         machineId: string,
         effect: Effect.Effect<A, E, R>,
+        options: { readonly container?: boolean } = {},
       ) =>
         effect.pipe(
           Effect.provideService(ServerConfig.ServerConfig, home),
           Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Environment, {}),
           Effect.provideService(FileSystem.FileSystem, {
             ...fileSystem,
+            exists: (path) =>
+              path === "/.dockerenv" || path === "/run/.containerenv"
+                ? Effect.succeed(options.container === true)
+                : fileSystem.exists(path),
+            stat: (path) =>
+              path === "/etc" || path === "/etc/machine-id"
+                ? fileSystem.stat(home.baseDir)
+                : fileSystem.stat(path),
             readFileString: (path, encoding) =>
               path === "/etc/machine-id"
                 ? Effect.succeed(machineId)
                 : fileSystem.readFileString(path, encoding),
           }),
         );
-      const readEnvironmentId = (home: ServerConfig.ServerConfig["Service"], machineId: string) =>
+      const readEnvironmentId = (
+        home: ServerConfig.ServerConfig["Service"],
+        machineId: string,
+        options?: { readonly container?: boolean },
+      ) =>
         onMachine(
           home,
           machineId,
@@ -305,6 +319,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
             const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
             return yield* identity.getEnvironmentId;
           }).pipe(Effect.provide(Layer.fresh(ServerEnvironment.layerIdentity))),
+          options,
         );
       const encode = (value: string) => new TextEncoder().encode(value);
       const withSecrets = <A, E>(
@@ -347,6 +362,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
 
       expect(yield* readEnvironmentId(original, "machine-a")).toBe("existing-id");
       expect(yield* readEnvironmentId(original, "machine-a")).toBe("existing-id");
+      // A rebuilt container has a new machine ID but keeps its persisted home.
+      expect(yield* readEnvironmentId(original, "rebuilt-image", { container: true })).toBe(
+        "existing-id",
+      );
       // Unmarked copies cannot be told apart; deleting the copy's ID is the way out.
       expect(yield* readEnvironmentId(legacyCopy, "machine-b")).toBe("existing-id");
       yield* fileSystem.remove(legacyCopy.environmentIdPath);

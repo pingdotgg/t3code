@@ -2,6 +2,7 @@ import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
 
@@ -158,6 +159,25 @@ export const detectServerEnvironmentMachineKind = Effect.fn("detectServerEnviron
 
 const LINUX_MACHINE_ID_PATHS = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
 
+// A container keeps a persisted T3 home while its image, and so its machine ID, is rebuilt.
+// systemd mounts a per-boot ID over an empty or read-only /etc/machine-id.
+const isLinuxMachineIdUnstable = Effect.fn("isLinuxMachineIdUnstable")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcess.Environment;
+  if (environment.KUBERNETES_SERVICE_HOST) {
+    return true;
+  }
+  const exists = (path: string) => fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+  if ((yield* exists("/.dockerenv")) || (yield* exists("/run/.containerenv"))) {
+    return true;
+  }
+  const [etc, machineId] = yield* Effect.all([
+    fileSystem.stat("/etc").pipe(Effect.option),
+    fileSystem.stat("/etc/machine-id").pipe(Effect.option),
+  ]);
+  return Option.isSome(etc) && Option.isSome(machineId) && etc.value.dev !== machineId.value.dev;
+});
+
 /** The OS install's own ID, which a T3 home copied to another machine does not carry along. */
 export const readServerMachineId = Effect.fn("readServerMachineId")(function* () {
   const platform = yield* HostProcess.Platform;
@@ -170,6 +190,9 @@ export const readServerMachineId = Effect.fn("readServerMachineId")(function* ()
       return ioreg?.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)?.[1] ?? null;
     }
     case "linux": {
+      if (yield* isLinuxMachineIdUnstable()) {
+        return null;
+      }
       for (const path of LINUX_MACHINE_ID_PATHS) {
         const machineId = yield* readOptionalFile(path);
         if (machineId !== null) {
