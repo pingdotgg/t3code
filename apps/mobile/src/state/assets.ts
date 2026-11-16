@@ -93,18 +93,19 @@ export function useRefreshAssetUrl(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): () => Promise<string | null> {
-  const connection = usePreparedConnection(environmentId);
-  const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const createUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     refresh: true,
     reportFailure: false,
   });
   return async () => {
-    if (environmentId === null || resource === null || httpBaseUrl === null) return null;
-    const state = assetUrlStateFromResult(
-      await createUrl({ environmentId, input: { resource } }),
-      httpBaseUrl,
-    );
+    if (environmentId === null || resource === null) return null;
+    const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
+    if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
+    const result = await createUrl({ environmentId, input: { resource } });
+    // A route can change while the query runs; resolve against the connection now current.
+    const connection = appAtomRegistry.get(connectionAtom);
+    if (connection._tag === "None") return null;
+    const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
     return state._tag === "Success" ? state.url : null;
   };
 }
