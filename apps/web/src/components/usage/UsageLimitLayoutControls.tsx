@@ -92,7 +92,7 @@ export function UsageLimitLayoutControls({
     <div
       className={cn(
         "flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100",
-        isDragging && "opacity-100",
+        (isDragging || hidden) && "opacity-100",
       )}
     >
       <button

@@ -512,69 +512,69 @@ function PoolWindowCard({
     isDragging,
   } = useSortable({ id });
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
+  const style = { transform: CSS.Translate.toString(transform), transition };
+  const controls = (
+    <UsageLimitLayoutControls
+      label={controlLabel}
+      attributes={attributes}
+      listeners={listeners}
+      handleRef={setActivatorNodeRef}
+      isDragging={isDragging}
+      hidden={hidden}
+      onToggleVisibility={onToggleVisibility}
+    />
+  );
+  if (hidden) {
+    return (
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={cn(
+          "group/limit-row flex items-center gap-3 rounded-lg border border-dashed border-border/60 bg-background py-1.5 pr-1.5 pl-4",
+          isDragging && "relative z-10 shadow-md",
+        )}
+      >
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+          {label ?? pool.label}
+        </span>
+        {controls}
+      </div>
+    );
+  }
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition: transition,
-      }}
+      style={style}
       className={cn(
         "group/limit-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3 rounded-lg border border-border/60 bg-background p-4 @xl/limits:grid-cols-[9rem_minmax(0,1fr)_auto] @xl/limits:items-center",
         isDragging && "relative z-10 shadow-md",
       )}
     >
       <div className="flex min-w-0 flex-col gap-1">
-        {hidden || label !== null ? (
-          <span
-            className={cn(
-              "text-sm font-medium",
-              hidden ? "text-muted-foreground" : "text-foreground",
-            )}
-          >
-            {label ?? pool.label}
-            {hidden ? <span className="ml-2 font-normal text-muted-foreground">Hidden</span> : null}
+        {label !== null ? (
+          <span className="text-sm font-medium text-foreground">{label ?? pool.label}</span>
+        ) : null}
+        <span className="flex items-baseline gap-2">
+          <span className="text-3xl font-semibold text-foreground tabular-nums">
+            {pool.remainingPercent}%
+          </span>
+          <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            <span>left</span>
+            {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
+          </span>
+        </span>
+        {nextRefill && pool.columns.length > 1 ? (
+          <span className="text-xs font-medium text-foreground tabular-nums">
+            ↻ +{nextRefill.restoresPercent}%
           </span>
         ) : null}
-        {!hidden ? (
-          <>
-            <span className="flex items-baseline gap-2">
-              <span className="text-3xl font-semibold text-foreground tabular-nums">
-                {pool.remainingPercent}%
-              </span>
-              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                <span>left</span>
-                {pool.pace ? <PaceIcon pace={pool.pace} /> : null}
-              </span>
-            </span>
-            {nextRefill && pool.columns.length > 1 ? (
-              <span className="text-xs font-medium text-foreground tabular-nums">
-                ↻ +{nextRefill.restoresPercent}%
-              </span>
-            ) : null}
-          </>
-        ) : null}
       </div>
-      <div className="col-start-2 row-start-1 @xl/limits:col-start-3">
-        <UsageLimitLayoutControls
-          label={controlLabel}
-          attributes={attributes}
-          listeners={listeners}
-          handleRef={setActivatorNodeRef}
-          isDragging={isDragging}
-          hidden={hidden}
-          onToggleVisibility={onToggleVisibility}
-        />
+      <div className="col-start-2 row-start-1 @xl/limits:col-start-3">{controls}</div>
+      <div className="col-span-2 min-w-0 @xl/limits:col-span-1 @xl/limits:col-start-2 @xl/limits:row-start-1">
+        <PoolBar pool={pool} color={color} now={now} />
       </div>
-      {!hidden ? (
-        <>
-          <div className="col-span-2 min-w-0 @xl/limits:col-span-1 @xl/limits:col-start-2 @xl/limits:row-start-1">
-            <PoolBar pool={pool} color={color} now={now} />
-          </div>
-          {description ? (
-            <p className="col-span-full text-xs text-muted-foreground">{description}</p>
-          ) : null}
-        </>
+      {description ? (
+        <p className="col-span-full text-xs text-muted-foreground">{description}</p>
       ) : null}
     </div>
   );
@@ -632,7 +632,12 @@ function PoolSection({
       }
     >
       <div className="group/limit-row flex items-center gap-2">
-        <h2 className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
+        <h2
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-2 text-sm font-medium",
+            hidden ? "text-muted-foreground opacity-60" : "text-foreground",
+          )}
+        >
           <ProviderInstanceIcon
             driverKind={pool.driver}
             displayName={label}
@@ -640,10 +645,7 @@ function PoolSection({
             className="size-5"
             iconClassName="size-4 text-foreground/80"
           />
-          {label}
-          {hidden ? (
-            <span className="text-xs font-normal text-muted-foreground">Hidden</span>
-          ) : null}
+          <span className="truncate">{label}</span>
         </h2>
         <UsageLimitLayoutControls
           label={label}
