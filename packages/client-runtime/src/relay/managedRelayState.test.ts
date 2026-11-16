@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import {
+  RelayInternalError,
   type RelayClientDeviceRecord,
   type RelayClientEnvironmentRecord,
 } from "@t3tools/contracts/relay";
@@ -188,33 +189,54 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
-  it.effect("can finish cleanup after a failed unlink has already revoked the link", () =>
+  it.effect("keeps cleanup retryable through another failure and failed verification", () =>
     Effect.gen(function* () {
       setSession();
       let linked = true;
-      let cleanupPending = true;
-      const failure = new ManagedRelay.ManagedRelayRequestFailedError({
-        action: "unlink relay environment",
-        cause: new Error("tunnel has active connections"),
-        status: 500,
-      });
+      let attempts = 0;
       const client = createClient({
-        unlinkEnvironment: () =>
+        unlinkEnvironment: ({ cleanupGeneration }) =>
           Effect.suspend(() => {
+            attempts++;
+            expect(cleanupGeneration).toBe(attempts === 1 ? undefined : attempts);
             const wasLinked = linked;
             linked = false;
-            return cleanupPending ? Effect.fail(failure) : Effect.succeed({ ok: wasLinked });
+            return attempts < 3
+              ? Effect.fail(
+                  new ManagedRelay.ManagedRelayRequestFailedError({
+                    action: "unlink relay environment",
+                    cause: new Error("tunnel has active connections"),
+                    status: 500,
+                    relayError: new RelayInternalError({
+                      code: "internal_error",
+                      reason: "upstream_unavailable",
+                      traceId: "cleanup-failed",
+                      cleanupGeneration: attempts + 1,
+                    }),
+                  }),
+                )
+              : Effect.succeed({ ok: wasLinked });
           }),
-        listEnvironments: () => Effect.sync(() => (linked ? [environment] : [])),
+        listEnvironments: () =>
+          attempts === 2
+            ? Effect.fail(
+                new ManagedRelay.ManagedRelayRequestFailedError({
+                  action: "list relay-managed environments",
+                  cause: new Error("listing unavailable"),
+                }),
+              )
+            : Effect.sync(() => (linked ? [environment] : [])),
       });
-      const deregister = deregisterManagedRelayEnvironment(registry, {
-        accountId: "account-1",
-        environmentId: environment.environmentId,
-      }).pipe(Effect.provideService(ManagedRelay.ManagedRelayClient, client));
+      const deregister = (cleanupGeneration?: number) =>
+        deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+          cleanupGeneration,
+        }).pipe(Effect.provideService(ManagedRelay.ManagedRelayClient, client));
 
-      expect(yield* deregister).toEqual({ cleanup: "unconfirmed", cause: failure });
-      cleanupPending = false;
-      expect(yield* deregister).toEqual({ cleanup: "complete" });
+      expect(yield* deregister()).toMatchObject({ cleanup: "unconfirmed", cleanupGeneration: 2 });
+      expect(yield* deregister(2)).toMatchObject({ cleanup: "unconfirmed", cleanupGeneration: 3 });
+      expect(yield* deregister(3)).toEqual({ cleanup: "complete" });
     }),
   );
 

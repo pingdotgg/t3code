@@ -48,8 +48,11 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
     scheduler: managedRelayMutationScheduler,
     concurrency: {
       mode: "serial",
-      key: (input: { readonly accountId: string; readonly environmentId: EnvironmentId }) =>
-        input.accountId,
+      key: (input: {
+        readonly accountId: string;
+        readonly environmentId: EnvironmentId;
+        readonly cleanupGeneration?: number | undefined;
+      }) => input.accountId,
     },
     execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
   },

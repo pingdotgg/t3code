@@ -182,7 +182,10 @@ export function T3ConnectUserProfilePage() {
     readonly linkedAtById: ReadonlyMap<EnvironmentId, string>;
   }>({ accountId: null, linkedAtById: new Map() });
 
-  const handleDeregister = async (environment: RelayClientEnvironmentRecord) => {
+  const handleDeregister = async (
+    environment: RelayClientEnvironmentRecord,
+    cleanup?: { generation: number; toastId: ReturnType<typeof toastManager.add> },
+  ) => {
     const accountId = environmentsState.accountId;
     if (!accountId || mutationPendingRef.current) return;
 
@@ -191,6 +194,7 @@ export function T3ConnectUserProfilePage() {
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
+      cleanupGeneration: cleanup?.generation,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
@@ -212,24 +216,34 @@ export function T3ConnectUserProfilePage() {
           traceId,
           cause,
         });
-        const toastId = toastManager.add({
-          type: "warning",
-          title: "Server removed; cleanup unconfirmed",
-          description:
-            "The server is no longer registered to your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup." +
-            (traceId ? ` Trace ID: ${traceId}` : ""),
-          timeout: 0,
-          actionProps: {
-            children: "Retry cleanup",
-            onClick: () => {
-              if (mutationPendingRef.current) return;
-              toastManager.close(toastId);
-              void handleDeregister(environment);
-            },
-          },
+        const generation = result.value.cleanupGeneration;
+        const description =
+          "The server was removed from your account, but tunnel cleanup could not be confirmed. " +
+          (generation === undefined
+            ? "Update the relay before retrying cleanup."
+            : "Retry to finish cleanup.") +
+          (traceId ? ` Trace ID: ${traceId}` : "");
+        const toastId =
+          cleanup?.toastId ??
+          toastManager.add({
+            type: "warning",
+            title: "Server removed; cleanup unconfirmed",
+            description,
+            timeout: 0,
+          });
+        toastManager.update(toastId, {
+          description,
+          actionProps:
+            generation === undefined
+              ? undefined
+              : {
+                  children: "Retry cleanup",
+                  onClick: () => void handleDeregister(environment, { generation, toastId }),
+                },
         });
         return;
       }
+      if (cleanup) toastManager.close(cleanup.toastId);
       toastManager.add({
         type: "success",
         title: "Server deregistered",
@@ -239,6 +253,14 @@ export function T3ConnectUserProfilePage() {
     }
     if (isAtomCommandInterrupted(result)) return;
 
+    if (cleanup) {
+      setRemovedEnvironments((current) => {
+        if (current.accountId !== accountId) return current;
+        const linkedAtById = new Map(current.linkedAtById);
+        linkedAtById.delete(environment.environmentId);
+        return { accountId, linkedAtById };
+      });
+    }
     // The relay may have removed it before failing.
     environmentsState.refresh();
     const cause = squashAtomCommandFailure(result);
@@ -253,7 +275,7 @@ export function T3ConnectUserProfilePage() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not deregister server",
+        title: cleanup ? "Could not finish tunnel cleanup" : "Could not deregister server",
         description: relayFailureReason(cause) ?? message,
         ...(traceId
           ? {

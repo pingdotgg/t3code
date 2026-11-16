@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
+import * as HttpApiError from "effect/http-api/HttpApiError";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as HttpApiMiddleware from "effect/http-api/HttpApiMiddleware";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -598,6 +599,7 @@ export class RelayInternalError extends Schema.TaggedError<RelayInternalError>()
     code: Schema.Literal("internal_error"),
     reason: RelayInternalErrorReason,
     traceId: TrimmedNonEmptyString,
+    cleanupGeneration: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   },
   { httpApiStatus: 500 },
 ) {
@@ -1120,6 +1122,19 @@ const RelayClientGroup = HttpApiGroup.make("client")
       success: RelayOkResponse,
       error: RelayAuthAndInternalErrors,
     }).annotate(OpenApi.Summary, "Unlink an environment"),
+    HttpApiEndpoint.post(
+      "cleanupEnvironment",
+      "/v1/client/environment-links/:environmentId/cleanup",
+      {
+        headers: RelayBearerRequestHeaders,
+        params: RelayEnvironmentUnlinkParams,
+        payload: Schema.Struct({
+          generation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+        }),
+        success: RelayOkResponse,
+        error: [...RelayAuthAndInternalErrors, HttpApiError.Conflict],
+      },
+    ).annotate(OpenApi.Summary, "Finish cleanup of a revoked environment link"),
     HttpApiEndpoint.delete(
       "releaseEnvironmentTunnel",
       "/v1/client/environment-links/:environmentId/tunnel",

@@ -1079,6 +1079,49 @@ describe("relay managed tunnel recovery", () => {
 });
 
 describe("relay environment unlink", () => {
+  it.effect("cleanup retries cannot revoke a relink or delete a replacement allocation", () =>
+    Effect.gen(function* () {
+      for (const state of ["relinked", "reprovisioned", "claim-lost", "revoked"] as const) {
+        const result = yield* unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          cleanupGeneration: 2,
+        }).pipe(
+          Effect.provide(
+            layerRelayUnlinkTest({
+              getForUser: () =>
+                Effect.succeed(state === "relinked" ? linkedEnvironmentRecord : null),
+              prepareDeprovision: () =>
+                Effect.succeed({
+                  userId: "user-1",
+                  environmentId: "environment-1",
+                  hostname: "environment-1.example.test",
+                  tunnelId: "tunnel-1",
+                  tunnelName: "environment-1-tunnel",
+                  dnsRecordId: "dns-1",
+                  readyAt: "2026-07-28T00:00:00.000Z",
+                  origin: null,
+                  updatedAt: "2026-07-28T00:00:00.000Z",
+                  generation: state === "reprovisioned" ? 3 : 2,
+                  tunnelReleasedAt: null,
+                }),
+              revokeForUser: () => Effect.die("cleanup must never revoke a link"),
+              revokeCredential: () => Effect.die("cleanup must never revoke credentials"),
+              deprovision: () =>
+                state === "revoked"
+                  ? Effect.succeed(true)
+                  : state === "claim-lost"
+                    ? Effect.succeed(false)
+                    : Effect.die("cleanup must spare the replacement"),
+            }),
+          ),
+          Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "cleaned" }),
+        );
+        expect(result).toBe(state === "revoked" ? "cleaned" : "Conflict");
+      }
+    }),
+  );
+
   it.effect("drops the unlinked endpoint's held webhooks, even if clearing fails", () => {
     const cleared: Array<string> = [];
     const endpointKey = "0123456789abcdef";

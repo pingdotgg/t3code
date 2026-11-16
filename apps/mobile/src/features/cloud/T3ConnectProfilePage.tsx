@@ -60,7 +60,10 @@ export function T3ConnectProfilePage() {
     readonly linkedAtById: ReadonlyMap<EnvironmentId, string>;
   }>({ accountId: null, linkedAtById: new Map() });
 
-  const handleDeregister = async (environment: RelayClientEnvironmentRecord) => {
+  const handleDeregister = async (
+    environment: RelayClientEnvironmentRecord,
+    cleanupGeneration?: number,
+  ) => {
     const accountId = environmentsState.accountId;
     if (!accountId || mutationPendingRef.current) return;
 
@@ -69,6 +72,7 @@ export function T3ConnectProfilePage() {
     const result = await deregisterEnvironment({
       accountId,
       environmentId: environment.environmentId,
+      cleanupGeneration,
     });
     mutationPendingRef.current = false;
     setDeregisteringEnvironmentId(null);
@@ -83,6 +87,7 @@ export function T3ConnectProfilePage() {
       void refreshRelayEnvironments();
       if (result.value.cleanup === "unconfirmed") {
         const cause = result.value.cause;
+        const generation = result.value.cleanupGeneration;
         const traceId = findErrorTraceId(cause);
         console.warn("[t3-connect] Server removed but deregistration cleanup is unconfirmed", {
           environmentId: environment.environmentId,
@@ -91,10 +96,20 @@ export function T3ConnectProfilePage() {
         });
         Dialog.alert(
           "Server removed; cleanup unconfirmed",
-          "The server is no longer registered to your account, but tunnel cleanup could not be confirmed. Retry to finish cleanup." +
+          "The server was removed from your account, but tunnel cleanup could not be confirmed. " +
+            (generation === undefined
+              ? "Update the relay before retrying cleanup."
+              : "Retry to finish cleanup.") +
             (traceId ? `\n\nTrace ID: ${traceId}` : ""),
           [
-            { text: "Retry cleanup", onPress: () => void handleDeregister(environment) },
+            ...(generation === undefined
+              ? []
+              : [
+                  {
+                    text: "Retry cleanup",
+                    onPress: () => void handleDeregister(environment, generation),
+                  },
+                ]),
             ...(traceId
               ? [
                   {
@@ -111,6 +126,15 @@ export function T3ConnectProfilePage() {
     }
     if (isAtomCommandInterrupted(result)) return;
 
+    if (cleanupGeneration !== undefined) {
+      setRemovedEnvironments((current) => {
+        if (current.accountId !== accountId) return current;
+        const linkedAtById = new Map(current.linkedAtById);
+        linkedAtById.delete(environment.environmentId);
+        return { accountId, linkedAtById };
+      });
+    }
+    environmentsState.refresh();
     const cause = squashAtomCommandFailure(result);
     const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
     const traceId = findErrorTraceId(cause);
@@ -121,17 +145,29 @@ export function T3ConnectProfilePage() {
       cause,
     });
     Dialog.alert(
-      "Could not deregister server",
+      cleanupGeneration === undefined
+        ? "Could not deregister server"
+        : "Could not finish tunnel cleanup",
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
-      traceId
-        ? [
-            {
-              text: "Copy trace ID",
-              onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
-            },
-            { text: "OK", style: "cancel" },
-          ]
-        : undefined,
+      [
+        ...(cleanupGeneration === undefined
+          ? []
+          : [
+              {
+                text: "Retry cleanup",
+                onPress: () => void handleDeregister(environment, cleanupGeneration),
+              },
+            ]),
+        ...(traceId
+          ? [
+              {
+                text: "Copy trace ID",
+                onPress: () => copyTextWithHaptic(traceId, { target: "connection-trace-id" }),
+              },
+            ]
+          : []),
+        { text: "OK", style: "cancel" },
+      ],
     );
   };
 

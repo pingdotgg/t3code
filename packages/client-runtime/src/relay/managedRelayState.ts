@@ -216,7 +216,11 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
   "clientRuntime.managedRelaySession.deregisterEnvironment",
 )(function* (
   registry: AtomRegistry.AtomRegistry,
-  input: { readonly accountId: string; readonly environmentId: EnvironmentId },
+  input: {
+    readonly accountId: string;
+    readonly environmentId: EnvironmentId;
+    readonly cleanupGeneration?: number | undefined;
+  },
 ) {
   const clerkToken = yield* requireSessionClerkToken(
     registry,
@@ -224,19 +228,38 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
     "deregistering an environment",
   );
   const relay = yield* ManagedRelay.ManagedRelayClient;
-  return yield* relay.unlinkEnvironment({ clerkToken, environmentId: input.environmentId }).pipe(
-    Effect.map(() => ({ cleanup: "complete" as const })),
-    Effect.catch((cause) =>
-      relay.listEnvironments({ clerkToken }).pipe(
-        Effect.mapError(() => cause),
-        Effect.flatMap((environments) =>
-          environments.some((environment) => environment.environmentId === input.environmentId)
-            ? Effect.fail(cause)
-            : Effect.succeed({ cleanup: "unconfirmed" as const, cause }),
-        ),
-      ),
-    ),
-  );
+  return yield* relay
+    .unlinkEnvironment({
+      clerkToken,
+      environmentId: input.environmentId,
+      cleanupGeneration: input.cleanupGeneration,
+    })
+    .pipe(
+      Effect.map(() => ({ cleanup: "complete" as const })),
+      Effect.catch((cause) => {
+        const generation =
+          isManagedRelayRequestFailedError(cause) && cause.relayError?._tag === "RelayInternalError"
+            ? (cause.relayError.cleanupGeneration ?? input.cleanupGeneration)
+            : input.cleanupGeneration;
+        const unconfirmed = {
+          cleanup: "unconfirmed" as const,
+          cause,
+          ...(generation === undefined ? {} : { cleanupGeneration: generation }),
+        };
+        return relay.listEnvironments({ clerkToken }).pipe(
+          Effect.matchEffect({
+            onFailure: () =>
+              input.cleanupGeneration === undefined
+                ? Effect.fail(cause)
+                : Effect.succeed(unconfirmed),
+            onSuccess: (environments) =>
+              environments.some((environment) => environment.environmentId === input.environmentId)
+                ? Effect.fail(cause)
+                : Effect.succeed(unconfirmed),
+          }),
+        );
+      }),
+    );
 });
 
 /** Returns the T3 Chat page URL where the signed-in user confirms the link. */
