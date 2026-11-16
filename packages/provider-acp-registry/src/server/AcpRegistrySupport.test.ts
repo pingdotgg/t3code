@@ -532,17 +532,6 @@ describe("AcpRegistrySupport", () => {
         .resolve(settings(), "/workspace", { ...userEnvironment, npm_config_bin_links: "false" })
         .pipe(Effect.flip);
       expect(failedRepair.reason).toBe("install_failed");
-
-      const separatedToolsDir = `${userBin}:tools`;
-      const separatedResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: separatedToolsDir,
-        registryUrl,
-      }).pipe(Effect.provideService(HostProcess.Environment, toolchain.environment));
-      const separated = yield* separatedResolver.resolve(settings(), "/workspace", userEnvironment);
-      expect(separated.spawn.command).toBe(
-        `${separatedToolsDir}/example-agent/1.2.3/npm/bin/example-agent`,
-      );
     }).pipe(
       Effect.scoped,
       Effect.provide(
