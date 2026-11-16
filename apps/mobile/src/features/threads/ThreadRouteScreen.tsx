@@ -94,8 +94,11 @@ import { useSelectedThreadRequests } from "../../state/use-selected-thread-reque
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
+import { groupIsWorking } from "@t3tools/client-runtime/state/thread-group";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
-import { threadEnvironment } from "../../state/threads";
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import {
@@ -132,6 +135,11 @@ import { useStartSideChat } from "./useStartSideChat";
 import { useThreadStatusAnnouncements } from "./useThreadStatusAnnouncements";
 import type { ThreadInspectorMode, ThreadInspectorTarget } from "./thread-inspector-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+
+const EMPTY_RUNNING_GROUP_SEATS = Atom.make<ReadonlyArray<ThreadId>>([]).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("empty-running-group-seats"),
+);
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
   const first = Array.isArray(value) ? value[0] : value;
@@ -367,6 +375,16 @@ function ThreadRouteContent(
     selectedThreadProject,
     selectedEnvironmentConnection,
   } = useThreadSelection();
+  const selectedThreadRef =
+    selectedThread === null
+      ? null
+      : scopeThreadRef(selectedThread.environmentId, selectedThread.id);
+  const runningGroupSeats = useAtomValue(
+    selectedThreadRef === null
+      ? EMPTY_RUNNING_GROUP_SEATS
+      : environmentThreadShells.runningGroupSeatsAtom(selectedThreadRef),
+  );
+  const groupWorking = groupIsWorking(selectedThread?.group, runningGroupSeats.length);
   useRememberThreadProject(selectedThreadProject);
   const canOperateThread = useEnvironmentScope(
     selectedThread?.environmentId ?? null,
@@ -694,7 +712,7 @@ function ThreadRouteContent(
     if (
       !selectedThread ||
       !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope) ||
-      (composer.interruptibleRunId === null && !selectedThread.groupDiscussionOpen)
+      (composer.interruptibleRunId === null && !groupWorking)
     ) {
       return;
     }
@@ -702,7 +720,7 @@ function ThreadRouteContent(
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
-        ...(selectedThread.groupDiscussionOpen || composer.interruptibleRunId === null
+        ...(groupWorking || composer.interruptibleRunId === null
           ? {}
           : { runId: composer.interruptibleRunId }),
       },
@@ -1127,7 +1145,7 @@ function ThreadRouteContent(
           canStopThread={
             awaitingBootstrapTurn ||
             composer.interruptibleRunId !== null ||
-            selectedThread.groupDiscussionOpen === true
+            groupWorking
           }
           queuedRunEdit={composer.queuedRunEdit}
           composerDraftKey={composer.composerDraftKey}
