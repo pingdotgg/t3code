@@ -29,8 +29,10 @@ import {
 } from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
+  WorkspaceColumnMetricsContext,
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
+import type { NativeLayoutMetrics } from "../../../lib/reserved-regions";
 import {
   useCompactWorkspaceTabs,
   useFloatingWorkspaceTabs,
@@ -169,6 +171,18 @@ export function WorkspaceNativeTabs(props: {
   // Once the first tab is up, the others mount their headers for UIKit to put in the window
   // once: iOS 26 fades bar items in the first time they enter it, which a first visit would show.
   const [prewarm, setPrewarm] = useState(false);
+  const [columnMetrics, setColumnMetrics] = useState<ReadonlyMap<string, NativeLayoutMetrics>>(
+    () => new Map(),
+  );
+  const sharedColumnMetrics = {
+    byColumn: columnMetrics,
+    publish: (column: string, metrics: NativeLayoutMetrics) =>
+      setColumnMetrics((current) =>
+        JSON.stringify(current.get(column)) === JSON.stringify(metrics)
+          ? current
+          : new Map(current).set(column, metrics),
+      ),
+  };
   const [prewarmRequests, setPrewarmRequests] = useState<ReadonlyMap<string, number>>(
     () => new Map(),
   );
@@ -182,73 +196,75 @@ export function WorkspaceNativeTabs(props: {
   const request = { selectedScreenKey: shownScreenKey, baseProvenance: provenance };
   return (
     <View style={{ flex: 1 }}>
-      <Tabs.Host
-        navStateRequest={request}
-        tabBarHidden={props.hidden || !systemTabBar}
-        ios={{
-          tabBarControllerMode: "tabBar",
-          tabBarMinimizeBehavior: "never",
-          tabBarTintColor: colors["--color-primary"],
-        }}
-        onTabSelectionRejected={({
-          nativeEvent,
-        }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
-          setProvenance(nativeEvent.provenance)
-        }
-        onTabSelectionPrevented={({
-          nativeEvent,
-        }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
-          const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.preventedScreenKey);
-          if (tab) selectTab(tab);
-        }}
-        onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
-          setProvenance(nativeEvent.provenance);
-          if (nativeEvent.actionOrigin === "programmatic-js") return;
-          const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
-          if (tab) selectTab(tab);
-        }}
-      >
-        {NATIVE_WORKSPACE_TAB_SLOTS.map((slot, index) => {
-          const settings = slot === "settings";
-          const tab = settings ? (overflow ?? selectedTab) : primaryTabs[index];
-          if (!tab) return null;
-          return (
-            <Tabs.Screen
-              // Stable slot controllers keep UIKit's stacks attached when a section moves into Settings.
-              key={slot}
-              screenKey={slot}
-              // Taps on an unmounted slot select it from JS, which shows it once it has mounted.
-              preventNativeSelection={!mountedSlots.has(slot) && slot !== shownScreenKey}
-              title=""
-              tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
-              ios={{
-                prewarmRequest: prewarmRequests.get(slot) ?? 0,
-                icon: settings
-                  ? { type: "sfSymbol", name: "gearshape" }
-                  : tab === "pullRequests"
-                    ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
-                    : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
-                selectedIcon:
-                  !settings && tab === "threads"
-                    ? { type: "sfSymbol", name: "text.bubble.fill" }
-                    : undefined,
-                overrideScrollViewContentInsetAdjustmentBehavior: false,
-              }}
-            >
-              <RetainedWorkspaceTab
-                slot={slot}
-                tab={tab}
-                prewarm={prewarm}
-                setMountedSlots={setMountedSlots}
-                setPrewarmRequests={setPrewarmRequests}
-                active={settings ? selectedSlot === -1 : selectedSlot === index}
+      <WorkspaceColumnMetricsContext value={sharedColumnMetrics}>
+        <Tabs.Host
+          navStateRequest={request}
+          tabBarHidden={props.hidden || !systemTabBar}
+          ios={{
+            tabBarControllerMode: "tabBar",
+            tabBarMinimizeBehavior: "never",
+            tabBarTintColor: colors["--color-primary"],
+          }}
+          onTabSelectionRejected={({
+            nativeEvent,
+          }: NativeSyntheticEvent<TabSelectionRejectedEvent>) =>
+            setProvenance(nativeEvent.provenance)
+          }
+          onTabSelectionPrevented={({
+            nativeEvent,
+          }: NativeSyntheticEvent<TabSelectionPreventedEvent>) => {
+            const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.preventedScreenKey);
+            if (tab) selectTab(tab);
+          }}
+          onTabSelected={({ nativeEvent }: NativeSyntheticEvent<TabSelectedEvent>) => {
+            setProvenance(nativeEvent.provenance);
+            if (nativeEvent.actionOrigin === "programmatic-js") return;
+            const tab = workspaceTabForNativeSlot(primaryTabs, nativeEvent.selectedScreenKey);
+            if (tab) selectTab(tab);
+          }}
+        >
+          {NATIVE_WORKSPACE_TAB_SLOTS.map((slot, index) => {
+            const settings = slot === "settings";
+            const tab = settings ? (overflow ?? selectedTab) : primaryTabs[index];
+            if (!tab) return null;
+            return (
+              <Tabs.Screen
+                // Stable slot controllers keep UIKit's stacks attached when a section moves into Settings.
+                key={slot}
+                screenKey={slot}
+                // Taps on an unmounted slot select it from JS, which shows it once it has mounted.
+                preventNativeSelection={!mountedSlots.has(slot) && slot !== shownScreenKey}
+                title=""
+                tabBarItemAccessibilityLabel={settings ? "Settings" : WORKSPACE_TAB_LABELS[tab]}
+                ios={{
+                  prewarmRequest: prewarmRequests.get(slot) ?? 0,
+                  icon: settings
+                    ? { type: "sfSymbol", name: "gearshape" }
+                    : tab === "pullRequests"
+                      ? { type: "templateSource", templateSource: PULL_REQUEST_ICON }
+                      : { type: "sfSymbol", name: NAVIGATION_TAB_ICONS[tab] },
+                  selectedIcon:
+                    !settings && tab === "threads"
+                      ? { type: "sfSymbol", name: "text.bubble.fill" }
+                      : undefined,
+                  overrideScrollViewContentInsetAdjustmentBehavior: false,
+                }}
               >
-                {props.children}
-              </RetainedWorkspaceTab>
-            </Tabs.Screen>
-          );
-        })}
-      </Tabs.Host>
+                <RetainedWorkspaceTab
+                  slot={slot}
+                  tab={tab}
+                  prewarm={prewarm}
+                  setMountedSlots={setMountedSlots}
+                  setPrewarmRequests={setPrewarmRequests}
+                  active={settings ? selectedSlot === -1 : selectedSlot === index}
+                >
+                  {props.children}
+                </RetainedWorkspaceTab>
+              </Tabs.Screen>
+            );
+          })}
+        </Tabs.Host>
+      </WorkspaceColumnMetricsContext>
       {(deviceType === "pad" ||
         compactTabs ||
         (layout.variant === "medium" &&

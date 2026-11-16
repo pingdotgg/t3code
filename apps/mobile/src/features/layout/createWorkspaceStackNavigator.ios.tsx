@@ -171,6 +171,7 @@ function ColumnScreen(props: {
             />
             <ColumnContent
               primary={sidebar}
+              column={props.primary ? "primary" : undefined}
               insetHorizontally={
                 (options as AppNativeStackNavigationOptions).nativeContentInsetHorizontally
               }
@@ -434,7 +435,7 @@ function WorkspaceColumns(
             <PaneContext value="content">
               <EmptyDetailHeader onCompose={detailCompose} />
             </PaneContext>
-            <ColumnContent>
+            <ColumnContent column="empty-detail">
               <WorkspaceEmptyDetail
                 tab={settingsOpen ? "settings" : selectedTab}
                 onStartNewTask={

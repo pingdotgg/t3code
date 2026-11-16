@@ -1,6 +1,7 @@
 import { createContext } from "react";
 
 import type { InspectorContent } from "../features/layout/inspector-panes";
+import type { NativeLayoutMetrics } from "../lib/reserved-regions";
 
 export const NativeWorkspaceModeContext = createContext(false);
 /**
@@ -33,6 +34,14 @@ export const NativeWorkspaceTabActivityContext = createContext<{
    * the first visit; it writes header options while inactive and loads nothing.
    */
   readonly headerOnly?: boolean;
+} | null>(null);
+/**
+ * What the shown workspace tab measured per column. UIKit lays out bars and safe areas only for
+ * the selected tab, so a tab that hasn't been shown yet starts from these instead.
+ */
+export const WorkspaceColumnMetricsContext = createContext<{
+  readonly byColumn: ReadonlyMap<string, NativeLayoutMetrics>;
+  readonly publish: (column: string, metrics: NativeLayoutMetrics) => void;
 } | null>(null);
 export const NativePrimaryColumnContext = createContext<{
   readonly presented: boolean;
