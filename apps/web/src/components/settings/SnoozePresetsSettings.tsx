@@ -279,12 +279,12 @@ function SnoozePresetList(props: {
   const seenWakes = new Set<string>();
   const previews = props.presets.map((preset) => {
     const resolved = resolveSnoozePreset(preset, now, formatTime);
-    if (resolved === null) return { tone: "muted", text: "Passed for today" } as const;
+    if (resolved === null) return { tone: "muted", text: msg("Passed for today") } as const;
     if (seenIds.has(resolved.id)) {
-      return { tone: "muted", text: "Duplicate of an option above" } as const;
+      return { tone: "muted", text: msg("Duplicate of an option above") } as const;
     }
     if (seenWakes.has(resolved.snoozedUntil)) {
-      return { tone: "muted", text: "Same time as an option above" } as const;
+      return { tone: "muted", text: msg("Same time as an option above") } as const;
     }
     seenIds.add(resolved.id);
     seenWakes.add(resolved.snoozedUntil);
@@ -335,7 +335,7 @@ function SnoozePresetList(props: {
                   <span className="ps-2 tabular-nums">{preview.when}</span>
                 </span>
               ) : (
-                <span className="truncate">{m(msg(preview.text))}</span>
+                <span className="truncate">{m(preview.text)}</span>
               )}
               <Button
                 variant="ghost-muted"
