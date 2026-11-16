@@ -1647,11 +1647,34 @@ describe("prepareRevertedMessageAttachments", () => {
 });
 
 describe("threadErrorBannerRunId", () => {
-  const run = (id: string, status: OrchestrationV2RunStatus, ordinal: number) => ({
+  const run = (
+    id: string,
+    status: OrchestrationV2RunStatus,
+    ordinal: number,
+    completedAt: string | null = null,
+  ) => ({
     id: id as RunId,
     status,
     ordinal,
-    completedAt: null,
+    completedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt),
+  });
+
+  it("drops a failed run's key once a later run completes, so a new session error is shown", () => {
+    expect(
+      threadErrorBannerRunId([
+        run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
+        run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
+      ]),
+    ).toBeNull();
+  });
+
+  it("keeps a failed run's key when the completed run finished before it failed", () => {
+    expect(
+      threadErrorBannerRunId([
+        run("run-b", "completed", 1, "2026-11-16T00:01:00Z"),
+        run("run-a", "failed", 2, "2026-11-16T00:02:00Z"),
+      ]),
+    ).toBe("run-a");
   });
 
   it("keeps the failed run's key while a later run starts, so its dismissed error stays hidden", () => {

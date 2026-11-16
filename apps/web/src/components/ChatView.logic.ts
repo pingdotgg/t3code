@@ -1202,18 +1202,21 @@ export function chatActionErrorMessage(error: unknown): string {
 }
 
 /**
- * The latest run that failed. The session's error can outlive its run, so a newer run that has
- * not failed keeps this key, and a dismissed error stays hidden while that run starts.
+ * The latest failed run, which owns the session's error until a later run completes: a run that
+ * completes proves the session works, so a later session error is a new one.
  */
 export function threadErrorBannerRunId(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">>,
 ): RunId | null {
-  let latest: (typeof runs)[number] | null = null;
+  let failed: (typeof runs)[number] | null = null;
   for (const run of runs) {
     if (run.status !== "failed") continue;
-    if (latest === null || runRanAfter(run, latest)) latest = run;
+    if (failed === null || runRanAfter(run, failed)) failed = run;
   }
-  return latest?.id ?? null;
+  if (failed === null) return null;
+  const owner = failed;
+  const completedSince = runs.some((run) => run.status === "completed" && runRanAfter(run, owner));
+  return completedSince ? null : owner.id;
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
