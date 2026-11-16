@@ -512,7 +512,8 @@ const make = Effect.gen(function* () {
           Effect.mapError((error) =>
             entry.project === undefined &&
             error._tag === "PullRequestUnavailableError" &&
-            error.reason === "provider-unsupported"
+            (error.reason === "provider-unsupported" ||
+              error.reason === "repository-without-project")
               ? new PullRequestProjectNotFoundError({ repository: target.repository })
               : new PullRequestGuideFailedError({
                   detail: guideFailureDetail(error),

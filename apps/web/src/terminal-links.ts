@@ -1,11 +1,4 @@
-import {
-  formatFilePathPosition,
-  parseFileUrlHref,
-  resolvePathLinkTarget,
-  splitFilePathPosition,
-} from "@t3tools/shared/fileLinks";
-import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -165,16 +158,15 @@ export function isTerminalUrl(value: string): boolean {
 /**
  * Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`.
  * `hostname` is the terminal's environment's, which producers such as GNU `ls` put in the URI.
+ * A URI's path is the exact filename, so only its `#L12C3` hash is a position.
  */
 export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
   const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
-  return formatFilePathPosition(
-    splitFilePathPosition(
-      stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
-      fileUrl.hash,
-    ),
-  );
+  // Keep URI identity until consumers decode the filename, separately from its position.
+  const uri = new URL(text);
+  if (!fileUrl.path.startsWith("\\")) uri.hostname = "";
+  return uri.href;
 }
 
 export function collectWrappedTerminalLinkLine(
