@@ -4477,6 +4477,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       input: Parameters<
         OrchestratorMcpService.OrchestratorMcpService["Service"]["sendToThread"]
       >[1],
+      // What a replayed receipt's run kept, when it differs from this request.
+      storedSelection?: { model: string; options?: ReadonlyArray<{ id: string; value: string }> },
     ) =>
       Effect.gen(function* () {
         const sent: Array<ThreadManagementService.ThreadManagementSendInput> = [];
@@ -4493,7 +4495,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   run: {
                     id: RunId.make("run:mcp-send-model"),
                     status: "queued",
-                    modelSelection: request.modelSelection,
+                    modelSelection: storedSelection ?? request.modelSelection,
                   },
                   delivery: "queued",
                 } as never;
@@ -4526,6 +4528,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.deepEqual(sent[0]?.modelSelection, { instanceId: codexInstanceId, ...expected });
         assert.equal(sent[0]?.mode, "queue");
         if (result._tag === "Success") assert.deepEqual(result.success.modelSelection, expected);
+      }),
+    );
+
+    it.effect("reports the run's stored selection when a retry replays an older send", () =>
+      Effect.gen(function* () {
+        const stored = { model: "gpt-6", options: [{ id: "effort", value: "low" }] };
+        const { result } = yield* send(
+          {
+            threadId: parentThreadId,
+            message: "continue",
+            modelSelection: { model: "gpt-6", options: [{ id: "effort", value: "high" }] },
+          },
+          stored,
+        );
+        assert.isTrue(result._tag === "Success");
+        if (result._tag === "Success") assert.deepEqual(result.success.modelSelection, stored);
       }),
     );
 
