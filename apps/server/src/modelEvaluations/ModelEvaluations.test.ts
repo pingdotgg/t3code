@@ -372,6 +372,13 @@ it.effect.each(["provider-error", "unsupported-citation", "abstention", "missing
         0,
       );
       if (kind !== "abstention") assert.isNull(record.verdict);
+      if (kind === "provider-error") {
+        assert.include(record.reason ?? "", "TextGenerationError");
+        assert.include(record.reason ?? "", "Codex CLI request timed out.");
+        assert.notInclude(record.reason ?? "", "TAIL_SECRET");
+        assert.notInclude(record.reason ?? "", "FULL_MODEL_RESPONSE");
+        assert.notInclude(record.reason ?? "", "x".repeat(200));
+      }
     }).pipe(
       Effect.provide(
         makeLayer((request) => {
@@ -379,7 +386,8 @@ it.effect.each(["provider-error", "unsupported-citation", "abstention", "missing
             return Effect.fail(
               new TextGenerationError({
                 operation: "generateModelEvaluation",
-                detail: "Do not persist this provider payload.",
+                detail: `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
+                cause: "FULL_MODEL_RESPONSE",
               }),
             );
           const output = verdict(request.packet);
