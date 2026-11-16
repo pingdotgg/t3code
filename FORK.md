@@ -51,9 +51,14 @@ app (app.t3.codes and its previews), the T3 Connect relay (`infra/relay`), and t
 site (`apps/marketing`). For the Conn Server, also every area that
 `apps/conn-server/docs/orbit-profile.md` rates "not needed".
 
-Their upstream workflows stay in the tree, gated to `pingdotgg/t3code` so they skip here
-("Pull request runners"). Deleting them would turn each upstream edit into a modify/delete
-conflict in the sync, and upstream edits `release.yml` almost daily.
+Their upstream workflows stay in the tree and skip here: each checks
+`github.repository == 'pingdotgg/t3code'` ("Pull request runners"). They are `release.yml`
+and `release-desktop.yml` (the Windows, Linux and Android release builds), `publish-aur.yml`,
+`windows-tests.yml`, `mobile-android-apk.yml`, `deploy-relay.yml`, `relay-preview.yml`,
+`relay-preview-cleanup.yml` and `web-preview.yml`. Do not delete them (Nick, 2026-11-16):
+each upstream edit would become a modify/delete conflict in the sync, and upstream edits
+`release.yml` and `release-desktop.yml` most days. On a sync, take upstream's version of
+these files and keep their repository checks.
 
 How the sync applies it:
 
@@ -1591,4 +1596,4 @@ The fork also skips upstream's `setup-apt-mirrors` action and installs the brows
 
 Test Web runs its tests through `.github/scripts/web-test.cjs`. Headless Chromium on the GitHub-hosted runners sometimes drops its vitest connection (`VITEST_BROWSER_CONNECTION_CLOSED`) with no failed test, several times a day, during a different file each time. A check that fails on infrastructure is not a gate, but a test that crashes the page every time must stay red. So when the only problem is that error (no failed test, failed file, assertion or other unhandled error), the wrapper reruns only the files that did not finish, including the one that closed, and passes with a warning annotation if they pass. It fails if the browser closes again, if Vitest printed no summary, or if no file had passed. `web-test-reporter.mjs` records the shard's files (sharded with Vitest's own sequencer) and each finished file, so the list survives the crash. The Changes job runs the wrapper's tests (`web-test.test.cjs`). On a sync keep the wrapper in the Test step, and the two sparse-checkout lines and test step in Changes.
 
-Upstream-only workflows need upstream's Blacksmith runners and secrets (relay, web, EAS and macOS previews, showcase screenshots, Windows tests), and the fork has neither. Their entry jobs check `github.repository == 'pingdotgg/t3code'`, so they skip in the fork instead of queueing forever; jobs that depend on them skip too. This covers `relay-preview.yml`, `relay-preview-cleanup.yml` (its daily schedule queued forever before), `web-preview.yml`, `mobile-eas-preview.yml`, `mobile-eas-preview-fork.yml`, `desktop-macos-preview.yml`, `desktop-macos-preview-publish.yml` (the `resolve` job), `mobile-showcase-screenshots.yml` and `windows-tests.yml`. Release, deploy and AUR workflows already have this check or are disabled in the fork. On a sync keep these conditions, and check new upstream workflows for Blacksmith labels.
+Upstream-only workflows need upstream's Blacksmith runners and secrets (relay, web, EAS and macOS previews, showcase screenshots, Windows tests), and the fork has neither. Their entry jobs check `github.repository == 'pingdotgg/t3code'`, so they skip in the fork instead of queueing forever; jobs that depend on them skip too. This covers `relay-preview.yml`, `relay-preview-cleanup.yml` (its daily schedule queued forever before), `web-preview.yml`, `mobile-eas-preview.yml`, `mobile-eas-preview-fork.yml`, `desktop-macos-preview.yml`, `desktop-macos-preview-publish.yml` (the `resolve` job), `mobile-showcase-screenshots.yml`, `windows-tests.yml`, `mobile-android-apk.yml`, `publish-aur.yml`, `deploy-relay.yml` and `release.yml` (the `resolve_commit` job). `release-desktop.yml` has no check of its own: only `release.yml` and `desktop-macos-preview-publish.yml` call it, and both skip here. On a sync keep these conditions, and check new upstream workflows for Blacksmith labels.
