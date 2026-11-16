@@ -172,6 +172,7 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
+  threadRuntimeHidesMarkUnread,
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,
@@ -179,6 +180,7 @@ import {
   groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
+  buildBulkMarkUnreadContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
@@ -2324,6 +2326,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const unpinMenuItem = buildBulkUnpinContextMenuItem({
         pinnedCount: pinnedSelectedThreads.length,
       });
+      const markUnreadThreads = selectedThreads.filter(
+        (thread) => !threadRuntimeHidesMarkUnread(thread.runtime),
+      );
+      const markUnreadMenuItem = buildBulkMarkUnreadContextMenuItem({
+        eligibleCount: markUnreadThreads.length,
+      });
       // Presets sync across environments, so the first selected thread's stand for all.
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
@@ -2375,7 +2383,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   },
                 ]
               : []),
-            { id: "mark-unread", label: `Mark unread (${count})` },
+            ...(markUnreadMenuItem ? [markUnreadMenuItem] : []),
             {
               id: "delete",
               label: `Delete (${count})`,
@@ -2478,9 +2486,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       if (clicked.value === "mark-unread") {
-        for (const threadKey of threadKeys) {
-          const thread = threadByKeyRef.current.get(threadKey);
-          if (thread) markThreadUnread(scopeThreadRef(thread.environmentId, thread.id));
+        for (const thread of markUnreadThreads) {
+          markThreadUnread(scopeThreadRef(thread.environmentId, thread.id));
         }
         clearSelection();
         return;
@@ -2648,6 +2655,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
+              hidesMarkUnread: threadRuntimeHidesMarkUnread(thread.runtime),
               canShareWithGuest: appAtomRegistry.get(
                 canShareWithGuestAtom(threadRef.environmentId),
               ),

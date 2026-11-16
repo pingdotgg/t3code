@@ -1,5 +1,9 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  threadRuntimeIsActive,
+  type ThreadStructureRuntime,
+} from "@t3tools/client-runtime/state/models";
 
 export type ThreadActionMenuId =
   | "find"
@@ -83,6 +87,7 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
+  readonly hidesMarkUnread: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -111,6 +116,14 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
+}
+
+// Unread surfaces only as the completion pill, which a Working thread never shows: an active
+// run has no completion yet, and held background work (idle) shows Waiting instead.
+export function threadRuntimeHidesMarkUnread(
+  runtime: ThreadStructureRuntime | null | undefined,
+): boolean {
+  return threadRuntimeIsActive(runtime) || runtime?.status === "idle";
 }
 
 export function buildThreadActionMenuItems(
@@ -178,7 +191,9 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
+    ...(state.hidesMarkUnread
+      ? []
+      : [{ id: "mark-unread" as const, label: "Mark unread", icon: "mail-open" }]),
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
       : []),
