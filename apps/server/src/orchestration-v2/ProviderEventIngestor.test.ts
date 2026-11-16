@@ -21,6 +21,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  EventId,
   RunId,
   RuntimeRequestId,
   TurnItemId,
@@ -598,7 +599,12 @@ layer("ProviderEventIngestorV2", (it) => {
       );
       assert.equal(latestThreadSequence, 2);
 
-      // Each background task keeps the run that started it when later rosters resend it.
+      // Each background task keeps the run that started it when later rosters resend it, and a
+      // task already stored without a run predates attribution and stays without one.
+      const rosterOf = (taskIds: ReadonlyArray<string>) => ({
+        ...providerThread,
+        pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "command" as const })),
+      });
       const ingestRoster = (runId: RunId, taskIds: ReadonlyArray<string>) =>
         ingestor.ingestNormalized({
           providerSessionId,
@@ -608,23 +614,58 @@ layer("ProviderEventIngestorV2", (it) => {
           event: {
             type: "provider_thread.updated",
             driver: CODEX_DRIVER,
-            providerThread: {
-              ...providerThread,
-              pendingBackgroundTasks: taskIds.map((taskId) => ({ taskId, kind: "command" })),
-            },
+            providerThread: rosterOf(taskIds),
           },
         });
-      yield* ingestRoster(RunId.make("run:roster-first"), ["first-build"]);
-      yield* ingestRoster(RunId.make("run:roster-second"), ["first-build", "second-build"]);
-      const roster = (yield* projectionStore.getThreadProjection(threadEvent.threadId))
-        .providerThreads[0]?.pendingBackgroundTasks;
-      assert.deepEqual(
-        roster?.map((work) => [work.taskId, work.runId]),
-        [
-          ["first-build", "run:roster-first"],
-          ["second-build", "run:roster-second"],
+      const readRoster = projectionStore
+        .getThreadProjection(threadEvent.threadId)
+        .pipe(
+          Effect.map((projection) =>
+            projection.providerThreads[0]?.pendingBackgroundTasks?.map((work) => [
+              work.taskId,
+              work.runId ?? null,
+            ]),
+          ),
+        );
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:roster-legacy"),
+            type: "provider-thread.updated",
+            threadId: threadEvent.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: rosterOf(["legacy-build"]),
+          },
         ],
-      );
+      });
+      yield* ingestRoster(RunId.make("run:roster-first"), ["legacy-build", "first-build"]);
+      yield* ingestRoster(RunId.make("run:roster-second"), [
+        "legacy-build",
+        "first-build",
+        "second-build",
+      ]);
+      const attributed = [
+        ["legacy-build", null],
+        ["first-build", "run:roster-first"],
+        ["second-build", "run:roster-second"],
+      ];
+      assert.deepEqual(yield* readRoster, attributed);
+
+      // A server-side writer resending the roster without runs keeps them.
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:roster-resent"),
+            type: "provider-thread.updated",
+            threadId: threadEvent.threadId,
+            providerInstanceId: modelSelection.instanceId,
+            occurredAt: now,
+            payload: rosterOf(["legacy-build", "first-build", "second-build"]),
+          },
+        ],
+      });
+      assert.deepEqual(yield* readRoster, attributed);
     }),
   );
 

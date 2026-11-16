@@ -9682,13 +9682,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
-    // A wake continues the follow-up whose run started the work it reports, or else the latest
+    // A wake continues the follow-up whose runs started the work it reports, or else the latest
     // follow-up, while it is open, as it continues the original task.
     const woken =
       command.notification === undefined
         ? undefined
         : yield* projectionStore
-            .getThreadRecords(command.threadId, ["runs", "providerThreads"])
+            .getThreadRecords(command.threadId, ["runs", "messages", "providerThreads"], {
+              messageRoles: ["user"],
+            })
             .pipe(mapDispatchError(command));
     const reportedWork = new Set(command.notification?.backgroundTaskIds);
     const startedBy = new Set(
@@ -9698,14 +9700,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       ),
     );
-    const latestFollowupId = woken?.runs
-      .filter(
-        (row) =>
-          row.id !== run.id &&
-          row.delegatedTaskId !== undefined &&
-          (startedBy.size === 0 || startedBy.has(row.id)),
-      )
-      .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
+    const followupIds = [
+      ...new Set(
+        (woken?.runs ?? [])
+          .filter((row) => row.id !== run.id)
+          .toSorted((a, b) => b.ordinal - a.ordinal)
+          .flatMap((row) => (row.delegatedTaskId === undefined ? [] : [row.delegatedTaskId])),
+      ),
+    ];
+    const latestFollowupId =
+      woken === undefined || startedBy.size === 0
+        ? followupIds[0]
+        : followupIds.find((id) =>
+            delegatedTaskRuns(woken, id).some((owned) => startedBy.has(owned.id)),
+          );
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [

@@ -298,7 +298,8 @@ export const layer: Layer.Layer<
       });
 
     // Records the run that started each background task, so a delegated follow-up waits only on
-    // its own work. Adapters resend whole rosters, so a known task keeps the run it was given.
+    // its own work. A task the stored roster already has is not new: it keeps the run it was
+    // given, or none when it predates attribution.
     const withBackgroundWorkRuns = Effect.fn("ProviderEventIngestor.withBackgroundWorkRuns")(
       function* (
         input: ProviderEventIngestInput,
@@ -314,12 +315,10 @@ export const layer: Layer.Layer<
           })
           .pipe(Effect.orElseSucceed(() => undefined));
         if (records === undefined) return providerThread;
-        const knownRuns = new Map(
+        const known = new Map(
           records.providerThreads
             .find((thread) => thread.id === providerThread.id)
-            ?.pendingBackgroundTasks?.flatMap((work) =>
-              work.runId === undefined ? [] : [[work.taskId, work.runId] as const],
-            ),
+            ?.pendingBackgroundTasks?.map((work) => [work.taskId, work.runId] as const),
         );
         const startedBy =
           (threadId === input.threadId ? input.runId : undefined) ??
@@ -329,7 +328,8 @@ export const layer: Layer.Layer<
         return {
           ...providerThread,
           pendingBackgroundTasks: roster.map((work) => {
-            const runId = work.runId ?? knownRuns.get(work.taskId) ?? startedBy;
+            const runId =
+              work.runId ?? (known.has(work.taskId) ? known.get(work.taskId) : startedBy);
             return runId === undefined ? work : { ...work, runId };
           }),
         };

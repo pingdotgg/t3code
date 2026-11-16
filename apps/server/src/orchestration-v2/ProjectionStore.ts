@@ -857,6 +857,28 @@ function upsertProviderTurn(
   });
 }
 
+/** Writers resend whole rosters without the run each task was recorded against; keep it. */
+function preserveBackgroundWorkRuns(
+  current: OrchestrationV2ProviderThread | undefined,
+  next: OrchestrationV2ProviderThread,
+): OrchestrationV2ProviderThread {
+  const roster = next.pendingBackgroundTasks ?? [];
+  if (current === undefined || roster.every((work) => work.runId !== undefined)) return next;
+  const recorded = new Map(
+    (current.pendingBackgroundTasks ?? []).flatMap((work) =>
+      work.runId === undefined ? [] : [[work.taskId, work.runId] as const],
+    ),
+  );
+  if (recorded.size === 0) return next;
+  return {
+    ...next,
+    pendingBackgroundTasks: roster.map((work) => {
+      const runId = work.runId ?? recorded.get(work.taskId);
+      return runId === undefined ? work : { ...work, runId };
+    }),
+  };
+}
+
 function preserveRunRecordedFields(
   current: OrchestrationV2Run | undefined,
   next: OrchestrationV2Run,
@@ -1040,7 +1062,13 @@ export function applyToProjection(
                 activeProviderThreadId: event.payload.id,
               }
             : base.thread,
-        providerThreads: upsertById(base.providerThreads, event.payload),
+        providerThreads: upsertById(
+          base.providerThreads,
+          preserveBackgroundWorkRuns(
+            base.providerThreads.find((thread) => thread.id === event.payload.id),
+            event.payload,
+          ),
+        ),
       };
     case "provider-turn.updated":
       return {
@@ -2687,7 +2715,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               break;
             }
             case "provider-thread.updated": {
-              const payloadJson = yield* encodeProviderThreadPayload(event.payload);
+              const storedRows = (event.payload.pendingBackgroundTasks ?? []).some(
+                (work) => work.runId === undefined,
+              )
+                ? yield* sql<PayloadRow>`
+                    SELECT payload_json
+                    FROM orchestration_v2_projection_provider_threads
+                    WHERE provider_thread_id = ${event.payload.id}
+                    LIMIT 1
+                  `
+                : [];
+              const providerThread = preserveBackgroundWorkRuns(
+                storedRows[0] === undefined
+                  ? undefined
+                  : yield* decodeProviderThreadPayload(storedRows[0].payload_json),
+                event.payload,
+              );
+              const payloadJson = yield* encodeProviderThreadPayload(providerThread);
               const payload = parseEncodedPayload(payloadJson);
               yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
