@@ -301,11 +301,13 @@ export const make = Effect.gen(function* () {
   /**
    * Forgejo's `mergeable` is false alike for a conflict, a pending or failed conflict check, and a
    * draft, and its API exposes nothing finer. A local merge of the two commits tells a conflict
-   * apart; a clean local merge stays unknown, since Forgejo may still refuse to merge.
+   * apart; a clean local merge stays unknown, since Forgejo may still refuse to merge. Lists do not
+   * fetch, so a page never waits on the network; they reuse what detail reads fetched.
    */
   const changeRequest = Effect.fn("ForgejoPullRequestProvider.changeRequest")(function* (
     input: ProviderRepositoryRef,
     pr: typeof ForgejoPullRequest.Type,
+    fetch = true,
   ) {
     const result = forgejoChangeRequest(pr);
     if (result.state !== "open" || result.mergeability !== "unknown") return result;
@@ -313,21 +315,23 @@ export const make = Effect.gen(function* () {
       cwd: input.cwd,
       baseSha: pr.base.sha,
       headSha: pr.head.sha,
-      fetchSource: host.git.remotes(input.cwd).pipe(
-        Effect.flatten,
-        Effect.map(({ remotes }) =>
-          remotes.find((remote) => isRepositoryRemote(remote.url, input)),
-        ),
-        Effect.map((remote) =>
-          remote === undefined
-            ? undefined
-            : {
-                url: remote.url,
-                refs: [`refs/pull/${pr.number}/head`, `refs/heads/${pr.base.ref}`],
-              },
-        ),
-        Effect.orElseSucceed(() => undefined),
-      ),
+      fetchSource: !fetch
+        ? undefined
+        : host.git.remotes(input.cwd).pipe(
+            Effect.flatten,
+            Effect.map(({ remotes }) =>
+              remotes.find((remote) => isRepositoryRemote(remote.url, input)),
+            ),
+            Effect.map((remote) =>
+              remote === undefined
+                ? undefined
+                : {
+                    url: remote.url,
+                    refs: [`refs/pull/${pr.number}/head`, `refs/heads/${pr.base.ref}`],
+                  },
+            ),
+            Effect.orElseSucceed(() => undefined),
+          ),
     });
     return local === "conflicting" ? { ...result, mergeability: local } : result;
   });
@@ -342,7 +346,7 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("ForgejoPullRequestProvider.listChangeRequests")(
       function* (input) {
         const offset = input.cursor?.delivered ?? 0;
-        const items: ReturnType<typeof forgejoChangeRequest>[] = [];
+        const rows: Array<typeof ForgejoPullRequest.Type> = [];
         const state = input.state === "merged" ? "closed" : input.state;
         const params = new URLSearchParams({ state, sort: "recentupdate" });
         const filters = input.filters;
@@ -381,22 +385,23 @@ export const make = Effect.gen(function* () {
         // Forgejo has no `merged` list state: `state=closed` returns merged and
         // closed-unmerged rows alike, so rows are filtered by their mapped state and
         // only matching rows count toward the requested limit.
-        for (let index = firstIndex; more && items.length < input.limit; index++) {
+        for (let index = firstIndex; more && rows.length < input.limit; index++) {
           const result =
             index === 1 ? first : yield* readPage(query, Schema.NullOr(ForgejoPullRequest), index);
-          const rows = result.rows;
           const start = index === firstIndex ? offset % pageSize : 0;
           const countBefore = consumed;
-          for (const row of rows.slice(start)) {
-            if (items.length >= input.limit) break;
+          for (const row of result.rows.slice(start)) {
+            if (rows.length >= input.limit) break;
             consumed++;
             if (!row) continue;
-            const changeRequest = forgejoChangeRequest(row);
-            if (input.state !== "all" && changeRequest.state !== input.state) continue;
-            items.push(changeRequest);
+            if (input.state !== "all" && forgejoChangeRequest(row).state !== input.state) continue;
+            rows.push(row);
           }
-          more = result.more || rows.length - start > consumed - countBefore;
+          more = result.more || result.rows.length - start > consumed - countBefore;
         }
+        const items = yield* Effect.forEach(rows, (row) => changeRequest(input, row, false), {
+          concurrency: 4,
+        });
         return { items, truncated: more, continues: true, cursorAdvance: consumed };
       },
     ),

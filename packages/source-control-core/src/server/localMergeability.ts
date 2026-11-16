@@ -20,7 +20,7 @@ export interface LocalMergeabilityInput {
    * Resolved only when a commit is missing from the checkout. Undefined leaves the answer
    * unknown, which keeps a checkout of another repository from being fetched into.
    */
-  readonly fetchSource?: Effect.Effect<LocalMergeabilityFetchSource | undefined>;
+  readonly fetchSource?: Effect.Effect<LocalMergeabilityFetchSource | undefined> | undefined;
 }
 
 type Process = SourceControlHost.SourceControlHost["Service"]["process"];
@@ -45,11 +45,20 @@ const isGitRef = (ref: string) =>
 export function makeLocalMergeabilityReader(process: Process) {
   const cache = new Map<
     string,
-    { readonly value: PullRequestMergeability; readonly until: number }
+    {
+      readonly value: PullRequestMergeability;
+      readonly until: number;
+      readonly unfetched: boolean;
+    }
   >();
-  const remember = (key: string, value: PullRequestMergeability, until: number) => {
+  const remember = (
+    key: string,
+    value: PullRequestMergeability,
+    until: number,
+    unfetched = false,
+  ) => {
     cache.delete(key);
-    cache.set(key, { value, until });
+    cache.set(key, { value, until, unfetched });
     const oldest = cache.keys().next();
     if (cache.size > CACHE_LIMIT && !oldest.done) cache.delete(oldest.value);
   };
@@ -122,11 +131,14 @@ export function makeLocalMergeabilityReader(process: Process) {
     const key = `${input.cwd}\0${input.baseSha.toLowerCase()}\0${input.headSha.toLowerCase()}`;
     const now = yield* Clock.currentTimeMillis;
     const cached = cache.get(key);
-    if (cached && cached.until > now) return cached.value;
+    // A miss from a read that could not fetch must not stop one that can.
+    if (cached && cached.until > now && !(cached.unfetched && input.fetchSource)) {
+      return cached.value;
+    }
 
     const present = (yield* hasCommits(input)) || (yield* fetch(input));
     if (!present) {
-      remember(key, "unknown", now + RETRY_AFTER_MS);
+      remember(key, "unknown", now + RETRY_AFTER_MS, !input.fetchSource);
       return "unknown";
     }
     const exitCode = yield* git(

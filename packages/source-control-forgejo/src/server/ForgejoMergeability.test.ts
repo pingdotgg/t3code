@@ -88,11 +88,11 @@ it.effect(
             Layer.mock(ForgejoCli.ForgejoCli)({
               api: (input) => {
                 const [route] = input.path.split("?");
-                const number = /^repos\/maria\/project\/pulls\/(\d+)$/.exec(route ?? "")?.[1];
-                const pull = number === undefined ? undefined : pulls[number];
-                const body =
-                  pull !== undefined
-                    ? {
+                const pullBody = (number: string) => {
+                  const pull = pulls[number];
+                  return pull === undefined
+                    ? undefined
+                    : {
                         number: Number(number),
                         title: `Pull request ${number}`,
                         body: "",
@@ -111,14 +111,27 @@ it.effect(
                         closed_at: null,
                         merged_at: null,
                         labels: [],
-                      }
-                    : route === "user"
-                      ? { login: "maria" }
-                      : route === "repos/maria/project"
-                        ? { full_name: "maria/project", permissions: { push: true, admin: false } }
-                        : route === "repos/maria/project/branches/main"
-                          ? {}
-                          : [];
+                      };
+                };
+                const number = /^repos\/maria\/project\/pulls\/(\d+)$/.exec(route ?? "")?.[1];
+                const pull = number === undefined ? undefined : pullBody(number);
+                const body =
+                  pull !== undefined
+                    ? pull
+                    : route === "repos/maria/project/pulls"
+                      ? input.path.includes("page=1")
+                        ? [pullBody("7")]
+                        : []
+                      : route === "user"
+                        ? { login: "maria" }
+                        : route === "repos/maria/project"
+                          ? {
+                              full_name: "maria/project",
+                              permissions: { push: true, admin: false },
+                            }
+                          : route === "repos/maria/project/branches/main"
+                            ? {}
+                            : [];
                 return Effect.succeed(TestSourceControlHost.processOutput(encodeJson(body)));
               },
             }),
@@ -126,11 +139,24 @@ it.effect(
         ),
       );
       const reference = { cwd, repository: "maria/project", host: "forgejo.test" };
+      const listed = () =>
+        provider
+          .listChangeRequests({
+            ...reference,
+            state: "open",
+            involvement: "all",
+            viewer: "maria",
+            limit: 10,
+          })
+          .pipe(Effect.map((page) => page.items[0]?.mergeability));
 
+      // A list never fetches, and its miss must not stop the detail read from fetching.
+      assert.strictEqual(yield* listed(), "unknown");
       const detail = yield* provider.getChangeRequest({ ...reference, number: 7 });
       assert.strictEqual(detail.mergeability, "conflicting");
       const summary = yield* provider.getChangeRequestSummary!({ ...reference, number: 7 });
       assert.strictEqual(summary.mergeability, "conflicting");
+      assert.strictEqual(yield* listed(), "conflicting");
       // A clean local merge cannot say whether Forgejo has finished its own check.
       const cleanDetail = yield* provider.getChangeRequest({ ...reference, number: 8 });
       assert.strictEqual(cleanDetail.mergeability, "unknown");
