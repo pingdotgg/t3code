@@ -1127,6 +1127,43 @@ it.effect("records and retries a source change during model generation", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("rolls up covered roots before summarizing a later uncovered stretch", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    const coveredLeaves = 8;
+    const uncovered = 10;
+    yield* seedThread(coveredLeaves * 2 + uncovered + 6);
+    for (let index = 0; index < coveredLeaves; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1]);
+    yield* summarize;
+    assert.equal(model.calls.length, 3);
+    assert.isTrue(isRollup(model.calls[0]!));
+    assert.isTrue(isRollup(model.calls[1]!));
+    assert.equal(model.calls[0]!.messages.length, 4);
+    assert.equal(model.calls[2]!.messages[0]!.text, rawText(coveredLeaves * 2));
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("replaces a leaf beside a gap before rolling roots across that gap", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seedThread(22);
+    for (let index = 0; index < 8; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1], index === 3);
+    yield* summarize;
+    assert.isFalse(isRollup(model.calls[0]!));
+    assert.equal(model.calls[0]!.messages[0]!.text, rawText(6));
+    assert.isFalse(
+      model.calls.some(
+        (call) =>
+          isRollup(call) &&
+          call.messages.some((message) => message.text.includes("Summary 2")) &&
+          call.messages.some((message) => message.text.includes("Summary 4")),
+      ),
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("continues coverage and handoff lookup beyond the first 500 summaries", () => {
   const model = citing();
   return Effect.gen(function* () {
