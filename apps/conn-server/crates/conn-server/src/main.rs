@@ -5,6 +5,14 @@ use conn_provider_claude::{ClaudeConfig, ClaudeProvider, HelperCommand};
 use conn_server::serve::{ServeOptions, serve_with_instances};
 
 fn main() {
+    // T3's binMain dispatches the bridge before loading the server CLI.
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("acp-mcp-bridge")) {
+        std::process::exit(conn_server::acp_mcp_bridge::main());
+    }
+    run_server();
+}
+
+fn run_server() {
     // Runs and exits for every command but `serve`.
     let options = ServeOptions::from_args();
     // `fixPath`: the login shell's PATH for every child and every program lookup, read before
