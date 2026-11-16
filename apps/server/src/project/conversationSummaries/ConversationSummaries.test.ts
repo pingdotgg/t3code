@@ -669,6 +669,100 @@ it.effect("records an unavailable model as a failed pass without publishing a su
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect.each([
+  "OpenCode returned empty output.",
+  "OpenCode returned invalid structured output.",
+] as const)("summarizes the next stretch after %s", (detail) => {
+  const model = scripted((input) =>
+    input.messages[0]?.text === rawText(0)
+      ? Effect.fail(new TextGenerationError({ operation: "generateConversationSummary", detail }))
+      : Effect.succeed({
+          statements: [{ text: "The later stretch.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  return Effect.gen(function* () {
+    // 32 settled messages: one full leaf, then a second leaf of eight.
+    yield* seedThread(38);
+    const first = yield* summarize;
+    assert.isTrue(first.hasMore);
+    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length, 1);
+    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(24)).length, 1);
+    const covered = (yield* list).summaries.flatMap((read) =>
+      read.state === "available"
+        ? read.summary.sources.flatMap((source) =>
+            source.kind === "message" ? [source.messageId] : [],
+          )
+        : [],
+    );
+    assert.notInclude(covered, messageId(0));
+    assert.include(covered, messageId(24));
+
+    const second = yield* summarize;
+    assert.isFalse(second.hasMore);
+    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length, 2);
+    assert.include((yield* list).lastPass?.reason ?? "", detail);
+
+    const calls = model.calls.length;
+    const third = yield* summarize;
+    assert.isFalse(third.hasMore);
+    assert.equal(model.calls.length, calls);
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const offered = yield* service.forHandoff({
+      projectId,
+      handoffs: [yield* prepareHandoff(38)],
+      itemIds: new Set(Array.from({ length: 32 }, (_, index) => itemId(index))),
+    });
+    const offeredIds = offered.flatMap((offer) => offer.coveredItemIds);
+    assert.notInclude(offeredIds, itemId(0));
+    assert.include(offeredIds, itemId(24));
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("summarizes the next stretch when the model cites none of the chunk", () => {
+  const model = scripted((input) =>
+    Effect.succeed({
+      statements: [
+        {
+          text: input.messages[0]?.text === rawText(0) ? "Uncited." : "The later stretch.",
+          citations: input.messages[0]?.text === rawText(0) ? ["M999"] : [input.messages[0]!.ref],
+        },
+      ],
+    }),
+  );
+  return Effect.gen(function* () {
+    yield* seedThread(38);
+    yield* summarize;
+    assert.equal(model.calls.filter((call) => call.messages[0]?.text === rawText(24)).length, 1);
+    assert.notInclude(
+      (yield* list).summaries.flatMap((read) =>
+        read.state === "available"
+          ? read.summary.sources.flatMap((source) =>
+              source.kind === "message" ? [source.messageId] : [],
+            )
+          : [],
+      ),
+      messageId(0),
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("retries a timed-out summary chunk instead of skipping to the next stretch", () => {
+  const model = scripted(() =>
+    Effect.fail(
+      new TextGenerationError({
+        operation: "generateConversationSummary",
+        detail: "OpenCode did not finish generating in time.",
+      }),
+    ),
+  );
+  return Effect.gen(function* () {
+    yield* seedThread(38);
+    assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
+    assert.equal(model.calls.length, 1);
+    assert.deepEqual((yield* list).summaries, []);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect(
   "covers every range of a long source and offers it only after all ranges are summarized",
   () => {
