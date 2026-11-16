@@ -55,7 +55,9 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 43] = [
+pub(crate) const HANDLED: [&str; 45] = [
+    "mcp_call",
+    "mcp_connect",
     "create_threads",
     "t3_attachment_prepare_upload",
     "t3_attachment_discard",
@@ -146,6 +148,7 @@ pub(crate) async fn call(
         "t3_queue" => manage::queue(&cx, &args).await,
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "mcp_call" | "mcp_connect" => panels::invoke(&cx, name, &args).await,
         "panel_open" => panels::open(&cx, &args).await,
         "request_secret" => secrets::request(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,

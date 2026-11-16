@@ -967,10 +967,10 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `git.resolvePullRequest` | yes | O | N | M | pull request checkout into a thread |
 | `git.runStackedAction` | commit only | U | N | M | commit/push/PR action; in a container only the commit step is ours, push and PR are Orbit's |
 | `guestShare.create` | no | X | X | L | guest link through T3 Connect |
-| `mcpApps.callTool` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.readResource` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.toolInfo` | no | U | U | M | MCP App UIs inside a thread |
-| `mcpApps.updateModelContext` | no | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.callTool` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.readResource` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.toolInfo` | yes | U | U | M | MCP App UIs inside a thread |
+| `mcpApps.updateModelContext` | yes | U | U | M | MCP App UIs inside a thread |
 | `orchestration.dispatchCommand` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.forceStopThread` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.getArchivedShellSnapshot` | yes | N | N |  | thread view, composer, diffs |
@@ -1198,8 +1198,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `link_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `list_scheduled_tasks` | yes | U | N |  | scheduled tasks |
 | `list_thread_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
-| `mcp_call` | no | U | U | M | MCP Apps |
-| `mcp_connect` | no | U | U | M | MCP Apps |
+| `mcp_call` | yes | U | U | M | MCP Apps |
+| `mcp_connect` | yes | U | U | M | MCP Apps |
 | `orchestrator_capabilities` | yes | N | N |  | core orchestration |
 | `panel_open` | yes | U | U | S |  |
 | `preview_act` | no | U | N | L | agent browser; needs headless Chromium on the server |

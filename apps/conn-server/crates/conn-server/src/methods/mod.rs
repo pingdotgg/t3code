@@ -12,6 +12,7 @@ mod annotations;
 mod files;
 mod git;
 mod git_message;
+mod mcp_apps;
 mod orchestration;
 mod panels;
 mod projects;
@@ -73,6 +74,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     vcs::register(table, deps);
     git::register(table, deps);
     files::register(table, deps);
+    mcp_apps::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
     secrets::register(table, deps);
