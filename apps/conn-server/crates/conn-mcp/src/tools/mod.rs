@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use conn_support::ids::encode_component as encode;
+use conn_support::{
+    ids::encode_component as encode,
+    modes::{interaction_rank, runtime_rank},
+};
 
 use conn_contract::{Command, ThreadId, from_json};
 use conn_engine::EngineError;
@@ -217,21 +220,6 @@ pub(crate) struct Cx<'a> {
     service: &'a Arc<McpService>,
     caller: &'a Caller,
     origin: Option<&'a str>,
-}
-
-pub(crate) const RUNTIME_MODES: [&str; 4] = [
-    "approval-required",
-    "auto-accept-edits",
-    "auto",
-    "full-access",
-];
-
-pub(crate) fn runtime_rank(mode: &str) -> usize {
-    RUNTIME_MODES.iter().position(|m| *m == mode).unwrap_or(0)
-}
-
-pub(crate) fn interaction_rank(mode: &str) -> usize {
-    usize::from(mode != "plan")
 }
 
 /// The broadest modes the caller may start or drive threads in.

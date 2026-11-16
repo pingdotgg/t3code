@@ -268,6 +268,7 @@ pub(crate) struct Update<'a> {
     pub progress: Option<String>,
     pub result: Option<String>,
     pub reopen: bool,
+    pub skip_parent_turn: bool,
     pub workflow_name: Option<String>,
     pub workflow_frame: Value,
     pub workflow_handles: Option<Value>,
@@ -415,40 +416,14 @@ impl<E: Env> Mapper<E> {
         {
             return;
         }
-        if self.turn.is_none()
+        let skip_parent_turn = self.turn.is_none()
             && self.last_ctx.as_ref().is_none_or(|ctx| {
                 self.subagents
                     .by_task
                     .get(task_id)
                     .is_some_and(|sub| sub.parent.run_id != ctx.run_id)
-            })
-        {
-            let Some(sub) = self.subagents.by_task.get_mut(task_id) else {
-                return;
-            };
-            if !coordinator || !super::workflows::has_snapshot(&frame) {
-                return;
-            }
-            if let Some(workflow) = super::workflows::merge(
-                sub.task.get("workflow"),
-                None,
-                None,
-                &frame,
-                &sub.child_thread_id,
-            ) {
-                sub.task["workflow"] = workflow;
-                if !progress.is_empty() {
-                    sub.task["progress"] = json!(progress);
-                }
-                sub.task["updatedAt"] = json!(self.env.now());
-                emit(
-                    out,
-                    |subagent| ProviderEvent::SubagentUpdated { subagent },
-                    sub.task.clone(),
-                );
-                let task = sub.task.clone();
-                project_workflow_members(sub, &task, &self.env.now(), out);
-            }
+            });
+        if skip_parent_turn && (!coordinator || !super::workflows::has_snapshot(&frame)) {
             return;
         }
         self.update_subagent(
@@ -458,6 +433,7 @@ impl<E: Env> Mapper<E> {
                 status: "running",
                 progress: (!progress.is_empty()).then(|| progress.to_string()),
                 workflow_frame: frame,
+                skip_parent_turn,
                 ..Update::default()
             },
             out,
@@ -1036,22 +1012,24 @@ impl<E: Env> Mapper<E> {
         }
         project_workflow_members(sub, &task, &now, out);
         // 6. The subagent row in the parent turn.
-        let mut item = json!({
-            "id": sub.item_id, "threadId": task["threadId"], "runId": task["runId"],
-            "nodeId": task["id"], "providerThreadId": sub.parent.provider_thread_id,
-            "providerTurnId": sub.parent.provider_turn_id, "nativeItemRef": task["nativeTaskRef"],
-            "parentItemId": null, "ordinal": sub.item_ordinal, "status": task["status"],
-            "title": task["title"], "startedAt": task["startedAt"],
-            "completedAt": task["completedAt"], "updatedAt": task["updatedAt"],
-            "type": "subagent", "subagentId": task["id"], "origin": task["origin"],
-            "driver": task["driver"], "providerInstanceId": task["providerInstanceId"],
-            "childThreadId": task["childThreadId"], "prompt": task["prompt"],
-            "result": task["result"],
-        });
-        if let Some(progress) = task.get("progress") {
-            item["progress"] = progress.clone();
+        if !input.skip_parent_turn {
+            let mut item = json!({
+                "id": sub.item_id, "threadId": task["threadId"], "runId": task["runId"],
+                "nodeId": task["id"], "providerThreadId": sub.parent.provider_thread_id,
+                "providerTurnId": sub.parent.provider_turn_id, "nativeItemRef": task["nativeTaskRef"],
+                "parentItemId": null, "ordinal": sub.item_ordinal, "status": task["status"],
+                "title": task["title"], "startedAt": task["startedAt"],
+                "completedAt": task["completedAt"], "updatedAt": task["updatedAt"],
+                "type": "subagent", "subagentId": task["id"], "origin": task["origin"],
+                "driver": task["driver"], "providerInstanceId": task["providerInstanceId"],
+                "childThreadId": task["childThreadId"], "prompt": task["prompt"],
+                "result": task["result"],
+            });
+            if let Some(progress) = task.get("progress") {
+                item["progress"] = progress.clone();
+            }
+            out.push(turn_item(item));
         }
-        out.push(turn_item(item));
         // 7. The result, as the child thread's last message, unless the last reply said it.
         let result = input.result.as_deref().map(str::trim).unwrap_or("");
         let shown = input.status == "completed"

@@ -389,7 +389,8 @@ mod tests {
     fn environment() -> (Arc<Environment>, std::path::PathBuf) {
         let dir =
             std::env::temp_dir().join(format!("conn-server-cfg-{}", crate::auth::random_hex(6)));
-        let env = Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
+        let env =
+            Environment::load(&dir, Some("Test".into()), dir.clone(), Default::default()).unwrap();
         (Arc::new(env), dir)
     }
 

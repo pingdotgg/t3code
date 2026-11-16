@@ -7,6 +7,7 @@ pub mod hex;
 pub mod hmac;
 pub mod ids;
 pub mod login_env;
+pub mod modes;
 pub mod secret_store;
 pub mod spawn_guard;
 #[cfg(any(test, feature = "test-util"))]

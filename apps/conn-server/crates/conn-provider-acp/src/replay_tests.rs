@@ -25,7 +25,7 @@ use conn_provider::{
 };
 use conn_provider_support::ids::FixedEnv;
 use serde_json::{Value, json};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 use crate::flavor::Flavor;
 use crate::replay_agent::{self, Script};
@@ -115,6 +115,20 @@ async fn idle(
     }
 }
 
+async fn wait_event(
+    events: &Arc<Mutex<Vec<Value>>>,
+    changed: &Notify,
+    matches: impl Fn(&[Value]) -> bool,
+) {
+    loop {
+        let notified = changed.notified();
+        if matches(&crate::lock(events)) {
+            return;
+        }
+        notified.await;
+    }
+}
+
 pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
     let calls = golden["calls"].as_array().cloned().unwrap_or_default();
     let open = calls
@@ -177,9 +191,12 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
     let (tx, mut rx) = mpsc::channel::<ProviderEvent>(session::EVENT_CAPACITY);
     let events = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
+    let changed = Arc::new(Notify::new());
+    let signal = changed.clone();
     tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             crate::lock(&sink).push(serde_json::to_value(&event).unwrap());
+            signal.notify_one();
         }
     });
     let mut errors = Vec::new();
@@ -197,7 +214,12 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
     let mut pending_seen = 0usize;
     let mut continuations_expected = 0usize;
     for call in &calls {
-        idle(&gates, &script, &events).await;
+        if !matches!(
+            call["method"].as_str(),
+            Some("startTurn" | "respondToRuntimeRequest" | "close")
+        ) {
+            idle(&gates, &script, &events).await;
+        }
         let input = &call["input"];
         match call["method"].as_str().unwrap_or("") {
             "ensureThread" => {
@@ -215,15 +237,16 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                 }
             }
             "startTurn" => {
-                // The orchestrator starts a turn once the last one ended; a deferred finalize
-                // may still be in its (shortened) debounce.
-                for _ in 0..1_000 {
-                    if !session.has_turn().await {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(2)).await;
+                if session.has_turn().await {
+                    wait_event(&events, &changed, |events| {
+                        events.iter().any(|e| {
+                            e["type"] == "turn.terminal"
+                                && e["runOrdinal"].as_u64()
+                                    == input["runOrdinal"].as_u64().map(|n| n - 1)
+                        })
+                    })
+                    .await;
                 }
-                idle(&gates, &script, &events).await;
                 if input["message"]["createdBy"] == "agent"
                     && input["message"]["creationSource"] == "provider"
                 {
@@ -243,6 +266,17 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                 }
             }
             "respondToRuntimeRequest" => {
+                wait_event(&events, &changed, |events| {
+                    events
+                        .iter()
+                        .filter(|e| {
+                            e["type"] == "runtime_request.updated"
+                                && e["runtimeRequest"]["status"] == "pending"
+                        })
+                        .count()
+                        > pending_seen
+                })
+                .await;
                 // Our request ids carry our own uuid: answer the requests in the order they came.
                 let ids: Vec<String> = crate::lock(&events)
                     .iter()
@@ -289,7 +323,20 @@ pub(crate) async fn replay(flavor: &'static Flavor, golden: &Value) -> Run {
                     })
                     .await;
             }
-            "close" => session.close().await,
+            "close" => {
+                if session.has_turn().await {
+                    let ordinal = calls.iter().filter(|c| c["method"] == "startTurn").count();
+                    wait_event(&events, &changed, |events| {
+                        events
+                            .iter()
+                            .filter(|e| e["type"] == "turn.terminal")
+                            .count()
+                            == ordinal
+                    })
+                    .await;
+                }
+                session.close().await;
+            }
             "openSession" | "getModelContextWindow" => {}
             other => errors.push(format!("call {other} is not replayed")),
         }

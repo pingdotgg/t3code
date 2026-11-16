@@ -474,8 +474,13 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("settings.json"), settings.to_string()).unwrap();
-        let environment =
-            crate::environment::Environment::load(&dir, Some("Test".into()), dir.clone()).unwrap();
+        let environment = crate::environment::Environment::load(
+            &dir,
+            Some("Test".into()),
+            dir.clone(),
+            Default::default(),
+        )
+        .unwrap();
         let flaky = Arc::new(Flaky {
             id: "grok".into(),
             calls: std::sync::Mutex::new(Vec::new()),

@@ -4010,7 +4010,7 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
         .unwrap();
     next(&mut changes).await;
     dispatch(&engine, message("t1", "c3", "latestart")).await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    provider.late_start_entered.notified().await;
     dispatch(&engine, stop("t1", "c4")).await;
     assert_eq!(
         run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
@@ -4155,6 +4155,57 @@ async fn work_queued_behind_an_abandoned_start_runs_after_it() {
     let abandoned = calls.iter().position(|c| c == "start abandoned run:t1:2");
     let next_start = calls.iter().position(|c| c == "start run:t1:3");
     assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_pending_workflow_stop_does_not_block_another_threads_dispatch() {
+    use std::hash::{Hash, Hasher};
+    let stripe = |id: &str| {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        id.hash(&mut hash);
+        hash.finish() % 64
+    };
+    // Exercise two ids that collided in the old stripe table.
+    let other = (0..4096)
+        .map(|n| format!("other-{n}"))
+        .find(|id| stripe(id) == stripe("t1"))
+        .unwrap();
+    let db = TempDb::new("workflow-stop-isolation");
+    let (engine, provider) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_control_delay(Duration::from_secs(60)),
+    );
+    let engine = Arc::new(engine);
+    dispatch(&engine, create("t1", "create-workflow")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    let _ = next(&mut stream).await;
+    dispatch(&engine, message("t1", "start-workflow", "workflow")).await;
+    loop {
+        if next(&mut stream).await["event"]["type"] == "subagent.updated" {
+            break;
+        }
+    }
+    let stopping = engine.clone();
+    let mut stop = tokio::spawn(async move {
+        stopping
+            .call(
+                "orchestration.stopWorkflow",
+                json!({"threadId":"t1","subagentId":"workflow-coordinator"}),
+            )
+            .await
+    });
+    provider.workflow_stop_entered.notified().await;
+    tokio::select! {
+        biased;
+        _ = dispatch(&engine, create(&other, "create-other")) => {},
+        result = &mut stop => panic!("another thread waited for workflow Stop: {result:?}"),
+    }
+    stop.abort();
+    assert!(stop.await.unwrap_err().is_cancelled());
+    engine.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]

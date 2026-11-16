@@ -42,13 +42,15 @@ pub(super) fn handles(value: &Value) -> Option<Value> {
     (!map.is_empty()).then_some(Value::Object(map))
 }
 
+fn epoch_ms(value: &Value) -> Option<u64> {
+    value.as_u64().filter(|n| *n <= 8_640_000_000_000_000)
+}
+
 fn agent(entry: &Value) -> Option<Value> {
     let mut map = Map::new();
     map.insert("index".into(), count(&entry["index"])?);
     map.insert("label".into(), text(&entry["label"])?);
-    let started = entry["startedAt"]
-        .as_u64()
-        .filter(|n| *n <= 8_640_000_000_000_000);
+    let started = epoch_ms(&entry["startedAt"]);
     let state = match entry["state"].as_str() {
         Some("queued") => "queued",
         Some("start") if started.is_none() => "queued",
@@ -78,19 +80,13 @@ fn agent(entry: &Value) -> Option<Value> {
     put(
         &mut map,
         "queuedAt",
-        entry["queuedAt"]
-            .as_u64()
-            .filter(|n| *n <= 8_640_000_000_000_000)
-            .map(|n| json!(n)),
+        epoch_ms(&entry["queuedAt"]).map(|n| json!(n)),
     );
     if matches!(state, "completed" | "failed") {
         put(
             &mut map,
             "completedAt",
-            entry["lastProgressAt"]
-                .as_u64()
-                .filter(|n| *n <= 8_640_000_000_000_000)
-                .map(|n| json!(n)),
+            epoch_ms(&entry["lastProgressAt"]).map(|n| json!(n)),
         );
     }
     Some(Value::Object(map))

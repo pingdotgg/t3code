@@ -171,7 +171,7 @@ pub(crate) struct Inner {
     pub(crate) effect_lanes: Mutex<HashMap<String, (u64, oneshot::Receiver<()>)>>,
     /// Numbers the effects, so a lane's last effect knows it is still the last.
     pub(crate) effect_seq: std::sync::atomic::AtomicU64,
-    thread_gates: [tokio::sync::Mutex<()>; 64],
+    thread_gates: crate::thread_locks::ThreadLocks,
 }
 
 /// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
@@ -283,7 +283,7 @@ impl SqliteEngine {
                     .provider_set
                     .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
-                thread_gates: std::array::from_fn(|_| tokio::sync::Mutex::new(())),
+                thread_gates: Default::default(),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
                 home,
@@ -424,16 +424,8 @@ pub(crate) enum DispatchError {
 }
 
 impl Inner {
-    /// Fixed stripes keep workflow Stop and thread commands serialized without a growing lock table.
-    pub(crate) async fn lock_thread(
-        &self,
-        thread_id: &str,
-    ) -> Option<tokio::sync::MutexGuard<'_, ()>> {
-        use std::hash::{Hash, Hasher};
-        let mut hash = std::collections::hash_map::DefaultHasher::new();
-        thread_id.hash(&mut hash);
-        let index = usize::try_from(hash.finish() % 64).ok()?;
-        Some(self.thread_gates.get(index)?.lock().await)
+    pub(crate) async fn lock_thread(&self, thread_id: &str) -> crate::thread_locks::Guard<'_> {
+        self.thread_gates.lock(thread_id).await
     }
 
     /// Runs `f` on the blocking pool, so SQLite never stalls the event loop.

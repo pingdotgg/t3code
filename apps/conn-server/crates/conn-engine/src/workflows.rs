@@ -1,7 +1,8 @@
 //! A workflow Stop targets one live Claude task, never the thread's turn.
 
-use conn_contract::{ProviderThread, RuntimeMode, from_json};
+use conn_contract::{ProviderThread, from_json};
 use conn_provider::{ProviderError, StopTaskInput};
+use conn_support::modes::{interaction_rank, runtime_rank};
 use serde_json::{Value, json};
 
 use crate::{EngineError, engine::Inner};
@@ -67,18 +68,11 @@ impl Inner {
                     request.get("modeLimit"),
                     tx.thread(&tid)?.filter(|t| t["deletedAt"].is_null()),
                 ) {
-                    let rank = |value: &Value| match from_json::<RuntimeMode>(value.clone())
-                        .unwrap_or(RuntimeMode::ApprovalRequired)
-                    {
-                        RuntimeMode::ApprovalRequired => 0,
-                        RuntimeMode::AutoAcceptEdits => 1,
-                        RuntimeMode::Auto => 2,
-                        RuntimeMode::FullAccess => 3,
-                    };
-                    let exceeded = if rank(&thread["runtimeMode"]) > rank(&limit["runtimeMode"]) {
+                    let exceeded = if runtime_rank(thread["runtimeMode"].as_str().unwrap_or_default())
+                        > runtime_rank(limit["runtimeMode"].as_str().unwrap_or_default()) {
                         Some("runtime_mode_escalation_denied")
-                    } else if thread["interactionMode"] != "plan"
-                        && limit["interactionMode"] == "plan"
+                    } else if interaction_rank(thread["interactionMode"].as_str().unwrap_or_default())
+                        > interaction_rank(limit["interactionMode"].as_str().unwrap_or_default())
                     {
                         Some("interaction_mode_escalation_denied")
                     } else {

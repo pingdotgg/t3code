@@ -263,7 +263,12 @@ async fn git_project(f: &Fixture) -> PathBuf {
 
 #[tokio::test(flavor = "current_thread")]
 async fn attachments_claim_bytes_reuse_canonical_metadata_and_refuse_foreign_ids() {
-    let f = fixture("attachment-send");
+    // Keep the parent active while the test sends and reuses attachment references.
+    let f = fixture_with(
+        "attachment-send",
+        None,
+        FakeProvider::new("claudeAgent").without_steering(),
+    );
     let (parent, caller) = running_parent(&f).await;
     let mut agent = Client::open(&f.service, caller).await;
     let prepared = agent.ok("t3_attachment_prepare_upload",json!({"upload":{"type":"file","name":"note.txt","mimeType":"text/plain","sizeBytes":3}})).await;

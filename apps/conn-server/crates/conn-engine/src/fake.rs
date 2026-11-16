@@ -80,6 +80,10 @@ pub struct FakeProvider {
     /// Set by [`Self::with_process_exit`]: a notify ends every open session's event stream,
     /// as a provider process that exits on its own (systemd's SIGTERM reaches it too).
     process_exit: Option<Arc<tokio::sync::Notify>>,
+    #[cfg(test)]
+    pub(crate) late_start_entered: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    pub(crate) workflow_stop_entered: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for FakeProvider {
@@ -115,6 +119,10 @@ impl FakeProvider {
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
+            #[cfg(test)]
+            late_start_entered: Arc::default(),
+            #[cfg(test)]
+            workflow_stop_entered: Arc::default(),
         }
     }
 
@@ -185,6 +193,10 @@ struct Turn {
 }
 
 struct FakeSession {
+    #[cfg(test)]
+    late_start_entered: Arc<tokio::sync::Notify>,
+    #[cfg(test)]
+    workflow_stop_entered: Arc<tokio::sync::Notify>,
     id: ProviderSessionId,
     /// The run whose start the engine abandoned (`abandon_turn_start`), and its wake-up.
     abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
@@ -296,6 +308,10 @@ impl Provider for FakeProvider {
                 })?,
                 background_tasks_end_with_process: true,
                 session: Box::new(FakeSession {
+                    #[cfg(test)]
+                    late_start_entered: self.late_start_entered.clone(),
+                    #[cfg(test)]
+                    workflow_stop_entered: self.workflow_stop_entered.clone(),
                     id: input.provider_session_id,
                     abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
@@ -557,10 +573,19 @@ impl Session for FakeSession {
                 });
                 return Ok(());
             }
-            // `latestart`: a provider that does not abandon: 300 ms, then a turn that runs until
-            // it is stopped (as `hang`).
+            // `latestart` accepts the turn after abandonment, then runs until interrupted.
             if text.starts_with("latestart") {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                #[cfg(test)]
+                self.late_start_entered.notify_one();
+                loop {
+                    let notified = self.abandoned.1.notified();
+                    tokio::pin!(notified);
+                    notified.as_mut().enable();
+                    if crate::lock(&self.abandoned.0).as_deref() == Some(&turn.run_id) {
+                        break;
+                    }
+                    notified.await;
+                }
             }
             // `write <path> <text>`: writes `<text>\n` to `<path>` in the turn's folder, then
             // answers as any other message.
@@ -912,6 +937,11 @@ impl Session for FakeSession {
                 });
             }
             crate::lock(&self.calls).push(format!("stop workflow {}", input.task_id));
+            #[cfg(test)]
+            self.workflow_stop_entered.notify_one();
+            if !self.control_delay.is_zero() {
+                tokio::time::sleep(self.control_delay).await;
+            }
             Ok(())
         })
     }

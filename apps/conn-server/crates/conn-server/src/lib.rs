@@ -22,6 +22,7 @@ pub mod session;
 pub mod settings;
 pub mod table;
 pub mod text_generation;
+mod workflow_script;
 
 pub use http::{AppState, router};
 use table::MethodTable;
@@ -38,5 +39,3 @@ pub fn method_table(deps: &methods::Deps) -> MethodTable {
 pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().expect("conn-server lock poisoned")
 }
-
-mod workflow_script;

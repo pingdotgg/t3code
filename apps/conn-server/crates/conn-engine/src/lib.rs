@@ -26,6 +26,7 @@ mod clock;
 mod commands;
 mod engine;
 mod mcp_apps;
+mod thread_locks;
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.
 /// With `panic = "abort"` a release build stops at the panic itself.

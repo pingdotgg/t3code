@@ -282,7 +282,8 @@ mod tests {
     async fn browser_access_is_scoped_to_project_and_captured_at_session_start() {
         let dir =
             std::env::temp_dir().join(format!("conn-browser-access-{}", conn_support::uuid_v4()));
-        let environment = Arc::new(Environment::load(&dir, None, dir.clone()).unwrap());
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
         let engine = Arc::new(
             conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
                 dir.join("engine.sqlite"),

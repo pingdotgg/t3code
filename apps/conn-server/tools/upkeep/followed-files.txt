@@ -76,8 +76,6 @@ packages/client-runtime/src/state/threadCheckpoints.ts
 apps/server/src/panels/AgentPanelBroker.ts
 packages/contracts/src/agentPanels.ts
 apps/server/src/mcp
-apps/server/src/mcp/McpToolExposure.ts
-apps/server/src/mcp/toolkits/toolSearch/handlers.ts
 apps/server/src/orchestration-v2/ThreadSearch.ts
 apps/server/src/orchestration-v2/QueuedRunOrder.ts
 apps/server/src/orchestration-v2/ThreadManagementService.ts

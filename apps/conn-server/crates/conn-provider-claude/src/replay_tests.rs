@@ -818,6 +818,49 @@ fn workflow_run_matches_the_ts_adapter() {
 #[test]
 fn workflow_progress_after_the_root_turn_matches_the_ts_adapter() {
     assert_same("e17_workflow_idle", "full-access");
+    let frames: Vec<Value> = testdata::cli("e17_workflow_idle")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap()["msg"].clone())
+        .collect();
+    let frame = |subtype: &str| {
+        frames
+            .iter()
+            .find(|msg| msg["subtype"] == subtype)
+            .unwrap()
+            .clone()
+    };
+    let result = frames
+        .iter()
+        .find(|msg| msg["type"] == "result")
+        .unwrap()
+        .clone();
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-session");
+    mapper.begin_turn(
+        &turn_input(1, &thread, "workflow", "full-access"),
+        "default",
+    );
+    mapper.handle(Inbound::from_value(frame("task_started")));
+    mapper.handle(Inbound::from_value(result.clone()));
+    mapper.begin_turn(
+        &turn_input(2, &thread, "another turn", "full-access"),
+        "default",
+    );
+    mapper.handle(Inbound::from_value(result));
+    let updates = mapper.handle(Inbound::from_value(frame("task_progress")));
+    assert!(updates.iter().any(
+        |out| matches!(out, Out::Event(ProviderEvent::SubagentUpdated { subagent })
+        if to_json(subagent)["workflow"]["agents"][0]["label"] == "Reviewer")
+    ));
+    assert!(
+        updates
+            .iter()
+            .any(|out| matches!(out, Out::Event(ProviderEvent::AppThreadCreated { .. })))
+    );
+    assert!(!updates.iter().any(
+        |out| matches!(out, Out::Event(ProviderEvent::TurnItemUpdated { turn_item })
+        if to_json(turn_item)["threadId"] == THREAD)
+    ));
 }
 
 #[test]

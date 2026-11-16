@@ -201,18 +201,8 @@ pub(crate) async fn handle(
                 .get_mut("params")
                 .map(Value::take)
                 .unwrap_or_default();
-            let search = params["name"] == "tool_search";
-            let result = call(service, &caller, &rpc_id, params, headers).await;
-            if search {
-                changed = serde_json::from_str::<Value>(&result)
-                    .ok()
-                    .and_then(|v| {
-                        v["result"]["structuredContent"]["tools"]
-                            .as_array()
-                            .map(|t| !t.is_empty())
-                    })
-                    .unwrap_or(false);
-            }
+            let (result, list_changed) = call(service, &caller, &rpc_id, params, headers).await;
+            changed = list_changed;
             result
         }
         other => rpc_error(&rpc_id, -32601, &format!("Method not found: {other}")),
@@ -240,35 +230,28 @@ async fn call(
     id: &Value,
     mut params: Value,
     headers: &HeaderMap,
-) -> String {
+) -> (String, bool) {
+    let invalid = |message: &str| (rpc_error(id, -32602, message), false);
     let mut arguments = match params["arguments"].take() {
         Value::Object(map) => map,
         Value::Null => Map::new(),
-        _ => return rpc_error(id, -32602, "Invalid method parameters"),
+        _ => return invalid("Invalid method parameters"),
     };
     let Some(name) = params["name"].as_str() else {
-        return rpc_error(id, -32602, "Invalid method parameters");
+        return invalid("Invalid method parameters");
     };
     let found =
         catalog::tool(name).filter(|_| catalog::offered(name, matches!(caller, Caller::Client(_))));
     let Some((tool, order)) = found else {
-        return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
+        return invalid(&format!("Tool '{name}' not found"));
     };
     if let Err(problem) =
         catalog::check_arguments(name, &tool["inputSchema"], &order, &mut arguments)
     {
-        return rpc_error(
-            id,
-            -32602,
-            &format!("Invalid parameters for tool '{name}': {problem}"),
-        );
+        return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
     }
     if let Err(problem) = crate::input::check(name, &mut arguments) {
-        return rpc_error(
-            id,
-            -32602,
-            &format!("Invalid parameters for tool '{name}': {problem}"),
-        );
+        return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
     }
     let origin = header(headers, "host")
         .filter(|host| !host.contains(['/', '\\', ' ']))
@@ -282,12 +265,19 @@ async fn call(
                 }
             )
         });
+    let mut changed = false;
     let result = match tools::call(service, caller, name, arguments, origin.as_deref()).await {
-        Ok(value) => json!({
-            "content": [{"type": "text", "text": value.to_string()}],
-            "structuredContent": value,
-            "isError": false,
-        }),
+        Ok(value) => {
+            changed = name == "tool_search"
+                && value["tools"]
+                    .as_array()
+                    .is_some_and(|tools| !tools.is_empty());
+            json!({
+                "content": [{"type": "text", "text": value.to_string()}],
+                "structuredContent": value,
+                "isError": false,
+            })
+        }
         Err(tools::ToolError::Failure { code, message }) => {
             let failure =
                 json!({"_tag": "OrchestratorMcpFailure", "code": code, "message": message});
@@ -301,12 +291,11 @@ async fn call(
             json!({"content": [{"type": "text", "text": message}], "isError": true})
         }
         Err(tools::ToolError::InvalidParams(problem)) => {
-            return rpc_error(
-                id,
-                -32602,
-                &format!("Invalid parameters for tool '{name}': {problem}"),
-            );
+            return invalid(&format!("Invalid parameters for tool '{name}': {problem}"));
         }
     };
-    json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+    (
+        json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string(),
+        changed,
+    )
 }

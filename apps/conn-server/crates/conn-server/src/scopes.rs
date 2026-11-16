@@ -363,7 +363,9 @@ mod tests {
     #[test]
     fn the_served_table_registers_only_declared_methods() {
         let dir = std::env::temp_dir().join(format!("conn-server-scopes-{}", auth::random_hex(6)));
-        let environment = crate::environment::Environment::load(&dir, None, dir.clone()).unwrap();
+        let environment =
+            crate::environment::Environment::load(&dir, None, dir.clone(), Default::default())
+                .unwrap();
         let engine = conn_engine::SqliteEngine::open(conn_engine::EngineConfig::new(
             dir.join("engine.sqlite"),
         ))

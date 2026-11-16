@@ -156,11 +156,11 @@ pub async fn serve_with_instances(
             workspace_root: root.to_string_lossy().into_owned(),
         })
         .collect();
-    let mut environment = or_exit(
-        Environment::load(&state_dir, label, cwd),
+    let restart = crate::restart::Restart::detect(desktop.is_some()).await;
+    let environment = or_exit(
+        Environment::load(&state_dir, label, cwd, restart),
         "cannot load the state directory",
     );
-    environment.set_restart(crate::restart::Restart::detect(desktop.is_some()).await);
     let environment = Arc::new(environment);
     let restart = environment.restart.clone();
     let auth = environment.auth.clone();
@@ -320,8 +320,7 @@ pub async fn serve_with_instances(
             tokio::select! {signal=shutdown_signal(is_desktop)=>signal, ()=restart.wait()=>"restart requested"}
         } => {
             eprintln!("conn-server: {signal}, stopping");
-            // At once, not after the drain below: systemd sends the same SIGTERM to the
-            // provider processes, which exit within it. A run they leave stays for the next start.
+            // Mark shutdown before draining: provider exits must leave runs for restart recovery.
             engine.begin_shutdown();
             let _ = stop_tx.send(true);
             // Open WebSockets keep the graceful stop waiting; give them a moment, no more.
