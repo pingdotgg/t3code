@@ -228,7 +228,9 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           className="flex-1 flex-row items-start gap-2"
         >
           <View className="flex-1 gap-2.5">
-            <Text className="font-t3-bold text-2xs text-foreground-secondary">User input needed</Text>
+            <Text className="font-t3-bold text-2xs text-foreground-secondary">
+              User input needed
+            </Text>
             <Text className="font-t3-bold text-lg text-foreground">
               Fill in the pending answers
             </Text>

@@ -96,7 +96,7 @@ describe("usage route modal", () => {
       });
     }
 
-    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/" }]]);
+    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/", replace: true }]]);
     await expect.element(dialog).not.toBeInTheDocument();
   });
 });
