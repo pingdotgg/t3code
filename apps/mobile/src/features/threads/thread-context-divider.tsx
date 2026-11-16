@@ -61,18 +61,23 @@ export interface ThreadLifecycleEvent {
   };
 }
 
-/** Closes the feed while the thread is snoozed, settled, or just woke. */
-export function ThreadLifecycleDivider(props: {
+/** Closes the feed while the thread is snoozed, settled, or just woke. Left-aligned, as on web. */
+export function ThreadLifecycleLine(props: {
   readonly event: ThreadLifecycleEvent;
   readonly iconColor: ColorValue;
 }) {
   const { action } = props.event;
   return (
-    <ThreadContextDivider
-      label={props.event.label}
-      icon={props.event.state === "settled" ? "checkmark.circle" : "clock"}
-      iconColor={props.iconColor}
-    >
+    <View className="mb-3 flex-row items-center gap-1.5 px-1 py-1">
+      <SymbolView
+        name={props.event.state === "settled" ? "checkmark.circle" : "alarm"}
+        size={13}
+        tintColor={props.iconColor}
+        type="monochrome"
+      />
+      <Text className="shrink font-t3-medium text-xs text-foreground-muted" numberOfLines={1}>
+        {props.event.label}
+      </Text>
       <Text className="text-xs text-foreground-muted">·</Text>
       <Pressable
         accessibilityRole="button"
@@ -85,6 +90,6 @@ export function ThreadLifecycleDivider(props: {
       >
         <Text className="font-t3-medium text-xs text-foreground">{action.label}</Text>
       </Pressable>
-    </ThreadContextDivider>
+    </View>
   );
 }

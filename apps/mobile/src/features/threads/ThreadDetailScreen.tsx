@@ -741,14 +741,19 @@ function ThreadDetailBody(
   const lifecycleEvent = ((): ThreadLifecycleEvent | null => {
     if (contentPresentationKind !== "ready" || !(lifecycleSnoozed || settled || woke)) return null;
     const actionLabel = lifecycleSnoozed ? "Wake now" : settled ? "Un-settle" : "Dismiss";
+    const wake =
+      lifecycleSnoozed && snoozedUntil !== null
+        ? snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })
+        : "now";
     return {
       state: lifecycleSnoozed ? "snoozed" : settled ? "settled" : "woke",
-      label:
-        lifecycleSnoozed && snoozedUntil !== null
-          ? `Snoozed, wakes in ${snoozeWakeLabel(snoozedUntil, { now: lifecycleNow })}`
-          : settled
-            ? "Settled"
-            : "Woke from snooze",
+      label: lifecycleSnoozed
+        ? wake === "now"
+          ? "Snoozed"
+          : `Snoozed, ${wake} left`
+        : settled
+          ? "Settled"
+          : "Woke from snooze",
       action: {
         label: statusPending
           ? lifecycleSnoozed

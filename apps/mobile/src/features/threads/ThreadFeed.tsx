@@ -23,7 +23,7 @@ import {
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
   ThreadContextDivider,
-  ThreadLifecycleDivider,
+  ThreadLifecycleLine,
   type ThreadLifecycleEvent,
 } from "./thread-context-divider";
 import {
@@ -4131,10 +4131,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                     />
                   ) : null}
                   {props.lifecycleEvent ? (
-                    <ThreadLifecycleDivider
-                      event={props.lifecycleEvent}
-                      iconColor={iconSubtleColor}
-                    />
+                    <ThreadLifecycleLine event={props.lifecycleEvent} iconColor={iconSubtleColor} />
                   ) : null}
                 </>
               ) : null
