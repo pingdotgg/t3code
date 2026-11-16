@@ -67,6 +67,7 @@ vi.mock("~/state/entities", () => ({
   useProject: () => ({ workspaceRoot: "/project", repositoryIdentity: null }),
   useThreadCheckpointSummaries: () => state.checkpoints,
   useQuietThreadVisibleTurnItems: () => [],
+  useQuietThreadProjection: () => null,
 }));
 vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
