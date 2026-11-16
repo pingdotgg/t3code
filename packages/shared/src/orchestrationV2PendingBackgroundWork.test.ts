@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
+import { ProviderInstanceId, ProviderThreadId, RunId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   monitorHoldsWakeCompletion,
+  stampAwaitingRuns,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -14,6 +15,35 @@ describe("backgroundWorkHoldsCompletion", () => {
     ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+  });
+});
+
+describe("stampAwaitingRuns", () => {
+  const earlier = RunId.make("run:earlier");
+  const current = RunId.make("run:current");
+  const command = { taskId: "build", kind: "command" as const };
+  it.each([
+    ["stamps new work with the current run", [], command, current],
+    [
+      "keeps the run known work was stamped with",
+      [{ ...command, awaitingRunId: earlier }],
+      command,
+      earlier,
+    ],
+    [
+      "moves work a later run starts waiting on to that run",
+      [{ ...command, awaitingRunId: earlier }],
+      { ...command, awaited: true as const },
+      current,
+    ],
+    [
+      "keeps work that was already awaited with its run",
+      [{ ...command, awaited: true as const, awaitingRunId: earlier }],
+      { ...command, awaited: true as const },
+      earlier,
+    ],
+  ])("%s", (_name, previous, task, expected) => {
+    expect(stampAwaitingRuns([task], previous, current)[0]?.awaitingRunId).toBe(expected);
   });
 });
 

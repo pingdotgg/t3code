@@ -1065,6 +1065,8 @@ const PendingBackgroundTaskFields = {
    * subagent. Only the agent knows whether a command is a wait or a dev server it left running.
    */
   awaited: Schema.optional(Schema.Literal(true)),
+  /** The run that started this work or last marked it awaited; the event sink stamps it. */
+  awaitingRunId: Schema.optional(RunId),
 };
 
 export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(

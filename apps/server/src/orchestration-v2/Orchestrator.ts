@@ -9682,20 +9682,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === message.runId,
       );
     if (run === undefined || run.delegatedTaskId !== undefined) return;
-    // A wake continues the latest follow-up while it is open, as it continues the original task.
-    const latestFollowupId =
+    // A wake continues the latest follow-up still open, as it continues the original task. A
+    // later follow-up can have ended while an earlier one waits on the work that woke the child.
+    const followupIds =
       command.notification === undefined
-        ? undefined
+        ? []
         : (yield* projectionStore
             .getThreadRecords(command.threadId, ["runs"])
             .pipe(mapDispatchError(command))).runs
-            .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
+            .filter((row) => row.id !== run.id)
+            .toSorted((a, b) => b.ordinal - a.ordinal)
+            .flatMap((row) => (row.delegatedTaskId === undefined ? [] : [row.delegatedTaskId]));
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
         subagentIds: [
           ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
-          ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
+          ...followupIds,
         ],
       })
       .pipe(mapDispatchError(command));
@@ -9706,14 +9708,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.id === (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined),
     );
     if (original === undefined || original.result === null) return;
-    const openFollowup = parent.subagents.find(
-      (task) =>
-        task.id === latestFollowupId &&
-        task.origin === "app_owned" &&
-        task.childThreadId === child.id &&
-        task.cancelledRunId === undefined &&
-        task.result === null,
-    );
+    const openFollowup = followupIds
+      .flatMap((id) => parent.subagents.filter((task) => task.id === id))
+      .find(
+        (task) =>
+          task.origin === "app_owned" &&
+          task.childThreadId === child.id &&
+          task.cancelledRunId === undefined &&
+          task.result === null,
+      );
     if (openFollowup !== undefined) {
       yield* emit(
         events,
@@ -15885,18 +15888,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // A child whose run ends while its background tasks or its own subagents still run has no
   // result yet. When that work settles there is no run update to finalize it, so these events
-  // do it. A background roster counts once it stops holding after it was seen holding.
-  const providerThreadsWithBackgroundWork = new Set<string>();
+  // do it. A background roster counts when work it was seen holding for has left it: each
+  // follow-up waits only for its own.
+  const holdingBackgroundWork = new Map<string, ReadonlySet<string>>();
   const settlesChildWork = (stored: OrchestrationV2StoredEvent) => {
     const { event } = stored;
     if (event.type === "subagent.updated")
       return !isOrchestrationV2WorkActive(event.payload.status);
     if (event.type !== "provider-thread.updated") return false;
-    if (backgroundWorkHoldsCompletion(event.payload.pendingBackgroundTasks ?? [])) {
-      providerThreadsWithBackgroundWork.add(event.payload.id);
-      return false;
-    }
-    return providerThreadsWithBackgroundWork.delete(event.payload.id);
+    const holding = new Set(
+      (event.payload.pendingBackgroundTasks ?? [])
+        .filter((task) => backgroundWorkHoldsCompletion([task]))
+        .map((task) => task.taskId),
+    );
+    const held = holdingBackgroundWork.get(event.payload.id);
+    if (holding.size === 0) holdingBackgroundWork.delete(event.payload.id);
+    else holdingBackgroundWork.set(event.payload.id, holding);
+    return held !== undefined && [...held].some((taskId) => !holding.has(taskId));
   };
   yield* Stream.merge(
     eventSink.stream({

@@ -562,6 +562,8 @@ const stopEarlierBackgroundWork = ({
         { taskId: "sleep", description: "Wait before the recheck", kind: "command" as const },
       ];
       const otherBackgroundTasks = [{ ...backgroundTasks[0]!, taskId: "other-sleep" }];
+      const unstamped = (tasks: (typeof codexProviderThread)["pendingBackgroundTasks"]) =>
+        tasks?.map(({ awaitingRunId: _run, ...task }) => task);
       const subagentThread = (name: string) =>
         Effect.gen(function* () {
           const subagentThreadId = ThreadId.make(`thread:${name}`);
@@ -954,7 +956,7 @@ const stopEarlierBackgroundWork = ({
           (thread) => thread.id === codexProviderThread.id,
         )!;
         assert.equal(beforeStop.lastRunOrdinal, 5);
-        assert.deepEqual(beforeStop.pendingBackgroundTasks, backgroundTasks);
+        assert.deepEqual(unstamped(beforeStop.pendingBackgroundTasks), backgroundTasks);
       }
 
       if (stopWithQueue !== undefined) {
@@ -1089,13 +1091,17 @@ const stopEarlierBackgroundWork = ({
       assert.equal(testerThread.nodes[0]?.status, "interrupted");
       if (failedStart) {
         assert.deepEqual(
-          after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
-            ?.pendingBackgroundTasks,
+          unstamped(
+            after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
+              ?.pendingBackgroundTasks,
+          ),
           backgroundWorkAfterStop === undefined ? [] : backgroundTasks,
         );
         assert.deepEqual(
-          after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
-            ?.pendingBackgroundTasks,
+          unstamped(
+            after.providerThreads.find((candidate) => candidate.id === otherProviderThreadId)
+              ?.pendingBackgroundTasks,
+          ),
           otherBackgroundTasks,
         );
       }

@@ -2,6 +2,7 @@ import {
   CommandId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
@@ -14,6 +15,10 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  backgroundWorkNeedsAwaitingRun,
+  stampAwaitingRuns,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -394,6 +399,47 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
+      // Adapters list background work without the run behind it, and every roster writer lands here.
+      const rosters = new Map<
+        ProviderThreadId,
+        ReadonlyArray<OrchestrationV2PendingBackgroundTask>
+      >();
+      const stampRoster = Effect.fnUntraced(function* (
+        event: Extract<OrchestrationV2DomainEvent, { readonly type: "provider-thread.updated" }>,
+      ) {
+        const tasks = event.payload.pendingBackgroundTasks ?? [];
+        if (tasks.length === 0) {
+          rosters.set(event.payload.id, tasks);
+          return event;
+        }
+        const previous =
+          rosters.get(event.payload.id) ??
+          (yield* projectionStore.getThreadRecords(event.threadId, ["providerThreads"]).pipe(
+            Effect.map(
+              ({ providerThreads }) =>
+                providerThreads.find((thread) => thread.id === event.payload.id)
+                  ?.pendingBackgroundTasks ?? [],
+            ),
+            Effect.catchTags({
+              ProjectionStoreThreadNotFoundError: () => Effect.succeed([]),
+            }),
+          ));
+        // Work reported between turns was left running by the thread's latest turn.
+        const runId =
+          event.runId ??
+          (backgroundWorkNeedsAwaitingRun(tasks, previous)
+            ? (yield* projectionStore.getThreadRecords(event.threadId, ["runs"]).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed({ runs: [] }),
+                }),
+              )).runs
+                .filter((run) => run.status !== "queued")
+                .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.id
+            : undefined);
+        const pendingBackgroundTasks = stampAwaitingRuns(tasks, previous, runId);
+        rosters.set(event.payload.id, pendingBackgroundTasks);
+        return { ...event, payload: { ...event.payload, pendingBackgroundTasks } };
+      });
       return Effect.forEach(
         events,
         (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
@@ -404,7 +450,9 @@ const layerBase: Layer.Layer<
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
+            : event.type === "provider-thread.updated"
+              ? stampRoster(event)
+              : Effect.succeed(event),
         { concurrency: 1 },
       );
     };

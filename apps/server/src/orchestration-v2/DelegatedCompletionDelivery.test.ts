@@ -3550,11 +3550,33 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           assert.notEqual(runB.delegatedTaskId, runA.delegatedTaskId);
           yield* answer("b", runB, "PONG");
 
-          const followupB = (yield* orchestrator.getThreadProjection(
-            parentThreadId,
-          )).subagents.find((task) => task.id === runB.delegatedTaskId);
+          const tasks = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents;
+          const followupB = tasks.find((task) => task.id === runB.delegatedTaskId);
           assert.equal(followupB?.status, "completed");
           assert.equal(followupB?.result, "PONG");
+          // A still waits on its build, and the build's wake continues A, not the settled B.
+          assert.isNull(tasks.find((task) => task.id === runA.delegatedTaskId)?.result ?? null);
+          const wakeMessageId = MessageId.make("message:followup-later-wake");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "server",
+            commandId: CommandId.make("command:followup-later-wake"),
+            threadId: child.childThreadId,
+            messageId: wakeMessageId,
+            text: "Background activity updated",
+            notification: {
+              source: { kind: "command" },
+              outcome: "completed",
+              summary: "Build finished",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const wakeRun = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+            (run) => run.userMessageId === wakeMessageId,
+          );
+          assert.equal(wakeRun?.delegatedTaskId, runA.delegatedTaskId);
         }),
     );
 

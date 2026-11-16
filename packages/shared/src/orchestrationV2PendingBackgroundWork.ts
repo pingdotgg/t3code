@@ -95,6 +95,38 @@ export function backgroundWorkHoldsCompletion(
   );
 }
 
+type AwaitingRunTask = Pick<PendingBackgroundWorkTask, "taskId" | "awaited" | "awaitingRunId">;
+
+/**
+ * Known work keeps the run it was stamped with until the agent newly marks it awaited: any
+ * later run can start waiting on work an earlier one left running.
+ */
+const takesCurrentRun = (task: AwaitingRunTask, before: AwaitingRunTask | undefined) =>
+  before?.awaitingRunId === undefined || (task.awaited === true && before.awaited !== true);
+
+export function backgroundWorkNeedsAwaitingRun(
+  tasks: ReadonlyArray<AwaitingRunTask>,
+  previous: ReadonlyArray<AwaitingRunTask>,
+): boolean {
+  const known = new Map(previous.map((task) => [task.taskId, task]));
+  return tasks.some((task) => takesCurrentRun(task, known.get(task.taskId)));
+}
+
+export function stampAwaitingRuns(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask>,
+  previous: ReadonlyArray<AwaitingRunTask>,
+  runId: OrchestrationV2Run["id"] | undefined,
+): ReadonlyArray<PendingBackgroundWorkTask> {
+  const known = new Map(previous.map((task) => [task.taskId, task]));
+  return tasks.map((task) => {
+    const before = known.get(task.taskId);
+    const awaitingRunId = takesCurrentRun(task, before)
+      ? (runId ?? task.awaitingRunId ?? before?.awaitingRunId)
+      : before?.awaitingRunId;
+    return awaitingRunId === task.awaitingRunId ? task : { ...task, awaitingRunId };
+  });
+}
+
 // Commands and monitors are as often a dev server or its watchdog as a wait, so they hold
 // only when the agent marks them awaited.
 function backgroundWorkKindHoldsCompletion(kind: PendingBackgroundWorkTask["kind"]): boolean {

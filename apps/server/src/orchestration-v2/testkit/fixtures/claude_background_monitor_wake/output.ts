@@ -49,6 +49,7 @@ export function assertClaudeBackgroundMonitorWakeOutput(
       command: "sleep 8 && echo MONITOR_DONE",
       itemId: monitorItem?.id,
       sourceThreadId: monitorItem?.threadId,
+      awaitingRunId: monitorItem?.runId ?? undefined,
     });
   }
   assert.deepEqual(projection.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
