@@ -331,7 +331,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       yield* persist("pending");
       const injected = yield* input.inject({
         messages: selected.messages,
-        context: selected.context,
+        context,
       });
       if (injected) {
         yield* persist("injected");
@@ -355,7 +355,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     }
     return {
       uncoveredItems,
-      context: renderHistory(selected.messages, selected.context),
+      context: renderHistory(selected.messages, context),
       messages: selected.messages,
       summaryFactIds,
       delivered: persist("inline").pipe(

@@ -1164,6 +1164,7 @@ export const layer: Layer.Layer<
       let contextRestart: OrchestrationV2ContextRestart | undefined;
       let recordForkMemory: Effect.Effect<void> = Effect.void;
       let recoveryTurnItem: OrchestrationV2TurnItem | undefined;
+      let restartHandoffItem: OrchestrationV2TurnItem | undefined;
       const loadedProviderThread = yield* Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadRecords(
@@ -1631,6 +1632,37 @@ export const layer: Layer.Layer<
                 strategy: handoff.strategy,
                 summary: handoff.summaryText,
               };
+        if (contextRestart !== undefined) {
+          restartHandoffItem = {
+            id: idAllocator.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: `context-handoff:${handoff.id}`,
+            }),
+            threadId: projection.thread.id,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerThreadId: providerThread.id,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: run.ordinal * 100 - 1,
+            status: "completed",
+            title: "Restarted from summaries",
+            startedAt: createdAt,
+            completedAt: createdAt,
+            updatedAt: createdAt,
+            type: "handoff",
+            contextHandoffId: handoff.id,
+            fromProviderThreadIds: [providerThread.id],
+            toProviderThreadId: providerThread.id,
+            fromProviderInstanceIds: [providerThread.providerInstanceId],
+            toProviderInstanceId: run.providerInstanceId,
+            toModel: run.modelSelection.model,
+            strategy: handoff.strategy,
+            summary: handoff.summaryText,
+            contextRestart,
+          };
+        }
         yield* eventSink.write({
           events: [
             {
@@ -1668,7 +1700,7 @@ export const layer: Layer.Layer<
                 consumedAt: null,
               },
             },
-            ...(contextRestart === undefined
+            ...(restartHandoffItem === undefined
               ? []
               : [
                   {
@@ -1679,35 +1711,7 @@ export const layer: Layer.Layer<
                     nodeId: rootNode.id,
                     providerInstanceId: run.providerInstanceId,
                     occurredAt: createdAt,
-                    payload: {
-                      id: idAllocator.derive.runSignalTurnItem({
-                        runId: run.id,
-                        signal: `context-handoff:${handoff.id}`,
-                      }),
-                      threadId: projection.thread.id,
-                      runId: run.id,
-                      nodeId: rootNode.id,
-                      providerThreadId: providerThread.id,
-                      providerTurnId: null,
-                      nativeItemRef: null,
-                      parentItemId: null,
-                      ordinal: run.ordinal * 100 - 1,
-                      status: "completed" as const,
-                      title: "Restarted from summaries",
-                      startedAt: createdAt,
-                      completedAt: createdAt,
-                      updatedAt: createdAt,
-                      type: "handoff" as const,
-                      contextHandoffId: handoff.id,
-                      fromProviderThreadIds: [providerThread.id],
-                      toProviderThreadId: providerThread.id,
-                      fromProviderInstanceIds: [providerThread.providerInstanceId],
-                      toProviderInstanceId: run.providerInstanceId,
-                      toModel: run.modelSelection.model,
-                      strategy: handoff.strategy,
-                      summary: handoff.summaryText,
-                      contextRestart,
-                    },
+                    payload: restartHandoffItem,
                   },
                 ]),
           ],
@@ -1993,25 +1997,48 @@ export const layer: Layer.Layer<
           yield* knowledgeDelivery.revalidate;
           yield* knowledgeDelivery.checkBudget(budget, initialDeliveryState.sent);
         });
+        const sentActivitySummary = new Map<string, string | undefined>();
         const persistHandoff = Effect.fn("ProviderTurnStartService.persist")(function* (
           handoff: OrchestrationV2ContextHandoff,
         ) {
           const updatedAt = yield* DateTime.now;
-          yield* eventSink.write({
-            events: [
-              {
-                id: yield* idAllocator.allocate.event({
-                  threadId: projection.thread.id,
-                }),
-                type: "context-handoff.updated",
+          const events: Array<OrchestrationV2DomainEvent> = [
+            {
+              id: yield* idAllocator.allocate.event({
                 threadId: projection.thread.id,
-                runId: run.id,
-                providerInstanceId: run.providerInstanceId,
-                occurredAt: updatedAt,
-                payload: { ...handoff, updatedAt },
-              },
-            ],
-          });
+              }),
+              type: "context-handoff.updated",
+              threadId: projection.thread.id,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: updatedAt,
+              payload: { ...handoff, updatedAt },
+            },
+          ];
+          const seen = new Set<string>();
+          for (const item of [...projection.turnItems, recoveryTurnItem, restartHandoffItem]) {
+            if (
+              item?.type !== "handoff" ||
+              item.contextHandoffId !== handoff.id ||
+              seen.has(item.id)
+            )
+              continue;
+            seen.add(item.id);
+            if ((sentActivitySummary.get(item.id) ?? item.summary) === handoff.summaryText)
+              continue;
+            sentActivitySummary.set(item.id, handoff.summaryText);
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+              type: "turn-item.updated",
+              threadId: projection.thread.id,
+              runId: item.runId ?? run.id,
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: updatedAt,
+              payload: { ...item, summary: handoff.summaryText, updatedAt },
+            });
+          }
+          yield* eventSink.write({ events });
         });
         const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
           function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
