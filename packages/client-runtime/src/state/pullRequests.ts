@@ -329,80 +329,15 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
   } satisfies AtomCommand<Target, A, E>;
 }
 
-function editedResults(
-  registry: AtomRegistry.AtomRegistry,
-  environmentId: EnvironmentId,
-  edit: PullRequestPendingEdit | null,
-) {
-  const results = new Map<unknown, AsyncResult.AsyncResult<unknown, unknown>>();
-  if (edit === null) return results;
-  for (const [atom, node] of registry.getNodes()) {
-    const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
-    if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
-    const result = Option.getOrUndefined(node.valueOption());
-    if (result !== undefined)
-      results.set(atom, result as AsyncResult.AsyncResult<unknown, unknown>);
-  }
-  return results;
-}
-
-function editedText(
-  value: unknown,
-  reference: PullRequestRef,
-): { readonly title?: string; readonly body?: string } | undefined {
-  const held = value as {
-    readonly entries?: ReadonlyArray<PullRequestListEntry>;
-    readonly title?: string;
-    readonly body?: string;
-  } | null;
-  const entries = Array.isArray(value)
-    ? (value as ReadonlyArray<PullRequestListEntry>)
-    : held?.entries;
-  if (entries === undefined) return held ?? undefined;
-  return entries.find((entry) => samePullRequest(entry, reference));
-}
-
-function editedTextAtSend(
-  atSend: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>> | undefined,
-  edit: PullRequestPendingEdit,
-) {
-  for (const result of atSend?.values() ?? []) {
-    const text = editedText(Option.getOrUndefined(AsyncResult.value(result)), edit.reference);
-    if (
-      text !== undefined &&
-      (["title", "body"] as const).every((field) => edit[field] === undefined || field in text)
-    )
-      return text;
-  }
-  return undefined;
-}
-
-/** Whether the edited text changed while the write was out. */
-function hostRewroteEdit(sent: unknown, shown: unknown, edit: PullRequestPendingEdit) {
-  const before = editedText(sent, edit.reference);
-  const after = editedText(shown, edit.reference);
-  if (before === undefined || after === undefined) return false;
-  return (["title", "body"] as const).some(
-    (field) => edit[field] !== undefined && before[field] !== after[field],
-  );
-}
-
-/** Keeps an accepted edit in loaded readers once it stops being in flight; true when the host rewrote it. */
+/** Keeps an accepted edit in loaded readers once it stops being in flight. */
 function settleEdit(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
   edit: PullRequestPendingEdit | null,
   readsAfterWrite = false,
-  atSend?: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>>,
 ) {
-  if (edit === null) return false;
-  let rewritten = false;
+  if (edit === null) return;
   const pending = registry.get(pullRequestPendingEditsAtom(environmentId));
-  const textAtSend = editedTextAtSend(atSend, edit);
-  const touched: Array<{
-    readonly reader: EditableReader;
-    readonly writable: Atom.Writable<AsyncResult.AsyncResult<never, unknown>>;
-  }> = [];
   for (const atom of registry.getNodes().keys()) {
     const reader = typeof atom === "string" ? undefined : editableReaders.get(atom);
     if (reader?.environmentId !== environmentId || !reader.concerns(edit.reference)) continue;
@@ -414,33 +349,11 @@ function settleEdit(
     // A read still waiting may predate the write, unless the caller started it after the commit.
     if (!readsAfterWrite && registry.get(writable).waiting) registry.refresh(writable);
     if (Option.isNone(shown)) continue;
-    // Text that changed during the write may be the host's own version of it, or an older read.
-    // A reader with no text from before the write checks against another reader's text from then,
-    // so a read answered before the commit is not taken for a rewrite; with none, the edit itself.
-    const sent = atSend?.get(atom);
-    const changed =
-      atSend !== undefined &&
-      hostRewroteEdit(
-        (sent === undefined ? undefined : Option.getOrUndefined(AsyncResult.value(sent))) ??
-          textAtSend ??
-          edit,
-        shown.value,
-        edit,
-      );
-    if (changed) rewritten = true;
-    touched.push({ reader, writable });
+    registry.update(
+      writable,
+      AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
+    );
   }
-  // A rewrite one reader saw holds for all of them, and a reader the server does not refresh
-  // would otherwise keep the typed text.
-  for (const { reader, writable } of touched) {
-    if (!rewritten) {
-      registry.update(
-        writable,
-        AsyncResult.map((value) => reader.edit(value, [edit], pending) as never),
-      );
-    } else if (!registry.get(writable).waiting) registry.refresh(writable);
-  }
-  return rewritten;
 }
 
 function pullRequestReference(input: PullRequestRef): PullRequestRef {
@@ -1282,11 +1195,10 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     environmentId: EnvironmentId,
     edit: PullRequestPendingEdit | null,
     readsAfterWrite = false,
-    atSend?: ReadonlyMap<unknown, AsyncResult.AsyncResult<unknown, unknown>>,
   ) =>
-    Effect.sync(() => settleEdit(registry, environmentId, edit, readsAfterWrite, atSend)).pipe(
-      Effect.andThen((rewritten) =>
-        edit === null || rewritten
+    Effect.sync(() => settleEdit(registry, environmentId, edit, readsAfterWrite)).pipe(
+      Effect.andThen(() =>
+        edit === null
           ? Effect.void
           : (onAnswer.acceptedEdit?.({ environmentId, input: edit.reference }, edit, registry) ??
             Effect.void),
@@ -1493,10 +1405,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         label: "environment-data:pull-requests:update",
         tag: WS_METHODS.pullRequestsUpdate,
         execute: (input) => routedRequest(WS_METHODS.pullRequestsUpdate, input),
-        onStart: ({ environmentId, input }, registry) =>
-          editedResults(registry, environmentId, updateEdit(input)),
-        onSuccess: (target, registry, _reply, atSend) =>
-          acceptEdit(registry, target.environmentId, updateEdit(target.input), false, atSend),
+        onSuccess: (target, registry) =>
+          acceptEdit(registry, target.environmentId, updateEdit(target.input)),
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),
