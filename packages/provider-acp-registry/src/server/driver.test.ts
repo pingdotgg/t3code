@@ -25,6 +25,7 @@ import * as Stream from "effect/Stream";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import * as Digest from "effect/crypto/Digest";
 import { KimiUsageLimits, KimiUsageLimitsLive, readKimiUsageLimits } from "./kimiUsageLimits.ts";
 import {
   AcpRegistryDriver,
@@ -710,6 +711,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
   it.effect("publishes Kimi usage limits on the provider snapshot", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const digest = yield* Digest.Digest;
       const path = yield* Path.Path;
       const homeDirectory = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "acp-driver-kimi-",
@@ -755,12 +757,12 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         displayName: "Kimi Code test",
         enabled: true,
         environment: [{ name: "KIMI_CODE_HOME", value: homeDirectory, sensitive: false }],
-        config: decodeSettings({ agentId: "kimi" }),
+        config: decodeSettings({ agentId: "kimi-code" }),
       }).pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
           ...catalogWithInspection({
             status: "ready",
-            agentId: "kimi",
+            agentId: "kimi-code",
             version: "1.0.0",
             distribution: "npx",
           }),
@@ -775,7 +777,13 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         // it the direct implementation so `read` resolves the stub HttpClient
         // from this instance's ambient context, not the suite's FetchHttpClient.
         Effect.provideService(KimiUsageLimits, {
-          read: (input) => readKimiUsageLimits(input),
+          read: (input) =>
+            readKimiUsageLimits(input).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(HttpClient.HttpClient, kimiClient),
+              Effect.provideService(Digest.Digest, digest),
+            ),
         }),
       );
 
@@ -789,8 +797,24 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* kimiInstance.snapshot.refresh;
       yield* Fiber.join(published);
       expect((yield* kimiInstance.snapshot.getSnapshot).usageLimits).toMatchObject({
-        windows: [{ id: "session", usedPercent: 19 }],
+        windows: [{ id: "limit_5h", usedPercent: 19 }],
       });
+      const tokenPath = path.join(homeDirectory, "credentials", "kimi-code.json");
+      const token = yield* fileSystem.readFileString(tokenPath);
+      const expired = JSON.stringify({ access_token: "expired", expires_at: 1 });
+      yield* fileSystem.writeFileString(tokenPath, expired);
+      yield* kimiInstance.snapshot.refreshUsage ?? Effect.void;
+      expect((yield* kimiInstance.snapshot.getSnapshot).usageLimits).toMatchObject({
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      });
+      expect(yield* fileSystem.readFileString(tokenPath)).toBe(expired);
+      yield* fileSystem.writeFileString(tokenPath, token);
+      yield* kimiInstance.snapshot.refreshUsage ?? Effect.void;
+      expect((yield* kimiInstance.snapshot.getSnapshot).usageLimits?.windows).toMatchObject([
+        { id: "limit_5h", usedPercent: 19 },
+      ]);
+      expect(yield* fileSystem.readFileString(tokenPath)).toBe(token);
     }),
   );
 });
