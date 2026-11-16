@@ -79,17 +79,6 @@ describe("tool image output parsing", () => {
       ).toBe("File contents");
     },
   );
-  it("reads an MCP result the same with or without the SDK's _meta", () => {
-    const structuredContent = {
-      check: "Server tests 7",
-      message: "expected [ 60 ]\nto equal [ 59 ]",
-    };
-    const result = { content: JSON.stringify(structuredContent), structuredContent };
-    const meta = { "io.modelcontextprotocol/serverInfo": { name: "T3 Code", version: "1" } };
-    const plain = turnItemOutputText(toolItem(result));
-    expect(plain).toContain('"check": "Server tests 7"');
-    expect(turnItemOutputText(toolItem({ ...result, _meta: meta }))).toBe(plain);
-  });
   it.each(["array", "content", "structured"] as const)(
     "keeps markers for images beyond the served positions in %s output",
     (shape) => {
@@ -191,5 +180,25 @@ describe("MCP app tool output", () => {
       ],
     });
     expect(turnItemOutputText(bounded)).toBe("chart\n[image]");
+  });
+});
+
+describe("MCP results with the SDK's _meta", () => {
+  const meta = { "io.modelcontextprotocol/serverInfo": { name: "T3 Code", version: "1" } };
+  const structuredContent = {
+    check: "Server tests 7",
+    message: "expected [ 60 ]\nto equal [ 59 ]",
+  };
+  it.each([
+    [
+      "text and structured content",
+      { content: JSON.stringify(structuredContent), structuredContent },
+    ],
+    ["text blocks only", { content: [{ type: "text", text: "Server tests: 7 passed" }] }],
+  ])("reads %s the same with or without _meta", (_shape, result) => {
+    const plain = turnItemOutputText(toolItem(result));
+    const withMeta = turnItemOutputText(toolItem({ ...result, _meta: meta }));
+    expect(withMeta).toBe(plain);
+    expect(withMeta).not.toContain("serverInfo");
   });
 });
