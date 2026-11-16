@@ -5761,6 +5761,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     );
   });
 
+  // regression: #37649 a goal never expands its last skill natively, so a user-only one needs its path
+  it("points a /goal at the file of a user-only skill mentioned last", () => {
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "/goal do the thing $deploy-x",
+      skills: new Map([
+        ["deploy-x", { path: "/repo/.claude/skills/deploy-x/SKILL.md", userInvocationOnly: true }],
+      ]),
+    });
+    assert.strictEqual(
+      message.message.content,
+      "/goal do the thing /deploy-x [The user invoked this skill. Follow the instructions at: /repo/.claude/skills/deploy-x/SKILL.md]",
+    );
+  });
+
   // regression: #15708 Stop must not silently drop a steer Claude queued behind a foreground task
   it.effect.each([
     {
