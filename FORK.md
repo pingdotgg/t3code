@@ -48,8 +48,13 @@ what serves them.
 
 Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR), the hosted web
 app (app.t3.codes and its previews), the T3 Connect relay (`infra/relay`), and the marketing
-site (`apps/marketing`). For the Conn Server, also every area that
-`apps/conn-server/docs/orbit-profile.md` rates "not needed".
+site (`apps/marketing`). Only GitHub is used as a source-control host: GitLab, Forgejo,
+Bitbucket, Azure DevOps, GitCafe and Cursor origin are out of scope. For the Conn Server, also
+every area that `apps/conn-server/docs/orbit-profile.md` rates "not needed".
+
+Ports follow the same scope. The GUI must work properly on macOS and iOS only, and the Conn
+Server runs on Linux only. When leaving out another platform or host makes a port clearly
+simpler, leave it out and name it in the sync notes or the PR.
 
 Their upstream workflows stay in the tree and skip here: each checks
 `github.repository == 'pingdotgg/t3code'` ("Pull request runners"). They are `release.yml`
