@@ -101,17 +101,17 @@ jobs:
               {
                 name: "vouch:trusted",
                 color: "1f883d",
-                description: "PR author is trusted by repo permissions or the VOUCHED list.",
+                description: "Author is trusted by repo permissions or the VOUCHED list.",
               },
               {
                 name: "vouch:unvouched",
                 color: "fbca04",
-                description: "PR author is not yet trusted in the VOUCHED list.",
+                description: "Author is not yet trusted in the VOUCHED list.",
               },
               {
                 name: "vouch:denounced",
                 color: "d1242f",
-                description: "PR author is explicitly blocked by the VOUCHED list.",
+                description: "Author is explicitly blocked by the VOUCHED list.",
               },
             ];
 

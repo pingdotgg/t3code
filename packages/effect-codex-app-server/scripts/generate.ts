@@ -188,6 +188,32 @@ function openStringEnum(schema: Schema.Json): Schema.Json {
   };
 }
 
+// Newer Codex identifies a generated image by `fileId` and omits the inline `result`.
+// Requiring `result` fails the whole notification decode and drops the finished image.
+function acceptImageFileIds(schema: Schema.Json): Schema.Json {
+  if (!isJsonSchemaNode(schema) || !Array.isArray(schema.oneOf)) return schema;
+  return {
+    ...schema,
+    oneOf: schema.oneOf.map((variant: Schema.Json) => {
+      if (
+        !isJsonSchemaNode(variant) ||
+        !isJsonSchemaNode(variant.properties) ||
+        !isJsonSchemaNode(variant.properties.type) ||
+        !Array.isArray(variant.properties.type.enum) ||
+        !variant.properties.type.enum.includes("imageGeneration") ||
+        !Array.isArray(variant.required)
+      ) {
+        return variant;
+      }
+      return {
+        ...variant,
+        properties: { ...variant.properties, fileId: { type: "string" } },
+        required: variant.required.filter((key: Schema.Json) => key !== "result"),
+      };
+    }),
+  };
+}
+
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
   const generatedDir = path.join(import.meta.dirname, "..", "src", "_generated");
@@ -684,7 +710,9 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
           DefinitionOverrides[definitionName] ??
             (OpenStringEnumDefinitions.has(definitionName)
               ? openStringEnum(definitionSchema)
-              : definitionSchema),
+              : definitionName === "ThreadItem"
+                ? acceptImageFileIds(definitionSchema)
+                : definitionSchema),
           localDefinitionNames,
           file.namespace,
           exportNameByQualifiedName,
