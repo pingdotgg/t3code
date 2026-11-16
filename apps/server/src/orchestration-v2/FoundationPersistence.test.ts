@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  RuntimeRequestId,
   RunAttemptId,
   RunId,
   ThreadId,
@@ -2697,6 +2698,72 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* outbox.cancelUnsettled({
         threadId: ThreadId.make("thread:foundation-next-claimable:future"),
         effectTypes: ["terminal.cleanup"],
+        reason: "Test cleanup.",
+      });
+    }),
+  );
+
+  it.effect("claims a request answer past its thread's running turn start only", () =>
+    Effect.gen(function* () {
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const workerId = "answer-order-worker";
+      const commandId = CommandId.make("command:foundation-answer-order");
+      const threadId = ThreadId.make("thread:foundation-answer-order");
+      const providerSessionId = ProviderSessionId.make("provider-session:foundation-answer-order");
+      const answer = (name: string) => ({
+        id: `effect:foundation-answer-order:${name}`,
+        commandId,
+        threadId,
+        request: {
+          type: "runtime-request.respond" as const,
+          providerSessionId,
+          requestId: RuntimeRequestId.make(`request:foundation-answer-order:${name}`),
+          decision: "accept" as const,
+        },
+      });
+      const claimId = outbox
+        .claimNext({ workerId })
+        .pipe(Effect.map(Option.map((effect) => effect.id)));
+      yield* outbox.enqueue([
+        {
+          id: "effect:foundation-answer-order:start",
+          commandId,
+          threadId,
+          request: {
+            type: "provider-turn.start",
+            runId: RunId.make("run:foundation-answer-order"),
+          },
+        },
+      ]);
+      assert.deepEqual(yield* claimId, Option.some("effect:foundation-answer-order:start"));
+
+      yield* outbox.enqueue([
+        answer("first"),
+        answer("second"),
+        {
+          id: "effect:foundation-answer-order:cleanup",
+          commandId,
+          threadId,
+          request: { type: "terminal.cleanup" },
+        },
+      ]);
+      assert.isTrue(Option.isSome(yield* outbox.nextClaimableAt()));
+      assert.deepEqual(yield* claimId, Option.some(answer("first").id));
+      // Answers stay serialized, and nothing else passes the running start.
+      assert.deepEqual(yield* claimId, Option.none());
+      yield* outbox.succeed({ effectId: answer("first").id, workerId });
+      assert.deepEqual(yield* claimId, Option.some(answer("second").id));
+      yield* outbox.succeed({ effectId: answer("second").id, workerId });
+      assert.deepEqual(yield* claimId, Option.none());
+
+      yield* outbox.succeed({ effectId: "effect:foundation-answer-order:start", workerId });
+      assert.deepEqual(yield* claimId, Option.some("effect:foundation-answer-order:cleanup"));
+      yield* outbox.enqueue([answer("behind-cleanup")]);
+      assert.deepEqual(yield* claimId, Option.none());
+      yield* outbox.succeed({ effectId: "effect:foundation-answer-order:cleanup", workerId });
+      yield* outbox.cancelUnsettled({
+        threadId,
+        effectTypes: ["runtime-request.respond"],
         reason: "Test cleanup.",
       });
     }),

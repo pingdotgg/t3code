@@ -333,6 +333,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
     // Retry backoff must block later effects so turns cannot race a pending rollback.
+    // A request answer alone passes its thread's running turn start, which can be waiting for it.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
@@ -360,6 +361,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                     : sql`1 = 1`
                 }
               )
+            )
+            AND NOT (
+              candidate.effect_type = 'runtime-request.respond'
+              AND active.status = 'running'
+              AND active.effect_type = 'provider-turn.start'
             )
             AND (
               (

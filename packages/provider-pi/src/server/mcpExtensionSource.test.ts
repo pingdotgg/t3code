@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_RUN_ADMISSION_TITLE,
+  PI_T3_SERVICE_TIER_COMMAND,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -32,6 +36,8 @@ async function loadHooks(
   argv: ReadonlyArray<string> = [],
 ) {
   const handlers = new Map<string, unknown>();
+  const firstHandlers = new Map<string, unknown>();
+  const sent: Array<{ content: unknown; deliverAs: string | undefined }> = [];
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -44,12 +50,18 @@ async function loadHooks(
     NodePath,
     stripFrontmatter: (content: string) => content,
     pi: {
-      on: (name: string, handler: unknown) => handlers.set(name, handler),
+      on: (name: string, handler: unknown) => {
+        handlers.set(name, handler);
+        if (!firstHandlers.has(name)) firstHandlers.set(name, handler);
+      },
       registerCommand: () => {},
+      sendUserMessage: async (content: unknown, options?: { deliverAs?: string }) => {
+        sent.push({ content, deliverAs: options?.deliverAs });
+      },
       getCommands: () => commands,
     },
   });
-  return handlers;
+  return Object.assign(handlers, { first: firstHandlers, sent });
 }
 
 describe("Pi orchestration prompt section", () => {
@@ -80,6 +92,77 @@ describe("Pi orchestration prompt section", () => {
       assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
+  });
+});
+
+describe("Pi run admission", () => {
+  it("holds a resumed session's first run until T3 answers", async () => {
+    const hooks = await loadHooks();
+    const sessionStart = hooks.first.get("session_start") as (event: unknown) => void;
+    const gate = hooks.first.get("before_agent_start") as (event: unknown, ctx: unknown) => void;
+    const compactGate = hooks.first.get("session_before_compact") as (
+      event: unknown,
+      ctx: unknown,
+    ) => Promise<void>;
+    const request = hooks.first.get("before_provider_request") as () => Promise<void> | undefined;
+    const input = hooks.first.get("input") as (event: unknown) => unknown;
+    const asked: Array<{ title: string; answer: (admitted: boolean) => void }> = [];
+    let aborts = 0;
+    const ctx = {
+      abort: () => aborts++,
+      ui: {
+        confirm: (title: string) =>
+          new Promise<boolean>((resolve) => asked.push({ title, answer: resolve })),
+      },
+    };
+
+    sessionStart({ type: "session_start", reason: "startup" });
+    gate({}, ctx);
+    assert.lengthOf(asked, 0);
+    assert.isUndefined(request());
+
+    // Pi emits resume twice for one switch_session, and pi-goal-x drops work it dispatched that
+    // has not started by the second. So the run starts when asked and waits at its first request.
+    sessionStart({ type: "session_start", reason: "resume" });
+    assert.isUndefined(gate({}, ctx));
+    sessionStart({ type: "session_start", reason: "resume" });
+    let started = false;
+    const run = request()!.then(() => (started = true));
+    await Promise.resolve();
+    // The held run keeps Pi busy: another extension's plain send is queued, not rejected.
+    const send = { type: "input", text: "continue", source: "extension" };
+    assert.deepEqual(input(send), { action: "handled" });
+    assert.isUndefined(input({ ...send, streamingBehavior: "followUp" }));
+    assert.isUndefined(input({ ...send, source: "rpc" }));
+    assert.deepEqual(hooks.sent, [{ content: "continue", deliverAs: "followUp" }]);
+    assert.deepEqual(
+      asked.map(({ title }) => title),
+      [PI_T3_RUN_ADMISSION_TITLE],
+    );
+    assert.isFalse(started);
+    asked[0]!.answer(true);
+    await run;
+    assert.isUndefined(input(send));
+    gate({}, ctx);
+    assert.isUndefined(request());
+    assert.lengthOf(asked, 1);
+    assert.equal(aborts, 0);
+
+    // In another restored session, pre-run compaction comes first and is held outright; a
+    // declined run is aborted, not asked again.
+    const next = await loadHooks();
+    (next.first.get("session_start") as typeof sessionStart)({
+      type: "session_start",
+      reason: "resume",
+    });
+    const compacting = (next.first.get("session_before_compact") as typeof compactGate)({}, ctx);
+    await Promise.resolve();
+    assert.lengthOf(asked, 2);
+    asked[1]!.answer(false);
+    await compacting;
+    (next.first.get("before_agent_start") as typeof gate)({}, ctx);
+    assert.lengthOf(asked, 2);
+    assert.equal(aborts, 1);
   });
 });
 
