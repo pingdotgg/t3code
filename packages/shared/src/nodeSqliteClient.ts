@@ -952,9 +952,21 @@ const make = Effect.fn("makeWithDatabase")(function* (
     | { readonly name: "abandoned"; readonly since: number };
   const idle: ReaderState = { name: "idle" };
   const live: ReaderState = { name: "live" };
-  const readerWaiters = new Set<() => void>();
+  // Waiting reads in arrival order. `resume` is set while one is parked; whoever wakes it clears it.
+  interface ReaderWaiter {
+    resume: (() => void) | undefined;
+  }
+  const readerWaiters = new Set<ReaderWaiter>();
+  const wake = (waiter: ReaderWaiter) => {
+    const resume = waiter.resume;
+    waiter.resume = undefined;
+    resume?.();
+  };
+  // Wakes only the longest-waiting parked read, so a change costs one check, not one per waiter.
   const readersChanged = () => {
-    for (const wake of Array.from(readerWaiters)) wake();
+    for (const waiter of readerWaiters) {
+      if (waiter.resume !== undefined) return wake(waiter);
+    }
   };
   const readers =
     options.readerWorker && isFileDatabase
@@ -978,53 +990,79 @@ const make = Effect.fn("makeWithDatabase")(function* (
   type Reader = (typeof readers)[number];
   let retiringReaders = 0;
 
-  // Returns the claimed reader, or how long until an abandoned one may be replaced.
-  const claimReader = (now: number): Reader | number | undefined => {
+  // Returns the reader a read may claim, or how long until an abandoned one may be replaced.
+  const findReader = (now: number): Reader | number | undefined => {
     // The lowest idle reader wins, so idle readers never start a worker.
     const idleReader = readers.find((reader) => reader.state.name === "idle");
-    if (idleReader !== undefined) {
-      idleReader.state = live;
-      return idleReader;
-    }
+    if (idleReader !== undefined) return idleReader;
     if (retiringReaders >= MAX_RETIRING_READERS) return undefined;
     let wait: number | undefined;
     for (const reader of readers) {
       if (reader.state.name !== "abandoned") continue;
       const remaining = reader.state.since + ABANDONED_READER_GRACE_MS - now;
-      if (remaining > 0) {
-        wait = Math.min(wait ?? remaining, remaining);
-        continue;
-      }
+      if (remaining <= 0) return reader;
+      wait = Math.min(wait ?? remaining, remaining);
+    }
+    return wait;
+  };
+  const claimReader = (reader: Reader) => {
+    if (reader.state.name === "abandoned") {
       retiringReaders++;
       void reader.retire().then(() => {
         retiringReaders--;
         readersChanged();
       });
-      reader.state = live;
-      return reader;
     }
-    return wait;
+    reader.state = live;
+    return reader;
   };
-  // A wake hands over nothing, so a waiter interrupted after its wake loses no reader.
-  const readersChange = Effect.callback<void>((resume) => {
-    const wake = () => {
-      readerWaiters.delete(wake);
-      resume(Effect.void);
-    };
-    readerWaiters.add(wake);
-    return Effect.sync(() => readerWaiters.delete(wake));
-  });
-  const waitForReader = (restore: typeof Effect.interruptible) =>
-    Effect.withFiber((fiber) => {
-      const clock = fiber.getRef(Clock.Clock);
-      const attempt: Effect.Effect<Reader> = Effect.suspend(() => {
-        const claimed = claimReader(clock.currentTimeMillisUnsafe());
-        if (typeof claimed === "object") return Effect.succeed(claimed);
-        const change =
-          claimed === undefined ? readersChange : Effect.timeoutOption(readersChange, claimed);
-        return Effect.andThen(restore(change), attempt);
+  // A grace deadline wakes only its own waiter; a change wakes the first parked one.
+  const park = (waiter: ReaderWaiter, delay: number | undefined) => {
+    const parked = Effect.callback<void>((resume) => {
+      waiter.resume = () => resume(Effect.void);
+      return Effect.sync(() => {
+        waiter.resume = undefined;
       });
-      return attempt;
+    });
+    if (delay === undefined) return parked;
+    const deadline = Effect.andThen(
+      Effect.sleep(delay),
+      Effect.sync(() => wake(waiter)),
+    );
+    return Effect.flatMap(Effect.forkChild(deadline, { startImmediately: true }), (timer) =>
+      Effect.ensuring(parked, Fiber.interrupt(timer)),
+    );
+  };
+  // Every change wakes one parked read. A read that stops waiting without a reader, or claims one
+  // while another reader is claimable or awaits its grace, wakes the next, so no wake is lost.
+  // A read arriving behind waiting reads parks behind them; it never takes a reader ahead of them.
+  const waitForReader = (restore: typeof Effect.interruptible) =>
+    Effect.withFiber((fiber): Effect.Effect<Reader> => {
+      const clock = fiber.getRef(Clock.Clock);
+      const found =
+        readerWaiters.size === 0 ? findReader(clock.currentTimeMillisUnsafe()) : undefined;
+      if (typeof found === "object") return Effect.succeed(claimReader(found));
+      const waiter: ReaderWaiter = { resume: undefined };
+      readerWaiters.add(waiter);
+      const attempt = (found: Reader | number | undefined): Effect.Effect<Reader> => {
+        if (typeof found !== "object") {
+          return Effect.andThen(
+            restore(park(waiter, found)),
+            Effect.suspend(() => attempt(findReader(clock.currentTimeMillisUnsafe()))),
+          );
+        }
+        readerWaiters.delete(waiter);
+        claimReader(found);
+        if (readerWaiters.size > 0 && findReader(clock.currentTimeMillisUnsafe()) !== undefined) {
+          readersChanged();
+        }
+        return Effect.succeed(found);
+      };
+      return Effect.onInterrupt(attempt(found), () =>
+        Effect.sync(() => {
+          if (readerWaiters.delete(waiter)) readersChanged();
+        }),
+      );
     });
 
   interface Target {
