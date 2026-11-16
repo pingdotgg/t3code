@@ -1194,7 +1194,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `device_screenshot` | no | X | N | L | simulators |
 | `fill_credential` | no | X | U | M | test logins |
 | `html_preview` | no | U | N | L | charts; needs headless Chromium on the server |
-| `html_render` | no | U | N | L | charts; needs headless Chromium on the server |
+| `html_render` | yes | U | N | L | charts; needs headless Chromium on the server |
 | `link_pull_request` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `link_pull_requests` | yes | U | N |  | PR links on a thread; Swamp could link the PR it opens |
 | `list_scheduled_tasks` | yes | U | N |  | scheduled tasks |

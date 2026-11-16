@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 conn-support.workspace = true
+conn-files.workspace = true
 conn-contract.workspace = true
 conn-engine.workspace = true
 # Scheduled tasks for `schedule_task` and its siblings.

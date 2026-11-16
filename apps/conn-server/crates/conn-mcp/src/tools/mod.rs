@@ -13,6 +13,7 @@ use crate::{Caller, McpConfig, McpService};
 
 mod annotations;
 mod background;
+mod html;
 mod manage;
 mod message;
 mod projects;
@@ -48,7 +49,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 34] = [
+pub(crate) const HANDLED: [&str; 35] = [
+    "html_render",
     "t3_background_wait",
     "link_pull_request",
     "link_pull_requests",
@@ -102,6 +104,7 @@ pub(crate) async fn call(
     }
     let cx = Cx { service, caller };
     match name {
+        "html_render" => html::render(&cx, &args).await,
         "orchestrator_capabilities" => projects::capabilities(&cx, &args).await,
         "t3_project_list" => projects::list(&cx, &args).await,
         "t3_project_read" => projects::read(&cx, &args).await,

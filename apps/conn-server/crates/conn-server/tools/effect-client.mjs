@@ -426,6 +426,16 @@ const decodeEach = (client) =>
     yield* call("filesystem.browse", { partialPath: `${repo}/` });
     yield* call("filesystem.getMetadata", { paths: [repo] });
     yield* call("assets.persistChatAttachments", { threadId: none, messageId: none, attachments: [] });
+    const htmlId = "effect-html-00000000-0000-4000-8000-000000000001-html";
+    NodeFS.writeFileSync(NodePath.join(stateDir, "attachments", `${htmlId}.html`), "<!doctype html><p>Rendered HTML</p>");
+    const htmlAsset = yield* call("assets.createUrl", { resource: { _tag: "attachment", attachmentId: htmlId, fileName: "Rendered HTML.html", mimeType: "text/html", disposition: "inline" } });
+    if (Exit.isSuccess(htmlAsset)) {
+      const served = yield* Effect.promise(async () => {
+        const response = await fetch(`${httpBaseUrl}${htmlAsset.value.relativeUrl}`);
+        return { status: response.status, type: response.headers.get("content-type"), csp: response.headers.get("content-security-policy"), body: await response.text() };
+      });
+      check("HTML render signed asset", served.status === 200 && served.type === "text/html; charset=utf-8" && served.csp === "sandbox allow-scripts allow-forms allow-popups allow-downloads" && served.body === "<!doctype html><p>Rendered HTML</p>", JSON.stringify(served));
+    } else check("HTML render signed asset URL", false, String(htmlAsset.cause));
     yield* call("attachments.delete", { attachmentId: none });
     yield* call("orchestration.forceStopThread", { threadId: none });
     yield* call("orchestration.getNativeChildWork", { threadId: none });

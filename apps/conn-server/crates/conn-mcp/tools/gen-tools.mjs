@@ -262,7 +262,16 @@ const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
 // Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
 const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
 const allNames = tools.map((tool) => `${tool.name}\n`).join("");
+const { injectHtmlRenderBootstrap, HTML_RENDER_MIN_HEIGHT, HTML_RENDER_MAX_HEIGHT } = await import(
+  NodeURL.pathToFileURL(NodePath.join(repo, "packages/shared/src/htmlRender.ts")).href
+);
+const bootstrap = injectHtmlRenderBootstrap('<head><!--conn-bootstrap-end--></head>');
+const markup = bootstrap.slice(bootstrap.indexOf('<style id="t3-theme">'), bootstrap.indexOf('<!--conn-bootstrap-end-->'));
+if (!markup.startsWith('<style') || !markup.endsWith('</script>')) throw new Error("HTML bootstrap shape changed");
+const htmlOut = NodePath.join(here, "../../conn-files/src/html-bootstrap.json");
+const htmlText = JSON.stringify({markup, minHeight: HTML_RENDER_MIN_HEIGHT, maxHeight: HTML_RENDER_MAX_HEIGHT}) + "\n";
 const outputs = [
+  [htmlOut, htmlText, "HTML render bootstrap and height limits"],
   [out, text, `${catalog.length} tools`],
   [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
   [allNamesOut, allNames, `${tools.length} tool names`],

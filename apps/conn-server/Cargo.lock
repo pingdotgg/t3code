@@ -192,10 +192,12 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "nucleo-matcher",
+ "regex-automata",
  "regex-syntax",
  "serde",
  "serde_json",
  "sha2",
+ "thiserror",
  "tokio",
 ]
 
@@ -206,6 +208,7 @@ dependencies = [
  "conn-contract",
  "conn-engine",
  "conn-features",
+ "conn-files",
  "conn-source-control",
  "conn-support",
  "getrandom 0.3.4",

@@ -13,6 +13,7 @@ pub mod assets;
 pub mod attachments;
 pub mod entries;
 mod git;
+pub mod html;
 pub mod mime;
 pub mod paths;
 pub mod search;

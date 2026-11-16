@@ -46,6 +46,8 @@ pub struct McpConfig {
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
     /// Annotations; without it the annotation tools answer that they are not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
+    /// Attachment publication and protected HTML source reads.
+    pub files: Option<Arc<conn_files::Files>>,
 }
 
 impl std::fmt::Debug for McpConfig {

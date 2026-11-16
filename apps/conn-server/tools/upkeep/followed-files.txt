@@ -131,6 +131,9 @@ packages/source-control-gitcafe
 packages/source-control-cursor-origin
 
 [crates/conn-files]
+apps/server/src/htmlRender/HtmlRender.ts
+packages/shared/src/htmlRender.ts
+packages/shared/src/themePalettes.ts
 apps/server/src/workspace
 apps/server/src/assets
 apps/server/src/attachmentStore.ts
