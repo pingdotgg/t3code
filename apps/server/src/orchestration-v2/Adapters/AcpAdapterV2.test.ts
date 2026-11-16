@@ -3380,7 +3380,7 @@ describe("AcpAdapterV2", () => {
           update: { sessionUpdate, messageId, content: { type: "text", text } },
         });
 
-      yield* replay("user_message_chunk", "u1", "Explain <monitor-event> ");
+      yield* replay("user_message_chunk", "u1", "<monitor-event> is ");
       yield* replay("user_message_chunk", "u1", "XML");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
@@ -3410,14 +3410,14 @@ describe("AcpAdapterV2", () => {
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
       assert.deepEqual(texts(first), [
-        "user:Explain <monitor-event> XML",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next",
         "assistant:\tcode with <monitor-event>",
         "user:Why did Monitor 0123abcd ended appear?",
       ]);
       assert.deepEqual(texts(second), [
-        "user:Explain <monitor-event> XML",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next\n\tone",
         "assistant:\tcode with <monitor-event>",
@@ -11194,7 +11194,7 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
         sessionId,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
       }) as const;
-    assert.isTrue(acpPostSettleContinuationOfferEvidence(reply("Wrap it in <monitor-event> tags")));
+    assert.isTrue(acpPostSettleContinuationOfferEvidence(reply("<monitor-event> tags wrap it")));
     assert.isFalse(
       acpPostSettleContinuationOfferEvidence(
         reply('<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">line</monitor-event>'),

@@ -1576,9 +1576,9 @@ function acpRootSessionUpdateIngestsOutput(
   }
 }
 
-/** Monitor wakes arrive as their own chunk led by the markup; text that only mentions it is real content. */
+/** Monitor wakes arrive as their own chunk led by a tagged `<monitor-event task_id=…>`; bare mentions are content. */
 const acpIsMonitorChatter = (text: string) =>
-  /^\s*(?:<monitor-event\b|Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended)/i.test(text);
+  /^\s*(?:<monitor-event\s|Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended)/i.test(text);
 
 export function acpPostSettleWakeEvidence(
   notification: EffectAcpSchema.SessionNotification,
