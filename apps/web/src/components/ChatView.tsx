@@ -38,7 +38,11 @@ import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
-import { isThreadEnvironmentLocked, resolveDraftHeroState } from "./ChatView.logic";
+import {
+  isThreadEnvironmentLocked,
+  resolveDraftHeroState,
+  threadErrorBannerRunId,
+} from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
@@ -971,7 +975,9 @@ export default function ChatView(props: ChatViewProps) {
   const threadErrorBannerKey = getThreadErrorBannerKey(
     routeThreadKey,
     threadError,
-    isServerThread && localServerError === null ? (serverLatestRun?.runId ?? null) : null,
+    isServerThread && localServerError === null
+      ? threadErrorBannerRunId(serverProjection?.runs ?? [])
+      : null,
   );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,

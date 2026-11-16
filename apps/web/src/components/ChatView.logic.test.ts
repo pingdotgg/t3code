@@ -22,8 +22,13 @@ import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
+  threadErrorBannerRunId,
 } from "./ChatView.logic";
-import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type OrchestrationV2RunStatus,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { deriveProviderInstanceEntries } from "../providerInstances";
 import { ensureInlineContextReferences } from "../lib/composerContextReferences";
 import {
@@ -1638,5 +1643,35 @@ describe("prepareRevertedMessageAttachments", () => {
     ]);
     expect(store.addImages(target, repeat)).toEqual([]);
     expect(store.getComposerDraft(target)?.images.map(({ id }) => id)).toEqual(["restored"]);
+  });
+});
+
+describe("threadErrorBannerRunId", () => {
+  const run = (id: string, status: OrchestrationV2RunStatus, ordinal: number) => ({
+    id: id as RunId,
+    status,
+    ordinal,
+    completedAt: null,
+  });
+
+  it("keeps the failed run's key while a later run starts, so its dismissed error stays hidden", () => {
+    expect(threadErrorBannerRunId([run("run-a", "failed", 1), run("run-b", "starting", 2)])).toBe(
+      "run-a",
+    );
+  });
+
+  it("moves to a later run once that run fails", () => {
+    expect(
+      threadErrorBannerRunId([
+        run("run-a", "failed", 1),
+        run("run-b", "running", 2),
+        run("run-c", "failed", 3),
+      ]),
+    ).toBe("run-c");
+  });
+
+  it("has no key when no run has failed", () => {
+    expect(threadErrorBannerRunId([])).toBeNull();
+    expect(threadErrorBannerRunId([run("run-a", "completed", 1)])).toBeNull();
   });
 });

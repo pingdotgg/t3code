@@ -1,5 +1,9 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
-import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
+import {
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2Run,
+  type RunAttemptId,
+} from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -9,6 +13,7 @@ import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-w
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
+  runRanAfter,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
@@ -1194,6 +1199,21 @@ export type LocalThreadErrorEntry = {
 
 export function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
+}
+
+/**
+ * The latest run that failed. The session's error can outlive its run, so a newer run that has
+ * not failed keeps this key, and a dismissed error stays hidden while that run starts.
+ */
+export function threadErrorBannerRunId(
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">>,
+): RunId | null {
+  let latest: (typeof runs)[number] | null = null;
+  for (const run of runs) {
+    if (run.status !== "failed") continue;
+    if (latest === null || runRanAfter(run, latest)) latest = run;
+  }
+  return latest?.id ?? null;
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
