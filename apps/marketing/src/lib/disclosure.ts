@@ -15,8 +15,9 @@ export function animateDetails(details: HTMLDetailsElement) {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     event.preventDefault();
 
-    // Read the live height before cancelling, so an interrupted slide continues from where it is.
+    // Read the live height and opacity before cancelling, so an interrupted slide continues from where it is.
     const from = details.open ? panel.offsetHeight : 0;
+    const fromOpacity = details.open ? getComputedStyle(panel).opacity : "0";
     animation?.cancel();
     expanded = !expanded;
     details.open = true;
@@ -25,7 +26,7 @@ export function animateDetails(details: HTMLDetailsElement) {
 
     panel.style.overflow = "hidden";
     animation = panel.animate(
-      { height: [`${from}px`, `${to}px`], opacity: [expanded ? 0 : 1, expanded ? 1 : 0] },
+      { height: [`${from}px`, `${to}px`], opacity: [fromOpacity, expanded ? 1 : 0] },
       { duration: 280, easing: "cubic-bezier(0.2, 0.7, 0.2, 1)" },
     );
     animation.onfinish = () => {
