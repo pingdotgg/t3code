@@ -119,6 +119,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
       className="flex-1"
       style={[
         {
+          direction: "ltr",
           backgroundColor: theme.background,
           borderRadius: 8,
           overflow: "hidden",
@@ -282,7 +283,7 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
 
   if (NativeTerminalSurfaceView) {
     return (
-      <View style={props.style}>
+      <View style={[props.style, { direction: "ltr" }]}>
         <NativeTerminalSurfaceView
           ref={nativeRef}
           appearanceScheme={themeAppearance}

@@ -81,6 +81,7 @@ export function CodeBlockHeaderButton(props: {
 
 const styles = StyleSheet.create({
   block: {
+    direction: "ltr",
     borderRadius: 8,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: "hidden",

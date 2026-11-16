@@ -1,3 +1,4 @@
+import { localeDirection } from "@t3tools/client-runtime/locales";
 import { getTranslationsSnapshot } from "gt-react";
 
 import {
@@ -51,6 +52,7 @@ function loadLocale(locale: string): Promise<void> {
 function activateLocale(locale: string): void {
   if (requestedLocale.catalogLocale !== locale) return;
   const { formattingLocale } = requestedLocale;
+  document.documentElement.dir = localeDirection(locale);
   if (
     snapshot.locale === locale &&
     snapshot.formattingLocale === formattingLocale &&

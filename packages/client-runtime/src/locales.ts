@@ -6,6 +6,7 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   de: "Deutsch",
   es: "Español",
   fr: "Français",
+  he: "עברית",
   ja: "日本語",
   ko: "한국어",
   pl: "Polski",
@@ -17,6 +18,56 @@ const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
 
 export function nativeLanguageName(locale: string): string {
   return NATIVE_LANGUAGE_NAMES[locale] ?? locale;
+}
+
+// RTL script metadata: https://github.com/unicode-org/cldr/blob/main/common/properties/scriptMetadata.txt
+const RTL_SCRIPTS = new Set([
+  "Adlm",
+  "Arab",
+  "Armi",
+  "Avst",
+  "Chrs",
+  "Cprt",
+  "Elym",
+  "Gara",
+  "Hatr",
+  "Hebr",
+  "Hung",
+  "Khar",
+  "Lydi",
+  "Mand",
+  "Mani",
+  "Mend",
+  "Merc",
+  "Mero",
+  "Narb",
+  "Nbat",
+  "Nkoo",
+  "Orkh",
+  "Ougr",
+  "Palm",
+  "Phli",
+  "Phlp",
+  "Phnx",
+  "Prti",
+  "Rohg",
+  "Samr",
+  "Sarb",
+  "Sidt",
+  "Sogd",
+  "Sogo",
+  "Syrc",
+  "Thaa",
+  "Yezi",
+]);
+
+export function localeDirection(locale: string): "ltr" | "rtl" {
+  try {
+    const { script } = new Intl.Locale(locale.trim().replaceAll("_", "-")).maximize();
+    return script !== undefined && RTL_SCRIPTS.has(script) ? "rtl" : "ltr";
+  } catch {
+    return "ltr";
+  }
 }
 
 // Our `zh` is Simplified, so Traditional tags only match an exact locale.

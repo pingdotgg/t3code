@@ -1,6 +1,9 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 const persisted = vi.hoisted(() => ({ title: "" }));
 const openMenu = vi.hoisted(() => vi.fn());
@@ -24,7 +27,7 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 import { render, stubGlobal } from "../../../test/render";
 import { ChatHeader } from "./ChatHeader";
 
-function header(title: string) {
+function header(title: string, props: Partial<ComponentProps<typeof ChatHeader>> = {}) {
   return (
     <>
       <ChatHeader
@@ -37,6 +40,7 @@ function header(title: string) {
         onOpenThread={() => {}}
         rightPanelOpen={false}
         onNewThreadInProject={() => {}}
+        {...props}
       />
       <div tabIndex={0}>Outside rename</div>
     </>
@@ -80,6 +84,56 @@ it("opens the thread menu on a desktop title click without waiting", async () =>
   await screen.getByRole("button", { name: "Thread actions for New thread" }).click();
   expect(openMenu).toHaveBeenCalledOnce();
 });
+
+it.each(["ltr", "rtl"] as const)(
+  "keeps draft titles beside the project in %s",
+  async (direction) => {
+    const project = {
+      id: ProjectId.make("project"),
+      environmentId: EnvironmentId.make("environment"),
+      title: "my-project",
+      workspaceRoot: "/projects/my-project",
+      defaultModelSelection: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      scripts: [],
+    };
+    const layout = (title: string) => (
+      <div dir={direction} style={{ width: 800 }}>
+        {header(title, { activeProject: project, isServerThread: false })}
+      </div>
+    );
+    await using screen = await render(layout("New thread"));
+    await vi.waitFor(() => {
+      const projectBounds = screen.container
+        .querySelector('[aria-label="New thread in my-project"]')!
+        .getBoundingClientRect();
+      const titleBounds = screen.container
+        .querySelector('h2[aria-label="New thread"]')!
+        .getBoundingClientRect();
+      const gap =
+        direction === "rtl"
+          ? projectBounds.left - titleBounds.right
+          : titleBounds.left - projectBounds.right;
+      expect(gap).toBeGreaterThan(0);
+      expect(gap).toBeLessThan(60);
+    });
+
+    const longTitle = "A very long draft title ".repeat(20);
+    await screen.rerender(layout(longTitle));
+    await vi.waitFor(() => {
+      const title = screen.container.querySelector("h2[aria-label]")!;
+      const text = title.querySelector<HTMLElement>('[data-slot="workspace-breadcrumb-text"]')!;
+      const bounds = title.getBoundingClientRect();
+      const breadcrumb = screen.container
+        .querySelector('nav[aria-label="Thread breadcrumb"]')!
+        .getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(breadcrumb.left);
+      expect(bounds.right).toBeLessThanOrEqual(breadcrumb.right);
+      expect(text.scrollWidth).toBeGreaterThan(text.clientWidth);
+    });
+  },
+);
 
 it("keeps the Escape that cancels a rename from also reaching window shortcuts", async () => {
   persisted.title = "New thread";
