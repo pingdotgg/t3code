@@ -24,6 +24,7 @@ import { AsyncResult } from "effect/reactivity";
 import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
+import * as Dialog from "../components/ui/Dialog";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
@@ -220,7 +221,8 @@ export function useSelectedThreadGitActions(repository?: GitRepositoryTarget) {
       const error = Cause.squash(result.cause);
       const message = error instanceof Error ? error.message : "Git action failed.";
       setPendingConnectionError(message);
-      showGitActionResult({ type: "error", title: "Git action failed", description: message });
+      // An alert, not the thread's toast: a Git sheet is usually open over it, and Git's reason is long.
+      Dialog.alert("Git action failed", message);
       return null;
     }
     return result.value;

@@ -65,6 +65,10 @@ vi.mock("./use-vcs-action-state", () => ({
     state.results.push(result),
   noteRepositoryGitAction: (action: { cwd: string }) => state.repositoryActions.push(action),
 }));
+vi.mock("../components/ui/Dialog", () => ({
+  alert: (_title: string, description: string) =>
+    state.results.push({ type: "error", description }),
+}));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "action" }));
 vi.mock("./threads", () => ({
   threadEnvironment: {

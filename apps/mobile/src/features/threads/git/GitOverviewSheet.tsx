@@ -323,92 +323,33 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
       }
     >
-      <ListSection>
-        {sheetMenuItems.map(({ item, disabledReason }) => (
-          <ListRow
-            key={`${item.id}-${item.label}`}
-            icon={menuItemIconName(item.icon)}
-            label={item.label}
-            description={disabledReason ?? rowStatusDetail(item)}
-            disabled={item.disabled}
-            onPress={() => void onPressMenuItem(item)}
-          />
-        ))}
-        {behindCount > 0 ? (
-          <ListRow
-            icon="arrow.down.circle"
-            label="Pull latest"
-            description={
-              canWriteSourceControl
-                ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
-                : "This connection cannot change source control."
-            }
-            disabled={!canWriteSourceControl || busy || !isRepo}
-            onPress={() => void gitActions.onPullSelectedThreadBranch()}
-          />
-        ) : null}
-        {repository === undefined ? (
-          <>
+      {sheetMenuItems.length > 0 || behindCount > 0 ? (
+        <ListSection>
+          {sheetMenuItems.map(({ item, disabledReason }) => (
             <ListRow
-              icon="text.bubble"
-              label="Review changes"
-              description={
-                trackedRepositoryCount > 0
-                  ? "Inspect turn diffs"
-                  : "Inspect changes, uncommitted edits, and turn diffs"
-              }
-              disabled={busy || !(isRepo || trackedRepositoryCount > 0)}
-              onPress={() => {
-                const params = { environmentId, threadId };
-                if (presentation === "sheet") {
-                  navigation.dispatch(StackActions.replace("ThreadReview", params));
-                } else {
-                  presentRoute(() =>
-                    navigation.dispatch(CommonActions.navigate("ThreadReview", params)),
-                  );
-                }
-              }}
+              key={`${item.id}-${item.label}`}
+              icon={menuItemIconName(item.icon)}
+              label={item.label}
+              description={disabledReason ?? rowStatusDetail(item)}
+              disabled={item.disabled}
+              onPress={() => void onPressMenuItem(item)}
             />
+          ))}
+          {behindCount > 0 ? (
             <ListRow
-              icon="point.topleft.down.curvedto.point.bottomright.up"
-              label="Branches & worktrees"
+              icon="arrow.down.circle"
+              label="Pull latest"
               description={
-                canChangeThreadBranch
-                  ? "Switch branch, create branch, or move to a worktree"
-                  : "View branches and worktrees"
+                canWriteSourceControl
+                  ? `${behindCount} commit${behindCount === 1 ? "" : "s"} behind upstream`
+                  : "This connection cannot change source control."
               }
-              disabled={busy || !isRepo}
-              onPress={() =>
-                presentRoute(() =>
-                  navigation.navigate("GitBranches", {
-                    environmentId: String(environmentId),
-                    threadId: String(threadId),
-                  }),
-                )
-              }
+              disabled={!canWriteSourceControl || busy || !isRepo}
+              onPress={() => void gitActions.onPullSelectedThreadBranch()}
             />
-            {linkedPrActions.canLink ? (
-              <ListRow
-                icon="link"
-                label={`Link ${linkedPrActions.terminology.singular}`}
-                description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
-                onPress={linkedPrActions.promptLink}
-              />
-            ) : null}
-          </>
-        ) : isPinnedRepository ? (
-          <ListRow
-            icon="pin.slash"
-            label="Remove from this thread"
-            description="The repository stays tracked by the project"
-            disabled={busy}
-            onPress={() => {
-              unpinRepositoryFromThread(threadRef, repository.key);
-              navigation.goBack();
-            }}
-          />
-        ) : null}
-      </ListSection>
+          ) : null}
+        </ListSection>
+      ) : null}
 
       {listsRepositories ? (
         <ThreadRepositoryRows
@@ -421,6 +362,72 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           explainsEmpty={!isRepo}
           onOpen={openRepository}
         />
+      ) : null}
+
+      {repository === undefined || isPinnedRepository ? (
+        <ListSection>
+          {repository === undefined ? (
+            <>
+              <ListRow
+                icon="text.bubble"
+                label="Review changes"
+                description={
+                  trackedRepositoryCount > 0
+                    ? "Inspect turn diffs"
+                    : "Inspect changes, uncommitted edits, and turn diffs"
+                }
+                disabled={busy || !(isRepo || trackedRepositoryCount > 0)}
+                onPress={() => {
+                  const params = { environmentId, threadId };
+                  if (presentation === "sheet") {
+                    navigation.dispatch(StackActions.replace("ThreadReview", params));
+                  } else {
+                    presentRoute(() =>
+                      navigation.dispatch(CommonActions.navigate("ThreadReview", params)),
+                    );
+                  }
+                }}
+              />
+              <ListRow
+                icon="point.topleft.down.curvedto.point.bottomright.up"
+                label="Branches & worktrees"
+                description={
+                  canChangeThreadBranch
+                    ? "Switch branch, create branch, or move to a worktree"
+                    : "View branches and worktrees"
+                }
+                disabled={busy || !isRepo}
+                onPress={() =>
+                  presentRoute(() =>
+                    navigation.navigate("GitBranches", {
+                      environmentId: String(environmentId),
+                      threadId: String(threadId),
+                    }),
+                  )
+                }
+              />
+              {linkedPrActions.canLink ? (
+                <ListRow
+                  icon="link"
+                  label={`Link ${linkedPrActions.terminology.singular}`}
+                  description={`Attach a ${linkedPrActions.terminology.singular} by URL or number`}
+                  onPress={linkedPrActions.promptLink}
+                />
+              ) : null}
+            </>
+          ) : isPinnedRepository ? (
+            <ListRow
+              icon="pin.slash"
+              label="Remove from this thread"
+              description="The repository stays tracked by the project"
+              disabled={busy}
+              onPress={() => {
+                unpinRepositoryFromThread(threadRef, repository.key);
+                navigation.goBack();
+              }}
+            />
+          ) : null}
+        </ListSection>
       ) : null}
 
       {repository === undefined && linkedPrLines.length > 0 ? (

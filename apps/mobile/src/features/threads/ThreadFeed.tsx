@@ -2393,7 +2393,10 @@ function TurnDiffStat(props: {
   const fileCountLabel = `${totals.count} file${totals.count === 1 ? "" : "s"} changed${
     repositories.length === 0
       ? ""
-      : ` in ${repositories.map((repository) => repository.name).join(", ")}`
+      : ` in ${[
+          ...(rootFiles.length > 0 ? ["this folder"] : []),
+          ...repositories.map((repository) => repository.name),
+        ].join(", ")}`
   }`;
   return (
     <Pressable
