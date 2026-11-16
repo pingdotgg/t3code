@@ -5771,28 +5771,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const settled = yield* Deferred.make<void>();
         const completed = yield* Deferred.make<void>();
+        const commandFinished = yield* Deferred.make<void>();
+        const registered = yield* Deferred.make<void>();
+        const nextTurn = codexReplayPreamble({
+          nativeThreadId: BG_NATIVE_THREAD,
+          nativeTurnId: "native-codex-bg-next-turn",
+          prompt: "Continue",
+        })
+          .slice(5)
+          .map((entry) =>
+            entry.type === "runtime_exit"
+              ? entry
+              : { ...withReplayRequestId(entry, 4), label: `next/${entry.label}` },
+          );
         const harness = yield* makeCodexReplayHarness(
           {
             ...backgroundExecTranscript,
-            entries: backgroundExecTranscript.entries.map((entry) =>
-              entry.type === "emit_inbound" && entry.label === "item/completed/command-late"
-                ? {
-                    ...entry,
-                    afterMs: 0,
-                    frame: {
-                      method: "item/completed",
-                      params: {
-                        item: { ...backgroundCommandItem("completed"), exitCode },
-                        threadId: BG_NATIVE_THREAD,
-                        turnId: BG_NATIVE_TURN,
-                        completedAtMs: 1782622465500,
-                      },
+            entries: [
+              ...backgroundExecTranscript.entries.slice(0, -1),
+              nextTurn[0]!,
+              {
+                type: "emit_inbound",
+                label: "item/completed/command-late",
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: { ...backgroundCommandItem("completed"), exitCode },
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: BG_NATIVE_TURN,
+                    completedAtMs: 1782622465500,
+                  },
+                },
+              },
+              ...nextTurn.slice(1),
+              {
+                type: "emit_inbound",
+                label: "goal/updated/after-registration",
+                frame: {
+                  method: "thread/goal/updated",
+                  params: {
+                    threadId: BG_NATIVE_THREAD,
+                    turnId: "native-codex-bg-next-turn",
+                    goal: {
+                      threadId: BG_NATIVE_THREAD,
+                      objective: "Continue",
+                      status: "paused",
+                      tokenBudget: null,
+                      tokensUsed: 0,
+                      timeUsedSeconds: 0,
+                      createdAt: 1782622440,
+                      updatedAt: 1782622465,
                     },
-                  }
-                : entry,
-            ),
+                  },
+                },
+              },
+            ],
           },
-          undefined,
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "completed"
+              ? Deferred.succeed(commandFinished, undefined)
+              : Effect.void,
           undefined,
           undefined,
           (entry) =>
@@ -5800,7 +5840,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               ? Deferred.await(settled)
               : entry.label === "item/completed/command-late"
                 ? Deferred.await(completed)
-                : Effect.void,
+                : entry.label === "goal/updated/after-registration"
+                  ? Deferred.await(registered)
+                  : entry.label === "next/turn/start"
+                    ? Deferred.await(commandFinished)
+                    : Effect.void,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -5868,6 +5912,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
         yield* wait!({ providerThread: harness.providerThread, taskIds: ["4242"], awaited: true });
         yield* harness.until(() => tasks().length === 1);
+        const nextStart = yield* harness.runtime
+          .startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: { ...harness.providerThread, pendingBackgroundTasks: tasks() },
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-command-next-turn"),
+              text: "Continue",
+            }),
+          )
+          .pipe(Effect.forkScoped);
         yield* Deferred.succeed(completed, undefined);
         yield* harness.until(
           () =>
@@ -5899,6 +5954,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
           { matched: [] },
         );
+        yield* Fiber.join(nextStart);
+        yield* Deferred.succeed(registered, undefined);
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.objective === "Continue",
+          ),
+        );
+        assert.deepEqual(tasks(), []);
       }).pipe(
         Effect.scoped,
         Effect.provide(

@@ -2523,7 +2523,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               completedAt: null,
             },
           });
-          yield* rememberRootProviderThread(input.turnInput.providerThread);
+          yield* rememberRootProviderThread({
+            ...input.turnInput.providerThread,
+            pendingBackgroundTasks:
+              (nativeThreadId == null
+                ? undefined
+                : rootProviderThreads.get(nativeThreadId)?.pendingBackgroundTasks) ??
+              input.turnInput.providerThread.pendingBackgroundTasks,
+          });
           yield* emitMcpStartupFailures(context);
           return context;
         });
