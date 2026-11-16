@@ -5,8 +5,10 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -20,6 +22,12 @@ export class ModelEvaluationSubagentRefresh extends Context.Service<
     readonly start: () => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/modelEvaluations/ModelEvaluationSubagentRefresh") {}
+
+const subscriptionBackoff = Schedule.exponential("1 second").pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.min(duration, Duration.minutes(1))),
+  ),
+);
 
 function settledSubagentRun(
   event: OrchestrationV2DomainEvent,
@@ -65,9 +73,10 @@ export const followSettledSubagentRefreshes = Effect.fn("ModelEvaluationSubagent
         );
       });
     }).pipe(
-      Effect.catchCause((cause) =>
+      Effect.tapCause((cause) =>
         Effect.logWarning("settled subagent evaluation refresh stopped", { cause }),
       ),
+      Effect.retry(subscriptionBackoff),
     );
   },
 );
