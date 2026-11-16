@@ -388,9 +388,10 @@ const make = Effect.gen(function* () {
             run.status AS run_status,
             (
               SELECT MAX(source.sequence)
-              FROM orchestration_events AS source
+              FROM orchestration_events AS source INDEXED BY model_evaluation_source_revision
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
+                AND source.event_type IN ('message.updated', 'turn-item.updated')
                 AND source.event_type = 'turn-item.updated'
                 AND json_extract(source.payload_json, '$.runId') = evaluation.run_id
                 AND json_extract(source.payload_json, '$.type') = 'subagent'
@@ -402,7 +403,7 @@ const make = Effect.gen(function* () {
             AND evaluation.evaluated_at >= ${after}
             AND ${runId === undefined ? sql`1 = 1` : sql`evaluation.run_id = ${runId}`}
             AND NOT EXISTS (
-              SELECT 1 FROM orchestration_events AS source
+              SELECT 1 FROM orchestration_events AS source INDEXED BY model_evaluation_source_revision
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
                 AND source.event_type IN ('message.updated', 'turn-item.updated')
@@ -416,7 +417,7 @@ const make = Effect.gen(function* () {
             )
             AND NOT EXISTS (
               SELECT 1 FROM json_each(evaluation.source_message_ids) AS message
-              JOIN orchestration_events AS source
+              JOIN orchestration_events AS source INDEXED BY model_evaluation_message_revision
                 ON json_extract(source.payload_json, '$.id') = message.value
               WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
                 AND source.stream_id = evaluation.thread_id AND source.event_type = 'message.updated'
