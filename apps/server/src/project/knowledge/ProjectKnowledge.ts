@@ -914,6 +914,8 @@ const make = Effect.gen(function* () {
       request: ProjectKnowledgeSearchInput,
       recallOptions?: {
         readonly skip: (fact: ProjectFact) => boolean;
+        readonly threadId: ThreadId;
+        readonly excludeFactIds: ReadonlyArray<ProjectFactId>;
       },
     ): Effect.fn.Return<ProjectKnowledgeSearchResult, ProjectKnowledgeError> {
       const skip = recallOptions?.skip;
@@ -1023,6 +1025,8 @@ const make = Effect.gen(function* () {
                 input.projectId,
                 projectMemorySearchTokens(input.query),
                 minTrust,
+                recallOptions.threadId,
+                recallOptions.excludeFactIds,
               )
         ).pipe(Effect.mapError(storageError(input.projectId)));
         const eligible = candidates.facts.filter(
@@ -1322,7 +1326,11 @@ const make = Effect.gen(function* () {
             recordRetrieval: false,
             minTrust: 0.5,
           },
-          { skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId) },
+          {
+            skip: (fact) => seen.has(fact.id) || cameFromThread(fact, input.threadId),
+            threadId: input.threadId,
+            excludeFactIds: [...seen],
+          },
         );
         if (result.facts.state !== "available") return yield* omit("failed");
         const selections = result.facts.matches.map(({ fact }) => ({

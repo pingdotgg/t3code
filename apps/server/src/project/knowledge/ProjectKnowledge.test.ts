@@ -2270,19 +2270,26 @@ it.effect(
           composer: { text: query, records: [] },
           knowledgeAllowance: 48000,
         });
-      const saveOlderTarget = (projectId: ProjectId) =>
-        Effect.gen(function* () {
+      const saveOlderTarget = (projectId: ProjectId) => {
+        const factId = ProjectFactId.make(`${projectId}-target`);
+        return Effect.gen(function* () {
           yield* createProject(projectId);
           yield* knowledge.mutate(
-            { ...createFact(projectId, "target"), content: longer },
+            {
+              ...createFact(projectId, factId),
+              commandId: CommandId.make(`create:${factId}`),
+              content: longer,
+            },
             { kind: "user" },
           );
           yield* TestClock.adjust("1 minute");
+          return factId;
         });
+      };
 
       const shownProject = ProjectId.make("recall-older-shown");
       const shownThread = ThreadId.make("recall-older-shown");
-      yield* saveOlderTarget(shownProject);
+      const shownTarget = yield* saveOlderTarget(shownProject);
       const shownIds = Array.from({ length: 45 }, (_, index) =>
         ProjectFactId.make(`shown-${index.toString().padStart(2, "0")}`),
       );
@@ -2291,12 +2298,12 @@ it.effect(
       yield* knowledge.recordViews(shownProject, shownThread, shownIds);
       assert.deepEqual(
         attachedFactIds(yield* recallTarget(shownProject, shownThread, "recall-older-shown")),
-        [ProjectFactId.make("target")],
+        [shownTarget],
       );
 
       const citedProject = ProjectId.make("recall-older-cited");
       const citedThread = ThreadId.make("recall-older-cited");
-      yield* saveOlderTarget(citedProject);
+      const citedTarget = yield* saveOlderTarget(citedProject);
       yield* projections.apply(thread(citedThread, citedProject));
       yield* projections.apply(
         message(citedThread, "recall-older-cited-message", "user", "tenant IDs in keys"),
@@ -2317,12 +2324,12 @@ it.effect(
         );
       assert.deepEqual(
         attachedFactIds(yield* recallTarget(citedProject, citedThread, "recall-older-cited")),
-        [ProjectFactId.make("target")],
+        [citedTarget],
       );
 
       const originProject = ProjectId.make("recall-older-origin");
       const originThread = ThreadId.make("recall-older-origin");
-      yield* saveOlderTarget(originProject);
+      const originTarget = yield* saveOlderTarget(originProject);
       const origin = {
         kind: "agent-thread" as const,
         threadId: originThread,
@@ -2330,12 +2337,15 @@ it.effect(
       };
       for (let index = 0; index < 45; index++)
         yield* knowledge.mutate(
-          createFact(originProject, `origin-${index.toString().padStart(2, "0")}`),
+          {
+            ...createFact(originProject, `origin-${index.toString().padStart(2, "0")}`),
+            sources: [],
+          },
           origin,
         );
       assert.deepEqual(
         attachedFactIds(yield* recallTarget(originProject, originThread, "recall-older-origin")),
-        [ProjectFactId.make("target")],
+        [originTarget],
       );
     }).pipe(Effect.provide(layerTest)),
 );

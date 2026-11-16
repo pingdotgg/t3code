@@ -313,15 +313,31 @@ export const makeStore = Effect.gen(function* () {
     projectId: ProjectId,
     terms: ReadonlyArray<string>,
     minTrust: number,
+    threadId: ThreadId,
+    excludeFactIds: ReadonlyArray<ProjectFactId>,
   ) {
     const ftsQuery = ftsMatch(terms);
     if (ftsQuery === "")
       return { facts: [], ranks: new Map<ProjectFactId, number>(), partial: false };
+    const unseen =
+      excludeFactIds.length === 0
+        ? sql`1 = 1`
+        : sql`f.id NOT IN (SELECT value FROM json_each(${encodeFactIds(excludeFactIds)}))`;
     const rows = yield* sql<{ readonly id: ProjectFactId; readonly rank: number }>`
       SELECT f.id, bm25(project_knowledge_fts) AS rank
       FROM project_knowledge_fts JOIN project_knowledge_facts f ON f.rowid = project_knowledge_fts.rowid
       WHERE project_knowledge_fts MATCH ${ftsQuery} AND f.project_id = ${projectId}
         AND f.status = 'saved' AND f.trust >= ${minTrust} AND f.superseded_by_id IS NULL
+        AND ${unseen}
+        AND NOT (
+          json_extract(f.origin_json, '$.kind') IN ('agent-thread', 'assisted')
+          AND json_extract(f.origin_json, '$.threadId') = ${threadId}
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(f.sources_json) source
+          WHERE json_extract(source.value, '$.kind') = 'message'
+            AND json_extract(source.value, '$.threadId') = ${threadId}
+        )
       ORDER BY rank ASC, f.updated_at DESC, f.id ASC LIMIT 40`;
     return {
       facts: yield* findMany(
