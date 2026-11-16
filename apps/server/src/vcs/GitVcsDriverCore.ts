@@ -1025,23 +1025,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
-  // WSL Git reading an index Git for Windows wrote on a drive mount sees every inode, owner and
-  // ctime differ, and polls never save the refresh, so each would re-read every file. Elsewhere the
-  // full check stays: it catches same-size replacements that keep their mtime. Guards always keep it.
+  // Git for Windows records no device or inode in the index, so WSL Git on a drive mount finds every
+  // entry changed and, as polls never save the refresh, re-reads every file. Only then is the stat
+  // check relaxed: it hides same-size edits that keep their mtime. Guards always keep the full check.
   const driveMountInfo =
     hostPlatform === "linux"
       ? yield* fileSystem
           .readFileString("/proc/self/mountinfo")
           .pipe(Effect.orElseSucceed(() => ""))
       : "";
+  const indexWrittenByGitForWindows = (indexPath: string) =>
+    Effect.scoped(
+      Effect.flatMap(fileSystem.open(indexPath, { flag: "r" }), (file) => file.readAlloc(36)),
+    ).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => false,
+          onSome: (header) => {
+            if (header.length < 36) return false;
+            const view = new DataView(header.buffer, header.byteOffset, header.length);
+            // Header: signature, version, entry count; the first entry's dev and ino follow at 28.
+            return view.getUint32(8) > 0 && view.getUint32(28) === 0 && view.getUint32(32) === 0;
+          },
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
   // Untraced: it runs on every status poll, and off Linux it does no work.
   const readPollStatConfig = Effect.fnUntraced(function* (cwd: string) {
     if (driveMountInfo === "") return [];
     // A symlinked alias must classify by the mount the checkout really lives on.
     const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
-    return windowsMountFor(driveMountInfo, physicalCwd) === undefined
-      ? []
-      : ["-c", "core.checkStat=minimal"];
+    if (windowsMountFor(driveMountInfo, physicalCwd) === undefined) return [];
+    const indexPath = yield* executeGit(
+      "GitVcsDriver.pollStatConfig.indexPath",
+      cwd,
+      ["rev-parse", "--git-path", "index"],
+      { allowNonZeroExit: true },
+    ).pipe(
+      Effect.map((result) =>
+        result.exitCode === 0 ? path.resolve(cwd, result.stdout.trim()) : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return indexPath !== null && (yield* indexWrittenByGitForWindows(indexPath))
+      ? ["-c", "core.checkStat=minimal"]
+      : [];
   });
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";

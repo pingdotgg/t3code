@@ -501,8 +501,18 @@ const replaceKeepingStat = (filePath: string, contents: string) => {
   NodeFS.renameSync(`${filePath}.copy`, filePath);
 };
 
+// Git for Windows writes no device or inode; zero the first entry's and re-sign the index.
+const markIndexWrittenByGitForWindows = (indexPath: string) =>
+  Effect.promise(async () => {
+    const index = NodeFS.readFileSync(indexPath);
+    index.fill(0, 28, 36);
+    const body = index.subarray(0, index.length - 20);
+    const checksum = new Uint8Array(await crypto.subtle.digest("SHA-1", body));
+    NodeFS.writeFileSync(indexPath, Buffer.concat([body, checksum]));
+  });
+
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "does not re-read a file that only differs from the index by inode on a WSL drive mount",
+  "does not re-read files on a WSL drive mount whose index Git for Windows wrote",
   () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -524,6 +534,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       yield* git(cwd, ["add", "."]);
       yield* git(cwd, ["commit", "-m", "filtered asset"]);
       replaceKeepingStat(assetPath, "original\n");
+      yield* markIndexWrittenByGitForWindows(path.join(cwd, ".git", "index"));
       const runsPath = path.join(cwd, ".filter-runs");
       yield* fs.remove(runsPath, { force: true });
 
@@ -538,12 +549,17 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "reports a same-size replacement that kept its mtime in a WSL distro-local clone",
+  "reports a same-size replacement that kept its mtime on a WSL drive mount whose index Linux Git wrote",
   () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const cwd = yield* makeTmpDir();
+      yield* fs.makeDirectory(wslDriveDir, { recursive: true });
+      yield* Effect.addFinalizer(() =>
+        fs.remove(wslDriveDir, { recursive: true }).pipe(Effect.ignore),
+      );
+      const cwd = yield* fs.makeTempDirectoryScoped({ directory: wslDriveDir });
       yield* initRepoWithCommit(cwd);
       yield* writeTextFile(cwd, "asset.txt", "original\n");
       const assetPath = path.join(cwd, "asset.txt");
@@ -559,7 +575,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         status.workingTree.files.map((file) => file.path),
         ["asset.txt"],
       );
-    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo("/mnt/c")))),
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(wslDriveDir)))),
 );
 
 it.effect.each(["origin", "github"] as const)(
