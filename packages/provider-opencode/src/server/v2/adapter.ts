@@ -305,6 +305,8 @@ interface Wake {
   readonly events: Array<OpenCode2Client.OpenCode2StreamEvent>;
   running: boolean;
   readonly reports: Array<BackgroundWorkReport>;
+  /** The roster ids of the work these reports end, so the server can find who started it. */
+  readonly taskIds: ReadonlyArray<string>;
   readonly detail: string | null;
   dropped: boolean;
   readonly after: string | undefined;
@@ -370,6 +372,7 @@ interface ThreadState {
     {
       readonly inboxId: string;
       readonly childId: string;
+      readonly taskId: string | undefined;
       readonly report: BackgroundWorkReport;
       readonly text: string;
     }
@@ -2208,7 +2211,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
       const route = state.providerThread.appThreadId;
       if (route === null || wake.messageId === undefined) return;
-      const notification = backgroundWorkNotification(wake.reports);
+      const reported = backgroundWorkNotification(wake.reports);
+      const notification =
+        reported === null || wake.taskIds.length === 0
+          ? reported
+          : { ...reported, backgroundTaskIds: wake.taskIds };
       yield* continuationRequests.offer({
         threadId: route,
         providerThreadId: state.providerThread.id,
@@ -2941,6 +2948,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         events: [],
         running: true,
         reports: delivered.map((entry) => entry.report),
+        taskIds: delivered.flatMap((entry) => (entry.taskId === undefined ? [] : [entry.taskId])),
         detail: delivered.length === 0 ? null : delivered.map((entry) => entry.text).join("\n\n"),
         dropped: false,
         after: delivered.at(-1)?.inboxId,
@@ -3049,6 +3057,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.reports.set(inboxId, {
           inboxId,
           childId: id ?? inboxId,
+          taskId: id,
           text: payload.text,
           report: {
             kind: "command",
@@ -3108,6 +3117,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state.reports.set(inboxId, {
         inboxId,
         childId,
+        taskId: call?.nativeId,
         text: payload.text,
         report: {
           kind: "subagent",

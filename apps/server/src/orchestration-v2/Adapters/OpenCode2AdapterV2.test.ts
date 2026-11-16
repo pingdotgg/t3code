@@ -2286,6 +2286,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.isTrue(yield* Effect.promise(() => gate.waitForReached("drained")));
       yield* watch.until(() => watch.rootVariant === "thinking");
       assert.lengthOf(offers, 1);
+      // The wake names the work it reports, so the server can route it to whoever started it.
+      assert.deepEqual(offers[0]!.notification?.backgroundTaskIds, ["call-background"]);
       yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
       gate.release("drained");
       yield* watch.until(() => watch.rootVariant === "none");

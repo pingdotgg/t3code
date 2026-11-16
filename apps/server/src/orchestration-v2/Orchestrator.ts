@@ -9710,6 +9710,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : [],
       ),
     ]);
+    // A provider may drop ended work from its roster before the wake; the work's timeline item
+    // still names it and the run that started it.
+    if (startedBy.size === 0 && reportedWork.size > 0) {
+      const { turnItems } = yield* projectionStore
+        .getThreadRecords(command.threadId, ["turnItems"], {
+          turnItemTypes: ["command_execution"],
+        })
+        .pipe(mapDispatchError(command));
+      for (const item of turnItems) {
+        const nativeId = item.nativeItemRef?.nativeId;
+        if (item.runId !== null && nativeId != null && reportedWork.has(nativeId))
+          startedBy.add(item.runId);
+      }
+    }
     const followupIds = [
       ...new Set(
         (woken?.runs ?? [])
