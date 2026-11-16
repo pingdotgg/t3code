@@ -2172,6 +2172,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitComposerRef = useRef<
     (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
   >(() => {});
+  // A discarded draft also ends compression; its held send must not turn into a resume.
+  const submitHeldComposer = useStableCallback(
+    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => {
+      if (composerDraftHasUserContent(composerDraft)) {
+        submitComposerRef.current(dispatchMode, submissionIntent);
+      }
+    },
+  );
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -2189,7 +2197,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Sending now would leave a still-compressing image out of the turn, so wait for it.
     if (
       activeThreadId &&
-      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
+      submitAfterPreparingImages(() => submitHeldComposer(dispatchMode, submissionIntent))
     ) {
       event?.preventDefault();
       return false;
