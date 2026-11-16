@@ -1,5 +1,6 @@
 import {
   conversationSummarySourceIdentity,
+  conversationSummarySourceKey,
   type ConversationSummaryRangeRef,
   type ConversationSummarySourceRef,
 } from "@t3tools/contracts";
@@ -122,6 +123,33 @@ export function buildSummaryTree(
     roots: [...current.values()].filter((node) => !claimed.has(node.row.id)).toSorted(byPosition),
     dead: rows.filter((row) => !current.has(row.id)),
   };
+}
+
+/**
+ * Current roots whose ranges all end before the first uncovered source. A gap splits the forest,
+ * so a roll-up cannot join the neighbours of a missing leaf.
+ */
+export function rootsBeforeFirstGap(input: {
+  readonly roots: ReadonlyArray<SummaryNode>;
+  readonly order: ReadonlyArray<string>;
+  readonly covered: ReadonlySet<string>;
+}): ReadonlyArray<SummaryNode> {
+  const gapAt = input.order.findIndex((key) => !input.covered.has(key));
+  if (gapAt === -1) return input.roots;
+  const indexByKey = new Map(input.order.map((key, index) => [key, index]));
+  const prefix: Array<SummaryNode> = [];
+  for (const root of input.roots) {
+    const positions = root.leafSources.map((source) =>
+      indexByKey.get(conversationSummarySourceKey(source)),
+    );
+    if (
+      positions.length === 0 ||
+      positions.some((position) => position === undefined || position >= gapAt)
+    )
+      break;
+    prefix.push(root);
+  }
+  return prefix;
 }
 
 /**

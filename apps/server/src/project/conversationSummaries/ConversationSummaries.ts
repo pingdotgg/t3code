@@ -71,6 +71,7 @@ import {
   isRangeRef,
   leafPosition,
   planCondensation,
+  rootsBeforeFirstGap,
   type StoredSummary,
   type SummaryNode,
   type SummaryTree,
@@ -1116,13 +1117,19 @@ const make = Effect.gen(function* () {
         });
       });
 
-      // Leaves first: a replacement leaf must exist before its stretch rolls up, or its old
-      // neighbours would roll up without it and the broken path could never be rebuilt alone.
+      // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
+      // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
       const nextWork = () => {
+        const group = planCondensation(
+          rootsBeforeFirstGap({
+            roots: tree.roots,
+            order: settled.map((source) => conversationSummarySourceKey(source.ref)),
+            covered,
+          }),
+        );
+        if (group !== null) return { kind: "condense" as const, group };
         const chunk = planLeafChunks({ settled, covered })[0];
-        if (chunk !== undefined) return { kind: "leaf" as const, chunk };
-        const group = planCondensation(tree.roots);
-        return group === null ? null : { kind: "condense" as const, group };
+        return chunk === undefined ? null : { kind: "leaf" as const, chunk };
       };
       while (generated < MAX_SUMMARIES_PER_PASS) {
         const work = nextWork();

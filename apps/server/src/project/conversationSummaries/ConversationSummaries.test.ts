@@ -1177,11 +1177,10 @@ it.effect("continues coverage and handoff lookup beyond the first 500 summaries"
       yield* persistSummary(index, [index * 2, index * 2 + 1]);
 
     yield* summarize;
-    yield* summarize;
-    const leafCalls = model.calls.filter((call) => !isRollup(call));
-    assert.equal(leafCalls.length, 1);
-    assert.equal(leafCalls[0]!.messages[0]!.text, rawText(coveredMessages));
-    assert.deepInclude((yield* list).lastPass, { waitingMessages: 0 });
+    assert.isTrue(isRollup(model.calls[0]!));
+    // Summary 501 covers the two messages just before the uncovered stretch. If the page hid it,
+    // those messages would be waiting too.
+    assert.deepInclude((yield* list).lastPass, { waitingMessages: 10 });
 
     const service = yield* ConversationSummaries.ConversationSummaries;
     const sql = yield* SqlClient.SqlClient;
