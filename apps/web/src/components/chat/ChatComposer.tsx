@@ -107,6 +107,7 @@ import {
   composerDraftHasUserContent,
   composerTargetKey,
   readComposerDraftPrompt,
+  resolveLiveComposerDraftTarget,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
@@ -1833,16 +1834,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? undefined
       : {
           readStoredText: () => readComposerDraftPrompt(composerDraftTarget),
-          commitStoredText: (text) => setComposerDraftPrompt(composerDraftTarget, text),
+          commitStoredText: (text) => {
+            const live = resolveLiveComposerDraftTarget(composerDraftTarget);
+            if (live !== null) setComposerDraftPrompt(live, text);
+          },
+          // The route, not the draft target: a queued-message edit has a draft id but no route.
           open: () =>
-            void (typeof composerDraftTarget === "string"
+            void (routeKind === "draft" && typeof composerDraftTarget === "string"
               ? navigate({
                   to: "/draft/$draftId",
                   params: buildDraftThreadRouteParams(composerDraftTarget),
                 })
               : navigate({
                   to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(composerDraftTarget),
+                  params: buildThreadRouteParams(routeThreadRef),
                 })),
         },
     readDraft: () => {

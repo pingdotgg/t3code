@@ -261,6 +261,13 @@ export class VoiceInputSession {
     return this.controller.start();
   }
 
+  /** A newly mounted editor for the recording's draft replaces the target that started it. */
+  adopt(target: VoiceInputTarget): void {
+    if (this.disposed || this.target?.ownerKey !== target.ownerKey) return;
+    this.target = target;
+    this.publish({ ...this.snapshot, target });
+  }
+
   stop(): Promise<void> {
     return this.controller.stop();
   }
