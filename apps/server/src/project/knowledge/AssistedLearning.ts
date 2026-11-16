@@ -306,7 +306,7 @@ const make = Effect.gen(function* () {
               candidate === null ||
               sources.length === 0 ||
               candidate.citations.some((ref) => !refs.has(ref.trim())) ||
-              (!userSupported && !corroborated)
+              (!userSupported && (!corroborated || candidate.kind === "decision"))
             ) {
               dropped += 1;
               continue;
