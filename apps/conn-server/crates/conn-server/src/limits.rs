@@ -11,7 +11,7 @@
 //! contract's own decode and a test here through [`check`].
 //!
 //! A length counts UTF-16 code units, as JavaScript's `length` does. The T3 server checks a
-//! trimmed string's length after it trims; this check reads the string as sent.
+//! trimmed non-empty string's length after trimming; this check does the same.
 
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -33,6 +33,8 @@ struct RawLimit {
     values: Option<Box<RawLimit>>,
     #[serde(default)]
     variants: HashMap<String, RawLimit>,
+    #[serde(default)]
+    non_blank: bool,
     max_length: Option<usize>,
     pattern: Option<String>,
     max_properties: Option<usize>,
@@ -47,6 +49,7 @@ struct Limit {
     keys: Option<Box<Limit>>,
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
+    non_blank: bool,
     max_length: Option<usize>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
@@ -83,6 +86,7 @@ impl Limit {
             keys: raw.keys.map(|k| Box::new(Self::build(*k))),
             values: raw.values.map(|v| Box::new(Self::build(*v))),
             variants,
+            non_blank: raw.non_blank,
             max_length: raw.max_length,
             pattern,
             max_properties: raw.max_properties,
@@ -100,7 +104,12 @@ impl Limit {
     /// is checked after that, as Effect checks it on the decoded record.
     fn problem(&self, value: &mut Value, path: &mut Vec<String>) -> Option<String> {
         match value {
-            Value::String(text) => self.text_problem(text, path),
+            Value::String(text) => {
+                if self.non_blank {
+                    *text = text.trim().to_owned();
+                }
+                self.text_problem(text, path)
+            }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
             Value::Object(map) => {
                 if let Some(Value::String(tag)) = map.get("_tag")
@@ -144,6 +153,9 @@ impl Limit {
     }
 
     fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
+        if self.non_blank && text.is_empty() {
+            return Some(at("a non-blank string".to_owned(), path));
+        }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();
             if length > max {

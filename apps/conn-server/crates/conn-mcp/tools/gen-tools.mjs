@@ -262,7 +262,14 @@ const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
 // Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
 const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
 const allNames = tools.map((tool) => `${tool.name}\n`).join("");
+const secretContracts = await import(NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/secretRequest.ts")).href);
+const secretSource = NodeFS.readFileSync(NodePath.join(repo, "packages/contracts/src/secretRequest.ts"), "utf8");
+const failureMessages = /const SECRET_REQUEST_FAILURE_MESSAGES = \{([\s\S]+?)\} as const;/.exec(secretSource)?.[1];
+if (!failureMessages) throw new Error("Secret request failure messages moved");
+const reasons = [...failureMessages.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
+const secretTexts = JSON.stringify({ notes: secretContracts.SECRET_REQUEST_UNSAVED_NOTE, errors: Object.fromEntries(reasons.map((reason) => [reason, new secretContracts.SecretRequestError({reason}).message])) }) + "\n";
 const outputs = [
+  [NodePath.join(here, "..", "..", "conn-features", "src", "secret-texts.json"), secretTexts, "secret request texts"],
   [out, text, `${catalog.length} tools`],
   [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
   [allNamesOut, allNames, `${tools.length} tool names`],

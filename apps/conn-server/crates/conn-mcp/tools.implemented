@@ -34,3 +34,5 @@ unlink_pull_request
 unlink_pull_requests
 list_thread_pull_requests
 t3_background_wait
+request_secret
+panel_open
