@@ -3393,6 +3393,13 @@ describe("AcpAdapterV2", () => {
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");
       yield* replay("user_message_chunk", "u2", "\tone");
+      yield* sessionUpdateHandler({
+        sessionId: "mock-child-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Child private work" },
+        },
+      });
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
