@@ -23,6 +23,10 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
+    "./server/localMergeability": {
+      "types": "./src/server/localMergeability.ts",
+      "import": "./src/server/localMergeability.ts"
+    },
     "./server/mergeMessage": {
       "types": "./src/server/mergeMessage.ts",
       "import": "./src/server/mergeMessage.ts"
