@@ -89,7 +89,8 @@ it. app.t3.codes and other connections do not use them.
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. **Duplicate** makes an independent copy you can edit. A published theme takes precedence over
 a saved custom theme with the same ID, which stays hidden until the server stops publishing that ID.
-If the server stops publishing the selected theme, T3 Code falls back to its standard theme.
+If the server stops publishing the selected theme, T3 Code uses that saved theme, or its standard
+theme when there is none.
 
 Run this on the server to set a default and switch connected clients to it:
 
