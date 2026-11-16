@@ -10,6 +10,7 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -20,7 +21,10 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import {
+  withCheckpointRestoreReservation,
+  withWorkspaceLease,
+} from "../workspace/workspaceLease.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -246,16 +250,52 @@ export const layer: Layer.Layer<
         ) {
           const project = yield* projects.get(context.thread.projectId);
           if (Option.isSome(project)) {
+            const recreate = gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot }).pipe(
+              Effect.andThen(
+                gitWorkflow.createWorktree({
+                  cwd: project.value.workspaceRoot,
+                  refName: branch,
+                  path: worktreePath,
+                }),
+              ),
+            );
             if (leftover) {
               if (!(yield* isolated)) return yield* sharedWorkspace();
-              yield* fileSystem.remove(worktreePath, { recursive: true, force: true });
+              // Set aside, not removed: a checkout that fails puts the folder and its files back.
+              yield* Effect.acquireUseRelease(
+                Effect.gen(function* () {
+                  const aside = yield* fileSystem.makeTempDirectory({
+                    directory: path.dirname(worktreePath),
+                    prefix: ".t3-replaced-",
+                  });
+                  yield* fileSystem.rename(worktreePath, path.join(aside, "folder"));
+                  return aside;
+                }),
+                () => recreate,
+                (aside, exit) =>
+                  (Exit.isSuccess(exit)
+                    ? Effect.void
+                    : fileSystem
+                        .remove(worktreePath, { recursive: true, force: true })
+                        .pipe(
+                          Effect.andThen(
+                            fileSystem.rename(path.join(aside, "folder"), worktreePath),
+                          ),
+                        )
+                  ).pipe(
+                    Effect.andThen(fileSystem.remove(aside, { recursive: true, force: true })),
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("Edit from here left a worktree folder set aside", {
+                        worktreePath,
+                        setAside: path.join(aside, "folder"),
+                        cause,
+                      }),
+                    ),
+                  ),
+              );
+            } else {
+              yield* recreate;
             }
-            yield* gitWorkflow.pruneWorktrees({ cwd: project.value.workspaceRoot });
-            yield* gitWorkflow.createWorktree({
-              cwd: project.value.workspaceRoot,
-              refName: branch,
-              path: worktreePath,
-            });
           }
         }
       }
@@ -385,9 +425,15 @@ export const layer: Layer.Layer<
         function* (input) {
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);
-          yield* thread.worktreePath === null
-            ? execute(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), execute(input));
+          if (thread.worktreePath === null) return yield* execute(input);
+          const worktreePath = path.resolve(thread.worktreePath);
+          const rollback = withWorkspaceLease(worktreePath, execute(input));
+          // Shared-workspace restores are rejected and conversation-only rewinds
+          // touch no files; reserving for them would stall turn starts on the
+          // slow provider rollback for nothing.
+          yield* input.restoreFiles === false
+            ? rollback
+            : withCheckpointRestoreReservation(fileSystem, path, worktreePath, rollback);
         },
         (effect, input) =>
           effect.pipe(

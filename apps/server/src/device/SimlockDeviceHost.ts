@@ -42,9 +42,9 @@ const REQUEST_TIMEOUT = Duration.seconds(15);
 // The gateway queues a lease request for up to five minutes when every device is busy.
 const OPEN_TIMEOUT = Duration.minutes(7);
 const COMMAND_TIMEOUT = Duration.minutes(2);
-// Renewal keeps a watched but idle device; a lease this server stops renewing ends after LEASE_TTL.
+// Renewal keeps a watched but idle device. It sends no ttlMs: Simlock then keeps the lease's own
+// length, while one above the gateway's lease.maxTtlMs is refused rather than shortened.
 const RENEW_INTERVAL = Duration.minutes(2);
-const LEASE_TTL_MS = 10 * 60_000;
 const STREAM_PATH = /^\/vendor\/serve-sim\/helper\/([^/]+)\/stream\.avcc$/;
 const INPUT_PATH = "/vendor/serve-sim/helper/ws";
 
@@ -422,7 +422,6 @@ export const make = Effect.fn("SimlockDeviceHost.make")(function* (
         lease.token,
         "POST",
         `/v1/leases/${encodeURIComponent(lease.leaseId)}/renew`,
-        { ttlMs: LEASE_TTL_MS },
       ).pipe(Effect.result);
       if (renewed._tag === "Success") continue;
       const error = renewed.failure;

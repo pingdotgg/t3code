@@ -91,6 +91,6 @@ it.layer(NodeServices.layer)("replaceOutdatedService", (it) => {
           command: [path.join(binDirectory, "opencode"), "serve", "--service"],
           env: { ...environment, PATH: "/nowhere", ELECTRON_RUN_AS_NODE: undefined },
         });
-      }).pipe(Effect.scoped),
+      }),
   );
 });
