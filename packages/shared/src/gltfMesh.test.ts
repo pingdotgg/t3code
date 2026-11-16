@@ -94,6 +94,18 @@ describe("parseGltf", () => {
     draco.accessors[0] = { componentType: 5126, count: 4, type: "VEC3" } as never;
     expect(await parseGltf(glb(draco, squareBuffer()), LIMITS, signal)).toBeNull();
     expect(await parseGltf(new TextEncoder().encode("solid part"), LIMITS, signal)).toBeNull();
+    // Names that only exist on Object.prototype are unknown accessor types.
+    for (const accessor of [0, 1]) {
+      for (const field of [
+        { type: "toString" },
+        { type: "constructor" },
+        { componentType: "constructor" },
+      ]) {
+        const json = document({ byteLength: 60 }, [{ mesh: 0 }]);
+        json.accessors[accessor] = { ...json.accessors[accessor]!, ...field } as never;
+        expect(await parseGltf(glb(json, squareBuffer()), LIMITS, signal)).toBeNull();
+      }
+    }
     expect(
       await parseGltf(
         glb(document({ byteLength: 60 }, [{ mesh: 0 }]), squareBuffer()),

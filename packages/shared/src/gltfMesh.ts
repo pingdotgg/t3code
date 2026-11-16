@@ -22,6 +22,12 @@ const COMPONENT_BYTES: Record<number, number> = {
 };
 const TYPE_COMPONENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
 
+/** Reads a table entry by a value from the file; own keys only, so names like `toString` miss. */
+const lookup = (table: Record<string | number, number>, key: unknown) =>
+  (typeof key === "string" || typeof key === "number") && Object.hasOwn(table, key)
+    ? table[key]
+    : undefined;
+
 const TRIANGLES = 4;
 const TRIANGLE_STRIP = 5;
 const TRIANGLE_FAN = 6;
@@ -196,8 +202,8 @@ export async function parseGltf(
     if (!accessor || accessor.bufferView === undefined) return null;
     const bufferView = document.bufferViews?.[accessor.bufferView];
     const buffer = bufferView ? buffers[bufferView.buffer] : null;
-    const componentBytes = COMPONENT_BYTES[accessor.componentType];
-    const components = TYPE_COMPONENTS[accessor.type];
+    const componentBytes = lookup(COMPONENT_BYTES, accessor.componentType);
+    const components = lookup(TYPE_COMPONENTS, accessor.type);
     if (!bufferView || !buffer || !componentBytes || !components) return null;
     if (bufferView.extensions && Object.keys(bufferView.extensions).length > 0) return null;
     const stride = bufferView.byteStride ?? componentBytes * components;

@@ -90,6 +90,18 @@ describe("parsePly", () => {
         signal,
       ),
     ).toBeNull();
+    // Type names that only exist on Object.prototype are unknown too, even with a valid body.
+    const body = `${QUAD.map((point) => `${point.join(" ")} 255`).join("\n")}\n4 0 1 2 3\n`;
+    for (const inherited of ["toString", "constructor", "__proto__"]) {
+      for (const [from, to] of [
+        ["uchar red", `${inherited} red`],
+        ["list uchar int", `list ${inherited} int`],
+        ["list uchar int", `list uchar ${inherited}`],
+      ] as const) {
+        const text = `${header("ascii").replace(from, to)}${body}`;
+        expect(await parsePly(encode(text), LIMITS, signal)).toBeNull();
+      }
+    }
     const cloud =
       "ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n";
     expect(await parsePly(encode(cloud), LIMITS, signal)).toBeNull();
