@@ -1736,6 +1736,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly detail: string;
     }
   >();
+  // Keyed by cwd; holds the HEAD and merge base whose totals diff failed (timed out or overflowed).
+  const branchTotalsDiffFailures = new Map<
+    string,
+    { readonly key: string; readonly detail: string }
+  >();
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
@@ -2484,6 +2489,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // and also for an unborn HEAD, which can still track a fetched upstream.
     let upstreamRefExists = false;
     let isUnbornHead = false;
+    let headOid: string | null = null;
     let aheadCount = 0;
     let behindCount = 0;
     let aheadOfDefaultCount = 0;
@@ -2496,6 +2502,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const line = statusRecords[index]!;
       if (line === "# branch.oid (initial)") {
         isUnbornHead = true;
+        continue;
+      }
+      if (line.startsWith("# branch.oid ")) {
+        headOid = line.slice("# branch.oid ".length).trim();
         continue;
       }
       if (line.startsWith("# branch.head ")) {
@@ -2553,6 +2563,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? readBranchChangeTotals(repositoryPaths?.worktreeRoot ?? cwd, refName, {
               knownOriginDefaultBranch: defaultBranch,
               untrackedRoots,
+              headOid,
             }).pipe(Effect.orElseSucceed(() => undefined))
           : Effect.undefined,
       ],
@@ -3847,6 +3858,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     options?: {
       readonly knownOriginDefaultBranch: string | null;
       readonly untrackedRoots: ReadonlyArray<string>;
+      readonly headOid: string | null;
     },
   ) {
     const resolved = yield* resolveReviewMergeBase(
@@ -3860,6 +3872,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       branch === null || (yield* branchExists(cwd, branch))
         ? resolved
         : { baseRef: null, mergeBase: "HEAD" };
+    // The same range would only fail again, so wait for HEAD or the merge base to move.
+    const diffKey = options?.headOid ? `${options.headOid}\0${mergeBase}` : null;
+    const diffFailure = branchTotalsDiffFailures.get(cwd);
+    if (diffFailure !== undefined && diffFailure.key === diffKey) {
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.readBranchChangeTotals",
+        command: "git diff --numstat",
+        cwd,
+        detail: diffFailure.detail,
+      });
+    }
     const roots = options?.untrackedRoots ?? [];
     // Bound pathspec matching work and stay below Windows' command-line limit.
     const pathspecs =
@@ -3921,7 +3944,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: untracked.env,
         },
       );
-    let result = yield* readNumstat(mergeBase);
+    let result = yield* readNumstat(mergeBase).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (diffKey === null) return;
+          branchTotalsDiffFailures.delete(cwd);
+          branchTotalsDiffFailures.set(cwd, { key: diffKey, detail: error.detail });
+          if (branchTotalsDiffFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+            const oldestKey = branchTotalsDiffFailures.keys().next().value;
+            if (oldestKey !== undefined) branchTotalsDiffFailures.delete(oldestKey);
+          }
+        }),
+      ),
+    );
+    branchTotalsDiffFailures.delete(cwd);
     if (result.exitCode !== 0 && mergeBase === "HEAD" && isUnbornHeadStderr(result.stderr)) {
       result = yield* readNumstat(yield* readEmptyTreeHash(cwd));
     }
