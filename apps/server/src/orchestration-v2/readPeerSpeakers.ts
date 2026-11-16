@@ -6,10 +6,11 @@ import type * as SqlClient from "effect/sql/SqlClient";
 const encodeIds = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 
 /**
- * Speaker label and model for assistant items that have one. The type list and `json_valid`
- * term match the message-ordinal index, so this does not decode assistant text.
+ * Speaker label and model for message items that carry both. The type list and `json_valid`
+ * term match the message-ordinal index. Speaker fields sit outside that index, so each hit
+ * decodes the payload.
  */
-export const readPeerSpeakers = Effect.fn("readPeerSpeakers")(function* (
+export const readPeerSpeakers = Effect.fn("ReadPeerSpeakers.read")(function* (
   sql: SqlClient.SqlClient,
   threadId: ThreadId,
   messageIds?: ReadonlyArray<MessageId>,
@@ -35,7 +36,6 @@ export const readPeerSpeakers = Effect.fn("readPeerSpeakers")(function* (
           ? sql``
           : sql`AND json_extract(payload_json, '$.messageId') IN (SELECT value FROM json_each(${encodeIds(messageIds)}))`
       }
-    ORDER BY ordinal ASC
   `;
   for (const row of rows) {
     if (row.label && row.model)
