@@ -85,6 +85,7 @@ export const resolveCliServerPaths = Effect.fn(function* (explicitBaseDir: Optio
 });
 
 const NO_SETTINGS: SparseSettings = {};
+const BLANK_FILE_SETTINGS: SparseSettings = { telemetryEnabled: false };
 
 /** Propagate read errors to avoid overwriting unread settings with a sparse file. */
 export const readSettingsObject = Effect.fn(function* (settingsPath: string) {
@@ -97,7 +98,8 @@ export const readSettingsObject = Effect.fn(function* (settingsPath: string) {
   const raw = yield* fs
     .readFileString(settingsPath)
     .pipe(Effect.mapError((cause) => new SettingsUnreadableError({ settingsPath, cause })));
-  if (raw.trim().length === 0) return { exists, raw, settings: NO_SETTINGS };
+  // The server cannot parse a blank file and treats telemetry as off; keep it off through rewrites.
+  if (raw.trim().length === 0) return { exists, raw, settings: BLANK_FILE_SETTINGS };
 
   const settings = yield* decodeSettingsJson(raw).pipe(
     Effect.mapError((cause) => new SettingsMalformedError({ settingsPath, cause })),

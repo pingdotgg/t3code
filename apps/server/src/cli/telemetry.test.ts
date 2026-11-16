@@ -11,6 +11,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 
 import { cli } from "../binCli.ts";
+import { updateSettingsObject } from "./settingsFile.ts";
 
 /** Runs one command and returns what it printed. */
 const runCli = (args: ReadonlyArray<string>, env: Record<string, string> = {}) =>
@@ -68,7 +69,7 @@ it.layer(NodeServices.layer)("t3 telemetry", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("reports a blank settings file as off, like the server, and a missing one as on", () =>
+  it.effect("treats a blank settings file as off, like the server, and a missing one as on", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -80,6 +81,15 @@ it.layer(NodeServices.layer)("t3 telemetry", (it) => {
       yield* fs.writeFileString(settingsPath, "  \n");
       const blank = yield* runCli(["telemetry", "status", "--base-dir", baseDir]);
       assert.isTrue(blank.some((line) => String(line).startsWith("Telemetry setting: off")));
+
+      // Another command rewriting the file, such as `t3 theme`, keeps that opt-out.
+      yield* updateSettingsObject(settingsPath, (settings) =>
+        Effect.succeed({ ...settings, otherSetting: 1 }),
+      );
+      assert.deepEqual(yield* readSettings(settingsPath), {
+        telemetryEnabled: false,
+        otherSetting: 1,
+      });
     }).pipe(Effect.scoped),
   );
 
