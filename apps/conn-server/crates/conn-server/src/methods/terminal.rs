@@ -71,7 +71,7 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         }
     });
     let m = manager.clone();
-    table.unary("terminal.write", move |_, input: TerminalWriteInput| {
+    table.unary("terminal.write", move |ctx, input: TerminalWriteInput| {
         let m = m.clone();
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
@@ -82,7 +82,9 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                     "terminal.write data must hold 1 to 65536 characters, not {units}"
                 )));
             }
-            m.write(input).await.map_err(|e| Failure::fail(&e))
+            m.write(input, Some(ctx.connection_id))
+                .await
+                .map_err(|e| Failure::fail(&e))
         }
     });
     let m = manager.clone();

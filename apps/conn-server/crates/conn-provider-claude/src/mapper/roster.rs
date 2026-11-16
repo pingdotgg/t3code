@@ -236,17 +236,24 @@ impl Roster {
         true
     }
 
+    /// A Monitor that starts is awaited: its thread keeps waiting between its updates, until the
+    /// agent releases it (`upsertPendingBackgroundTask`).
     fn upsert(&mut self, task: Value) {
-        if let Some(slot) = self
+        let slot = self
             .tasks
             .iter_mut()
-            .find(|t| t["taskId"] == task["taskId"])
-        {
+            .find(|t| t["taskId"] == task["taskId"]);
+        let started_monitor =
+            task["kind"] == "monitor" && slot.as_ref().is_none_or(|t| t["kind"] != "monitor");
+        if let Some(slot) = slot {
             *slot = task.clone();
         } else if self.tasks.len() < ROSTER_CAP {
             self.tasks.push(task.clone());
         } else {
             return;
+        }
+        if started_monitor && let Some(id) = task["taskId"].as_str() {
+            add_id(&mut self.awaited, id);
         }
         self.remember(&task);
     }

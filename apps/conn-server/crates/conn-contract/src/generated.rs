@@ -5395,6 +5395,8 @@ pub struct OrchestrationV2Subagent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_selection: Option<ModelSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executed_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_wake: Option<OrchestrationV2SubagentCompletionWake>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_delivery: Option<OrchestrationV2DelegatedCompletionTaskDelivery>,
@@ -9163,6 +9165,8 @@ pub struct ProviderAdapterEventStreamError {
     pub provider_session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detached_thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raised_by_t3: Option<bool>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -9472,6 +9476,8 @@ pub struct ProviderAdapterV2EventProviderTurnUpdated {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     pub provider_turn: OrchestrationV2ProviderTurn,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_runtime_request_ids: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -9607,6 +9613,8 @@ pub struct ProviderAdapterV2EventTurnTerminal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub thread_disposition: ProviderAdapterV2EventTurnTerminalThreadDisposition,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_runtime_request_ids: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -9627,6 +9635,8 @@ pub struct ProviderAdapterV2EventTurnTerminal2 {
     pub thread_disposition: ProviderAdapterV2EventTurnTerminalThreadDisposition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub child_turns_continue: Option<lit::True>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_runtime_request_ids: Option<Vec<String>>,
 }
 
 tagged_union! {
@@ -14822,6 +14832,8 @@ pub struct ProviderAuthResponseTerminal {
     pub r#type: lit::Terminal,
     pub data: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<ProviderAuthResponseTerminalSize>,
 }
 
@@ -15303,6 +15315,8 @@ pub enum PullRequestUnavailableReason {
     CliUnauthenticated,
     #[serde(rename = "provider-unsupported")]
     ProviderUnsupported,
+    #[serde(rename = "repository-without-project")]
+    RepositoryWithoutProject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15420,6 +15434,8 @@ pub struct PullRequestUnavailableError {
     pub list_result: Option<PullRequestListResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository: Option<String>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -15600,6 +15616,8 @@ pub struct PullRequestCapabilities {
     pub reference_sigils: Option<Vec<Option<PullRequestFilterOptionsInputSigil>>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks_always_report: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withheld_file_diff: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18616,6 +18634,8 @@ pub struct ServerProvidersItemItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_snapshots: Option<Vec<ServerProvidersItemItemWorkspaceSnapshotsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_rescanned_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_limits: Option<ServerProvidersItemItemUsageLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_advisory: Option<ServerProvidersItemItemVersionAdvisory>,
@@ -19560,6 +19580,8 @@ pub struct ServerConfig {
     pub environment: ExecutionEnvironmentDescriptor,
     pub auth: ServerAuthDescriptor,
     pub cwd: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
     pub keybindings_config_path: String,
     pub keybindings: ResolvedKeybindingsConfig,
     pub issues: Vec<Option<ServerConfigIssuesItem>>,
@@ -22103,9 +22125,20 @@ pub enum EditorId {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LaunchEditorInputPosition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LaunchEditorInput {
     pub cwd: String,
     pub editor: EditorId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<LaunchEditorInputPosition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_root: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -22625,6 +22658,8 @@ pub struct ServerConfigProviderStatusDeltasPayloadProvidersItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_snapshots: Option<Vec<ServerProvidersItemItemWorkspaceSnapshotsItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_rescanned_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage_limits: Option<ServerProvidersItemItemUsageLimits>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_advisory: Option<ServerProvidersItemItemVersionAdvisory>,
@@ -23100,6 +23135,8 @@ pub struct TerminalSessionSnapshot {
     pub cols: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rows: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -23391,6 +23428,10 @@ pub struct TerminalWriteInput {
     pub thread_id: String,
     pub terminal_id: String,
     pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

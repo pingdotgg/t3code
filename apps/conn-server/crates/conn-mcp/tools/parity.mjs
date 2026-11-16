@@ -247,8 +247,19 @@ if (recordFile !== undefined) {
   NodeFS.writeFileSync(recordFile, `${JSON.stringify(lists[0], null, 2)}\n`);
   console.log(`wrote the T3 server's tools/list (${lists[0].result.tools.length} tools) to ${recordFile}`);
 }
+// This session is an outside client: tools that act as the calling thread must be missing on
+// both servers, and exactly those (src/outside-hidden.txt).
+const outsideHidden = new Set(
+  NodeFS.readFileSync(new URL("../src/outside-hidden.txt", import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => line !== ""),
+);
 for (const name of implemented) {
   const [ts, rust] = lists.map((list) => list.result.tools.find((tool) => tool.name === name));
+  if (outsideHidden.has(name)) {
+    report(`tools/list ${name}: hidden from outside clients`, ts === undefined && rust === undefined);
+    continue;
+  }
   report(`tools/list ${name}`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
 }
 

@@ -307,9 +307,13 @@ fn thread_config(app_thread_id: Option<&str>, mcp: &[McpServer]) -> Value {
     config
 }
 
+/// `CODEX_DIRECT_ONLY_T3_TOOLS`: Code Mode runs a blocking wait or delegate wait as a nested
+/// call, and the model keeps polling it; the direct-only server makes it a plain tool call.
+const DIRECT_ONLY_TOOLS: [&str; 2] = ["t3_thread_wait", "delegate_task"];
+
 /// `mcp_servers.<name>` overrides for one server, as `codexThreadRuntimeParams` builds them.
-/// T3's own server (`t3-code`) splits in two: `t3_thread_wait` goes on a direct-only server,
-/// out of code mode, so a wait never runs inside a script.
+/// T3's own server (`t3-code`) splits in two: [`DIRECT_ONLY_TOOLS`] go on a direct-only
+/// server, out of code mode, so a wait never runs inside a script.
 fn mcp_server_config(server: &McpServer) -> Vec<(String, Value)> {
     let entry = |extra: Value| {
         let mut entry = json!({
@@ -333,12 +337,12 @@ fn mcp_server_config(server: &McpServer) -> Vec<(String, Value)> {
     vec![
         (
             format!("mcp_servers.{name}"),
-            entry(json!({ "disabled_tools": ["t3_thread_wait"] })),
+            entry(json!({ "disabled_tools": DIRECT_ONLY_TOOLS })),
         ),
         (
             format!("mcp_servers.{name}-direct"),
             entry(json!({
-                "enabled_tools": ["t3_thread_wait"],
+                "enabled_tools": DIRECT_ONLY_TOOLS,
                 "omit_tools_from": ["code_mode", "deferred"],
             })),
         ),
@@ -363,16 +367,31 @@ pub fn thread_params(
 }
 
 /// `codexRuntimeModeTurnDefaults`: approval policy, reviewer, sandbox.
-pub fn runtime_mode_defaults(runtime_mode: &str) -> (&'static str, &'static str, Value) {
+pub fn runtime_mode_defaults(runtime_mode: &str) -> (Value, &'static str, Value) {
     match runtime_mode {
-        "approval-required" => ("untrusted", "user", json!({"type": "readOnly"})),
-        "auto-accept-edits" => ("on-request", "user", json!({"type": "workspaceWrite"})),
+        "approval-required" => (json!("untrusted"), "user", json!({"type": "readOnly"})),
+        "auto-accept-edits" => (
+            json!("on-request"),
+            "user",
+            json!({"type": "workspaceWrite"}),
+        ),
         "auto" => (
-            "on-request",
+            json!("on-request"),
             "auto_review",
             json!({"type": "workspaceWrite"}),
         ),
-        _ => ("never", "user", json!({"type": "dangerFullAccess"})),
+        // `never` also rejects browser and app access prompts before the client sees them.
+        _ => (
+            json!({"granular": {
+                "mcp_elicitations": true,
+                "request_permissions": false,
+                "rules": false,
+                "sandbox_approval": false,
+                "skill_approval": false,
+            }}),
+            "user",
+            json!({"type": "dangerFullAccess"}),
+        ),
     }
 }
 
@@ -469,7 +488,7 @@ pub fn turn_start_params(
     let interaction_mode = to_json(&policy.interaction_mode);
     let (approval, reviewer, sandbox) =
         runtime_mode_defaults(runtime_mode.as_str().unwrap_or("full-access"));
-    let approval = policy.approval_policy.clone().unwrap_or(json!(approval));
+    let approval = policy.approval_policy.clone().unwrap_or(approval);
     let sandbox = policy
         .sandbox_policy
         .as_ref()
@@ -711,8 +730,14 @@ mod tests {
         let config = &thread_params(Some("t1"), None, None, &[server])["config"];
         let main = &config["mcp_servers.t3-code"];
         let direct = &config["mcp_servers.t3-code-direct"];
-        assert_eq!(main["disabled_tools"], json!(["t3_thread_wait"]));
-        assert_eq!(direct["enabled_tools"], json!(["t3_thread_wait"]));
+        assert_eq!(
+            main["disabled_tools"],
+            json!(["t3_thread_wait", "delegate_task"])
+        );
+        assert_eq!(
+            direct["enabled_tools"],
+            json!(["t3_thread_wait", "delegate_task"])
+        );
         assert_eq!(direct["http_headers"]["Authorization"], "Bearer abc");
         assert_eq!(main["tool_timeout_sec"], MCP_TOOL_TIMEOUT_SECS);
     }
@@ -835,7 +860,9 @@ mod tests {
         assert_eq!(
             params,
             json!({
-                "approvalPolicy": "never", "approvalsReviewer": "user", "cwd": "<workspace>",
+                "approvalPolicy": {"granular": {"mcp_elicitations": true, "request_permissions": false,
+                    "rules": false, "sandbox_approval": false, "skill_approval": false}},
+                "approvalsReviewer": "user", "cwd": "<workspace>",
                 "input": [{"text": "Respond with the following text: fixture simple ok", "type": "text"}],
                 "model": "gpt-6-luna", "sandboxPolicy": {"type": "dangerFullAccess"},
                 "summary": "auto", "threadId": "01a0d5eb-f0c0",

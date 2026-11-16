@@ -332,7 +332,12 @@ async fn transport_answers_as_the_typescript_server() {
         .iter()
         .map(|t| t["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, catalog::names().collect::<Vec<_>>());
+    // An outside client is not offered the tools that act as a calling thread.
+    let offered: Vec<_> = catalog::names()
+        .filter(|name| catalog::offered(name, true))
+        .collect();
+    assert_eq!(names, offered);
+    assert!(!names.contains(&"delegate_task"));
     assert_eq!(
         c.request("foo/bar", json!({})).await["error"]["message"],
         "Method not found: foo/bar"
@@ -563,8 +568,7 @@ async fn swamp_drives_a_thread_from_outside() {
         .failure("t3_thread_read", json!({"threadId": "nope"}))
         .await;
     assert_eq!(code, "thread_not_found");
-    let (code, _) = c.failure("delegate_task", json!({"task": "x"})).await;
-    assert_eq!(code, "thread_credential_required");
+    not_offered(&mut c, "delegate_task", json!({"task": "x"})).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -685,10 +689,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     );
     // Another thread cannot read this task.
     let mut stranger = Client::open(&f.service, swamp.caller.clone()).await;
-    let (code, _) = stranger
-        .failure("task_status", json!({"taskId": task_id}))
-        .await;
-    assert_eq!(code, "thread_credential_required");
+    not_offered(&mut stranger, "task_status", json!({"taskId": task_id})).await;
 
     // The finished task woke the parent with a message queued behind its running turn, in
     // the transaction that ended the child's run (the engine's `delegated_task` wake).
@@ -1042,6 +1043,16 @@ async fn launch_prepares_a_worktree() {
 }
 
 /// The JSON-RPC error of a call the arguments check refused.
+/// A tool that acts as the calling thread is not offered to an outside client: as in
+/// `apps/server` (`hiddenFromOutsideClients`), a call to it is "not found".
+async fn not_offered(c: &mut Client<'_>, tool: &str, args: Value) {
+    let (code, message) = rpc_error(c, tool, args).await;
+    assert_eq!(
+        (code, message.as_str()),
+        (-32602, format!("Tool '{tool}' not found").as_str())
+    );
+}
+
 async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String) {
     let reply = c
         .request("tools/call", json!({"name": tool, "arguments": args}))
@@ -1061,15 +1072,9 @@ async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String)
 async fn send_to_user_echoes_the_message_to_a_live_thread_caller() {
     let f = fixture("send-to-user");
     let mut swamp = Client::open(&f.service, client(true)).await;
-    let (code, _) = swamp
-        .failure("send_to_user", json!({"message": "hi"}))
-        .await;
-    assert_eq!(code, "thread_credential_required");
+    not_offered(&mut swamp, "send_to_user", json!({"message": "hi"})).await;
     let mut reader = Client::open(&f.service, client(false)).await;
-    let (code, _) = reader
-        .failure("send_to_user", json!({"message": "hi"}))
-        .await;
-    assert_eq!(code, "thread_credential_required");
+    not_offered(&mut reader, "send_to_user", json!({"message": "hi"})).await;
 
     let live = launch_as_swamp(&mut swamp, "Live", "hang", "approval-required", "plan").await;
     let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
@@ -1138,11 +1143,7 @@ async fn background_wait_marks_the_callers_tasks() {
     let mut swamp = Client::open(&f.service, client(true)).await;
     let mut reader = Client::open(&f.service, client(false)).await;
     for c in [&mut swamp, &mut reader] {
-        let (code, message) = c
-            .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
-            .await;
-        assert_eq!(code, "thread_credential_required", "{message}");
-        assert!(message.starts_with("This tool acts as the calling T3 thread"));
+        not_offered(c, "t3_background_wait", json!({"taskIds": ["bg-1"]})).await;
     }
 
     let live = launch_as_swamp(
@@ -1301,6 +1302,21 @@ async fn organize_writes_as_the_typescript_server() {
         .await;
     assert!(pinned["sequence"].as_u64().unwrap() > 0);
     assert!(thread_field(&f, &full, "pinnedAt").await.is_string());
+    // Agents see it in the list and the read (`pinned: shell.pinnedAt != null`).
+    let pinned_in = |list: &Value| {
+        list["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["threadId"] == full.as_str())
+            .map(|t| t["pinned"].clone())
+    };
+    let list = swamp
+        .ok("t3_thread_list", json!({"allProjects": true}))
+        .await;
+    assert_eq!(pinned_in(&list), Some(Value::Bool(true)));
+    let read = swamp.ok("t3_thread_read", json!({"threadId": full})).await;
+    assert_eq!(read["thread"]["pinned"], true);
     swamp
         .ok(
             "t3_thread_organize",
@@ -1308,6 +1324,10 @@ async fn organize_writes_as_the_typescript_server() {
         )
         .await;
     assert!(thread_field(&f, &full, "pinnedAt").await.is_null());
+    let list = swamp
+        .ok("t3_thread_list", json!({"allProjects": true}))
+        .await;
+    assert_eq!(pinned_in(&list), Some(Value::Bool(false)));
     swamp
         .ok(
             "t3_thread_organize",
@@ -1698,22 +1718,11 @@ fn names_word(text: &str, name: &str) -> bool {
 
 #[test]
 fn agent_texts_name_only_known_unserved_tools() {
-    let dump: Value = serde_json::from_str(include_str!("../fixtures/ts-tools-list.json")).unwrap();
-    // The live dump is an outside caller's list: the link tools and `tool_search` are hidden.
-    let mut all: Vec<String> = dump["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap().to_owned())
+    // Every tool apps/server registers, whoever may see it (`tools/gen-tools.mjs`).
+    let all: Vec<String> = include_str!("../fixtures/t3-tool-names.txt")
+        .lines()
+        .map(str::to_owned)
         .collect();
-    for hidden in [
-        "t3_environment_link",
-        "t3_environment_links",
-        "t3_environment_unlink",
-        "tool_search",
-    ] {
-        all.push(hidden.to_owned());
-    }
     let served: Vec<&str> = catalog::names().collect();
     let texts = agent_texts();
     let mut named: Vec<&str> = all
@@ -2185,13 +2194,8 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
         reply["result"]["content"][0]["text"],
         "Annotation only is todo; it must be in_progress. Read the list again."
     );
-    let outside = "This tool acts as the calling T3 thread, so it needs an agent running inside T3 Code. This MCP client signed in from outside a thread.";
     for tool in ["annotations_claim", "annotations_list"] {
-        assert_eq!(
-            plain_failure(&mut swamp, tool, json!({})).await,
-            outside,
-            "{tool}"
-        );
+        not_offered(&mut swamp, tool, json!({})).await;
     }
     assert_eq!(
         rpc_error(&mut agent, "annotations_claim", json!({"id": "../x"}))

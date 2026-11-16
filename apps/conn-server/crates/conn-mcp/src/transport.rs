@@ -184,7 +184,7 @@ pub(crate) async fn handle(
         }
         "tools/list" => format!(
             "{{\"jsonrpc\":\"2.0\",\"id\":{rpc_id},\"result\":{}}}",
-            catalog::list_result()
+            catalog::list_result(matches!(caller, Caller::Client(_)))
         ),
         "tools/call" => {
             let params = message
@@ -207,7 +207,9 @@ async fn call(service: &Arc<McpService>, caller: &Caller, id: &Value, mut params
     let Some(name) = params["name"].as_str() else {
         return rpc_error(id, -32602, "Invalid method parameters");
     };
-    let Some((tool, order)) = catalog::tool(name) else {
+    let found =
+        catalog::tool(name).filter(|_| catalog::offered(name, matches!(caller, Caller::Client(_))));
+    let Some((tool, order)) = found else {
         return rpc_error(id, -32602, &format!("Tool '{name}' not found"));
     };
     if let Err(problem) =

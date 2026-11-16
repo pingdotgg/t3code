@@ -537,11 +537,14 @@ fn a_failed_turns_text_loses_its_secrets() {
 
 /// An MCP elicitation is an approval with the app's name and its persistence choices; the
 /// answer goes back as the form's option (`CodexMcpElicitation.ts`). One an approval cannot
-/// answer is declined at once.
+/// answer is cancelled at once.
 #[test]
 fn an_mcp_elicitation_is_an_approval_answered_with_the_forms_option() {
     let dir = env!("CARGO_MANIFEST_DIR");
-    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let mut ts: Value =
+        serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    // Full access answers by itself (below); this turn asks.
+    ts["startTurn"][0]["runtimePolicy"]["runtimeMode"] = json!("auto-accept-edits");
     let input = turn_input(&ts["startTurn"][0]);
     let mut mapper = Mapper::new(FixedEnv::default());
     mapper.begin_turn("th", &input);
@@ -559,7 +562,7 @@ fn an_mcp_elicitation_is_an_approval_answered_with_the_forms_option() {
     let outs = mapper.handle(Inbound::from_value(url));
     assert_eq!(
         reply_of(&outs).unwrap(),
-        json!({"id": 3, "result": {"action": "decline"}})
+        json!({"id": 3, "result": {"action": "cancel"}})
     );
 
     let form = json!({"method": "mcpServer/elicitation/request", "id": 4, "params": {
@@ -612,6 +615,41 @@ fn an_mcp_elicitation_is_an_approval_answered_with_the_forms_option() {
         json!({"id": 4, "result": {"action": "accept", "_meta": {"persist": "session"},
             "content": {"approval": "session"}}})
     );
+}
+
+/// In full access T3 accepts an MCP access prompt without asking (`never` would have rejected
+/// it before the client saw it), also one whose turn id is null: it finds the thread's turn.
+#[test]
+fn full_access_accepts_an_mcp_access_prompt_without_asking() {
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let input = turn_input(&ts["startTurn"][0]);
+    let mut mapper = Mapper::new(FixedEnv::default());
+    mapper.begin_turn("th", &input);
+    let _ = mapper.turn_start_result("th", &json!({"turn": {"id": "tu", "startedAt": null}}));
+    for (id, turn) in [(5, json!("tu")), (6, Value::Null)] {
+        let prompt = json!({"method": "mcpServer/elicitation/request", "id": id, "params": {
+            "threadId": "th", "turnId": turn, "serverName": "browser", "mode": "form",
+            "message": "Allow ChatGPT to use Google Chrome?",
+            "requestedSchema": {"type": "object", "properties": {"approval": {"type": "string",
+                "enum": ["once", "always"]}}, "required": ["approval"]}}});
+        let outs = mapper.handle(Inbound::from_value(prompt));
+        let reply: Value = outs
+            .iter()
+            .find_map(|o| match o {
+                Out::Write(line) => serde_json::from_str(line).ok(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            reply,
+            json!({"id": id, "result": {"action": "accept", "content": {"approval": "once"}}})
+        );
+        assert!(
+            !outs.iter().any(|o| matches!(o, Out::Event(_))),
+            "no prompt"
+        );
+    }
 }
 
 /// T3's Codex adapter never reports a broken thread: every `turn.terminal` it emits says

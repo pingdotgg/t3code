@@ -1,11 +1,11 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_background_bash/grok_transcript.ndjson through the orchestrator fixture runner at b12470dcad; driver dropped.",
- "capturedOn": "2026-11-14",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_background_bash/grok_transcript.ndjson through the orchestrator fixture runner at a7755b30bd; driver dropped.",
+ "capturedOn": "2026-11-16",
  "outcome": "passed",
  "gates": [
   {
    "label": "notification:session/update:agent_thought_chunk:task-completed-00000000-0000-4000-8000-000000000002",
-   "afterRun": 1
+   "afterRun": 0
   }
  ],
  "transcripts": [
@@ -9211,7 +9211,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-oo1ljY"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -9232,7 +9232,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-oo1ljY"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -9374,7 +9374,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-oo1ljY"
     }
    },
    "exit": {
@@ -9415,7 +9415,7 @@
      },
      "forkedFrom": null,
      "createdAt": "1970-01-01T00:00:00.000Z",
-     "updatedAt": "1970-01-01T00:00:03.002Z",
+     "updatedAt": "1970-01-01T00:00:00.002Z",
      "archivedAt": null,
      "settledOverride": null,
      "settledAt": null,
@@ -9457,7 +9457,7 @@
      },
      "goal": null,
      "createdAt": "1970-01-01T00:00:00.001Z",
-     "updatedAt": "1970-01-01T00:00:03.002Z"
+     "updatedAt": "1970-01-01T00:00:00.002Z"
     },
     "message": {
      "messageId": "message:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1:eb354ed4-8815-4085-8b11-673cb3dd1f39",
@@ -9473,7 +9473,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-HMXV7B"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-grok_background_bash-oo1ljY"
     }
    },
    "exit": {
@@ -10185,6 +10185,68 @@
    }
   },
   {
+   "type": "provider_turn.updated",
+   "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+   "providerTurn": {
+    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+    "nativeTurnRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:1",
+     "strength": "weak"
+    },
+    "ordinal": 1,
+    "status": "completed",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "turnTokenUsage": {
+     "usageScope": "main_agent",
+     "usageStatus": "unavailable",
+     "hasSubagents": false
+    }
+   }
+  },
+  {
+   "type": "provider_thread.updated",
+   "providerThread": {
+    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "driver": "grok",
+    "providerInstanceId": "grok",
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "appThreadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "ownerNodeId": null,
+    "nativeThreadRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001",
+     "strength": "strong"
+    },
+    "nativeConversationHeadRef": null,
+    "status": "active",
+    "firstRunOrdinal": 1,
+    "lastRunOrdinal": 1,
+    "handoffIds": [],
+    "forkedFrom": null,
+    "contextUsage": null,
+    "nativeMetadata": {
+     "itemIdentityVersion": 2,
+     "title": "Background for-loop sleep echo tock command"
+    },
+    "createdAt": "1970-01-01T00:00:00.001Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn.terminal",
+   "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+   "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
+   "runOrdinal": 1,
+   "status": "completed",
+   "failure": null,
+   "threadDisposition": "reusable"
+  },
+  {
    "type": "node.updated",
    "node": {
     "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-c1442937-9504-419c-b6a6-6f909b99cade-0",
@@ -10388,16 +10450,815 @@
    "type": "provider_turn.updated",
    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
    "providerTurn": {
-    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
+    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
     "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
-    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:attempt:1",
+    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:attempt:1",
     "nativeTurnRef": {
      "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:1",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2",
      "strength": "weak"
     },
-    "ordinal": 1,
+    "ordinal": 2,
+    "status": "running",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "provider_thread.updated",
+   "providerThread": {
+    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "driver": "grok",
+    "providerInstanceId": "grok",
+    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
+    "appThreadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "ownerNodeId": null,
+    "nativeThreadRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001",
+     "strength": "strong"
+    },
+    "nativeConversationHeadRef": null,
+    "status": "active",
+    "firstRunOrdinal": 1,
+    "lastRunOrdinal": 2,
+    "handoffIds": [],
+    "forkedFrom": null,
+    "pendingBackgroundTasks": [],
+    "contextUsage": null,
+    "nativeMetadata": {
+     "title": "Background for-loop sleep echo tock command",
+     "itemIdentityVersion": 2
+    },
+    "goal": null,
+    "createdAt": "1970-01-01T00:00:00.001Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "reasoning",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 201,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "reasoning",
+    "text": "The",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "reasoning",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 201,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "reasoning",
+    "text": "The background task completed. The user said: \"When it finishes, reply exactly with its last line.\"\n",
+    "streaming": false
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "assistant_message",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "role": "assistant",
+    "text": "The",
+    "attachments": [],
+    "streaming": true,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 202,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "text": "The",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "assistant_message",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "role": "assistant",
+    "text": "The background loop finished. I'll read its output and reply with the last line.",
+    "attachments": [],
+    "streaming": false,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 202,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
+    "text": "The background loop finished. I'll read its output and reply with the last line.",
+    "streaming": false
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "tool_call",
+    "status": "running",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 203,
+    "status": "pending",
+    "title": "get_command_or_subagent_output",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "get_command_or_subagent_output",
+    "input": {
+     "task_ids": [
+      "00000000-0000-4000-8000-000000000002"
+     ]
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "tool_call",
+    "status": "running",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 203,
+    "status": "pending",
+    "title": "Get task output: 00000000-0000-4000-8000-000000000002",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "Get task output: 00000000-0000-4000-8000-000000000002",
+    "input": {
+     "variant": "TaskOutput",
+     "task_ids": [
+      "00000000-0000-4000-8000-000000000002"
+     ],
+     "timeout_ms": null
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-c1442937-9504-419c-b6a6-6f909b99cade-0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
+    "kind": "tool_call",
+    "status": "completed",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-c1442937-9504-419c-b6a6-6f909b99cade-0",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-c1442937-9504-419c-b6a6-6f909b99cade-0",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-c1442937-9504-419c-b6a6-6f909b99cade-0",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-c1442937-9504-419c-b6a6-6f909b99cade-0",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 103,
+    "status": "completed",
+    "title": "Run three tock echoes in the background",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "command_execution",
+    "input": "for i in 1 2 3; do sleep 8; echo tock $i; done",
+    "output": "tock 1\ntock 2\ntock 3\ntock 1\ntock 2\ntock 3"
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "tool_call",
+    "status": "completed",
+    "countsForRun": true,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Atool%3Acall-a01d27f3-40fb-455c-b492-da5b620213be-1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "call-a01d27f3-40fb-455c-b492-da5b620213be-1",
+     "strength": "strong"
+    },
+    "parentItemId": null,
+    "ordinal": 203,
+    "status": "completed",
+    "title": "for i in 1 2 3; do sleep 8; echo tock $i; done (01a0dc77)",
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "dynamic_tool",
+    "toolName": "for i in 1 2 3; do sleep 8; echo tock $i; done (01a0dc77)",
+    "input": {
+     "variant": "TaskOutput",
+     "task_ids": [
+      "00000000-0000-4000-8000-000000000002"
+     ],
+     "timeout_ms": null
+    },
+    "output": {
+     "type": "TaskOutput",
+     "Result": {
+      "task_id": "00000000-0000-4000-8000-000000000002",
+      "command": "for i in 1 2 3; do sleep 8; echo tock $i; done",
+      "status": "completed",
+      "exit_code": 0,
+      "started": "2026-09-26T06:46:22Z",
+      "ended": "2026-09-26T06:46:46Z",
+      "duration_secs": 24.018086881,
+      "output": "tock 1\ntock 2\ntock 3\n",
+      "output_file": "/home/grok-replay/.grok/sessions/%3Cworkspace%3E/00000000-0000-4000-8000-000000000001/terminal/call-c1442937-9504-419c-b6a6-6f909b99cade-0.log",
+      "truncated": false,
+      "truncation_hint": "[truncated - use read_file on output_file for full content]",
+      "raw_output_bytes": 21
+     }
+    }
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "reasoning",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 204,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "reasoning",
+    "text": "The",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "reasoning",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 204,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "reasoning",
+    "text": "The last line is \"tock 3\". The user said reply exactly with its last line. So my entire response should be:\n",
+    "streaming": false
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "assistant_message",
+    "status": "running",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "role": "assistant",
+    "text": "t",
+    "attachments": [],
+    "streaming": true,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 205,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "text": "t",
+    "streaming": true
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "role": "assistant",
+    "text": "tock3",
+    "attachments": [],
+    "streaming": true,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:00.052Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 205,
+    "status": "running",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": null,
+    "updatedAt": "1970-01-01T00:00:00.052Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "text": "tock3",
+    "streaming": true
+   }
+  },
+  {
+   "type": "node.updated",
+   "node": {
+    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "kind": "assistant_message",
+    "status": "completed",
+    "countsForRun": false,
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
+     "strength": "weak"
+    },
+    "runtimeRequestId": null,
+    "checkpointScopeId": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:03.002Z"
+   }
+  },
+  {
+   "type": "message.updated",
+   "message": {
+    "createdBy": "agent",
+    "creationSource": "provider",
+    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "role": "assistant",
+    "text": "tock3",
+    "attachments": [],
+    "streaming": false,
+    "createdAt": "1970-01-01T00:00:00.002Z",
+    "updatedAt": "1970-01-01T00:00:03.002Z"
+   }
+  },
+  {
+   "type": "turn_item.updated",
+   "turnItem": {
+    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
+    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "nativeItemRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
+     "strength": "weak"
+    },
+    "parentItemId": null,
+    "ordinal": 205,
+    "status": "completed",
+    "title": null,
+    "startedAt": "1970-01-01T00:00:00.002Z",
+    "completedAt": "1970-01-01T00:00:03.002Z",
+    "updatedAt": "1970-01-01T00:00:03.002Z",
+    "type": "assistant_message",
+    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
+    "text": "tock3",
+    "streaming": false
+   }
+  },
+  {
+   "type": "provider_turn.updated",
+   "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
+   "providerTurn": {
+    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
+    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
+    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
+    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:attempt:1",
+    "nativeTurnRef": {
+     "driver": "grok",
+     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2",
+     "strength": "weak"
+    },
+    "ordinal": 2,
     "status": "completed",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:03.002Z",
@@ -10425,63 +11286,6 @@
     "nativeConversationHeadRef": null,
     "status": "active",
     "firstRunOrdinal": 1,
-    "lastRunOrdinal": 1,
-    "handoffIds": [],
-    "forkedFrom": null,
-    "contextUsage": null,
-    "nativeMetadata": {
-     "itemIdentityVersion": 2,
-     "title": "Background for-loop sleep echo tock command"
-    },
-    "createdAt": "1970-01-01T00:00:00.001Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn.terminal",
-   "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-   "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
-   "runOrdinal": 1,
-   "status": "completed",
-   "failure": null,
-   "threadDisposition": "reusable"
-  },
-  {
-   "type": "provider_turn.updated",
-   "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-   "providerTurn": {
-    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:attempt:1",
-    "nativeTurnRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2",
-     "strength": "weak"
-    },
-    "ordinal": 2,
-    "status": "running",
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null
-   }
-  },
-  {
-   "type": "provider_thread.updated",
-   "providerThread": {
-    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "driver": "grok",
-    "providerInstanceId": "grok",
-    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
-    "appThreadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "ownerNodeId": null,
-    "nativeThreadRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001",
-     "strength": "strong"
-    },
-    "nativeConversationHeadRef": null,
-    "status": "active",
-    "firstRunOrdinal": 1,
     "lastRunOrdinal": 2,
     "handoffIds": [],
     "forkedFrom": null,
@@ -10494,577 +11298,6 @@
     "goal": null,
     "createdAt": "1970-01-01T00:00:00.001Z",
     "updatedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "reasoning",
-    "status": "running",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 201,
-    "status": "running",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null,
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "reasoning",
-    "text": "The",
-    "streaming": true
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "reasoning",
-    "status": "completed",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A0",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:0",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 201,
-    "status": "completed",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "reasoning",
-    "text": "The background task completed. The user said: \"When it finishes, reply exactly with its last line.\"\n",
-    "streaming": false
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "assistant_message",
-    "status": "running",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null
-   }
-  },
-  {
-   "type": "message.updated",
-   "message": {
-    "createdBy": "agent",
-    "creationSource": "provider",
-    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "role": "assistant",
-    "text": "The",
-    "attachments": [],
-    "streaming": true,
-    "createdAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 202,
-    "status": "running",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null,
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "assistant_message",
-    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "text": "The",
-    "streaming": true
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "assistant_message",
-    "status": "completed",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "message.updated",
-   "message": {
-    "createdBy": "agent",
-    "creationSource": "provider",
-    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "role": "assistant",
-    "text": "The background loop finished. I'll read its output and reply with the last line.",
-    "attachments": [],
-    "streaming": false,
-    "createdAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:0",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 202,
-    "status": "completed",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "assistant_message",
-    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A0",
-    "text": "The background loop finished. I'll read its output and reply with the last line.",
-    "streaming": false
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "reasoning",
-    "status": "running",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 203,
-    "status": "running",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null,
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "reasoning",
-    "text": "The",
-    "streaming": true
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "reasoning",
-    "status": "completed",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Areasoning%3A1",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:reasoning:1",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 203,
-    "status": "completed",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "reasoning",
-    "text": "The last line is \"tock 3\". The user said reply exactly with its last line. So my entire response should be:\n",
-    "streaming": false
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "assistant_message",
-    "status": "running",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null
-   }
-  },
-  {
-   "type": "message.updated",
-   "message": {
-    "createdBy": "agent",
-    "creationSource": "provider",
-    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "role": "assistant",
-    "text": "t",
-    "attachments": [],
-    "streaming": true,
-    "createdAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 204,
-    "status": "running",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null,
-    "updatedAt": "1970-01-01T00:00:03.002Z",
-    "type": "assistant_message",
-    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "text": "t",
-    "streaming": true
-   }
-  },
-  {
-   "type": "message.updated",
-   "message": {
-    "createdBy": "agent",
-    "creationSource": "provider",
-    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "role": "assistant",
-    "text": "tock3",
-    "attachments": [],
-    "streaming": true,
-    "createdAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:03.052Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 204,
-    "status": "running",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": null,
-    "updatedAt": "1970-01-01T00:00:03.052Z",
-    "type": "assistant_message",
-    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "text": "tock3",
-    "streaming": true
-   }
-  },
-  {
-   "type": "node.updated",
-   "node": {
-    "id": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "rootNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "kind": "assistant_message",
-    "status": "completed",
-    "countsForRun": false,
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
-     "strength": "weak"
-    },
-    "runtimeRequestId": null,
-    "checkpointScopeId": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:06.002Z"
-   }
-  },
-  {
-   "type": "message.updated",
-   "message": {
-    "createdBy": "agent",
-    "creationSource": "provider",
-    "id": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "role": "assistant",
-    "text": "tock3",
-    "attachments": [],
-    "streaming": false,
-    "createdAt": "1970-01-01T00:00:03.002Z",
-    "updatedAt": "1970-01-01T00:00:06.002Z"
-   }
-  },
-  {
-   "type": "turn_item.updated",
-   "turnItem": {
-    "id": "turn-item:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "runId": "run:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:2",
-    "nodeId": "node:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "nativeItemRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2:assistant:1",
-     "strength": "weak"
-    },
-    "parentItemId": null,
-    "ordinal": 204,
-    "status": "completed",
-    "title": null,
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:06.002Z",
-    "updatedAt": "1970-01-01T00:00:06.002Z",
-    "type": "assistant_message",
-    "messageId": "message:provider:grok:native-item:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2%3Aassistant%3A1",
-    "text": "tock3",
-    "streaming": false
-   }
-  },
-  {
-   "type": "provider_turn.updated",
-   "threadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-   "providerTurn": {
-    "id": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A2",
-    "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "nodeId": "node:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:root",
-    "runAttemptId": "run-attempt:run:run%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A2:attempt:1",
-    "nativeTurnRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001:turn:2",
-     "strength": "weak"
-    },
-    "ordinal": 2,
-    "status": "completed",
-    "startedAt": "1970-01-01T00:00:03.002Z",
-    "completedAt": "1970-01-01T00:00:06.002Z",
-    "turnTokenUsage": {
-     "usageScope": "main_agent",
-     "usageStatus": "unavailable",
-     "hasSubagents": false
-    }
-   }
-  },
-  {
-   "type": "provider_thread.updated",
-   "providerThread": {
-    "id": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Agrok_background_bash%253Aproject%253Aproject%25253Afixture%25253Agrok_background_bash%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
-    "driver": "grok",
-    "providerInstanceId": "grok",
-    "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Agrok_background_bash%3Aproject%3Aproject%253Afixture%253Agrok_background_bash%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
-    "appThreadId": "thread:fixture:grok_background_bash:project:project%3Afixture%3Agrok_background_bash%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
-    "ownerNodeId": null,
-    "nativeThreadRef": {
-     "driver": "grok",
-     "nativeId": "00000000-0000-4000-8000-000000000001",
-     "strength": "strong"
-    },
-    "nativeConversationHeadRef": null,
-    "status": "active",
-    "firstRunOrdinal": 1,
-    "lastRunOrdinal": 2,
-    "handoffIds": [],
-    "forkedFrom": null,
-    "pendingBackgroundTasks": [],
-    "contextUsage": null,
-    "nativeMetadata": {
-     "title": "Background for-loop sleep echo tock command",
-     "itemIdentityVersion": 2
-    },
-    "goal": null,
-    "createdAt": "1970-01-01T00:00:00.001Z",
-    "updatedAt": "1970-01-01T00:00:06.002Z"
    }
   },
   {

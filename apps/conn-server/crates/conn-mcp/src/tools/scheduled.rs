@@ -426,6 +426,7 @@ pub(super) async fn run_now(cx: &Cx<'_>, args: &Args) -> ToolResult {
         "taskId": outcome.task.id,
         "threadId": outcome.thread_id,
         "lastRunStatus": to_json(&outcome.task.last_run_status),
+        "lastRunError": outcome.task.last_run_error,
         "runCount": outcome.task.run_count,
         "nextRunAt": outcome.task.next_run_at,
     });

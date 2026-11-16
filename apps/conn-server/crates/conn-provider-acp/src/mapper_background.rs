@@ -23,6 +23,8 @@ use crate::grok_background::{Lifecycle, ReportKind, TaskStatus};
 use crate::tools::{self, ToolState};
 use conn_provider_support::ids::Env;
 
+/// `endedDetachedBackgroundCommandLimit`.
+const ENDED_DETACHED_KEPT: usize = 16;
 /// `endedBackgroundTaskIdLimit`.
 const ENDED_TASKS_KEPT: usize = 128;
 /// Our bound on the running, handled and unreported task id sets.
@@ -111,6 +113,10 @@ pub(super) struct SessionBackground {
     pub(super) quarantined: bool,
     /// `continuationClosed`.
     closed: bool,
+    /// `detachedBackgroundCommands`' keys: task id → the `seq` of the completed turn that owns
+    /// its row, oldest first. Running ones stay; ended ones are bounded by
+    /// [`ENDED_DETACHED_KEPT`], so a later authoritative end still corrects the row.
+    detached: VecDeque<(String, u64)>,
 }
 
 /// A timer the session runs for the mapper; it comes back through [`Mapper::timer_fired`].
@@ -256,8 +262,11 @@ impl<E: Env> Mapper<E> {
         if !bg.awaiting_hydration.is_empty() || !bg.pending_injected_report.is_empty() {
             return true;
         }
+        // Commands are as often a dev server as a wait; only their wake follows up.
         bg.tool_of_task.iter().any(|(task_id, tool_call_id)| {
-            !bg.persistent.contains(task_id) && turn.tools.get(tool_call_id).is_some_and(open)
+            !bg.persistent.contains(task_id)
+                && bg.command_end(task_id).is_none()
+                && turn.tools.get(tool_call_id).is_some_and(open)
         }) || self.subagents_block_settlement()
     }
 
@@ -456,46 +465,24 @@ impl<E: Env> Mapper<E> {
                     turn.bg.awaiting_hydration.remove(&completion.task_id);
                 }
             }
-            let Some(turn) = self.turn.as_mut() else {
+            let Some(turn) = self.turn.as_ref() else {
                 break;
             };
-            let target = turn
-                .bg
-                .tool_of_task
-                .get(&completion.task_id)
-                .and_then(|id| turn.tools.get(id))
-                .cloned();
-            if target.is_some() {
+            // The completed turn that owns a detached command's row takes its end.
+            let owner = (!turn.bg.tool_of_task.contains_key(&completion.task_id))
+                .then(|| self.detached_turn_of(&completion.task_id))
+                .flatten();
+            let found = match owner {
+                Some(seq) => self
+                    .with_detached(seq, |m| {
+                        m.hydrate_target(&completion, &tool.tool_call_id, out)
+                    })
+                    .unwrap_or(false),
+                None => self.hydrate_target(&completion, &tool.tool_call_id, out),
+            };
+            if found {
                 hydrated_monitor = true;
             }
-            let Some(target) = target.filter(|t| t.tool_call_id != tool.tool_call_id) else {
-                continue;
-            };
-            let mut hydrated = target;
-            hydrated.status = Some(completion.status.tool_status().into());
-            if !completion.append_output.is_empty() {
-                let current = output_text(&hydrated);
-                hydrated = if crate::grok_background::is_monitor_end_notice(&current)
-                    || current.trim().is_empty()
-                {
-                    tools::set_output_text(hydrated, &completion.append_output)
-                } else {
-                    tools::append_output_text(hydrated, &completion.append_output)
-                };
-            }
-            // A start ACK can reopen this row; keep the end for the settle.
-            if completion.status != TaskStatus::Running
-                && matches!(turn.bg.command_end(&completion.task_id), Some(None))
-            {
-                turn.bg.set_command_end(
-                    &completion.task_id,
-                    Some(CommandEnd {
-                        status: completion.status,
-                        output: Some(output_text(&hydrated)),
-                    }),
-                );
-            }
-            self.tool_updated(hydrated, None, out);
         }
         (tool, hydrated_monitor)
     }
@@ -690,12 +677,16 @@ impl<E: Env> Mapper<E> {
         self.bg.running.clear();
         self.bg.unreported.clear();
         self.bg.route = None;
+        self.bg.detached.clear();
+        self.detached_turns.clear();
     }
 
     /// `continuationClosed`: the session closed.
     pub(crate) fn close_background(&mut self) {
         self.bg.closed = true;
         self.bg.wake_buffer.clear();
+        self.bg.detached.clear();
+        self.detached_turns.clear();
     }
 
     // ---- continuation ----------------------------------------------------------------------
@@ -1040,6 +1031,35 @@ impl<E: Env> Mapper<E> {
         if self.hooks().is_none() || self.bg.quarantined || !self.is_root(&life.session_id) {
             return out;
         }
+        // `backgroundCommandTurn`: a detached command's completed turn, else the live one.
+        let detached = self.detached_turn_of(&life.task_id);
+        let (status, output) = match detached {
+            Some(seq) => self
+                .with_detached(seq, |m| m.record_command_end(&life))
+                .unwrap_or((life.status, life.output.clone())),
+            None => self.record_command_end(&life),
+        };
+        // T3 records a wake report here for the continuation's notification; the engine's
+        // continuation request carries none (see the crate README).
+        self.apply_late_background_mutation(&life.session_id, &life.task_id, status, &mut out);
+        if status != TaskStatus::Running {
+            match detached {
+                Some(seq) => {
+                    self.with_detached(seq, |m| {
+                        m.finish_registered_background_tool(&life.task_id, status, output, &mut out)
+                    });
+                }
+                None => {
+                    self.finish_registered_background_tool(&life.task_id, status, output, &mut out)
+                }
+            }
+        }
+        out
+    }
+
+    /// A command's end, recorded on the turn that owns its row: the reported output, else the
+    /// known one; a missing exit code cannot undo a known failure.
+    fn record_command_end(&mut self, life: &Lifecycle) -> (TaskStatus, Option<String>) {
         let mut status = life.status;
         let mut output = life.output.clone();
         if status != TaskStatus::Running
@@ -1059,7 +1079,6 @@ impl<E: Env> Mapper<E> {
                 .clone()
                 .or_else(|| previous.as_ref().and_then(|p| p.output.clone()))
                 .or(tool_output);
-            // A missing exit code decodes as success; it cannot undo a known failure.
             if previous
                 .as_ref()
                 .is_some_and(|p| p.status == TaskStatus::Failed)
@@ -1074,17 +1093,180 @@ impl<E: Env> Mapper<E> {
                 }),
             );
         }
-        // T3 records a wake report here for the continuation's notification; the engine's
-        // continuation request carries none (see the crate README).
-        self.apply_late_background_mutation(&life.session_id, &life.task_id, status, &mut out);
-        if status != TaskStatus::Running {
-            self.finish_registered_background_tool(&life.task_id, status, output, &mut out);
-        }
-        out
+        (status, output)
     }
 
     #[cfg(test)]
     pub(crate) fn background_state_empty(&self) -> bool {
         self.bg.wake_buffer.is_empty() && !self.bg.continuation_requested
+    }
+}
+
+// ---- detached background commands ------------------------------------------------------------
+
+impl<E: Env> Mapper<E> {
+    /// `emitTool`'s hydration of a background task's row from another tool's completion.
+    /// Returns whether the task has a row in the turn.
+    fn hydrate_target(
+        &mut self,
+        completion: &crate::grok_background::TaskMutation,
+        tool_call_id: &str,
+        out: &mut Vec<Out>,
+    ) -> bool {
+        let Some(turn) = self.turn.as_mut() else {
+            return false;
+        };
+        let Some(target) = turn
+            .bg
+            .tool_of_task
+            .get(&completion.task_id)
+            .and_then(|id| turn.tools.get(id))
+            .cloned()
+        else {
+            return false;
+        };
+        if target.tool_call_id == tool_call_id {
+            return true;
+        }
+        let mut hydrated = target;
+        hydrated.status = Some(completion.status.tool_status().into());
+        if !completion.append_output.is_empty() {
+            let current = output_text(&hydrated);
+            hydrated = if crate::grok_background::is_monitor_end_notice(&current)
+                || current.trim().is_empty()
+            {
+                tools::set_output_text(hydrated, &completion.append_output)
+            } else {
+                tools::append_output_text(hydrated, &completion.append_output)
+            };
+        }
+        // A start ACK can reopen this row; keep the end for the settle.
+        if completion.status != TaskStatus::Running
+            && matches!(turn.bg.command_end(&completion.task_id), Some(None))
+        {
+            turn.bg.set_command_end(
+                &completion.task_id,
+                Some(CommandEnd {
+                    status: completion.status,
+                    output: Some(output_text(&hydrated)),
+                }),
+            );
+        }
+        self.tool_updated(hydrated, None, out);
+        true
+    }
+
+    /// A tool that started a background command (`backgroundCommandTaskId`).
+    pub(super) fn is_command_tool(&self, tool: &ToolState) -> bool {
+        self.turn
+            .as_ref()
+            .is_some_and(|t| t.bg.command_of_tool.contains_key(&tool.tool_call_id))
+    }
+
+    /// `detachBackgroundCommands`: a completed turn keeps the rows of its background commands,
+    /// so their output and end still land on its run.
+    pub(super) fn detach_background_commands(&mut self, turn: super::Turn) {
+        if self.hooks().is_none() || self.bg.quarantined || turn.bg.commands.is_empty() {
+            return;
+        }
+        let seq = turn.seq;
+        for (task_id, _) in &turn.bg.commands {
+            self.bg.detached.retain(|(id, _)| id != task_id);
+            self.bg.detached.push_back((task_id.clone(), seq));
+        }
+        self.detached_turns.push(turn);
+        // Ended commands beyond the bound go, oldest first; running ones stay.
+        let ended: Vec<String> = self
+            .bg
+            .detached
+            .iter()
+            .filter(|(task_id, seq)| !self.detached_command_open(task_id, *seq))
+            .map(|(task_id, _)| task_id.clone())
+            .collect();
+        let drop = ended.len().saturating_sub(ENDED_DETACHED_KEPT);
+        for task_id in ended.iter().take(drop) {
+            self.bg.detached.retain(|(id, _)| id != task_id);
+        }
+        let detached = &self.bg.detached;
+        self.detached_turns
+            .retain(|turn| detached.iter().any(|(_, seq)| *seq == turn.seq));
+    }
+
+    fn detached_command_open(&self, task_id: &str, seq: u64) -> bool {
+        self.detached_turns
+            .iter()
+            .find(|turn| turn.seq == seq)
+            .and_then(|turn| {
+                let id = turn.bg.tool_of_task.get(task_id)?;
+                turn.tools.get(id)
+            })
+            .is_some_and(open)
+    }
+
+    /// The completed turn that owns a background command's row.
+    pub(super) fn detached_turn_of(&self, task_id: &str) -> Option<u64> {
+        self.bg
+            .detached
+            .iter()
+            .rev()
+            .find(|(id, _)| id == task_id)
+            .map(|(_, seq)| *seq)
+    }
+
+    /// Runs `f` with a detached turn as the turn, then puts both back.
+    pub(super) fn with_detached<R>(
+        &mut self,
+        seq: u64,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        let at = self.detached_turns.iter().position(|t| t.seq == seq)?;
+        let turn = self.detached_turns.remove(at);
+        let live = self.turn.replace(turn);
+        let result = f(self);
+        if let Some(turn) = std::mem::replace(&mut self.turn, live) {
+            self.detached_turns.insert(at, turn);
+        }
+        Some(result)
+    }
+
+    /// `projectDetachedBackgroundCommand`: output and replays for a detached command land on
+    /// its row, not in the wake buffer.
+    pub(super) fn project_detached_command(
+        &mut self,
+        session_id: &str,
+        kind: &str,
+        update: &Value,
+        out: &mut Vec<Out>,
+    ) -> bool {
+        if kind != "tool_call" && kind != "tool_call_update" {
+            return false;
+        }
+        let Some(tool_call_id) = update["toolCallId"].as_str() else {
+            return false;
+        };
+        if self
+            .turn
+            .as_ref()
+            .is_some_and(|t| t.tools.contains_key(tool_call_id))
+        {
+            return false;
+        }
+        if self.root_session.as_deref() != Some(session_id) {
+            return false;
+        }
+        let Some(seq) = self
+            .detached_turns
+            .iter()
+            .find(|t| t.bg.command_of_tool.contains_key(tool_call_id))
+            .map(|t| t.seq)
+        else {
+            return false;
+        };
+        let fallback = (kind == "tool_call").then_some("pending");
+        let Some(state) = tools::parse_tool_call(update, fallback) else {
+            return true;
+        };
+        self.with_detached(seq, |m| m.tool_updated(state, None, out));
+        true
     }
 }

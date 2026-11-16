@@ -172,6 +172,9 @@ pub(crate) struct Mapper<E: Env> {
     root_session: Option<String>,
     turn_seq: u64,
     bg: background::SessionBackground,
+    /// Completed turns whose background commands still own their rows
+    /// (`detachedBackgroundCommands`' values); see [`background::SessionBackground`].
+    detached_turns: Vec<Turn>,
 }
 
 impl<E: Env> std::fmt::Debug for Mapper<E> {
@@ -206,6 +209,7 @@ impl<E: Env> Mapper<E> {
             root_session: None,
             turn_seq: 0,
             bg: background::SessionBackground::default(),
+            detached_turns: Vec::new(),
         }
     }
 
@@ -807,6 +811,9 @@ impl<E: Env> Mapper<E> {
         {
             self.mark_compacted(Some(&format!("{session_id}\u{0}{id}")));
         }
+        if self.project_detached_command(&session_id, kind, update, &mut out) {
+            return out;
+        }
         if kind == "usage_update" || kind == "session_info_update" {
             self.session_state_update(&session_id, kind, update, &mut out);
             return out;
@@ -1251,7 +1258,8 @@ impl<E: Env> Mapper<E> {
             })
             .unwrap_or_default();
         for tool in open {
-            if foreground_only && self.is_background_tool(&tool) {
+            // Progress output replaces the start ACK, so the registered task id outlives it.
+            if foreground_only && (self.is_background_tool(&tool) || self.is_command_tool(&tool)) {
                 continue;
             }
             self.emit_tool(&tool, None, Some(status), out);
@@ -1814,6 +1822,9 @@ impl<E: Env> Mapper<E> {
         self.event(terminal, &mut out);
         // Requests of this turn cannot be answered any more.
         self.pending.clear();
+        if settled == "completed" {
+            self.detach_background_commands(turn);
+        }
         self.background_after_finalize(settled, &mut out);
         out
     }
