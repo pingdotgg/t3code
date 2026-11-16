@@ -287,7 +287,7 @@ it.each([
 });
 
 const restoreLeaseExists = vi.fn(() => Effect.succeed(false));
-const restoreLeaseCreateWorktree = vi.fn(() => Effect.succeed({} as never));
+const restoreLeaseEnsureWorkspace = vi.fn(() => Effect.void);
 const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -297,9 +297,7 @@ const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
       } as never),
       layerWorktreeLocation(),
       Layer.mock(GitWorkflow.GitWorkflowService)({
-        pruneWorktrees: () => Effect.void,
-        createWorktree: restoreLeaseCreateWorktree,
-        listLocalBranchNames: () => Effect.succeed(["feature/restore"]),
+        ensureWorkspace: restoreLeaseEnsureWorkspace,
       }),
       Layer.mock(ProjectService.ProjectService)({
         getById: () =>
@@ -326,7 +324,7 @@ effectIt.effect("restores a missing worktree before a send only under the worksp
         return restoring;
       }),
     ).pipe(Effect.flatMap(Fiber.join));
-    expect(restoreLeaseCreateWorktree).toHaveBeenCalledTimes(1);
+    expect(restoreLeaseEnsureWorkspace).toHaveBeenCalledTimes(1);
   }).pipe(Effect.provide(layerRestoreLeaseTest)),
 );
 

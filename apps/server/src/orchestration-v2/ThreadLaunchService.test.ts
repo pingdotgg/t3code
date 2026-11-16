@@ -1403,10 +1403,12 @@ it.effect("keeps a working-copy base local despite the start-from-origin default
   const fetchWorktreeBaseCommit = vi.fn(() =>
     Effect.die("Working-copy bases must not fetch a remote."),
   );
-  const harness = makeHarness({ fetchWorktreeBaseCommit });
+  const harness = makeHarness({
+    fetchWorktreeBaseCommit,
+    hasCommit: ({ refName }) => Effect.succeed(refName === JJ_WORKING_COPY_REVISION),
+  });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
     const launched = yield* launches.launch(
       launchInput({
         command: "command:launch:working-copy",
@@ -1419,14 +1421,7 @@ it.effect("keeps a working-copy base local despite the start-from-origin default
         },
       }),
     );
-    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "run.updated" && stored.event.payload.status === "starting",
-      ),
-      Stream.runHead,
-    );
-    const projection = yield* threads.getThreadProjection(launched.threadId);
+    const projection = yield* preparationSettled(launched.threadId);
     assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
     assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, JJ_WORKING_COPY_REVISION);
     assert.equal(fetchWorktreeBaseCommit.mock.calls.length, 0);

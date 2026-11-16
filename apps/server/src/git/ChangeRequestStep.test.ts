@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   ProviderInstanceId,
@@ -85,7 +86,14 @@ function readsFor(providerCwd: string): ChangeRequestVcsReads {
       resolveBranchHeadContext(
         {
           readConfigValue: () => Effect.succeed(null),
-          executeGit: () => Effect.die("No remote lookup expected"),
+          executeGit: () =>
+            Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(1),
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
         },
         cwd,
         { branch: refName, upstreamRef },

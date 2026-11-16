@@ -101,7 +101,9 @@ describe("preview commands", () => {
     stack.defer(installChatRouteCommands(router));
     const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as KeyboardEvent;
 
-    register.mock.calls[0]![0][command]!(event);
+    const handler = register.mock.calls.find(([commands]) => command in commands)?.[0][command];
+    expect(handler).toBeTypeOf("function");
+    handler?.(event);
 
     expect(dispatch).toHaveBeenCalledWith(action);
   });
