@@ -198,6 +198,8 @@ export function PreviewView({
   usePreviewSession(threadRef);
 
   const tabId = requestedTabId ?? previewState.activeTabId;
+  // A docked float keeps its saved selection, but the panel showing its tab hides it.
+  const floating = miniPlayerTabId === tabId && requestedTabId !== tabId;
   const runtimeTabId = tabId
     ? previewRuntimeTabId(threadRef, previewState.serverEpoch, tabId)
     : null;
@@ -490,7 +492,7 @@ export function PreviewView({
 
   const handlePictureInPicture = () => {
     if (!tabId) return;
-    if (miniPlayerTabId === tabId) {
+    if (floating) {
       usePreviewMiniPlayerStore.getState().close(threadRef);
       return;
     }
@@ -1004,7 +1006,7 @@ export function PreviewView({
         onPictureInPicture={
           tabId && (isServerTab || previewBridge) ? handlePictureInPicture : undefined
         }
-        pictureInPicture={miniPlayerTabId === tabId}
+        pictureInPicture={floating}
         pictureInPictureDisabled={
           isUnreachable || (!isServerTab && !desktopOverlay?.hasWebContents)
         }

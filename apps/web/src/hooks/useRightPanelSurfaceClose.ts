@@ -11,6 +11,7 @@ import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
+import { usePreviewMiniPlayerStore } from "../previewMiniPlayerStore";
 import { readLocalApi } from "../localApi";
 import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
 import {
@@ -52,6 +53,9 @@ export function useRightPanelSurfaceClose(input: {
   );
 
   const releaseSurfaceResources = (ref: ScopedThreadRef, surface: RightPanelSurface) => {
+    if (surface.kind === "device" && surface.target) {
+      usePreviewMiniPlayerStore.getState().close(ref, { kind: "device", ...surface.target });
+    }
     // Without preview access, server state remains until an authorized close or restart.
     if (canOperatePreview && surface.kind === "preview" && surface.resourceId) {
       void closePreviewSession({

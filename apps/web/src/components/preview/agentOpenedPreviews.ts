@@ -13,11 +13,7 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 
 import { getClientSettings } from "../../hooks/useSettings";
-import {
-  browserMiniPlayerSource,
-  type PreviewMiniPlayerSource,
-  usePreviewMiniPlayerStore,
-} from "../../previewMiniPlayerStore";
+import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import {
   previewStateAtom,
   previewThreadRefsAtom,
@@ -197,20 +193,6 @@ export function applyDeviceSnapshot(
     if (existing) continue;
     useRightPanelStore.getState().openDevice(threadRef, target, true);
   }
-}
-
-/**
- * Floats a device panel tab over chat. A tab whose device session already
- * ended has nothing to stream, so it only closes the panel. Before the first
- * device snapshot the tab floats, and that snapshot closes it if needed.
- */
-export function floatDeviceSurface(
-  threadRef: ScopedThreadRef,
-  source: Extract<PreviewMiniPlayerSource, { kind: "device" }>,
-  state: DeviceServiceState | null,
-): void {
-  if (state !== null && !hasLiveSession(state, threadRef.threadId, source)) return;
-  usePreviewMiniPlayerStore.getState().open(threadRef, source);
 }
 
 export function resetDeviceSessionBaselinesForTests(): void {
