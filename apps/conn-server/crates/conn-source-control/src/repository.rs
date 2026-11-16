@@ -6,9 +6,8 @@
 //! step is `git`: the clone (its own child, see [`run_clone`]), the remote, the push.
 //!
 //! What reaches the client: a host's failure reads as T3's fixed "could not be completed" text
-//! unless the host gives a user-facing detail (only Bitbucket's "workspace/repository"
-//! complaint does); git's stderr only through the redacted last lines of a failed clone; a
-//! failed push only through T3's fixed texts.
+//! regardless of the host's error. Git's stderr reaches it only through the redacted last
+//! lines of a failed clone; a failed push only through T3's fixed texts.
 
 use std::{
     collections::VecDeque,
@@ -54,28 +53,17 @@ pub struct CloneUrls {
     pub ssh_url: String,
 }
 
-/// A host operation that failed. `user_facing` is the host error's `userFacingDetail`, the only
-/// part of it a client sees.
+/// A host operation that failed, with detail kept out of the client response.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("{detail}")]
 pub struct HostFailure {
     pub detail: String,
-    pub user_facing: Option<String>,
 }
 
 impl HostFailure {
     pub fn new(detail: impl Into<String>) -> Self {
         Self {
             detail: detail.into(),
-            user_facing: None,
-        }
-    }
-
-    pub fn user_facing(detail: impl Into<String>) -> Self {
-        let detail = detail.into();
-        Self {
-            user_facing: Some(detail.clone()),
-            detail,
         }
     }
 }
@@ -127,12 +115,8 @@ impl RepositoryError {
         Self::new(operation, provider, GENERIC_DETAIL)
     }
 
-    fn from_host(operation: &'static str, provider: &str, failure: HostFailure) -> Self {
-        Self::new(
-            operation,
-            provider,
-            failure.user_facing.unwrap_or_else(|| GENERIC_DETAIL.into()),
-        )
+    fn from_host(operation: &'static str, provider: &str, _failure: HostFailure) -> Self {
+        Self::generic(operation, provider)
     }
 
     /// The contract error. The T3 server also sends a `cause`; clients read `detail`.
