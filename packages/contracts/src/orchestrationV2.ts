@@ -744,6 +744,8 @@ export const OrchestrationV2Run = Schema.Struct({
   manualContinuationOfRunId: Schema.optional(RunId),
   usageLimitContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
+  /** Awaited background work already pending when this follow-up was sent; an earlier run owns it. */
+  priorBackgroundTaskIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
