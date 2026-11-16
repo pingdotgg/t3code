@@ -78,6 +78,7 @@ pub struct Mapper<E: Env> {
     /// Keyed by runtime request id.
     pending: HashMap<String, Pending>,
     subagents: Subagents,
+    process_generation: u64,
     /// The last turn's context, for subagents and continuations after it ended.
     last_ctx: Option<ParentCtx>,
     /// Root frames that arrived with no turn running (a background subagent woke Claude).
@@ -335,6 +336,7 @@ impl<E: Env> Mapper<E> {
             turn: None,
             pending: HashMap::new(),
             subagents: Subagents::default(),
+            process_generation: 0,
             last_ctx: None,
             wake: VecDeque::new(),
             continuation_requested: false,
@@ -355,7 +357,8 @@ impl<E: Env> Mapper<E> {
     }
 
     /// A new CLI process: its `modelUsage` starts from nothing (`modelLedger: new Map()`).
-    pub fn new_process(&mut self) {
+    pub fn new_process(&mut self, generation: u64) {
+        self.process_generation = generation;
         self.ledger = Some(Vec::new());
         self.echo_mode = EchoMode::Unknown;
         // Replacing the process cancels Claude's wakeup.
@@ -1273,7 +1276,7 @@ impl<E: Env> Mapper<E> {
         let mut out = Vec::new();
         self.cancel_all_pending(&mut out);
         let stopped = expected || self.turn.as_ref().is_some_and(|t| t.interrupt_requested);
-        self.end_running_subagents(if stopped { "cancelled" } else { "failed" }, &mut out);
+        out.extend(self.end_process_subagents(self.process_generation, stopped));
         self.wake.clear();
         self.continuation_requested = false;
         self.wakes.clear();

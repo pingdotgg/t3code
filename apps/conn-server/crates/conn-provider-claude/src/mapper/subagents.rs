@@ -65,6 +65,7 @@ pub(crate) struct Sub {
     effort: Option<String>,
     members: HashMap<u64, Value>,
     stop_requested: bool,
+    process_generation: u64,
 }
 
 impl Sub {
@@ -314,6 +315,7 @@ impl<E: Env> Mapper<E> {
             return false;
         };
         if !sub.running()
+            || sub.process_generation != self.process_generation
             || !sub.task["workflow"].is_object()
             || sub.parent.thread_id != thread["appThreadId"].as_str().unwrap_or_default()
             || sub.parent.provider_thread_id != thread["id"].as_str().unwrap_or_default()
@@ -544,7 +546,31 @@ impl<E: Env> Mapper<E> {
         true
     }
 
-    /// The process ended: every running subagent ends with it.
+    /// A retired query must leave the replacement query's tasks and turn alone.
+    pub(crate) fn end_process_subagents(&mut self, generation: u64, stopped: bool) -> Vec<Out> {
+        let mut out = Vec::new();
+        let running: Vec<(String, String)> = self
+            .subagents
+            .by_task
+            .iter()
+            .filter(|(_, sub)| sub.running() && sub.process_generation == generation)
+            .map(|(id, sub)| (id.clone(), sub.tool_use_id.clone()))
+            .collect();
+        for (task_id, tool_use_id) in running {
+            self.update_subagent(
+                Update {
+                    task_id: &task_id,
+                    tool_use_id: &tool_use_id,
+                    status: if stopped { "cancelled" } else { "failed" },
+                    ..Update::default()
+                },
+                &mut out,
+            );
+        }
+        out
+    }
+
+    /// The session ended: every running subagent ends with it.
     pub(super) fn end_running_subagents(&mut self, status: &str, out: &mut Vec<Out>) {
         let running: Vec<(String, String)> = self
             .subagents
@@ -789,6 +815,7 @@ impl<E: Env> Mapper<E> {
             // A resumed subagent (SendMessage) runs in the turn that resumed it.
             if is_reopen && let Some(parent) = current_parent {
                 sub.parent = parent;
+                sub.process_generation = self.process_generation;
             }
         } else {
             let Some(parent) = self.parent_ctx() else {
@@ -848,6 +875,7 @@ impl<E: Env> Mapper<E> {
                     effort: input.effort.clone(),
                     members: HashMap::new(),
                     stop_requested: false,
+                    process_generation: self.process_generation,
                 },
             );
         }

@@ -4144,6 +4144,18 @@ async fn workflow_stop_uses_the_run_session_and_keeps_the_thread_running() {
         panic!("a narrower caller stopped the workflow");
     };
     assert_eq!(error["code"], "runtime_mode_escalation_denied");
+    let expected_message = "Thread t1 now runs in full-access/default mode, above this caller's. Its user changed it while this call ran.";
+    assert_eq!(error["message"], expected_message);
+    let mut limited = request.clone();
+    limited["modeLimit"] = json!({"runtimeMode":"full-access","interactionMode":"plan"});
+    let Err(EngineError::Rejected(error)) =
+        engine.call("orchestration.stopWorkflow", limited).await
+    else {
+        panic!("a plan caller stopped the workflow");
+    };
+    assert_eq!(error["code"], "interaction_mode_escalation_denied");
+    assert_eq!(error["message"], expected_message);
+
     assert!(
         !crate::lock(&provider.calls)
             .iter()

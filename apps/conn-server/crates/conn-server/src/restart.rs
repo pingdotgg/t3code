@@ -141,6 +141,10 @@ mod tests {
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn acknowledges_before_stopping_and_refuses_a_second_restart() {
         let service = Arc::new(Restart::new(true));
+        assert_eq!(
+            conn_contract::to_json(&crate::environment::capabilities(&service))["serverRestart"],
+            true
+        );
         assert_eq!(service.request().unwrap(), json!({"accepted":true}));
         assert!(!*service.stop.borrow());
         assert_eq!(

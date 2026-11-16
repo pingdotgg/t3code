@@ -1,8 +1,12 @@
 //! CLI recordings and constructed workflow transcripts (`testdata/cli`), compared with the
 //! TypeScript adapter's events for the same input (`testdata/ts`).
 
-pub(crate) fn cli_transcripts() -> [(&'static str, &'static str); 14] {
+pub(crate) fn cli_transcripts() -> [(&'static str, &'static str); 15] {
     [
+        (
+            "e18_workflow_exit",
+            include_str!("../testdata/cli/e18_workflow_exit.ndjson"),
+        ),
         (
             "e17_workflow_idle",
             include_str!("../testdata/cli/e17_workflow_idle.ndjson"),
@@ -66,6 +70,7 @@ pub(crate) fn cli(name: &str) -> &'static str {
 
 pub(crate) fn ts_events(name: &str) -> &'static str {
     match name {
+        "e18_workflow_exit" => include_str!("../testdata/ts/e18_workflow_exit.json"),
         "e17_workflow_idle" => include_str!("../testdata/ts/e17_workflow_idle.json"),
         "e16_workflow" => include_str!("../testdata/ts/e16_workflow.json"),
         "e01_turn" => include_str!("../testdata/ts/e01_turn.json"),

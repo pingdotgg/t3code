@@ -76,6 +76,11 @@ impl Environment {
         })
     }
 
+    pub(crate) fn set_restart(&mut self, restart: crate::restart::Restart) {
+        self.restart = Arc::new(restart);
+        self.descriptor["capabilities"] = conn_contract::to_json(&capabilities(&self.restart));
+    }
+
     pub fn environment_id(&self) -> &str {
         self.descriptor["environmentId"]
             .as_str()
@@ -144,7 +149,7 @@ pub fn descriptor(environment_id: &str, label: &str) -> Value {
         server_version: CONTRACT_SERVER_VERSION.into(),
         orchestration_protocol_version: Some(i64::from(ORCHESTRATION_PROTOCOL_VERSION)),
         database_migration: None,
-        capabilities: capabilities(),
+        capabilities: capabilities(&crate::restart::Restart::default()),
         orbit_instance: None,
     })
 }
@@ -153,10 +158,11 @@ pub fn descriptor(environment_id: &str, label: &str) -> Value {
 /// clients then rely on, so each one here is served; every other one stays unset (off). This
 /// covers the descriptor's `capabilities` and the flags `ServerConfig` carries
 /// ([`config_flags`]).
-pub fn capabilities() -> ExecutionEnvironmentCapabilities {
+pub fn capabilities(restart: &crate::restart::Restart) -> ExecutionEnvironmentCapabilities {
     // Every capability is optional; the test below proves this decode holds.
     let mut capabilities: ExecutionEnvironmentCapabilities =
         conn_contract::from_json(json!({})).expect("every capability is optional");
+    capabilities.server_restart = restart.available().then_some(true);
     capabilities.repository_identity = Some(false);
     // Uploads are claimed by the message that sends them (`host.rs`).
     capabilities.attachment_uploads = Some(true);
@@ -220,6 +226,20 @@ mod tests {
         assert_eq!(
             fs::read_to_string(fresh.join("environment-id")).unwrap(),
             format!("{}\n", made.environment_id())
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unsupervised_runtime_omits_the_restart_capability() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-env-restart-{}", conn_support::uuid_v4()));
+        let mut env = Environment::load(&dir, Some("Box".into()), dir.clone()).unwrap();
+        env.set_restart(crate::restart::Restart::default());
+        assert!(
+            env.descriptor["capabilities"]
+                .get("serverRestart")
+                .is_none()
         );
         fs::remove_dir_all(dir).unwrap();
     }

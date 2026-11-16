@@ -470,6 +470,7 @@ const NAMES = [
   "e15_image",
   "e16_workflow",
   "e17_workflow_idle",
+  "e18_workflow_exit",
 ];
 const RUNTIME_MODE: Record<string, "full-access" | "approval-required"> = {
   e06_permissions: "approval-required",
@@ -542,6 +543,18 @@ describe("capture ClaudeAdapterV2 events from recorded CLI transcripts", () => {
       });
       for (let i = 0; i < lines.length; i++) {
         const { dir, msg } = lines[i]!;
+        if (dir === "end") {
+          yield* Queue.shutdown(harness.processQueues.at(-1)!);
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "subagent" &&
+                event.turnItem.status === "failed",
+            ),
+          );
+          continue;
+        }
         if (dir === "out") {
           if (msg.type === "control_request" && msg.request?.subtype === "interrupt") {
             // interruptTurn waits (TestClock timeout) for the CLI to close, which the fake never

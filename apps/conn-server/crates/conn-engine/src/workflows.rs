@@ -76,28 +76,18 @@ impl Inner {
                         RuntimeMode::FullAccess => 3,
                     };
                     let exceeded = if rank(&thread["runtimeMode"]) > rank(&limit["runtimeMode"]) {
-                        Some((
-                            "runtime_mode_escalation_denied",
-                            format!(
-                                "Child runtime mode {} is broader than parent mode {}.",
-                                thread["runtimeMode"].as_str().unwrap_or_default(),
-                                limit["runtimeMode"].as_str().unwrap_or_default()
-                            ),
-                        ))
+                        Some("runtime_mode_escalation_denied")
                     } else if thread["interactionMode"] != "plan"
                         && limit["interactionMode"] == "plan"
                     {
-                        Some((
-                            "interaction_mode_escalation_denied",
-                            format!(
-                                "Child interaction mode {} is broader than parent mode plan.",
-                                thread["interactionMode"].as_str().unwrap_or_default()
-                            ),
-                        ))
+                        Some("interaction_mode_escalation_denied")
                     } else {
                         None
                     };
-                    if let Some((code, message)) = exceeded {
+                    if let Some(code) = exceeded {
+                        let runtime = thread["runtimeMode"].as_str().unwrap_or_default();
+                        let interaction = thread["interactionMode"].as_str().unwrap_or_default();
+                        let message = format!("Thread {tid} now runs in {runtime}/{interaction} mode, above this caller's. Its user changed it while this call ran.");
                         tx.rollback();
                         return Ok(Err(
                             json!({"_tag":"OrchestratorMcpFailure","code":code,"message":message}),

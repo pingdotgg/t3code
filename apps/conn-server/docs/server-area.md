@@ -119,9 +119,9 @@ The small leftovers were done instead (see the end).
   checksum, runs a preflight on the database, and asks the launcher or the desktop to switch.
 - **`server.commitDesktopUpdate`**: asks the desktop over its control channel; fails without
   one.
-- **`server.restart`** (fork): **the T3 server does not register it** (`S/wsFork.ts` mounts
-  only the annotations), though it advertises `serverRestart` when launchd keeps it alive.
-  Our server neither serves nor advertises it.
+- **`server.restart`**: `S/serverRestart.ts`. T3 acknowledges the request, then exits so its
+  supervisor starts it again. This server serves and advertises it only when systemd's
+  `t3.service` owns this process and has `Restart=always` or `Restart=on-failure`.
 
 ## Provider sign-in, sign-out and install (map only)
 
@@ -151,8 +151,9 @@ The T3 server builds `ServerConfig` in `S/ws.ts` (1806 to 1920) and the capabili
 `modelCatalogRefresh`, and, when they apply, `serverSelfUpdate`, `serverSelfUpdateProgress`,
 `serverInstallation`, `desktopAppUpdate`, `serverRestart`.
 
-This server advertises none of them, because it serves none of the methods behind them. What
-it advertises (`environment::capabilities`, `config_flags`): `repositoryIdentity: false`,
+This server advertises `serverRestart` when its supervisor can restart it; the key is absent
+otherwise. The other capabilities in this area remain unserved. What else it advertises
+(`environment::capabilities`, `config_flags`): `repositoryIdentity: false`,
 `attachmentUploads`, `fileAttachments`, `threadForceStop`, `shellThreadFamilies`,
 `shellOlderSettled`, `ignoredFileListing`, `ignoredFileSearch`; flags `shellThreadFamilies`,
 `shellOlderSettled`, `threadLinkMetadata`, `threadFind`. A test in `environment.rs` holds

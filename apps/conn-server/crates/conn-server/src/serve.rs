@@ -160,9 +160,7 @@ pub async fn serve_with_instances(
         Environment::load(&state_dir, label, cwd),
         "cannot load the state directory",
     );
-    environment.restart = Arc::new(crate::restart::Restart::detect(desktop.is_some()).await);
-    environment.descriptor["capabilities"]["serverRestart"] =
-        serde_json::json!(environment.restart.available());
+    environment.set_restart(crate::restart::Restart::detect(desktop.is_some()).await);
     let environment = Arc::new(environment);
     let restart = environment.restart.clone();
     let auth = environment.auth.clone();

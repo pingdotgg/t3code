@@ -26,6 +26,9 @@ fn read(script: &str, home: &Path) -> Result<Value, Value> {
     if !path.is_absolute() || path.extension().is_none_or(|ext| ext != "js") {
         return Err(fail("invalid-path"));
     }
+    if !home.is_absolute() {
+        return Err(fail("root-unavailable"));
+    }
     let root = std::fs::canonicalize(home.join(".claude/projects"))
         .map_err(|_| fail("root-unavailable"))?;
     let resolved = std::fs::canonicalize(path).map_err(|_| fail("not-found"))?;
@@ -86,6 +89,17 @@ mod tests {
             read(script.to_str().unwrap(), &home).unwrap()["contents"],
             "// hello"
         );
+        let cwd = std::env::current_dir().unwrap();
+        let mut relative_home: PathBuf = cwd.ancestors().skip(1).map(|_| "..").collect();
+        relative_home.push(home.strip_prefix("/").unwrap());
+        for invalid_home in [Path::new(""), relative_home.as_path()] {
+            assert_eq!(
+                read(script.to_str().unwrap(), invalid_home).unwrap_err(),
+                error("root-unavailable", script.to_str().unwrap()),
+                "HOME {}",
+                invalid_home.display()
+            );
+        }
         let outside = home.join("outside.js");
         std::fs::write(&outside, "secret").unwrap();
         std::os::unix::fs::symlink(&outside, root.join("escape.js")).unwrap();

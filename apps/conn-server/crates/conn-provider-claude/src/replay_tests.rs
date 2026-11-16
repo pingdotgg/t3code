@@ -129,6 +129,7 @@ fn replay(name: &str, runtime_mode: &str) -> Replay {
                 mapper.mark_interrupted();
                 vec![]
             }
+            ("end", _) => mapper.end_process_subagents(0, false),
             ("in", "control_response") | ("out", _) => vec![],
             ("in", _) => {
                 let mut outs = mapper.handle(Inbound::from_value(msg.clone()));
@@ -817,4 +818,48 @@ fn workflow_run_matches_the_ts_adapter() {
 #[test]
 fn workflow_progress_after_the_root_turn_matches_the_ts_adapter() {
     assert_same("e17_workflow_idle", "full-access");
+}
+
+#[test]
+fn workflow_process_exit_matches_the_ts_adapter() {
+    assert_same("e18_workflow_exit", "full-access");
+}
+
+#[test]
+fn a_retired_process_cannot_stop_or_settle_a_replacements_workflow() {
+    let mut mapper = Mapper::new(FixedEnv::default(), SESSION);
+    let thread = provider_thread("workflow-processes");
+    mapper.begin_turn(&turn_input(1, &thread, "x", "full-access"), "default");
+    let started = |task: &str| {
+        Inbound::from_value(json!({
+            "type":"system", "subtype":"task_started", "task_id":task, "tool_use_id":task,
+            "task_type":"local_workflow", "workflow_name":"Review"
+        }))
+    };
+    mapper.handle(started("old"));
+    mapper.new_process(1);
+    let thread = serde_json::to_value(thread).unwrap();
+    assert!(!mapper.workflow_stop(&thread, "old", true));
+    mapper.handle(started("new"));
+    let ended = mapper.end_process_subagents(0, false);
+    let events: Vec<Value> = ended
+        .into_iter()
+        .filter_map(|out| match out {
+            Out::Event(event) => Some(serde_json::to_value(event).unwrap()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "old"
+                && e["subagent"]["status"] == "failed")
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| e["subagent"]["nativeTaskRef"]["nativeId"] == "new")
+    );
+    assert!(mapper.workflow_stop(&thread, "new", true));
+    assert!(mapper.turn_active());
 }
