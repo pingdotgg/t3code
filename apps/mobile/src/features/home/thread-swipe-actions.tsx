@@ -56,6 +56,8 @@ const ACTION_LABEL_MIN_HEIGHT = 14;
 const ACTION_LABEL_OFFSET = 2;
 
 const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
+// RNGH's DRAG_TOSS: its open/close decision projects the release by this many seconds of velocity.
+const FULL_SWIPE_DRAG_TOSS = 0.05;
 const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
@@ -433,16 +435,20 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
     }
   }, [commitPrimaryAction, content, fullSwipeAction, onDelete]);
   const handleRelease = useCallback(
-    (translation: SharedValue<number>, canceled: boolean) => {
+    (translation: SharedValue<number>, canceled: boolean, velocityX: number) => {
       "worklet";
       if (dismissing.value) return true;
-      if (!canceled && -translation.value >= fullSwipeThreshold) {
+      if (canceled) return false;
+      const dragged = -translation.value;
+      const flicked =
+        dragged >= actionsWidth && dragged - velocityX * FULL_SWIPE_DRAG_TOSS >= fullSwipeThreshold;
+      if (dragged >= fullSwipeThreshold || flicked) {
         runOnJS(commitFullSwipe)();
         return true;
       }
       return false;
     },
-    [commitFullSwipe, dismissing, fullSwipeThreshold],
+    [actionsWidth, commitFullSwipe, dismissing, fullSwipeThreshold],
   );
   const handleFullSwipeArmedChange = useCallback(
     (armed: boolean) => {

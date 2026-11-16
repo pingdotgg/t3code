@@ -70,7 +70,7 @@ index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..5e6e99cee482c78aac71fe5ed1dc19e4
        // Restore the row to where it rested before the gesture.
        const restingValue = rowState.value === 1 ? leftWidth.value : rowState.value === -1 ? -rightWidth.value : 0;
 +      // A caller animating translation (e.g. a dismissal) keeps it.
-+      if (onSwipeableRelease?.(appliedTranslation, true)) {
++      if (onSwipeableRelease?.(appliedTranslation, true, 0)) {
 +        return;
 +      }
        animateRow(restingValue, 0, true);
@@ -81,7 +81,7 @@ index 30e6601d1dd2dbb8fa43b077feee374e0af4e509..5e6e99cee482c78aac71fe5ed1dc19e4
        }
      }
 +    // Let a UI-thread full-swipe commit take over before the return spring.
-+    if (onSwipeableRelease?.(appliedTranslation, false)) {
++    if (onSwipeableRelease?.(appliedTranslation, false, velocityX)) {
 +      return;
 +    }
      animateRow(toValue, velocityX / friction);
@@ -109,11 +109,11 @@ index e97b6dbbced1bcbd359cf35293b7f10cbf13b0e7..b7d03718c4ce50a0a69f0f478ae5114d
      onSwipeableClose?: (direction: SwipeDirection.LEFT | SwipeDirection.RIGHT) => void;
 +    /**
 +     * UI-thread worklet called on release before the built-in spring starts,
-+     * including a canceled pan (`canceled`), which must not commit an action.
++     * including a canceled pan (`canceled`, velocity 0), which must not commit.
 +     * Return true to consume the release and take ownership of translation.
 +     * The caller must reset or remove the row after its custom animation.
 +     */
-+    onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean) => boolean;
++    onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean, velocityX: number) => boolean;
      /**
       * Called when action panel starts animating on open (either right or left).
       */
@@ -149,7 +149,7 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0c23c2ce6b0a07540c68204a8528b655
                ? -rightWidth.value
                : 0;
 +        // A caller animating translation (e.g. a dismissal) keeps it.
-+        if (onSwipeableRelease?.(appliedTranslation, true)) {
++        if (onSwipeableRelease?.(appliedTranslation, true, 0)) {
 +          return;
 +        }
          animateRow(restingValue, 0, true);
@@ -160,7 +160,7 @@ index 2b3789a5277404e57607c05db96dc062d6db1b10..0c23c2ce6b0a07540c68204a8528b655
        }
  
 +      // Let a UI-thread full-swipe commit take over before the return spring.
-+      if (onSwipeableRelease?.(appliedTranslation, false)) {
++      if (onSwipeableRelease?.(appliedTranslation, false, velocityX)) {
 +        return;
 +      }
 +
@@ -202,11 +202,11 @@ index 1e1246f709feb04c01cf3221472cc1219a8fffac..9099c53aa5e2ff164beeb0f43897fd56
  
 +  /**
 +   * UI-thread worklet called on release before the built-in spring starts,
-+   * including a canceled pan (`canceled`), which must not commit an action.
++   * including a canceled pan (`canceled`, velocity 0), which must not commit.
 +   * Return true to consume the release and take ownership of translation.
 +   * The caller must reset or remove the row after its custom animation.
 +   */
-+  onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean) => boolean;
++  onSwipeableRelease?: (translation: SharedValue<number>, canceled: boolean, velocityX: number) => boolean;
 +
    /**
     * Called when action panel starts animating on open (either right or left).
