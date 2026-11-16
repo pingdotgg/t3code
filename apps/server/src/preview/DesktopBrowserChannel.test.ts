@@ -110,3 +110,55 @@ it.live("closes a tab's relay connection when the desktop detaches the tab", () 
     ),
   ),
 );
+
+it.live("closes a tab's relay connection when a CDP command cannot be written to the desktop", () =>
+  Effect.gen(function* () {
+    const input = yield* Queue.unbounded<Uint8Array>();
+    vi.mocked(NodeStream.fromReadable).mockReturnValue(Stream.fromQueue(input));
+    const config = yield* ServerConfig.ServerConfig;
+    yield* Effect.gen(function* () {
+      const channel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
+      const key = { threadId: "thread-1", tabId: "tab-1" };
+      yield* Queue.offer(
+        input,
+        new TextEncoder().encode(`${JSON.stringify({ type: "attached", ...key })}\n`),
+      );
+      yield* channel.awaitAttached(key, "5 seconds");
+      const url = yield* channel.endpoint(key);
+      const socket = new WebSocket(url);
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket.close()));
+      const closed = new Promise<void>((resolve) =>
+        socket.addEventListener("close", () => resolve()),
+      );
+      yield* Effect.promise(
+        () => new Promise<void>((resolve) => socket.addEventListener("open", () => resolve())),
+      );
+
+      // The control fd is not open here, so the write fails with EBADF; the command never
+      // reaches the tab and Playwright must not wait for its reply.
+      socket.send(
+        JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1" } }),
+      );
+      yield* Effect.promise(() => closed).pipe(Effect.timeout("2 seconds"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        DesktopBrowserChannel.layer.pipe(
+          Layer.provide(
+            ServerConfig.layer({
+              ...config,
+              desktopBrowserFd: 41,
+              desktopBrowserControlFd: 1_000_000,
+            }),
+          ),
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "desktop-browser-channel-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
