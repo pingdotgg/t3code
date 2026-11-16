@@ -3,6 +3,7 @@ import {
   trackedFoldersFromSelection,
   untrackedScannedFolders,
 } from "@t3tools/client-runtime/state/projects";
+import { isTrackedFolderRule } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -160,7 +161,11 @@ export function ProjectRepositoriesSection(props: {
               label={folder.name}
               description={folder.path}
               meta={
-                state === undefined ? undefined : (
+                isTrackedFolderRule(folder.path) ? (
+                  <Text textRole="footnote" className="text-foreground-muted">
+                    Follows folder
+                  </Text>
+                ) : state === undefined ? undefined : (
                   <Text
                     textRole="footnote"
                     className={

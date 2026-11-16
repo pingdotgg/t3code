@@ -3,6 +3,7 @@ import {
   CommandId,
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectMutation,
   type ProjectSnapshot,
@@ -519,7 +520,11 @@ const projectAddCommand = Command.make("add", {
         const scanned = flags.trackRepos ? (yield* scanFolders({ workspaceRoot })).folders : [];
         const named = flags.track.map((folder) => {
           const resolved = path.resolve(folder);
-          return { path: resolved, name: path.basename(resolved) || resolved };
+          // A rule is named by its last two segments: `src/*` says more than `*`.
+          const name = isTrackedFolderRule(resolved)
+            ? resolved.split(path.sep).slice(-2).join("/")
+            : path.basename(resolved);
+          return { path: resolved, name: name || resolved };
         });
         const trackedFolders = [...named, ...scanned]
           .filter(
