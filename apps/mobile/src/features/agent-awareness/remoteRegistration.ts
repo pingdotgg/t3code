@@ -6,10 +6,10 @@ import {
 import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -92,6 +92,7 @@ export type AgentAwarenessRegistrationError =
 const activityPushTokenLocks = new Map<string, Semaphore.Semaphore>();
 const unregisteredStartedLiveActivities = new Map<string, LiveActivity<AgentActivityProps>>();
 const endedUnregisteredLiveActivityIds = new Set<string>();
+const liveActivityRegistrationWaiters = new Map<string, Deferred.Deferred<void>>();
 // Each accepted registration replays the relay aggregate, repairing drifted or orphaned activities.
 const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
 // Match the relay's STALE_AFTER_SECONDS so activities expire even if registration fails.
@@ -930,6 +931,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   activityPushTokenLocks.clear();
   unregisteredStartedLiveActivities.clear();
   endedUnregisteredLiveActivityIds.clear();
+  liveActivityRegistrationWaiters.clear();
   widgetSnapshotReads = 0;
 }
 
@@ -1049,39 +1051,46 @@ function observeLiveActivityPushTokens(
 const endUnregisteredStartedLiveActivities = Effect.fn(
   "remoteRegistration.endUnregisteredStartedLiveActivities",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
-  for (const [activityId, activity] of unregisteredStartedLiveActivities) {
-    yield* Effect.scoped(endUnregisteredStartedLiveActivity(activityId, activity));
-  }
+  yield* Effect.forEach(
+    [...unregisteredStartedLiveActivities],
+    ([activityId, activity]) => endUnregisteredStartedLiveActivity(activityId, activity),
+    { concurrency: "unbounded", discard: true },
+  );
 });
 
-// The relay keeps one token per device, so ending a card while its registration is in flight
-// would let that late token replace a newer card's. The card ends only under its token lock.
 const endUnregisteredStartedLiveActivity = Effect.fn(
   "remoteRegistration.endUnregisteredStartedLiveActivity",
 )(function* (
   activityId: string,
   activity: LiveActivity<AgentActivityProps>,
-): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient | Scope.Scope> {
-  let locked = false;
-  yield* observeLiveActivityPushTokens(activity)
-    .takeScoped(1)
-    .pipe(
-      Effect.andThen(() => {
-        locked = true;
-        return canRegisterRemoteLiveActivities()
-          ? registerCurrentLiveActivityPushToken(activity)
-          : Effect.void;
-      }),
-      Effect.timeout(BACKGROUND_ACTIVITY_REGISTRATION_TIMEOUT),
-      Effect.catch((error) =>
-        Effect.sync(() => {
-          logRegistrationError("unregistered live activity registration failed", error);
-        }),
-      ),
+): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
+  const lock = observeLiveActivityPushTokens(activity);
+  const registered = yield* Deferred.make<void>();
+  liveActivityRegistrationWaiters.set(activityId, registered);
+  yield* Effect.gen(function* () {
+    // Reads a token whose listener event was missed.
+    yield* lock.withPermit(
+      canRegisterRemoteLiveActivities()
+        ? registerCurrentLiveActivityPushToken(activity)
+        : Effect.void,
     );
-  if (locked) {
-    yield* endUnregisteredLiveActivityInBackground(activityId, activity);
-  }
+    if (!unregisteredStartedLiveActivities.has(activityId)) return;
+    // ActivityKit may not have issued the token yet; its listener can still register the card.
+    yield* Deferred.await(registered);
+  }).pipe(
+    Effect.timeout(BACKGROUND_ACTIVITY_REGISTRATION_TIMEOUT),
+    Effect.catch((error) =>
+      Effect.sync(() => {
+        logRegistrationError("unregistered live activity registration failed", error);
+      }),
+    ),
+    Effect.ensuring(Effect.sync(() => liveActivityRegistrationWaiters.delete(activityId))),
+  );
+  // The relay keeps one token per device, so a card must not end while its registration is in
+  // flight: the late token would replace a newer card's. A holder that fails ends the card itself.
+  yield* lock.withPermitsIfAvailable(1)(
+    endUnregisteredLiveActivityInBackground(activityId, activity),
+  );
 });
 
 // Callers hold the activity's token lock.
@@ -1123,7 +1132,7 @@ const registerLiveActivityPushTokenValue = Effect.fn(
     acceptedAt !== undefined &&
     (yield* Clock.currentTimeMillis) - acceptedAt < ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS
   ) {
-    unregisteredStartedLiveActivities.delete(input.activityId);
+    yield* markLiveActivityRegistered(input.activityId);
     return true;
   }
   const deviceId = yield* Effect.tryPromise({
@@ -1140,10 +1149,18 @@ const registerLiveActivityPushTokenValue = Effect.fn(
   });
   if (registered) {
     registeredActivityPushTokens.set(input.activityPushToken, yield* Clock.currentTimeMillis);
-    unregisteredStartedLiveActivities.delete(input.activityId);
+    yield* markLiveActivityRegistered(input.activityId);
   }
   return registered;
 });
+
+function markLiveActivityRegistered(activityId: string): Effect.Effect<void> {
+  return Effect.suspend(() => {
+    unregisteredStartedLiveActivities.delete(activityId);
+    const waiter = liveActivityRegistrationWaiters.get(activityId);
+    return waiter ? Deferred.succeed(waiter, undefined) : Effect.void;
+  });
+}
 
 function forgetGoneLiveActivities(active: ReadonlyArray<LiveActivity<AgentActivityProps>>): void {
   const activeIds = new Set(active.map((activity) => activity.getId()));

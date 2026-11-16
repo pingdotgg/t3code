@@ -607,35 +607,61 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
-  it.effect("ends a card the relay never accepted when the app goes to the background", () => {
-    const registrations = stubLiveActivityRelay();
-    const activity = {
-      getId: () => "activity-1",
-      getPushToken: vi.fn((): Promise<string | null> => Promise.resolve(null)),
-      addPushTokenListener: vi.fn(),
-      end: vi.fn(() => Promise.resolve()),
-    };
+  it.effect.each(["never arrives", "arrives after the app backgrounds"] as const)(
+    "settles a card armed without a token when the token %s",
+    (token) => {
+      const registrations = stubLiveActivityRelay();
+      let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi.fn((): Promise<string | null> => Promise.resolve(null)),
+        addPushTokenListener: vi.fn((listener: typeof tokenListener) => {
+          tokenListener = listener;
+        }),
+        end: vi.fn(() => Promise.resolve()),
+      };
 
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    return Effect.gen(function* () {
-      // iOS reports inactive while Control Center or a call covers the app.
-      appStateMock.currentState = "inactive";
-      yield* armCardOnSend(activity);
-      expect(activity.end).not.toHaveBeenCalled();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      return Effect.gen(function* () {
+        // iOS reports inactive while Control Center or a call covers the app.
+        appStateMock.currentState = "inactive";
+        yield* armCardOnSend(activity);
+        expect(activity.end).not.toHaveBeenCalled();
 
-      appStateMock.currentState = "background";
-      for (const listener of appStateMock.listeners) listener("background");
-      yield* runBackgroundOperations();
+        appStateMock.currentState = "background";
+        for (const listener of appStateMock.listeners) listener("background");
+        const cleanup = yield* Effect.forkChild(runBackgroundOperations());
+        if (token === "never arrives") {
+          yield* TestClock.adjust("3 seconds");
+          yield* Fiber.join(cleanup);
+          expect(registrations).toEqual([]);
+          expect(activity.end).toHaveBeenCalledWith("immediate");
+          expect(vi.getTimerCount()).toBe(0);
+          return;
+        }
 
-      expect(registrations).toEqual([]);
-      expect(activity.end).toHaveBeenCalledWith("immediate");
-      expect(vi.getTimerCount()).toBe(0);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
-      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-      Effect.provide(layerRelayTest),
-    );
-  });
+        // ActivityKit issues the token while iOS still runs the backgrounded app.
+        yield* TestClock.adjust("1 second");
+        expect(activity.end).not.toHaveBeenCalled();
+        tokenListener?.({ pushToken: "activity-token" });
+        const registration = backgroundRuntime.pending.shift()!;
+        yield* registration.operation as Effect.Effect<
+          unknown,
+          AgentAwarenessRegistrationError,
+          ManagedRelay.ManagedRelayClient
+        >;
+        yield* Fiber.join(cleanup);
+        expect(registrations).toEqual([
+          { deviceId: "device-1", activityPushToken: "activity-token" },
+        ]);
+        expect(activity.end).not.toHaveBeenCalled();
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
 
   it.effect.each([
     ["accepted", "token listener"],
