@@ -51,7 +51,6 @@
       Push $R0
       Push $R1
       Push $R2
-      Push $R9
       StrCpy $R2 0
       ${If} ${isUpdated}
         ${StdUtils.TestParameter} $R1 "t3-direct-spawn"
@@ -79,7 +78,6 @@
       ${If} $R2 = 0
         ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$startAppArgs"
       ${EndIf}
-      Pop $R9
       Pop $R2
       Pop $R1
       Pop $R0
