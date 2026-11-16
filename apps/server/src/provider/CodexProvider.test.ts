@@ -308,25 +308,83 @@ it("ignores custom models that shadow a preferred slug", () => {
   assert.deepStrictEqual(models.find((model) => model.isDefault)?.slug, "gpt-5.4");
 });
 
-it("reports native quota only for an OpenAI login on a native route", () => {
+it("reports native quota only for an OpenAI login on a native or confirmed proxy route", () => {
   const chatgpt = { type: "chatgpt", email: "a@example.com", planType: "pro" } as const;
+  const proxyUrl = "http://127.0.0.1:6767/v1";
+  const proxy = { openai_base_url: proxyUrl };
+  const namedProxy = {
+    model_provider: "proxy",
+    model_providers: { proxy: { base_url: proxyUrl } },
+  };
   const hub = {
     model_provider: "hub",
     model_providers: { hub: { base_url: "https://hub.example.com/v1" } },
   };
   const cases = [
-    ["default route", chatgpt, true, {}, true],
-    ["openai base url", chatgpt, true, { openai_base_url: "https://chatgpt.com/x" }, true],
-    ["openai proxy url", chatgpt, true, { openai_base_url: "https://proxy.example.com" }, false],
-    ["custom provider", chatgpt, true, hub, false],
-    ["unknown provider id", chatgpt, true, { model_provider: "missing" }, false],
-    ["unreadable config", chatgpt, true, null, false],
-    ["login not required", chatgpt, false, {}, false],
-    ["api key", { type: "apiKey" }, true, {}, false],
+    ["default route", chatgpt, true, {}, undefined, true],
+    [
+      "openai base url",
+      chatgpt,
+      true,
+      { openai_base_url: "https://chatgpt.com/x" },
+      undefined,
+      true,
+    ],
+    [
+      "openai proxy url",
+      chatgpt,
+      true,
+      { openai_base_url: "https://proxy.example.com" },
+      undefined,
+      false,
+    ],
+    ["custom provider", chatgpt, true, hub, undefined, false],
+    ["unknown provider id", chatgpt, true, { model_provider: "missing" }, undefined, false],
+    ["unreadable config", chatgpt, true, null, undefined, false],
+    ["login not required", chatgpt, false, {}, undefined, false],
+    ["api key", { type: "apiKey" }, true, {}, undefined, false],
+    ["unconfirmed local proxy", chatgpt, true, proxy, undefined, false],
+    ["confirmed local proxy", chatgpt, true, proxy, proxyUrl, true],
+    ["confirmed named proxy", chatgpt, true, namedProxy, proxyUrl, true],
+    [
+      "changed proxy path",
+      chatgpt,
+      true,
+      { openai_base_url: `${proxyUrl}/other` },
+      proxyUrl,
+      false,
+    ],
+    ["changed proxy port", chatgpt, true, proxy, "http://127.0.0.1:6768/v1", false],
+    ["other provider route", chatgpt, true, hub, proxyUrl, false],
+    ["missing proxy config", chatgpt, true, null, proxyUrl, false],
+    ["unknown proxy provider", chatgpt, true, { model_provider: "missing" }, proxyUrl, false],
+    ["proxy login not required", chatgpt, false, proxy, proxyUrl, false],
+    ["proxy api key", { type: "apiKey" }, true, proxy, proxyUrl, false],
+    ["proxy without an account", null, true, proxy, proxyUrl, false],
+    ["invalid proxy url", chatgpt, true, { openai_base_url: "relative" }, "relative", false],
+    [
+      "non-http proxy url",
+      chatgpt,
+      true,
+      { openai_base_url: "file:///proxy" },
+      "file:///proxy",
+      false,
+    ],
   ] as const;
-  for (const [name, account, requiresOpenaiAuth, config, expected] of cases) {
+  for (const [
+    name,
+    account,
+    requiresOpenaiAuth,
+    config,
+    subscriptionQuotaBaseUrl,
+    expected,
+  ] of cases) {
     assert.strictEqual(
-      codexRoutesSpendNativeQuota({ account, requiresOpenaiAuth }, config),
+      codexRoutesSpendNativeQuota(
+        { account, requiresOpenaiAuth },
+        config,
+        subscriptionQuotaBaseUrl,
+      ),
       expected,
       name,
     );
