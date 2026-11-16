@@ -14,10 +14,12 @@ vi.mock(import("./useTheme"), () => ({ refreshTheme }) as never);
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
+  getStandardPaintedThemeColors,
   getThemeDefinition,
   installCustomTheme,
   invalidateCustomThemes,
   publishedThemeDefinitions,
+  toCanonicalThemeColor,
 } from "../themePalette";
 import { startEnvironmentThemeRepaint } from "./useEnvironmentTheme";
 
@@ -83,6 +85,15 @@ describe("environment themes", () => {
       "partial",
       "light-variant",
     ]);
+    const [, partial, lightVariant] = definitions;
+    expect(partial?.colors).toEqual({
+      ...getStandardPaintedThemeColors("dark"),
+      text: toCanonicalThemeColor("#ffffff"),
+    });
+    expect(lightVariant?.variants?.light).toEqual({
+      ...getStandardPaintedThemeColors("light"),
+      canvas: toCanonicalThemeColor("#eff1f5"),
+    });
   });
 
   // Routes without the old root sync component (/connect, prompt-link landings) never saw them.
