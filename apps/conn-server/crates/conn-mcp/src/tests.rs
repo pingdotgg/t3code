@@ -43,6 +43,7 @@ fn fixture_with(
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    let dir = dir.canonicalize().unwrap();
     let files = Arc::new(conn_files::Files::open(&dir).unwrap());
     let mut config = EngineConfig::new(dir.join("engine.sqlite"));
     config.projects = vec![ProjectConfig {
