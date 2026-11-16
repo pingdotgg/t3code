@@ -523,25 +523,34 @@ describe("evaluatePullRequestWatch", () => {
   });
 
   it("reports one failure of a check whose push and pull_request runs both fail", () => {
-    const run = (event: string, job: number): PullRequestCheck => ({
+    const run = (job: number, startedAt: string, finishedAt: string): PullRequestCheck => ({
       ...check("lint", "failure"),
       url: `https://ci.example/lint/job/${job}`,
-      event,
+      startedAt: `2026-11-16T00:${startedAt}Z`,
+      finishedAt: `2026-11-16T00:${finishedAt}Z`,
     });
-    const push = evaluatePullRequestWatch(watch(), detail({ checks: [run("push", 1)] }), noRemarks);
-    assert.deepEqual(push.changes, [{ kind: "checks-failed", failed: [run("push", 1)] }]);
-    const pullRequest = evaluatePullRequestWatch(
-      push.next,
-      detail({ checks: [run("pull_request", 2)] }),
+    const push = run(1, "00:00", "01:00");
+    const pullRequest = run(2, "00:01", "02:00");
+    const rerunOfPush = run(3, "02:30", "03:00");
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [push] }), noRemarks);
+    const second = evaluatePullRequestWatch(
+      first.next,
+      detail({ checks: [pullRequest] }),
       noRemarks,
     );
-    assert.deepEqual(pullRequest.changes, []);
-    // The rerun of the push run that fails again is news, once it finishes.
-    assert.deepEqual(
-      evaluatePullRequestWatch(pullRequest.next, detail({ checks: [run("push", 3)] }), noRemarks)
-        .changes,
-      [{ kind: "checks-failed", failed: [run("push", 3)] }],
+    assert.deepEqual(second.changes, []);
+    // The read may also show only the pull_request run first, the push one never seen.
+    const onlyPullRequest = evaluatePullRequestWatch(
+      watch(),
+      detail({ checks: [pullRequest] }),
+      noRemarks,
     );
+    for (const told of [second.next, onlyPullRequest.next]) {
+      assert.deepEqual(
+        evaluatePullRequestWatch(told, detail({ checks: [rerunOfPush] }), noRemarks).changes,
+        [{ kind: "checks-failed", failed: [rerunOfPush] }],
+      );
+    }
   });
 
   it("does not repeat a failure an older watch told by name", () => {
@@ -550,7 +559,7 @@ describe("evaluatePullRequestWatch", () => {
     const report = evaluatePullRequestWatch(older, failed, noRemarks);
     assert.deepEqual(report.changes, []);
     assert.deepEqual(report.next.failedRuns, [
-      JSON.stringify(["lint", null, "https://ci.example/lint", null]),
+      JSON.stringify(["lint", "https://ci.example/lint", null]),
     ]);
   });
 

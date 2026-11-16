@@ -624,12 +624,14 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
   readonly check: PullRequestCheck;
   readonly workflowName: string | null;
   readonly at: string | null;
+  readonly event: string | null;
 }> {
   return (raw ?? []).flatMap((check) => {
     const name = trimmed(check.name) ?? trimmed(check.context);
     if (name === null) return [];
     const status = toCheckStatus(check);
-    const event = trimmed(check.workflowRun?.event);
+    const startedAt = realTimestamp(check.startedAt);
+    const finishedAt = status === "pending" ? null : realTimestamp(check.completedAt);
     return [
       {
         check: {
@@ -638,9 +640,10 @@ function toCheckEntries(raw: ReadonlyArray<CheckFields> | null | undefined): Rea
           description: trimmed(check.description),
           url: trimmed(check.detailsUrl) ?? trimmed(check.targetUrl),
           ...(typeof check.isRequired === "boolean" ? { required: check.isRequired } : {}),
-          ...(event !== null && { event }),
+          ...(startedAt !== null && finishedAt !== null && { startedAt, finishedAt }),
         },
         workflowName: trimmed(check.workflowName),
+        event: trimmed(check.workflowRun?.event),
         at:
           status === "pending"
             ? STILL_RUNNING

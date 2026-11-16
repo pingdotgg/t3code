@@ -78,19 +78,23 @@ export function evaluatePullRequestWatch(
   if (checks.length > 0) {
     // A run awaiting approval waits on a person, like a review, so only running checks count.
     checksPending = checks.some((check) => check.status === "pending");
-    // A new run of a failing check and event is a rerun that failed again between reads. The other
-    // event's first run of it is the same failure. A GitLab pipeline retry keeps its URL.
+    // A new failed run of a failing check is a rerun that failed again between reads. A GitLab
+    // pipeline retry keeps its URL, so its finish time tells it apart.
     const toldRuns = failedRuns;
     const runOf = (check: PullRequestCheck) =>
-      check.url === null
-        ? null
-        : JSON.stringify([check.name, check.event ?? null, check.url, check.finishedAt ?? null]);
+      check.url === null ? null : JSON.stringify([check.name, check.url, check.finishedAt ?? null]);
     const isRerun = (check: PullRequestCheck) => {
       const run = runOf(check);
       if (toldRuns === undefined || run === null || toldRuns.includes(run)) return false;
-      // The run key's prefix up to the URL: a told run of the same check and event.
-      const lane = `${JSON.stringify([check.name, check.event ?? null]).slice(0, -1)},`;
-      return toldRuns.some((told) => told.startsWith(lane));
+      if (check.startedAt === undefined) return true;
+      // A run that started before every failure seen of its check finished ran beside them, like
+      // GitHub's push and pull_request runs of one commit: the same failure, not a rerun.
+      const toldFinishes = toldRuns.flatMap((told) => {
+        const [name, , finishedAt] = JSON.parse(told) as [string, string, string | null];
+        return name === check.name && finishedAt !== null ? [Date.parse(finishedAt)] : [];
+      });
+      const startedAt = Date.parse(check.startedAt);
+      return toldFinishes.length === 0 || toldFinishes.some((finishedAt) => startedAt > finishedAt);
     };
     const newlyFailed = failed.filter(
       (check) => !failedChecks.includes(check.name) || isRerun(check),
