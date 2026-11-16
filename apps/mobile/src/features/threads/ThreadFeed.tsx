@@ -1,4 +1,3 @@
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -86,6 +85,7 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
+  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -420,7 +420,10 @@ function AssistantForkButton(props: {
     sourceThreadId: props.projectedItem.sourceThreadId,
     sourceItemId: props.projectedItem.sourceItemId,
   });
-  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
+  const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, {
+    label: "fork from response",
+    reportFailure: false,
+  });
   const selectDetail = useSelectWorkspaceDetail();
   const [busy, setBusy] = useState(false);
   const canFork = canForkProjectedAssistantItem({
@@ -453,9 +456,12 @@ function AssistantForkButton(props: {
           .then(async (result) => {
             if (isAtomCommandInterrupted(result)) return;
             if (result._tag !== "Success") {
+              const error = squashAtomCommandFailure(result);
               Dialog.alert(
-                "Could not confirm fork",
-                "Reconnect and check the thread list before trying again.",
+                "Could not fork",
+                error instanceof Error
+                  ? error.message
+                  : "Reconnect and check the thread list before trying again.",
               );
               return;
             }
