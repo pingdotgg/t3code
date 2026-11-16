@@ -206,16 +206,21 @@ dependencies = [
  "conn-contract",
  "conn-engine",
  "conn-features",
+ "conn-files",
  "conn-source-control",
  "conn-support",
+ "conn-terminal",
+ "conn-vcs",
  "getrandom 0.3.4",
  "http",
  "jiff",
+ "regex-automata",
  "rusqlite",
  "serde_json",
  "sha2",
  "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]

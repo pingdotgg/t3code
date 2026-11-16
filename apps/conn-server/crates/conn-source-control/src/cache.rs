@@ -1,6 +1,6 @@
 //! A bounded cache whose callers share one lookup per key, as Effect's `Cache.makeWith` with
 //! a capacity and a time to live per answer. The T3 server keeps provider detection, unknown
-//! remote verdicts, the fj login check, `cafe` tokens and `gh` tokens in such caches.
+//! remote verdicts and `gh` tokens in such caches.
 //!
 //! - At most `capacity` keys. A new key evicts expired keys first, then the oldest.
 //! - Callers of a key that is being looked up wait for that lookup; the first caller's future

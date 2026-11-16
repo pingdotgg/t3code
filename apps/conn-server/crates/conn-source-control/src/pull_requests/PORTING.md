@@ -36,7 +36,7 @@ viewed-file pagination and ordered toggles. The server's panel tests check the t
 results, routing, refreshes, bounded caches, state-report deduplication and permissions. The
 HTTP test checks the read scope and typed error status.
 
-`tools/gen-pr-cases.mjs` records 67 cases from T3's own summary, check, file-classification,
+`tools/gen-pr-cases.mjs` records 85 cases from T3's own summary, check, file-classification,
 patch and credential-requirement code. Rust tests compare against them; `tools/check.sh`
 checks their generator for drift. Every registered RPC has a call in `effect-client.mjs`,
 which uses the real client's decoders. Tests never use a real login, model or GitHub API.

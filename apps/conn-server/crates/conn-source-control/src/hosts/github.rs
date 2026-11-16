@@ -43,7 +43,6 @@ fn spec() -> CliSpec {
             "--json".into(),
             "hosts".into(),
         ],
-        auth_retry_args: None,
         probe_timeout: DEFAULT_PROBE_TIMEOUT,
         install_hint: INSTALL_HINT,
     }
@@ -517,8 +516,9 @@ async fn token_from_gh(
     account: Option<&str>,
 ) -> Result<Secret, CredentialError> {
     let mut args = vec!["auth", "token", "--hostname", host];
-    if let Some(account) = account {
-        args.extend(["--user", account]);
+    let user = account.map(|account| format!("--user={account}"));
+    if let Some(user) = user.as_deref() {
+        args.push(user);
     }
     let mut command =
         crate::discovery::ProbeCommand::new("GitHubCredentials.get", "gh", &args, ctx.cwd);
@@ -540,6 +540,37 @@ pub async fn credential(
     ctx: DiscoveryContext<'_>,
     raw_host: &str,
 ) -> Result<Secret, CredentialError> {
+    credential_with_source(ctx, raw_host)
+        .await
+        .map(|(token, _)| token)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CredentialSource {
+    Settings,
+    Environment,
+    Gh,
+}
+impl CredentialSource {
+    pub(crate) fn access_hint(self) -> &'static str {
+        match self {
+            Self::Settings => {
+                "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control."
+            }
+            Self::Environment => {
+                "The server's environment token can't see it. Give it access, or unset it."
+            }
+            Self::Gh => {
+                "Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+            }
+        }
+    }
+}
+
+pub(crate) async fn credential_with_source(
+    ctx: DiscoveryContext<'_>,
+    raw_host: &str,
+) -> Result<(Secret, CredentialSource), CredentialError> {
     let host = raw_host.trim().to_lowercase();
     if !is_github_host(&host) {
         return Err(CredentialError::NotSignedIn);
@@ -553,18 +584,19 @@ pub async fn credential(
         .require()
         .map_err(CredentialError::Unresolved)?
     {
-        return Ok(saved);
+        return Ok((saved, CredentialSource::Settings));
     }
     if let Some(token) = environment_token(&host, ctx.env) {
-        return Ok(token);
+        return Ok((token, CredentialSource::Environment));
     }
     let account = settings.host_account(&host);
-    match token_from_gh(ctx, &host, account).await {
+    let token = match token_from_gh(ctx, &host, account).await {
         Err(CredentialError::NotSignedIn) if account.is_some() => {
             token_from_gh(ctx, &host, None).await
         }
         other => other,
-    }
+    }?;
+    Ok((token, CredentialSource::Gh))
 }
 
 /// `starredPath`: exactly `owner/name`, neither empty nor a dot segment, each part encoded.
@@ -975,7 +1007,6 @@ mod tests {
             let env = Environment::fixed([("GH_TOKEN", "environment-token")]);
             let endpoints = Endpoints {
                 github_rest: Some(server.base.clone()),
-                ..Endpoints::default()
             };
             let child_env = stubs.path_env();
             let item = discover(DiscoveryContext {
@@ -1061,7 +1092,7 @@ mod tests {
             "gh",
             &["GH_DEBUG", "GH_PROMPT_DISABLED"],
             &format!(
-                "user=''; prev=''; for a in \"$@\"; do [ \"$prev\" = --user ] && user=\"$a\"; prev=\"$a\"; done\nif [ -n \"$user\" ]; then [ \"$user\" = '{signed_out}' ] && exit 0; echo \"token-for-$user\"; else echo active-token; fi"
+                "user=''; prev=''; for a in \"$@\"; do [ \"$prev\" = --user ] && user=\"$a\"; prev=\"$a\"; case \"$a\" in --user=*) user=${{a#--user=}};; esac; done\nif [ -n \"$user\" ]; then [ \"$user\" = '{signed_out}' ] && exit 0; echo \"token-for-$user\"; else echo active-token; fi"
             ),
         )
     }
@@ -1107,6 +1138,10 @@ mod tests {
                 r#"{"hosts":{"github.com":{"enabled":false}}}"#,
                 Err(CredentialError::HostDisabled),
             ),
+            (
+                r#"{"hosts":{"github.com":{"account":"-work","enabled":true}}}"#,
+                Ok("token-for--work".into()),
+            ),
             (r#"{"hosts":{}}"#, Ok("active-token".into())),
         ];
         for (github, expected) in cases {
@@ -1116,6 +1151,10 @@ mod tests {
             let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
             assert_eq!(token_of(c, "github.com").await, expected, "{github}");
         }
+        assert!(
+            stubs.log("gh").contains("--user=-work"),
+            "pinned accounts are a single flag value"
+        );
         assert!(
             stubs
                 .log("gh")
@@ -1150,7 +1189,7 @@ mod tests {
         assert_eq!(
             argv,
             [
-                "argv auth token --hostname github.com --user gone",
+                "argv auth token --hostname github.com --user=gone",
                 "argv auth token --hostname github.com"
             ],
             "T3's argv"
@@ -1226,7 +1265,6 @@ mod tests {
         let env = Environment::fixed([("GH_TOKEN", "env-token")]);
         let endpoints = Endpoints {
             github_rest: Some(server.base.clone()),
-            ..Endpoints::default()
         };
         let (child_env, s) = (stubs.path_env(), defaults());
         let c = ctx(&stubs, &s, &env, &endpoints, &child_env);

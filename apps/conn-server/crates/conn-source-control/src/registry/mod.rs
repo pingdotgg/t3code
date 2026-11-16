@@ -3,9 +3,8 @@
 //! whether a change request belongs to a project.
 //!
 //! T3: `packages/source-control-core/src/shared/definition.ts` (`makeSourceControlDefinitionRegistry`
-//! and its helpers), `packages/source-control-definitions/src/registry.ts` (the order) and each
-//! host's `src/shared/definition.ts`. URLs are read with the WHATWG parser (`url`), as `new URL`
-//! reads them. What only clients use (icons, autolinks, media, checkout commands, settings
+//! and its helpers), with only `packages/source-control-github/src/shared/definition.ts`.
+//! URLs use the WHATWG parser (`url`), as `new URL` reads them. What only clients use (icons, autolinks, media, checkout commands, settings
 //! forms) is not here. `tools/registry-diff.mjs` runs T3's registry and this one on the same
 //! cases and fails on any difference.
 
@@ -15,89 +14,35 @@ pub mod thread_keys;
 use url::Url;
 
 use crate::remote::{
-    canonical_repository_path, is_azure_hostname, parse_git_remote_repository,
+    canonical_repository_path, parse_git_remote_repository,
     repository_key_from_remote as remote_key,
 };
 
-/// The seven hosts, in the registry's display order (T3's `builtInSourceControlDefinitions`).
+/// GitHub is the only source-control host in Conn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HostKind {
     GitHub,
-    CursorOrigin,
-    GitLab,
-    GitCafe,
-    Forgejo,
-    Bitbucket,
-    AzureDevOps,
 }
 
 impl HostKind {
-    /// Display order; also the order hosts are probed in and the fallback for an unknown host.
-    pub const ALL: [HostKind; 7] = [
-        HostKind::GitHub,
-        HostKind::CursorOrigin,
-        HostKind::GitLab,
-        HostKind::GitCafe,
-        HostKind::Forgejo,
-        HostKind::Bitbucket,
-        HostKind::AzureDevOps,
-    ];
-    /// `claimChangeRequestUrlsFirst`: GitCafe, Cursor Origin and Azure DevOps, then the rest.
-    const CLAIM_ORDER: [HostKind; 7] = [
-        HostKind::GitCafe,
-        HostKind::CursorOrigin,
-        HostKind::AzureDevOps,
-        HostKind::GitHub,
-        HostKind::GitLab,
-        HostKind::Forgejo,
-        HostKind::Bitbucket,
-    ];
-    /// `recognizeRemotesIn`: host labels overlap, so remotes have their own order.
-    const RECOGNITION_ORDER: [HostKind; 7] = [
-        HostKind::GitCafe,
-        HostKind::CursorOrigin,
-        HostKind::Forgejo,
-        HostKind::GitHub,
-        HostKind::GitLab,
-        HostKind::AzureDevOps,
-        HostKind::Bitbucket,
-    ];
+    /// The supported definitions, in display order.
+    pub const ALL: [HostKind; 1] = [HostKind::GitHub];
+    const CLAIM_ORDER: [HostKind; 1] = Self::ALL;
+    const RECOGNITION_ORDER: [HostKind; 1] = Self::ALL;
 
     pub fn as_str(self) -> &'static str {
-        match self {
-            HostKind::GitHub => "github",
-            HostKind::CursorOrigin => "cursor-origin",
-            HostKind::GitLab => "gitlab",
-            HostKind::GitCafe => "gitcafe",
-            HostKind::Forgejo => "forgejo",
-            HostKind::Bitbucket => "bitbucket",
-            HostKind::AzureDevOps => "azure-devops",
-        }
+        "github"
     }
-
     pub fn parse(kind: &str) -> Option<Self> {
-        HostKind::ALL.into_iter().find(|k| k.as_str() == kind)
+        (kind == "github").then_some(Self::GitHub)
     }
-
-    /// The definition's `label`.
+    /// The definition's display label.
     pub fn label(self) -> &'static str {
-        match self {
-            HostKind::GitHub => "GitHub",
-            HostKind::CursorOrigin => "Cursor Origin",
-            HostKind::GitLab => "GitLab",
-            HostKind::GitCafe => "GitCafe",
-            HostKind::Forgejo => "Forgejo",
-            HostKind::Bitbucket => "Bitbucket",
-            HostKind::AzureDevOps => "Azure DevOps",
-        }
+        "GitHub"
     }
-
-    /// `changeRequest.singular`: "pull request", or "merge request" on GitLab.
+    /// The singular change request name.
     pub fn change_request_singular(self) -> &'static str {
-        match self {
-            HostKind::GitLab => "merge request",
-            _ => "pull request",
-        }
+        "pull request"
     }
 }
 
@@ -323,28 +268,15 @@ fn has_label(hostname: &str, label: &str) -> bool {
 
 // ---- Per-host definitions ----------------------------------------------------------------
 
-const GITCAFE_HOSTS: [&str; 2] = ["git.cafe", "staging.git.cafe"];
-const CURSOR_ORIGIN_GIT_HOST: &str = "origin.cursor.com";
-const CURSOR_ORIGIN_WEB_BASE_URL: &str = "https://cursor.com/codebase";
-
 fn is_github_host(hostname: &str) -> bool {
     let host = hostname.to_lowercase();
     host == "github.com" || host.ends_with(".ghe.com") || has_label(&host, "github")
 }
 
-fn is_bitbucket_host(hostname: &str) -> bool {
-    let host = hostname.to_lowercase();
-    host == "bitbucket.org" || host.ends_with(".bitbucket.org") || has_label(&host, "bitbucket")
-}
-
 impl HostKind {
     /// `recognizeRemote`.
     fn recognize_remote(self, remote: &GitRemoteHost) -> Option<ProviderInfo> {
-        let GitRemoteHost {
-            remote_url,
-            host,
-            hostname,
-        } = remote;
+        let GitRemoteHost { host, hostname, .. } = remote;
         let base = || format!("https://{host}");
         match self {
             HostKind::GitHub => is_github_host(hostname).then(|| {
@@ -355,52 +287,6 @@ impl HostKind {
                 };
                 ProviderInfo::of(self, name, base())
             }),
-            HostKind::CursorOrigin => (hostname == CURSOR_ORIGIN_GIT_HOST).then(|| {
-                ProviderInfo::of(self, "Cursor Origin", CURSOR_ORIGIN_WEB_BASE_URL.to_owned())
-            }),
-            HostKind::GitLab => {
-                (hostname == "gitlab.com" || has_label(hostname, "gitlab")).then(|| {
-                    let name = if hostname == "gitlab.com" {
-                        "GitLab"
-                    } else {
-                        "GitLab Self-Hosted"
-                    };
-                    ProviderInfo::of(self, name, base())
-                })
-            }
-            HostKind::GitCafe => GITCAFE_HOSTS
-                .contains(&hostname.as_str())
-                .then(|| ProviderInfo::of(self, "GitCafe", format!("https://{hostname}"))),
-            HostKind::Forgejo => (hostname == "codeberg.org"
-                || has_label(hostname, "forgejo")
-                || has_label(hostname, "gitea"))
-            .then(|| {
-                let http = remote_url
-                    .get(..5)
-                    .is_some_and(|p| p.eq_ignore_ascii_case("http:"))
-                    || remote_url
-                        .get(..6)
-                        .is_some_and(|p| p.eq_ignore_ascii_case("https:"));
-                let base_url = if http {
-                    parse_url(remote_url).map(|u| u.origin().ascii_serialization())
-                } else {
-                    None
-                };
-                ProviderInfo::of(self, "Forgejo", base_url.unwrap_or_else(base))
-            }),
-            HostKind::Bitbucket => {
-                (hostname == "bitbucket.org" || has_label(hostname, "bitbucket")).then(|| {
-                    let name = if hostname == "bitbucket.org" {
-                        "Bitbucket"
-                    } else {
-                        "Bitbucket Self-Hosted"
-                    };
-                    ProviderInfo::of(self, name, base())
-                })
-            }
-            HostKind::AzureDevOps => {
-                is_azure_hostname(hostname).then(|| ProviderInfo::of(self, "Azure DevOps", base()))
-            }
         }
     }
 
@@ -422,43 +308,7 @@ impl HostKind {
             })
         };
         match self {
-            HostKind::GitHub => parsed(paths::two_segment_route(path, None, &["pull"])),
-            HostKind::GitLab => parsed(paths::nested_route(path, &["-", "merge_requests"])),
-            HostKind::CursorOrigin => {
-                if host != "cursor.com" && host != "www.cursor.com" {
-                    return None;
-                }
-                let m = paths::two_segment_route(path, Some("codebase"), &["pull"])?;
-                let number = paths::change_request_number(m.digits)?;
-                Some(ParsedChangeRequestUrl {
-                    link: ChangeRequestLink {
-                        host: CURSOR_ORIGIN_GIT_HOST.to_owned(),
-                        repository: canonical_repository_path(m.repository),
-                        number,
-                        authority: None,
-                    },
-                    repository_url: format!("{CURSOR_ORIGIN_WEB_BASE_URL}/{}", m.repository),
-                })
-            }
-            HostKind::GitCafe => GITCAFE_HOSTS
-                .contains(&host.as_str())
-                .then(|| parsed(paths::two_segment_route(path, None, &["pull", "pulls"])))
-                .flatten(),
-            HostKind::Forgejo => {
-                let mut link = parsed(paths::nested_route(path, &["pulls"]))?;
-                link.link.authority = Some(host_with_port(url).to_lowercase());
-                Some(link)
-            }
-            HostKind::Bitbucket => is_bitbucket_host(&host)
-                .then(|| parsed(paths::two_segment_route(path, None, &["pull-requests"])))
-                .flatten(),
-            HostKind::AzureDevOps => {
-                let mut link = parsed(paths::azure_route(path))?;
-                if url.port().is_some() {
-                    link.link.authority = Some(host_with_port(url).to_lowercase());
-                }
-                Some(link)
-            }
+            HostKind::GitHub => parsed(paths::github_route(path)),
         }
     }
 
@@ -489,86 +339,27 @@ impl HostKind {
                     .ok()
                     .map(String::from)
             }
-            HostKind::GitLab => Some(match web_url {
-                Some(web) => below(web, &format!("-/merge_requests/{number}")),
-                None => format!(
-                    "{}/{repository}/-/merge_requests/{number}",
-                    remote_web_origin(host, remote_url)
-                ),
-            }),
-            HostKind::CursorOrigin => Some(format!(
-                "{CURSOR_ORIGIN_WEB_BASE_URL}/{repository}/pull/{number}"
-            )),
-            HostKind::GitCafe => Some(match web_url {
-                Some(web) => below(web, &format!("pulls/{number}")),
-                None => format!("https://{host}/{repository}/pulls/{number}"),
-            }),
-            HostKind::Forgejo => Some(match web_url {
-                Some(web) => below(web, &format!("pulls/{number}")),
-                None => {
-                    format!(
-                        "{}/{repository}/pulls/{number}",
-                        remote_web_origin(host, remote_url)
-                    )
-                }
-            }),
-            HostKind::Bitbucket => Some(match web_url {
-                Some(web) => below(web, &format!("pull-requests/{number}")),
-                None => format!("https://{host}/{repository}/pull-requests/{number}"),
-            }),
-            HostKind::AzureDevOps => {
-                if let Some(web) = web_url {
-                    return Some(below(web, &format!("pullrequest/{number}")));
-                }
-                let key = format!("{host}/{repository}").to_lowercase();
-                let canonical = azure_canonical_repository_key(&key).unwrap_or(key);
-                let mut parts = canonical.split('/');
-                let canonical_host = parts.next().filter(|h| !h.is_empty()).unwrap_or(host);
-                let path: Vec<&str> = parts.collect();
-                Some(format!(
-                    "{}/{}/pullrequest/{number}",
-                    remote_web_origin(canonical_host, remote_url),
-                    path.join("/")
-                ))
-            }
         }
     }
 
-    /// `changeRequestHeadRef`: the ref the target repository publishes a change request's
-    /// head under, where the host has one.
+    /// `changeRequestHeadRef`.
     pub fn change_request_head_ref(self, number: u64) -> Option<String> {
-        match self {
-            HostKind::GitHub | HostKind::Forgejo => Some(format!("refs/pull/{number}/head")),
-            HostKind::GitLab => Some(format!("refs/merge-requests/{number}/head")),
-            _ => None,
-        }
+        Some(format!("refs/pull/{number}/head"))
     }
 
     /// `checkoutChangeRequestHost`.
     pub fn checkout_change_request_host(self, identity: &ProjectIdentity) -> Option<String> {
-        match self {
-            HostKind::GitHub | HostKind::CursorOrigin => Some(project_change_request_host(
-                Some(&identity.canonical_key),
-                self.as_str(),
-            )),
-            _ => None,
-        }
+        Some(project_change_request_host(
+            Some(&identity.canonical_key),
+            self.as_str(),
+        ))
     }
 
-    /// `changeRequestHost`, falling back to `projectChangeRequestHost`. Forgejo's server includes
-    /// its port, which only its resolved web URL or an HTTP remote names; the web URL wins, so
-    /// an SSH remote on another host still finds the web host.
     fn change_request_host(
         self,
-        identity: &ProjectIdentity,
+        _identity: &ProjectIdentity,
         canonical_key: Option<&str>,
     ) -> String {
-        if self == HostKind::Forgejo {
-            let remote = || parse_url(&identity.remote_url).filter(is_http);
-            if let Some(url) = resolved_web_url(identity).or_else(remote) {
-                return host_with_port(&url).to_lowercase();
-            }
-        }
         project_change_request_host(canonical_key, self.as_str())
     }
 
@@ -578,45 +369,11 @@ impl HostKind {
         identity: &ProjectIdentity,
         link: &ChangeRequestLink,
     ) -> bool {
-        match self {
-            HostKind::Forgejo => {
-                if !is_authority_of_project(identity, link) {
-                    return false;
-                }
-                match resolved_web_url(identity) {
-                    None => in_project_repository(
-                        &self.change_request_host(identity, Some(&identity.canonical_key)),
-                        identity,
-                        link,
-                    ),
-                    Some(web) => {
-                        host_with_port(&web).to_lowercase()
-                            == link
-                                .authority
-                                .as_deref()
-                                .unwrap_or(&link.host)
-                                .to_lowercase()
-                            && canonical_repository_path(web.path().trim_matches('/'))
-                                == canonical_repository_path(&link.repository)
-                    }
-                }
-            }
-            HostKind::AzureDevOps => {
-                if !is_authority_of_project(identity, link) {
-                    return false;
-                }
-                let project = canonical_repository_path(&identity.canonical_key);
-                let linked =
-                    canonical_repository_path(&format!("{}/{}", link.host, link.repository));
-                azure_canonical_repository_key(&project).unwrap_or(project)
-                    == azure_canonical_repository_key(&linked).unwrap_or(linked)
-            }
-            _ => in_project_repository(
-                &project_change_request_host(Some(&identity.canonical_key), self.as_str()),
-                identity,
-                link,
-            ),
-        }
+        in_project_repository(
+            &project_change_request_host(Some(&identity.canonical_key), self.as_str()),
+            identity,
+            link,
+        )
     }
 
     /// `canReadChangeRequestOnHost`.
@@ -625,51 +382,12 @@ impl HostKind {
         identity: &ProjectIdentity,
         link: &ChangeRequestLink,
     ) -> bool {
-        match self {
-            HostKind::AzureDevOps => false,
-            HostKind::Forgejo => match resolved_web_url(identity) {
-                None => on_project_host(
-                    &self.change_request_host(identity, Some(&identity.canonical_key)),
-                    identity,
-                    link,
-                ),
-                Some(web) => {
-                    let trimmed = web.path().trim_matches('/');
-                    let parts: Vec<&str> = trimmed.split('/').collect();
-                    let mount = parts
-                        .get(..parts.len().saturating_sub(2))
-                        .map(|p| p.join("/"))
-                        .unwrap_or_default();
-                    host_with_port(&web).to_lowercase()
-                        == link
-                            .authority
-                            .as_deref()
-                            .unwrap_or(&link.host)
-                            .to_lowercase()
-                        && (mount.is_empty()
-                            || link
-                                .repository
-                                .to_lowercase()
-                                .starts_with(&format!("{}/", mount.to_lowercase())))
-                }
-            },
-            _ => on_project_host(
-                &project_change_request_host(Some(&identity.canonical_key), self.as_str()),
-                identity,
-                link,
-            ),
-        }
+        on_project_host(
+            &project_change_request_host(Some(&identity.canonical_key), self.as_str()),
+            identity,
+            link,
+        )
     }
-}
-
-/// Forgejo's `resolvedWebUrl`.
-fn resolved_web_url(identity: &ProjectIdentity) -> Option<Url> {
-    identity
-        .web_url
-        .as_deref()
-        .filter(|w| !w.is_empty())
-        .and_then(parse_url)
-        .filter(is_http)
 }
 
 /// `projectChangeRequestHost`: the host of the project's repository key, or `kind`.
@@ -725,43 +443,6 @@ fn in_project_repository(
     repository.is_some_and(|r| {
         canonical_repository_path(&r) == canonical_repository_path(&link.repository)
     }) && on_project_host(project_host, identity, link)
-}
-
-/// Azure DevOps's `canonicalRepositoryKey`: every spelling of a Services repository, on
-/// `dev.azure.com`.
-fn azure_canonical_repository_key(key: &str) -> Option<String> {
-    let parts: Vec<&str> = key.split('/').collect();
-    let mut canonical = key.to_owned();
-    // `^(?:ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com)/v3/([^/]+)/([^/]+)/([^/]+)$`
-    if let [host, "v3", org, project, repo] = parts.as_slice()
-        && matches!(*host, "ssh.dev.azure.com" | "vs-ssh.visualstudio.com")
-        && [org, project, repo].iter().all(|s| !s.is_empty())
-    {
-        canonical = format!("dev.azure.com/{org}/{project}/_git/{repo}");
-    }
-    // `^([^.]+)\.visualstudio\.com/(?:defaultcollection/)?([^/]+)/_git/([^/]+)$`
-    // `[^.]+` may hold `/` and `:`: the organization is everything before the first `.`.
-    let rewritten = canonical.split_once('.').and_then(|(org, tail)| {
-        let rest = tail.strip_prefix("visualstudio.com/")?;
-        if org.is_empty() {
-            return None;
-        }
-        let parts: Vec<&str> = rest.split('/').collect();
-        let parts = match parts.as_slice() {
-            ["defaultcollection", tail @ ..] if tail.len() == 3 => tail.to_vec(),
-            _ => parts,
-        };
-        match parts.as_slice() {
-            [project, "_git", repo] if !project.is_empty() && !repo.is_empty() => {
-                Some(format!("dev.azure.com/{org}/{project}/_git/{repo}"))
-            }
-            _ => None,
-        }
-    });
-    if let Some(rewritten) = rewritten {
-        canonical = rewritten;
-    }
-    canonical.starts_with("dev.azure.com/").then_some(canonical)
 }
 
 // ---- The registry ------------------------------------------------------------------------
@@ -827,13 +508,12 @@ fn canonical_key_path(key: &str) -> String {
 
 /// `canonicalRepositoryKey`.
 pub fn canonical_repository_key(key: &str) -> String {
-    let key = canonical_key_path(key);
-    azure_canonical_repository_key(&key).unwrap_or(key)
+    canonical_key_path(key)
 }
 
 /// `findByRepositoryKey`: the host with more than one spelling of `key`.
-pub fn find_by_repository_key(key: &str) -> Option<HostKind> {
-    azure_canonical_repository_key(&canonical_key_path(key)).map(|_| HostKind::AzureDevOps)
+pub fn find_by_repository_key(_key: &str) -> Option<HostKind> {
+    None
 }
 
 /// `repositorySelector`: what a host's tools take to select the project's repository.
@@ -848,20 +528,7 @@ pub fn repository_selector(identity: &ProjectIdentity) -> Option<String> {
                 _ => None,
             })
     };
-    match identity.provider.as_deref().and_then(HostKind::parse) {
-        Some(HostKind::AzureDevOps) => {
-            let display = identity.display_name.clone().unwrap_or_default();
-            let segments: Vec<&str> = display.split('/').filter(|p| *p != "_git").collect();
-            let name = identity
-                .name
-                .clone()
-                .filter(|n| !n.is_empty())
-                .or_else(|| segments.last().map(|s| (*s).to_owned()))
-                .filter(|n| !n.is_empty())?;
-            Some(crate::remote::decode_uri_component(&name).unwrap_or(name))
-        }
-        _ => default(),
-    }
+    default()
 }
 
 /// The registry's `changeRequestHost`: the host change requests in the project are listed and
@@ -882,17 +549,9 @@ pub fn change_request_host(identity: &ProjectIdentity, kind: Option<&str>) -> Op
 }
 
 impl HostKind {
-    /// The definition's `publicHost`; Azure DevOps has none.
+    /// The definition's `publicHost`.
     pub fn public_host(self) -> Option<&'static str> {
-        match self {
-            HostKind::GitHub => Some("github.com"),
-            HostKind::CursorOrigin => Some(CURSOR_ORIGIN_GIT_HOST),
-            HostKind::GitLab => Some("gitlab.com"),
-            HostKind::GitCafe => Some("git.cafe"),
-            HostKind::Forgejo => Some("codeberg.org"),
-            HostKind::Bitbucket => Some("bitbucket.org"),
-            HostKind::AzureDevOps => None,
-        }
+        Some("github.com")
     }
 }
 
@@ -902,28 +561,6 @@ pub fn find_by_public_host(hostname: &str) -> Option<HostKind> {
     HostKind::ALL
         .into_iter()
         .find(|k| k.public_host() == Some(host.as_str()))
-}
-
-/// `canonicalizeGitCafePullRequestUrl`: GitCafe's own spelling of one of its pull request URLs.
-pub fn canonicalize_gitcafe_pull_request_url(value: &str) -> String {
-    let parsed = parse_url(value).filter(is_http).and_then(|url| {
-        GITCAFE_HOSTS
-            .contains(&hostname(&url).to_lowercase().as_str())
-            .then(|| HostKind::GitCafe.parse_change_request_url(&url))
-            .flatten()
-    });
-    match parsed {
-        Some(p) => HostKind::GitCafe
-            .change_request_url(ChangeRequestUrlInput {
-                host: &p.link.host,
-                repository: &p.link.repository,
-                number: p.link.number,
-                remote_url: None,
-                web_url: None,
-            })
-            .unwrap_or_else(|| value.to_owned()),
-        None => value.to_owned(),
-    }
 }
 
 /// `parseGitRemoteRepository`, re-exported for callers of the registry.

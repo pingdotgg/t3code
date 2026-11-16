@@ -243,8 +243,9 @@ for (const name of Object.keys(GROUPS)) {
 for (const name of groupFields.keys()) {
   if (!(name in GROUPS)) throw new Error(`${SECRETS_FILE} has a new secret group ${name}SecretFields: map it here and in settings.rs`);
 }
-const hostSecrets = await importSource("apps/server/src/sourceControl/sourceControlHostSecrets.ts");
-const hostFields = [...hostSecrets.SOURCE_CONTROL_HOST_SECRET_FIELDS].sort(([a], [b]) => (a < b ? -1 : 1));
+const { definition: githubDefinition } = await importSource("packages/source-control-github/src/shared/definition.ts");
+if (githubDefinition.settings === undefined) throw new Error("GitHub has no settings schema");
+const hostFields = [[githubDefinition.kind, [...contracts.secretSettingsFields(githubDefinition.settings)]]];
 const secretProviders = await importSource("apps/server/src/secrets/secretProviderDefinitions.ts");
 const secretProviderKinds = secretProviders.secretProviderDefinitions.definitions.map((d) => d.kind).sort();
 
@@ -286,7 +287,7 @@ const strs = (list) => `&[${list.map(str).join(", ")}]`;
 const secretsRs = rustfmt(
   [
     ...HEADER,
-    `// Source: ${SECRETS_FILE} (secretSettingsFields per group), sourceControlHostSecrets.ts,`,
+    `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
@@ -405,6 +406,8 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "secrets.answerRequest",
+  "panels.respond",
   ...["comment","replyToThread","updateComment","setReaction","setThreadResolution","submitReview","requestReviewers","reviewerCandidates","labelCandidates","setLabels","update","stack","reviewGuide"].map(method=>`pullRequests.${method}`),
   "server.listTextGeneratorModels",
   "terminal.attach",
@@ -440,6 +443,10 @@ function limitNode(ast) {
     return members.length === 1 ? limitNode(members[0]) : null;
   }
   const node = {};
+  if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) {
+    node.trim = true;
+    node.minLength = 1;
+  }
   if(ast._tag==="String" && ast.encoding?.some(link=>link.transformation===trimTransformation)) {
     node.trim=true;
     for(const check of ast.checks ?? []) {
@@ -486,6 +493,11 @@ function limitNode(ast) {
   return Object.keys(node).length ? node : null;
 }
 const limits = Object.fromEntries(LIMITED_METHODS.map((tag) => [tag, limitNode(payloadOf(tag).ast) ?? {}]));
+// Review-requested caps reuse PanelName/PanelText; upstream leaves response text unbounded.
+const panelInputs = await importSource("packages/contracts/src/agentPanels.ts");
+const panelLimits = limitNode(panelInputs.AgentPanelMcpServer.ast);
+limits["panels.respond"].fields.deviceName = { maxLength: panelLimits.fields.name.maxLength };
+limits["panels.respond"].fields.error = { maxLength: panelLimits.fields.headers.values.maxLength };
 const limitsRs = rustfmt(
   [
     ...HEADER,

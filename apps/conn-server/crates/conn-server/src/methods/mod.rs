@@ -11,10 +11,12 @@ use crate::table::MethodTable;
 mod annotations;
 mod files;
 mod orchestration;
+mod panels;
 mod projects;
 pub mod provider;
 pub(crate) mod pull_requests;
 mod scheduled;
+mod secrets;
 pub mod server;
 mod source_control;
 pub mod terminal;
@@ -34,12 +36,18 @@ pub struct Deps {
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
     pub vcs: vcs::VcsShared,
+    /// One PR service for RPC reads, refreshes and HTTP diffs.
+    pub pull_requests: pull_requests::Shared,
     /// Shared with the engine host, so a thread's terminals close with it.
     pub terminals: Option<conn_terminal::TerminalManager>,
     /// Files, assets and attachments; without it those methods and routes are not served.
     pub files: Option<Arc<conn_files::Files>>,
     /// Scheduled tasks (`conn_features::scheduled`); without it `scheduledTasks.*` is not served.
     pub scheduled_tasks: Option<conn_features::scheduled::ScheduledTasks>,
+    /// Shared by the desktop request stream and the agent panel tool.
+    pub panels: Option<conn_features::panels::PanelBroker>,
+    /// Shared by secret card answers and the agent secret tool.
+    pub secrets: Option<conn_features::secrets::SecretRequests>,
     /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
     /// Text generators (`crate::text_generation`); without it `listTextGeneratorModels` is not
@@ -67,6 +75,8 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     files::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
+    secrets::register(table, deps);
+    panels::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);
     pull_requests::register(table, deps);

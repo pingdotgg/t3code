@@ -599,7 +599,7 @@ fn error_invalid() -> Response {
 }
 
 /// `EnvironmentInternalError`, 500. The cause goes to the log, never to the client.
-fn internal_reason(reason: &str) -> Response {
+pub(crate) fn internal_reason(reason: &str) -> Response {
     error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "EnvironmentInternalError",
@@ -1355,6 +1355,22 @@ mod tests {
         let body = json!({"projectId":"missing","host":"github.com","repository":"a/b","number":7})
             .to_string();
         assert_eq!(call(addr, head, &body).await.0, 401, "bearer required");
+        assert_eq!(
+            call(addr, head, "{").await.0,
+            401,
+            "auth precedes JSON decoding"
+        );
+        assert_eq!(
+            call(
+                addr,
+                &format!("{head}\r\nauthorization: Bearer {denied}"),
+                "{"
+            )
+            .await
+            .0,
+            403,
+            "scope precedes JSON decoding"
+        );
         let (status, body_denied) = call(
             addr,
             &format!("{head}\r\nauthorization: Bearer {denied}"),

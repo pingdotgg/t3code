@@ -142,7 +142,6 @@ fn answer(case: &Value) -> Value {
                 .map_or(Value::Null, Value::String)
         }
         "isSameChangeRequest" => json!(registry::is_same_change_request(&s("left"), &s("right"))),
-        "canonicalizeGitCafe" => json!(registry::canonicalize_gitcafe_pull_request_url(&s("url"))),
         "normalizeThreadKey" => {
             let key = case.get("key").cloned().unwrap_or(Value::Null);
             let (host, repository) = (text(&key, "host"), text(&key, "repository"));

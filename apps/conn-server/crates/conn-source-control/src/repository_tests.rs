@@ -182,26 +182,13 @@ fn with_stub(scratch: &Scratch, stubs: &StubDir) -> Vec<(&'static str, OsString)
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn tells_the_user_a_hosts_fixed_explanation_of_a_failed_lookup() {
+async fn keeps_host_errors_out_of_a_failed_lookup() {
     let scratch = Scratch::new("lookup");
     let input = SourceControlRepositoryLookupInput {
-        provider: "bitbucket".into(),
+        provider: "github".into(),
         repository: "x".into(),
         cwd: None,
     };
-    let fixed = FakeHosts {
-        failure: Some(HostFailure::user_facing(
-            "Repositories are named workspace/repository.",
-        )),
-        ..FakeHosts::default()
-    };
-    let error = lookup(&fixed, scratch.ctx(), &input)
-        .await
-        .expect_err("fails");
-    assert_eq!(error.detail, "Repositories are named workspace/repository.");
-    assert_eq!(error.operation, "lookupRepository");
-
-    // "keeps a host's raw response text out of a failed repository lookup"
     let raw = FakeHosts {
         failure: Some(HostFailure::new("<html>internal token=abc</html>")),
         ..FakeHosts::default()
@@ -366,7 +353,7 @@ async fn retries_a_clone_over_https_when_the_ssh_login_is_refused() {
     let stubs = StubDir::new("git-ssh");
     refusing_git(&stubs, false);
     let mut env = with_stub(&scratch, &stubs);
-    env.push(("LC_ALL", "C".into()));
+    env.push(("LC_ALL", "en_US.UTF-8".into()));
     let ctx = ServiceContext {
         child_env: &env,
         ..scratch.ctx()
@@ -384,7 +371,7 @@ async fn retries_a_clone_over_https_when_the_ssh_login_is_refused() {
     assert_eq!(result.remote_url, "https://github.com/octocat/t3code");
     assert_eq!(
         stubs.log("git"),
-        "argv clone --progress -- git@github.com:octocat/t3code.git t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=C\nargv clone --progress -- https://github.com/octocat/t3code t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=C\n",
+        "argv clone --progress -- git@github.com:octocat/t3code.git t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=en_US.UTF-8\nargv clone --progress -- https://github.com/octocat/t3code t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=en_US.UTF-8\n",
         "argv and CLONE_ENV as T3 runs them; the locale is left alone"
     );
 
@@ -513,7 +500,7 @@ async fn publish_without_commits_only_adds_the_remote() {
     ));
     let input = SourceControlPublishRepositoryInput {
         cwd: work.to_string_lossy().into_owned(),
-        provider: "gitlab".into(),
+        provider: "github".into(),
         repository: "group/project".into(),
         visibility: SourceControlRepositoryVisibility::Public,
         remote_name: Some("  ".into()),
@@ -530,7 +517,7 @@ async fn publish_without_commits_only_adds_the_remote() {
     );
     assert_eq!(
         hosts.calls.lock().map(|c| c.clone()).unwrap_or_default(),
-        ["create gitlab group/project Public"]
+        ["create github group/project Public"]
     );
 }
 

@@ -19,7 +19,7 @@ impl Client {
         }
         .await;
         match read {
-            Err(Error::NotFound(_)) => Ok(Value::Null),
+            Err(Error::NotFound(_) | Error::RepositoryNotFound(_, _)) => Ok(Value::Null),
             other => other,
         }
     }

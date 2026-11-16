@@ -770,3 +770,33 @@ async fn setup_scripts_leave_no_processes_behind() {
         "background jobs outlived the script"
     );
 }
+
+#[tokio::test]
+async fn worktree_base_fetch_skips_tags_and_deleted_tracking_refs() {
+    let fx = Fixture::new("handoff-base");
+    git(&fx.work, &["tag", "handoff-tag"]);
+    git(&fx.work, &["push", "-q", "origin", "handoff-tag"]);
+    git(&fx.work, &["tag", "-d", "handoff-tag"]);
+    let base = conn_vcs::setup::fetch_base(&fx.work, "main")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(base.1, "origin/main");
+    assert_eq!(git(&fx.work, &["tag", "--list", "handoff-tag"]).trim(), "");
+    git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
+    assert!(
+        conn_vcs::setup::fetch_base(&fx.work, "main")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    for name in ["origin/HEAD", "HEAD~1", "main^", "@{-1}", "-", ":/fix"] {
+        assert!(
+            conn_vcs::setup::fetch_base(&fx.work, name)
+                .await
+                .unwrap()
+                .is_none(),
+            "{name}"
+        );
+    }
+}

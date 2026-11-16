@@ -26,7 +26,10 @@ pub(crate) fn latest_run(projection: &Value) -> Option<&Value> {
 }
 
 pub(crate) fn active_run(projection: &Value) -> Option<&Value> {
-    runs(projection).into_iter().rev().find(|run| is_live(run))
+    runs(projection)
+        .into_iter()
+        .rev()
+        .find(|run| is_live(run) && run["status"] != "queued")
 }
 
 pub(crate) fn run_by_id<'a>(projection: &'a Value, run_id: &str) -> Option<&'a Value> {
@@ -338,6 +341,15 @@ fn text(value: &Value) -> Option<String> {
 pub(crate) fn turn_item_text(item: &Value) -> Option<String> {
     let kind = item["type"].as_str().unwrap_or_default();
     Some(match kind {
+        "secret_request" => format!(
+            "Asked the user for {}: {}.",
+            item.get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            item.get("secretStatus")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        ),
         "notification" => join(&[text(&item["summary"]), text(&item["detail"])]),
         "user_message" | "assistant_message" | "reasoning" => return text(&item["text"]),
         "proposed_plan" => return text(&item["markdown"]),
@@ -381,6 +393,14 @@ pub(crate) fn turn_item_text(item: &Value) -> Option<String> {
         }
         "error" => return text(&item["failure"]["message"]),
         "compaction" => return text(&item["summary"]),
+        "thread_created" => format!(
+            "Created thread {} with {} ({}).",
+            item["targetThreadId"].as_str().unwrap_or_default(),
+            item["targetProviderInstanceId"]
+                .as_str()
+                .unwrap_or_default(),
+            item["targetModel"].as_str().unwrap_or_default()
+        ),
         "subagent" => {
             return text(&item["result"])
                 .or_else(|| text(&item["progress"]))
@@ -562,6 +582,18 @@ pub(crate) fn run_result_text(projection: &Value, run_id: &str) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_request_timeline_text_includes_the_label_and_every_status() {
+        for status in ["pending", "saved", "declined", "cancelled"] {
+            assert_eq!(
+                turn_item_text(
+                    &json!({"type":"secret_request","label":"Webhook key","secretStatus":status})
+                ),
+                Some(format!("Asked the user for Webhook key: {status}."))
+            );
+        }
+    }
 
     fn with_pull_requests(links: &Value, include_links: bool) -> Value {
         let mut out = json!({});

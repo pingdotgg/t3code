@@ -160,12 +160,16 @@ const program = Effect.gen(function* () {
   if (Exit.isSuccess(activity)) decodedTags.add("server.reportClientActivity");
 
   if (fixture) {
+    yield* decodeCall(client, "panels.requests", {deviceName: "Fixture Mac"});
     const events = yield* take(client.subscribeServerConfig({}), 20);
     check("windowed stream: 20 chunks, window 8", events.length === 20, `${events.length} events`);
     // Stream.take interrupted the subscription; the fixture logs when the server drops it.
     yield* Effect.sleep("200 millis");
     check("interrupt reaches the handler", stderr.join("").includes("stream dropped"));
   } else {
+    yield* decodeCall(client, "secrets.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
+    yield* decodeCall(client, "panels.respond", { requestId: "unknown", ok: true });
+
     const [config] = yield* take(client.subscribeServerConfig({}), 1);
     check(
       "subscribeServerConfig snapshot decodes",
@@ -572,7 +576,7 @@ const decodeEach = (client) =>
     yield* call("pullRequests.invalidate", { reference: prRef });
     yield* call("pullRequests.subscribeRefreshes", {});
     yield* call("pullRequests.subscribeLinkedThreadRefreshes", {});
-    // Source control: every host probed, with no login or token of this machine (sealedEnv).
+    // Source control: GitHub probed, with no login or token of this machine (sealedEnv).
     yield* call("server.discoverSourceControl", {});
     // As a T3 server without an app client id: typed refusals, signed-out, not starred.
     const signIn = { provider: "github", host: "github.com" };
@@ -582,9 +586,8 @@ const decodeEach = (client) =>
     const repository = { ...signIn, repository: "pingdotgg/t3code" };
     yield* call("sourceControl.appAccess", repository);
     yield* call("sourceControl.starred", repository);
-    yield* call("sourceControl.star", { ...repository, provider: "gitlab" });
-    // Repositories, with no host asked: a provider still "unknown" is refused, a Bitbucket name
-    // without a workspace fails before any request, and a clone copies the local repository.
+    yield* call("sourceControl.star", { ...repository, provider: "unknown" });
+    // Unknown providers are refused before any request; a clone copies the local repository.
     yield* call("sourceControl.lookupRepository", { provider: "unknown", repository: "o/r" });
     yield* call("sourceControl.cloneRepository", {
       remoteUrl: repo,
@@ -592,7 +595,7 @@ const decodeEach = (client) =>
     });
     yield* call("sourceControl.publishRepository", {
       cwd: repo,
-      provider: "bitbucket",
+      provider: "unknown",
       repository: "no-workspace",
       visibility: "private",
     });

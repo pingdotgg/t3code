@@ -46,19 +46,43 @@ pub enum Error {
     Failed(String),
     #[error("{0}")]
     NotFound(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    RepositoryNotFound(String, &'static str),
 }
 
 impl Error {
+    pub fn access_hint(&self) -> Option<&'static str> {
+        if let Self::RepositoryNotFound(_, hint) = self {
+            Some(hint)
+        } else {
+            None
+        }
+    }
     pub fn to_contract(&self, operation: &str) -> Value {
         match self {
             Self::Missing | Self::Unauthenticated => {
                 json!({"_tag":"PullRequestUnavailableError", "reason":if *self == Self::Missing {"cli-missing"} else {"cli-unauthenticated"}, "provider":"github", "requirement":if *self == Self::Missing {MISSING} else {UNAUTHENTICATED}})
             }
-            Self::Failed(detail) => {
-                json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail})
-            }
-            Self::NotFound(detail) => {
-                json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail,"reason":"not-found"})
+            Self::Failed(detail)
+            | Self::Forbidden(detail)
+            | Self::NotFound(detail)
+            | Self::RepositoryNotFound(detail, _) => {
+                let reason = match self {
+                    Self::Forbidden(_) => "forbidden",
+                    Self::NotFound(_) | Self::RepositoryNotFound(_, _) => "not-found",
+                    _ => "failed",
+                };
+                let mut value = json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail,
+                    "cause":{"_tag":"PullRequestProviderError","provider":"github","operation":operation,"reason":reason,"detail":detail}});
+                if reason == "not-found" {
+                    value["reason"] = json!(reason);
+                }
+                if let Some(hint) = self.access_hint() {
+                    value["cause"]["accessHint"] = json!(hint);
+                }
+                value
             }
         }
     }
@@ -109,6 +133,7 @@ pub struct Client {
     host: String,
     root: String,
     token: Secret,
+    credential_source: github::CredentialSource,
 }
 impl Client {
     pub async fn connect(context: DiscoveryContext<'_>, host: &str) -> Result<Self, Error> {
@@ -122,7 +147,7 @@ impl Client {
             .await
             .map_err(|_| Error::Failed("GitHub CLI is unavailable.".into()))?;
 
-        let token = github::credential(context, &host)
+        let (token, credential_source) = github::credential_with_source(context, &host)
             .await
             .map_err(|e| match e {
                 github::CredentialError::CliMissing => Error::Missing,
@@ -135,7 +160,12 @@ impl Client {
             .clone()
             .unwrap_or_else(|| github::rest_root(&host));
 
-        Ok(Self { host, root, token })
+        Ok(Self {
+            host,
+            root,
+            token,
+            credential_source,
+        })
     }
 
     pub fn same_credential(&self, other: &Self) -> bool {
@@ -200,25 +230,28 @@ impl Client {
             return Err(Error::Failed("GitHub API rate limit exceeded.".into()));
         }
         if response.status == 404 {
-            return Err(Error::NotFound(
+            return Err(Error::RepositoryNotFound(
                 "GitHub could not find the requested resource, or the credential cannot see it."
                     .into(),
+                self.credential_source.access_hint(),
             ));
         }
         if !(200..300).contains(&response.status) {
-            if !path.ends_with("graphql") {
-                let messages = rest_error_messages(&raw);
-                if !messages.is_empty() {
-                    return Err(Error::Failed(format!(
-                        "GitHub returned an error: {}",
-                        messages.join("; ")
-                    )));
-                }
-            }
-            return Err(Error::Failed(format!(
-                "GitHub returned HTTP {}.",
-                response.status
-            )));
+            let messages = if path.ends_with("graphql") {
+                Vec::new()
+            } else {
+                rest_error_messages(&raw)
+            };
+            let detail = if messages.is_empty() {
+                format!("GitHub returned HTTP {}.", response.status)
+            } else {
+                format!("GitHub returned an error: {}", messages.join("; "))
+            };
+            return Err(if response.status == 403 {
+                Error::Forbidden(detail)
+            } else {
+                Error::Failed(detail)
+            });
         }
         Ok(response)
     }
@@ -311,17 +344,31 @@ impl Client {
                     .collect();
                 if errors.iter().all(is_not_found_lookup) {
                     let missing = "GitHub could not find the requested resource, or the credential cannot see it.";
-                    return Err(Error::NotFound(if messages.is_empty() {
-                        missing.into()
-                    } else {
-                        format!("{missing} GitHub said: {}", messages.join("; "))
-                    }));
+                    return Err(Error::RepositoryNotFound(
+                        if messages.is_empty() {
+                            missing.into()
+                        } else {
+                            format!("{missing} GitHub said: {}", messages.join("; "))
+                        },
+                        self.credential_source.access_hint(),
+                    ));
                 }
-                return Err(Error::Failed(if messages.is_empty() {
+                let forbidden = errors
+                    .iter()
+                    .any(|e| normalize::text(e, "type") == "FORBIDDEN")
+                    && errors
+                        .iter()
+                        .all(|e| matches!(normalize::text(e, "type"), "FORBIDDEN" | "NOT_FOUND"));
+                let detail = if messages.is_empty() {
                     format!("GitHub returned HTTP {}.", response.status)
                 } else {
                     format!("GitHub returned an error: {}", messages.join("; "))
-                }));
+                };
+                return Err(if forbidden {
+                    Error::Forbidden(detail)
+                } else {
+                    Error::Failed(detail)
+                });
             }
             return raw
                 .get("data")

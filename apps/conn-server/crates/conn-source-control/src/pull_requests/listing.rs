@@ -64,7 +64,7 @@ impl Cursor {
             )),
         }
     }
-    fn next(&self, items: &[Value]) -> Option<String> {
+    fn next(&self, items: &[Value], delivered: usize) -> Option<String> {
         let boundary = items.iter().map(|i| text(i, "updatedAt")).min()?;
 
         let mut seen = if boundary == self.boundary {
@@ -84,7 +84,7 @@ impl Cursor {
         }
         Some(format!(
             "{boundary}|{}|{}",
-            self.delivered + items.len() as u64,
+            self.delivered + delivered as u64,
             seen.iter()
                 .map(u64::to_string)
                 .collect::<Vec<_>>()
@@ -350,6 +350,7 @@ impl Client {
         let q = query(repository, input, viewer, previous);
 
         let mut items = Vec::new();
+        let mut fetched = Vec::new();
 
         let mut after = Value::Null;
 
@@ -360,19 +361,24 @@ impl Client {
 
             let conn = result.get("search").unwrap_or(&Value::Null);
 
+            let rows: Vec<_> = nodes(conn)
+                .iter()
+                .filter_map(|r| row(r, &self.host))
+                .collect();
             items.extend(
-                nodes(conn)
-                    .iter()
-                    .filter_map(|r| row(r, &self.host))
+                rows.iter()
                     .filter(|r| {
-                        previous.is_none_or(|c| {
-                            text(r, "updatedAt") != c.boundary
-                                || !c
-                                    .seen
-                                    .contains(&r.get("number").and_then(Value::as_u64).unwrap_or(0))
-                        })
-                    }),
+                        matches(r, input, viewer)
+                            && previous.is_none_or(|c| {
+                                text(r, "updatedAt") != c.boundary
+                                    || !c.seen.contains(
+                                        &r.get("number").and_then(Value::as_u64).unwrap_or(0),
+                                    )
+                            })
+                    })
+                    .cloned(),
             );
+            fetched.extend(rows);
 
             after = cursor(conn);
 
@@ -382,7 +388,7 @@ impl Client {
                 break;
             }
         }
-        if items.is_empty() && text(input, "query").is_empty() {
+        if items.is_empty() && previous.is_none() && text(input, "query").is_empty() {
             let states = match text(input, "state") {
                 "open" => json!(["OPEN"]),
                 "closed" => json!(["CLOSED"]),
@@ -391,6 +397,7 @@ impl Client {
             };
 
             after = Value::Null;
+            fetched.clear();
 
             for _ in 0..10 {
                 let result=self.graphql(&generated::PULL_REQUEST_LIST,json!({"owner":lookup.owner,"name":lookup.name,"states":states,"first":100,"after":after,"stacks":self.host=="github.com","stats":true})).await?;
@@ -399,10 +406,13 @@ impl Client {
                     .pointer("/repository/pullRequests")
                     .unwrap_or(&Value::Null);
 
+                let rows: Vec<_> = nodes(connection)
+                    .iter()
+                    .filter_map(|r| row(r, &self.host))
+                    .collect();
+                fetched.extend(rows.iter().cloned());
                 items.extend(
-                    nodes(connection)
-                        .iter()
-                        .filter_map(|r| row(r, &self.host))
+                    rows.iter()
                         .filter(|r| {
                             matches(r, input, viewer)
                                 && previous.is_none_or(|c| {
@@ -414,7 +424,8 @@ impl Client {
                                                     .unwrap_or(0),
                                             ))
                                 })
-                        }),
+                        })
+                        .cloned(),
                 );
 
                 after = cursor(connection);
@@ -437,7 +448,14 @@ impl Client {
         };
 
         let next = if truncated {
-            previous.unwrap_or(&empty).next(&items)
+            previous.unwrap_or(&empty).next(
+                if items.len() < limit {
+                    &fetched
+                } else {
+                    &items
+                },
+                items.len(),
+            )
         } else {
             None
         };

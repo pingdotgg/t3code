@@ -149,7 +149,7 @@ decoded="$scratch/decoded-tags"
 run "effect-client (conn-server)" \
   env DECODE_COVERAGE="$decoded" node crates/conn-server/tools/effect-client.mjs "$release/conn-server"
 run "effect-client (ack window)" \
-  node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
+  env DECODE_COVERAGE="$decoded" node crates/conn-server/tools/effect-client.mjs "$release/examples/effect_fixture" --fixture
 run "client-check" client_check
 # Every recording in fixtures/sessions (about 15 s).
 scenarios=()
@@ -167,7 +167,7 @@ run "settings-diff" node crates/conn-server/tools/settings-diff.mjs "$release/co
 run "secrets-interop" node crates/conn-server/tools/secrets-interop.mjs "$release"
 # Text generators and thread titles against T3's own code, on a loopback stub (no model).
 run "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$release/examples/text_generation"
-# The host definition registry against T3's own, on T3's test literals and a fixed grid.
+# GitHub and unknown-host fallback against T3's registry, test literals and a fixed grid.
 run "registry-diff" \
   node crates/conn-source-control/tools/registry-diff.mjs "$release/examples/registry_cases"
 # Webhook prompt templates, filters and signatures against T3's own functions.
