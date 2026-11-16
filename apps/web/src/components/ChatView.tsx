@@ -968,7 +968,11 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
+  const threadErrorBannerKey = getThreadErrorBannerKey(
+    routeThreadKey,
+    threadError,
+    isServerThread && localServerError === null ? (serverLatestRun?.runId ?? null) : null,
+  );
   const visibleThreadError = shouldShowThreadErrorBanner(
     routeThreadKey,
     threadError,
