@@ -626,7 +626,10 @@ export const make = Effect.gen(function* () {
         );
   });
 
-  const downloadAvailableUpdate = Effect.gen(function* () {
+  // Install refreshes before downloading, and a second check could pick a stale, older release.
+  const downloadAvailableUpdate = Effect.fn("desktop.updates.downloadAvailableUpdate")(function* (
+    refresh: boolean,
+  ) {
     const admission = yield* Effect.scoped(
       admitAfterCheck(
         Effect.gen(function* () {
@@ -653,20 +656,22 @@ export const make = Effect.gen(function* () {
     const offered = yield* Ref.get(updateStateRef);
     let state = offered;
     return yield* Effect.gen(function* () {
-      // electron-updater downloads what its last check found, which can be hours old.
-      yield* logUpdaterInfo("checking for updates", { reason: "download" });
-      yield* runUpdaterCheck(
-        offered.channel !== desktopUpdateChannelOf(environment.appVersion),
-      ).pipe(
-        // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
-        Effect.catchTags({
-          ElectronUpdaterCheckForUpdatesError: (error) =>
-            logUpdaterWarning(error.message, {
-              errorTag: error._tag,
-              cause: describeUpdateErrorCause(error.cause),
-            }),
-        }),
-      );
+      if (refresh) {
+        // electron-updater downloads what its last check found, which can be hours old.
+        yield* logUpdaterInfo("checking for updates", { reason: "download" });
+        yield* runUpdaterCheck(
+          offered.channel !== desktopUpdateChannelOf(environment.appVersion),
+        ).pipe(
+          // A failed check keeps electron-updater's earlier result, so the known offer still downloads.
+          Effect.catchTags({
+            ElectronUpdaterCheckForUpdatesError: (error) =>
+              logUpdaterWarning(error.message, {
+                errorTag: error._tag,
+                cause: describeUpdateErrorCause(error.cause),
+              }),
+          }),
+        );
+      }
       state = yield* Ref.get(updateStateRef);
       if (state.status !== "available") {
         return { accepted: true, completed: false };
@@ -719,7 +724,7 @@ export const make = Effect.gen(function* () {
       }),
       Effect.ensuring(finishUpdateAction("download")),
     );
-  }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
+  });
 
   const updateRestartMarkerDir = environment.path.join(environment.baseDir, "runtime");
   const updateRestartMarkerPath = environment.path.join(
@@ -995,7 +1000,7 @@ export const make = Effect.gen(function* () {
       ) {
         yield* setState(retained);
       } else {
-        const download = yield* downloadAvailableUpdate;
+        const download = yield* downloadAvailableUpdate(false);
         if (!download.completed) {
           return {
             accepted: download.accepted,
@@ -1418,7 +1423,7 @@ export const make = Effect.gen(function* () {
       };
     }),
     download: Effect.gen(function* () {
-      const result = yield* downloadAvailableUpdate;
+      const result = yield* downloadAvailableUpdate(true);
       return {
         accepted: result.accepted,
         completed: result.completed,

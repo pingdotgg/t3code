@@ -556,8 +556,11 @@ describe("DesktopUpdates", () => {
         assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
 
         published = "1.2.5";
+        const checksBefore = harness.checkCount();
         const result = yield* updates.installPrepared("1.2.4");
         assert.isTrue(result.accepted);
+        // A second check before downloading could find a stale feed's older release.
+        assert.equal(harness.checkCount(), checksBefore + 1);
         assert.equal(harness.quitAndInstalls(), 1);
         assert.equal(installedVersion, "1.2.5");
       }),
