@@ -2157,7 +2157,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       const repository = lookupResult.value;
-      const remoteUrl = getDefaultCloneUrl(repository);
+      const remoteUrl = getDefaultCloneUrl(repository, rawRepository);
       const destinationPath = getDefaultCloneDestination(
         addProjectCloneFlow.environmentId,
         remoteUrl,

@@ -10,7 +10,7 @@ import type {
   SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
+import { cloneUrlProtocol, cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
 import { newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
@@ -136,7 +136,11 @@ export function normalizePastedCloneUrl(input: string): string {
 
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
+  input?: string,
 ): string {
+  // A pasted SSH URL carries a user and port the lookup result does not report.
+  const pasted = input?.trim();
+  if (pasted && cloneUrlProtocol(pasted) === "ssh") return pasted;
   return sourceControlClients.get(repository.provider).defaultCloneTransport === "https"
     ? repository.url
     : repository.sshUrl;
