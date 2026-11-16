@@ -48,7 +48,11 @@ runs:
       if: steps.vp_cache.outputs.cache-hit == 'true'
       shell: bash
       run: |
-        echo "$HOME/.vite-plus/bin" >> "$GITHUB_PATH"
+        vp_bin="$HOME/.vite-plus/bin"
+        # Git Bash's $HOME is /c/Users/...; PowerShell and Node child processes
+        # cannot use that PATH entry, so `vp` would only resolve in bash steps.
+        if [ "$RUNNER_OS" = "Windows" ]; then vp_bin="$(cygpath -w "$vp_bin")"; fi
+        echo "$vp_bin" >> "$GITHUB_PATH"
         "$HOME/.vite-plus/bin/vp" env use "${{ steps.vp.outputs.node }}"
 
     # vp gives each Node.js download attempt 10 minutes by default, so one
