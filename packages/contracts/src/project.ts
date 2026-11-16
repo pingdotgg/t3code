@@ -58,6 +58,25 @@ export const ProjectTrackedFolder = Schema.Struct({
 });
 export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
 
+/**
+ * A tracked folder whose path holds a `*` segment is a rule: it stands for every repository at a
+ * matching place, read from disk each time, so the project follows clones and removals.
+ */
+export function isTrackedFolderRule(folderPath: string): boolean {
+  return folderPath.split(/[\\/]/).includes("*");
+}
+
+/** Whether `candidate` is, or lies inside, a folder that a tracked folder or rule names. */
+export function trackedFolderCovers(folderPath: string, candidate: string): boolean {
+  const segments = (value: string) => value.split(/[\\/]/).filter((segment) => segment !== "");
+  const expected = segments(folderPath);
+  const actual = segments(candidate);
+  return (
+    actual.length >= expected.length &&
+    expected.every((segment, index) => segment === "*" || segment === actual[index])
+  );
+}
+
 export const ProjectTrackedFolders = Schema.Array(ProjectTrackedFolder).check(
   Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX),
 );

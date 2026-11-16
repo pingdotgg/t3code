@@ -259,6 +259,7 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { TrackedFoldersDialog } from "./TrackedFoldersDialog";
+import { followedTrackedFolders } from "./TrackedFoldersDialog.logic";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -3093,8 +3094,15 @@ function OpenCommandPaletteDialog(props: {
           mode="add"
           scan={trackedFoldersRequest.scan}
           maxChecked={PROJECT_TRACKED_FOLDERS_MAX}
-          onConfirm={(checked) =>
-            trackedFoldersRequest.resolve(checked.map(({ path, name }) => ({ path, name })))
+          onConfirm={(checked, follow) =>
+            trackedFoldersRequest.resolve(
+              follow
+                ? followedTrackedFolders({
+                    workspaceRoot: trackedFoldersRequest.scan.workspaceRoot,
+                    scanned: checked,
+                  })
+                : checked.map(({ path, name }) => ({ path, name })),
+            )
           }
           onSkip={() => trackedFoldersRequest.resolve([])}
           onClose={() => trackedFoldersRequest.resolve(null)}

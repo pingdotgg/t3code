@@ -6,6 +6,7 @@ import {
   type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
+  trackedFolderCovers,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
@@ -161,12 +162,13 @@ export const make = Effect.gen(function* () {
     project: OrchestrationProjectShell,
     refresh: boolean,
   ) {
-    const tracked = new Set((project.trackedFolders ?? []).map((folder) => folder.path));
-    if (tracked.size === 0 || thread.archivedAt !== null) return;
+    const tracked = project.trackedFolders ?? [];
+    if (tracked.length === 0 || thread.archivedAt !== null) return;
     const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
     const cwds = new Set(
       checkpointScopes.flatMap((scope) =>
-        typeof scope.repositoryPath === "string" && tracked.has(scope.repositoryPath)
+        typeof scope.repositoryPath === "string" &&
+        tracked.some((folder) => trackedFolderCovers(folder.path, scope.repositoryPath!))
           ? [scope.cwd]
           : [],
       ),

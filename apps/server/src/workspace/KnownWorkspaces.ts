@@ -1,4 +1,5 @@
 // Client-supplied worktrees count only under managed folders or when Git lists them for the project.
+import { isTrackedFolderRule, trackedFolderCovers } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
@@ -93,7 +94,9 @@ export const make = Effect.gen(function* () {
       // After every project folder: most tracked folders sit inside one and need no lookup.
       for (const project of projects) {
         for (const folder of project.trackedFolders ?? []) {
-          if (within(yield* resolveRoot(folder.path))) return true;
+          if (isTrackedFolderRule(folder.path)) {
+            if (trackedFolderCovers(path.resolve(folder.path), realPath)) return true;
+          } else if (within(yield* resolveRoot(folder.path))) return true;
         }
       }
 

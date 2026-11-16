@@ -37,7 +37,7 @@ import {
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
-import { parseGitmodulesPaths } from "./WorkspaceFolders.ts";
+import { expandTrackedFolders, parseGitmodulesPaths } from "./WorkspaceFolders.ts";
 import { withWorkspaceLease } from "./workspaceLease.ts";
 
 // Each worktree is a checkout: enough at once to finish four repositories together, few enough
@@ -187,6 +187,13 @@ const make = Effect.gen(function* () {
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
   const isRepository = (folder: string) => exists(path.join(folder, ".git"));
+  const trackedFolders = (project: {
+    readonly trackedFolders: ReadonlyArray<ProjectTrackedFolder>;
+  }) =>
+    expandTrackedFolders(project.trackedFolders).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   // The repository that pins a submodule owns its checkout: Git, a hook or a setup script puts it
   // in that repository's worktree, so it never gets one of its own here.
   const isSubmodule = Effect.fnUntraced(function* (folder: string) {
@@ -241,7 +248,7 @@ const make = Effect.gen(function* () {
     const project = yield* readProject("plan", input.projectId);
     const projectRoot = path.resolve(project.workspaceRoot);
     const classified = yield* Effect.forEach(
-      project.trackedFolders,
+      yield* trackedFolders(project),
       (folder) => {
         const folderPath = path.resolve(folder.path);
         return Effect.all([isRepository(folderPath), isSubmodule(folderPath)]).pipe(
@@ -761,7 +768,7 @@ const make = Effect.gen(function* () {
         const taskFolder = yield* requireTaskFolder("add-repository", found.root);
         const project = yield* readProject("add-repository", taskFolder.projectId);
         const repositoryPath = path.resolve(input.repositoryPath);
-        const folder = project.trackedFolders.find(
+        const folder = (yield* trackedFolders(project)).find(
           (candidate) => path.resolve(candidate.path) === repositoryPath,
         );
         if (folder === undefined)
@@ -937,7 +944,7 @@ const make = Effect.gen(function* () {
     } else if (!(yield* exists(taskFolder.projectPath))) {
       const project = yield* readProject("create", taskFolder.projectId);
       const tracked = yield* Effect.filter(
-        project.trackedFolders.map((folder) => path.resolve(folder.path)),
+        (yield* trackedFolders(project)).map((folder) => path.resolve(folder.path)),
         isRepository,
       );
       yield* linkFolder(taskFolder.projectRoot, taskFolder.projectPath, tracked).pipe(

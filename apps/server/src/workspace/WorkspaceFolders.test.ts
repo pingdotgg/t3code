@@ -67,6 +67,8 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "web/.git",
         "sub/.git",
         "notes",
+        "src/svc/.git",
+        "tree",
         ".hidden/.git",
         "node_modules/.git",
         "../outside/.git",
@@ -75,6 +77,11 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       }
       yield* fileSystem.symlink(outside, path.join(root, "linked"));
       yield* fileSystem.symlink(root, path.join(root, "self"));
+      // A worktree of `api`: its history is that repository's.
+      yield* fileSystem.writeFileString(
+        path.join(root, "tree", ".git"),
+        `gitdir: ${path.join(root, "api", ".git", "worktrees", "tree")}\n`,
+      );
       yield* fileSystem.writeFileString(
         path.join(root, ".gitmodules"),
         '[submodule "sub"]\n\tpath = sub\n\turl = https://example.test/sub.git\n',
@@ -112,6 +119,13 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             source: "code-workspace",
           },
           { path: outside, name: "outside", isGitRepository: true, source: "code-workspace" },
+          // One level below a plain folder is looked into.
+          {
+            path: path.join(root, "src", "svc"),
+            name: "svc",
+            isGitRepository: true,
+            source: "child",
+          },
           { path: path.join(root, "web"), name: "web", isGitRepository: true, source: "child" },
         ],
       });
@@ -121,6 +135,41 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "WorkspaceFoldersError",
       );
     }).pipe(Effect.provide(layerFor())),
+  );
+
+  it.effect("reads a rule's repositories from disk each time", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const workspaceRoot = path.join(tmp, "wrapper");
+      const repository = (name: string) => path.join(workspaceRoot, "src", name);
+      for (const folder of ["src/api/.git", "src/notes", "docs/.git"]) {
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+      }
+      const trackedFolders = [
+        { path: path.join(workspaceRoot, "docs"), name: "Docs" },
+        { path: path.join(workspaceRoot, "src", "*"), name: "src/*" },
+        { path: path.join(workspaceRoot, "*"), name: "*" },
+      ];
+
+      yield* Effect.gen(function* () {
+        const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+        const listed = Effect.map(workspaceFolders.list({ projectId }), ({ folders }) =>
+          folders.map((folder) => [folder.name, folder.path]),
+        );
+        assert.deepEqual(yield* listed, [
+          ["Docs", path.join(workspaceRoot, "docs")],
+          ["api", repository("api")],
+        ]);
+        yield* fileSystem.makeDirectory(path.join(repository("web"), ".git"), { recursive: true });
+        yield* fileSystem.remove(repository("api"), { recursive: true });
+        assert.deepEqual(yield* listed, [
+          ["Docs", path.join(workspaceRoot, "docs")],
+          ["web", repository("web")],
+        ]);
+      }).pipe(Effect.provide(layerFor({ workspaceRoot, trackedFolders })));
+    }),
   );
 
   it.effect("reports each tracked folder's state and grants a thread the ones outside", () =>

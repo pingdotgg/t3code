@@ -15,6 +15,8 @@ import {
   type WorkspaceFolderState,
   type WorkspaceScanFoldersResult,
   type WorkspaceScannedFolder,
+  isTrackedFolderRule,
+  trackedFolderCovers,
 } from "@t3tools/contracts";
 import { FolderIcon, PlusIcon } from "lucide-react";
 import { useId, useState } from "react";
@@ -35,6 +37,7 @@ import {
   resolveTrackedFolderInput,
   trackedFolderDisplayPath,
   untrackedScannedPaths,
+  followedTrackedFolders,
 } from "../TrackedFoldersDialog.logic";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -95,6 +98,14 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const stateByPath = new Map(
     (listQuery.data?.folders ?? []).map((folder) => [folder.path, folder.state]),
   );
+  // A rule's row counts the repositories it matches right now.
+  const matchCount = (rule: string) =>
+    (listQuery.data?.folders ?? []).filter(
+      (folder) =>
+        trackedFolderCovers(rule, folder.path) &&
+        folder.path.split(/[\\/]/).length === rule.split(/[\\/]/).length &&
+        !tracked.some((entry) => entry.path === folder.path),
+    ).length;
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
@@ -152,8 +163,17 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const saveRescan = async (
     scan: WorkspaceScanFoldersResult,
     checked: ReadonlyArray<WorkspaceScannedFolder>,
+    follow: boolean,
   ) => {
-    const next = mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked });
+    // Following replaces the scanned folders' own entries with the rules that cover them.
+    const next = follow
+      ? [
+          ...mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked: [] }).filter(
+            (folder) => !isTrackedFolderRule(folder.path),
+          ),
+          ...followedTrackedFolders({ workspaceRoot: scan.workspaceRoot, scanned: checked }),
+        ]
+      : mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked });
     if (await save(next, "Failed to save repositories")) setRescan(null);
   };
 
@@ -205,7 +225,11 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
               title={
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="min-w-0 truncate">{folder.name}</span>
-                  {state ? (
+                  {isTrackedFolderRule(folder.path) ? (
+                    <Badge size="sm" variant="info">
+                      {matchCount(folder.path)} followed
+                    </Badge>
+                  ) : state ? (
                     <Badge size="sm" variant={state === "missing" ? "warning" : "outline"}>
                       {FOLDER_STATE_LABELS[state]}
                     </Badge>
@@ -252,7 +276,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
           }
           newPaths={scannedButUntracked}
           busy={isSaving}
-          onConfirm={(checked) => void saveRescan(rescan, checked)}
+          onConfirm={(checked, follow) => void saveRescan(rescan, checked, follow)}
           onClose={() => setRescan(null)}
         />
       ) : null}

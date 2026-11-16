@@ -1,4 +1,8 @@
-import type { ProjectTrackedFolder, WorkspaceScannedFolder } from "@t3tools/contracts";
+import {
+  isTrackedFolderRule,
+  type ProjectTrackedFolder,
+  type WorkspaceScannedFolder,
+} from "@t3tools/contracts";
 import { hasTrailingPathSeparator } from "@t3tools/client-runtime/state/projects";
 import {
   fileBasename,
@@ -76,6 +80,35 @@ export function mergeScannedTrackedFolders(input: {
 }
 
 /**
+ * The tracked list that keeps following a scanned folder: one rule per folder the repositories
+ * sit in, so later clones are picked up. Folders a workspace file lists stay named.
+ */
+export function followedTrackedFolders(input: {
+  readonly workspaceRoot: string;
+  readonly scanned: ReadonlyArray<WorkspaceScannedFolder>;
+}): ReadonlyArray<ProjectTrackedFolder> {
+  const followed: ProjectTrackedFolder[] = [];
+  const seen = new Set<string>();
+  for (const folder of input.scanned) {
+    const cut = Math.max(folder.path.lastIndexOf("/"), folder.path.lastIndexOf("\\"));
+    const entry =
+      folder.source === "child" && cut > 0
+        ? {
+            path: `${folder.path.slice(0, cut + 1)}*`,
+            name: trackedFolderDisplayPath(
+              `${folder.path.slice(0, cut + 1)}*`,
+              input.workspaceRoot,
+            ),
+          }
+        : { path: folder.path, name: folder.name };
+    if (seen.has(entry.path)) continue;
+    seen.add(entry.path);
+    followed.push(entry);
+  }
+  return followed;
+}
+
+/**
  * The folder a typed path adds. A listing resolves `~/` and names the directory exactly; without
  * one, only an absolute path is safe to send.
  */
@@ -95,7 +128,10 @@ export function resolveTrackedFolderInput(input: {
         : null);
   if (rawPath === null) return null;
   const path = normalizeProjectPathForDispatch(rawPath);
-  const name = fileBasename(path).trim();
+  // A rule is named by its last two segments: `src/*` says more than `*`.
+  const name = (
+    isTrackedFolderRule(path) ? path.split(/[\\/]/).slice(-2).join("/") : fileBasename(path)
+  ).trim();
   if (path.length === 0 || name.length === 0) return null;
   return { path, name };
 }

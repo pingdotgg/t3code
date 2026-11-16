@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   filterScannedFolders,
+  followedTrackedFolders,
   mergeScannedTrackedFolders,
   resolveTrackedFolderInput,
   trackedFolderDisplayPath,
@@ -79,6 +80,22 @@ describe("filterScannedFolders", () => {
     expect(filterScannedFolders(folders, " api ")).toEqual([folders[0]]);
     expect(filterScannedFolders(folders, "LIBS")).toEqual([folders[1]]);
     expect(filterScannedFolders(folders, "")).toBe(folders);
+  });
+});
+
+describe("followedTrackedFolders", () => {
+  it("turns scanned children into one rule per folder and keeps listed folders named", () => {
+    const scanned = [
+      { path: "/work/shop/api", name: "api", isGitRepository: true, source: "child" as const },
+      { path: "/work/shop/web", name: "web", isGitRepository: true, source: "child" as const },
+      { path: "/work/shop/src/svc", name: "svc", isGitRepository: true, source: "child" as const },
+      { path: "/work/lib", name: "Lib", isGitRepository: true, source: "code-workspace" as const },
+    ];
+    expect(followedTrackedFolders({ workspaceRoot: "/work/shop", scanned })).toEqual([
+      { path: "/work/shop/*", name: "*" },
+      { path: "/work/shop/src/*", name: "src/*" },
+      { path: "/work/lib", name: "Lib" },
+    ]);
   });
 });
 

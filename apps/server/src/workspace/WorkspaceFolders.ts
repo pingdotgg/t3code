@@ -1,4 +1,5 @@
 import {
+  isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectId,
   type ProjectTrackedFolder,
@@ -120,7 +121,66 @@ const folderProbes = Effect.gen(function* () {
     return { ...folder, state: (yield* exists(folder.path)) ? "plain" : "missing" };
   });
 
-  return { exists, realPath, classify };
+  // A linked worktree and a submodule keep `.git` as a file; both follow another repository.
+  const ownsHistory = (folder: string) =>
+    fileSystem.stat(path.join(folder, ".git")).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+
+  const childFolders = (folder: string) =>
+    fileSystem.readDirectory(folder).pipe(
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+      Effect.map((names) =>
+        names
+          .filter((name) => !name.startsWith(".") && name !== "node_modules")
+          .toSorted()
+          .map((name) => path.join(folder, name)),
+      ),
+    );
+
+  return { exists, realPath, classify, ownsHistory, childFolders };
+});
+
+/**
+ * A project's tracked folders with each rule replaced by the repositories it matches now. A
+ * folder listed by name keeps its place and name.
+ */
+export const expandTrackedFolders = Effect.fn("WorkspaceFolders.expandTrackedFolders")(function* (
+  tracked: ReadonlyArray<ProjectTrackedFolder>,
+): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
+  if (!tracked.some((folder) => isTrackedFolderRule(folder.path))) return tracked;
+  const path = yield* Path.Path;
+  const { ownsHistory, childFolders } = yield* folderProbes;
+  const matches = Effect.fnUntraced(function* (rule: string) {
+    const [first = "", ...rest] = rule.split(path.sep);
+    let folders: ReadonlyArray<string> = [first === "" ? path.sep : first];
+    for (const segment of rest) {
+      folders =
+        segment === "*"
+          ? (yield* Effect.forEach(folders, childFolders, {
+              concurrency: DETECTION_CONCURRENCY,
+            })).flat()
+          : folders.map((folder) => path.join(folder, segment));
+    }
+    return yield* Effect.filter(folders, ownsHistory, { concurrency: DETECTION_CONCURRENCY });
+  });
+  const seen = new Set(
+    tracked.flatMap((folder) => (isTrackedFolderRule(folder.path) ? [] : [folder.path])),
+  );
+  const expanded: ProjectTrackedFolder[] = [];
+  for (const folder of tracked) {
+    if (!isTrackedFolderRule(folder.path)) {
+      expanded.push(folder);
+      continue;
+    }
+    for (const match of yield* matches(path.resolve(folder.path))) {
+      if (seen.has(match)) continue;
+      seen.add(match);
+      expanded.push({ path: match, name: path.basename(match) });
+    }
+  }
+  return expanded.slice(0, PROJECT_TRACKED_FOLDERS_MAX);
 });
 
 const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFolders")(function* (
@@ -154,7 +214,7 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { exists, realPath, classify } = yield* folderProbes;
+  const { exists, realPath, classify, ownsHistory, childFolders } = yield* folderProbes;
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
@@ -168,13 +228,24 @@ export const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
   const codeWorkspaceFile = names.find((name) => name.endsWith(CODE_WORKSPACE_EXTENSION)) ?? null;
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
+  // A worktree of another repository is that repository's, so only folders with their own
+  // history are offered. A plain child is looked into once: wrappers keep repositories under
+  // folders such as `src` or `packages`.
   const children = yield* Effect.forEach(
     names.filter((name) => !name.startsWith(".") && name !== "node_modules"),
     (name) => {
       const folderPath = path.join(root, name);
-      return exists(path.join(folderPath, ".git")).pipe(
-        Effect.map((isRepository) => (isRepository ? [{ path: folderPath, name }] : [])),
-      );
+      return Effect.gen(function* () {
+        if (yield* ownsHistory(folderPath)) return [{ path: folderPath, name }];
+        if (yield* exists(path.join(folderPath, ".git"))) return [];
+        const nested = yield* Effect.filter(yield* childFolders(folderPath), ownsHistory, {
+          concurrency: DETECTION_CONCURRENCY,
+        });
+        return nested.map((nestedPath) => ({
+          path: nestedPath,
+          name: path.basename(nestedPath),
+        }));
+      });
     },
     { concurrency: DETECTION_CONCURRENCY },
   );
@@ -252,6 +323,11 @@ const make = Effect.gen(function* () {
 
   const classifyAll = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
     Effect.forEach(folders, classify, { concurrency: DETECTION_CONCURRENCY });
+  const expand = (folders: ReadonlyArray<ProjectTrackedFolder>) =>
+    expandTrackedFolders(folders).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
 
   // `identity` is `root` in the checkout the thread's was made from: it names the same submodule
   // in every worktree.
@@ -346,7 +422,7 @@ const make = Effect.gen(function* () {
     }
     const project = yield* readProject(input.projectId);
     if (project.trackedFolders.length === 0) return EMPTY_WORKSPACE;
-    const folders = (yield* classifyAll(project.trackedFolders)).flatMap((folder) =>
+    const folders = (yield* classifyAll(yield* expand(project.trackedFolders))).flatMap((folder) =>
       folder.state === "missing"
         ? []
         : [{ name: folder.name, path: folder.path, isGitRepository: folder.state === "git" }],
@@ -389,7 +465,8 @@ const make = Effect.gen(function* () {
 
   const list: WorkspaceFolders["Service"]["list"] = Effect.fn("WorkspaceFolders.list")(
     function* (input) {
-      return { folders: yield* classifyAll((yield* readProject(input.projectId)).trackedFolders) };
+      const project = yield* readProject(input.projectId);
+      return { folders: yield* classifyAll(yield* expand(project.trackedFolders)) };
     },
   );
 

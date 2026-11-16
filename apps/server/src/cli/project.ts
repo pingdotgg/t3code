@@ -482,7 +482,9 @@ const projectAddCommand = Command.make("add", {
     Flag.withDefault(false),
   ),
   track: Flag.String("track").pipe(
-    Flag.withDescription("Another folder the project works in. Repeat for more."),
+    Flag.withDescription(
+      "Another folder the project works in, or a rule such as src/* that follows every repository there. Repeat for more.",
+    ),
     Flag.atLeast(0),
   ),
 }).pipe(

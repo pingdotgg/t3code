@@ -40,7 +40,8 @@ export function TrackedFoldersDialog(props: {
   /** Listed paths the project does not track yet, marked in `edit` mode. */
   readonly newPaths?: ReadonlySet<string>;
   readonly busy?: boolean;
-  readonly onConfirm: (checked: ReadonlyArray<WorkspaceScannedFolder>) => void;
+  /** `follow`: keep tracking whatever these folders hold, instead of the checked list. */
+  readonly onConfirm: (checked: ReadonlyArray<WorkspaceScannedFolder>, follow: boolean) => void;
   readonly onSkip?: () => void;
   readonly onClose: () => void;
 }) {
@@ -50,10 +51,13 @@ export function TrackedFoldersDialog(props: {
     () => new Set(scan.folders.map((folder) => folder.path)),
   );
   const [filter, setFilter] = useState("");
+  const [follow, setFollow] = useState(false);
   const showTools = scan.folders.length > TRACKED_FOLDERS_FILTER_THRESHOLD;
   const visibleFolders = filterScannedFolders(scan.folders, filter);
   const checked = scan.folders.filter((folder) => checkedPaths.has(folder.path));
   const overLimit = checked.length - props.maxChecked;
+  // A rule tracks everything it matches, so it is offered only while nothing is left out.
+  const canFollow = checked.length === scan.folders.length && scan.folders.length > 0;
   const folderName = fileBasename(scan.workspaceRoot);
   const noun = scan.folders.every((folder) => folder.isGitRepository)
     ? scan.folders.length === 1
@@ -154,6 +158,24 @@ export function TrackedFoldersDialog(props: {
             </ul>
           )}
         </DialogPanel>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={follow && canFollow}
+          disabled={!canFollow}
+          className="mx-4 mb-3 flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-start outline-none hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default disabled:opacity-60"
+          onClick={() => setFollow((current) => !current)}
+        >
+          <CheckboxMark checked={follow && canFollow} />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium">Keep following this folder</span>
+            <span className="block text-xs text-muted-foreground">
+              {canFollow
+                ? "Repositories cloned here later are tracked, and removed ones are dropped."
+                : "Check every repository to follow the folder."}
+            </span>
+          </span>
+        </button>
         {overLimit > 0 ? (
           <p role="alert" className="px-6 pb-3 text-xs text-warning-foreground">
             A project can track up to {PROJECT_TRACKED_FOLDERS_MAX} folders. Uncheck {overLimit} to
@@ -172,7 +194,7 @@ export function TrackedFoldersDialog(props: {
           )}
           <DialogAction
             disabled={props.busy || overLimit > 0}
-            onClick={() => props.onConfirm(checked)}
+            onClick={() => props.onConfirm(checked, follow && canFollow)}
           >
             {mode === "add" ? "Add project" : "Save"}
           </DialogAction>
