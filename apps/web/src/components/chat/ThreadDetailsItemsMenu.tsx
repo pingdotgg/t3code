@@ -15,7 +15,6 @@ import {
 /** Menu body that shows and hides thread details items. The card's context menu and Settings share it. */
 export function ThreadDetailsItemsMenuItems() {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
-  const inSidebar = useClientSettings((settings) => settings.threadDetailsInSidebar);
   return (
     <>
       <MenuGroup>
@@ -34,15 +33,6 @@ export function ThreadDetailsItemsMenuItems() {
           </MenuCheckboxItem>
         ))}
       </MenuGroup>
-      <MenuSeparator />
-      <MenuCheckboxItem
-        checked={inSidebar}
-        onCheckedChange={(checked) =>
-          updateClientSettings({ threadDetailsInSidebar: Boolean(checked) })
-        }
-      >
-        Show under the thread in the sidebar
-      </MenuCheckboxItem>
       <MenuSeparator />
       <MenuItem
         disabled={isDefaultThreadDetailsVisibility(visibility)}

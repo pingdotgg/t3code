@@ -70,7 +70,6 @@ import {
   SettingsIcon,
 } from "lucide-react";
 import {
-  Fragment,
   useEffect,
   useLayoutEffect,
   useReducer,
@@ -249,8 +248,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
-import { SidebarContent, SidebarGroup, useSidebar, useSidebarVisibility } from "./ui/sidebar";
-import { ThreadDetailsSidebarSlot } from "./sidebar/ThreadDetailsSidebarSlot";
+import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
 import { TooltipProvider } from "./ui/tooltip";
@@ -920,8 +918,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
-  const sidebarVisible = useSidebarVisibility();
-  const showDetailsInSidebar = useClientSettings((s) => s.threadDetailsInSidebar) && sidebarVisible;
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -3472,17 +3468,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onFileDropThreads={handleThreadFileDrop}
                           />
                         );
-                        return showDetailsInSidebar && routeThreadKey === threadKey ? (
-                          <Fragment key={threadKey}>
-                            {row}
-                            <ThreadDetailsSidebarSlot
-                              threadRef={scopeThreadRef(thread.environmentId, thread.id)}
-                              hidden={dragState !== null}
-                            />
-                          </Fragment>
-                        ) : (
-                          row
-                        );
+                        return row;
                       };
                       const from = isContextDrag ? null : (dragState?.activeSection ?? null);
                       const items: ReactNode[] = [
