@@ -408,6 +408,9 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "git.resolvePullRequest",
+  "git.preparePullRequestThread",
+  "git.runStackedAction",
   "secrets.answerRequest",
   "testLogins.save",
   "testLogins.update",
@@ -469,7 +472,7 @@ function limitNode(ast) {
   if(ast._tag==="Arrays") {
     if(ast.elements.length!==0 || ast.rest.length!==1) throw new Error("Payload limits need a tuple handler");
     const value=limitNode(ast.rest[0]);
-    if(value) node.values=value;
+    if(value) node.items=value;
   }
   if (ast._tag === "Objects") {
     const fields = {};
@@ -499,7 +502,7 @@ const limitsRs = rustfmt(
     ...HEADER,
     "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
     "",
-    "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`,",
+    "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`, `items`,",
     "/// `variants` (by `discriminator`, default `_tag`), `trim`, `nonBlank`, `minLength`, `maxLength`,",
     "/// `pattern`, `maxProperties`, `int`, `minimum`, `maximum`.",
     `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
@@ -517,20 +520,24 @@ const limitsRs = rustfmt(
 
 const prompts = await importSource("packages/provider-core/src/server/textGenerationPrompts.ts");
 const PLACEHOLDERS = { '"@@P@@"': "Project", '"@@T@@"': "Previous", "@@M@@": "Message" };
-function promptParts(input) {
-  const { prompt } = prompts.buildThreadTitlePrompt({ message: "@@M@@", ...input });
+function partsOf(prompt, placeholders) {
   const parts = [];
+  const pattern = new RegExp(Object.keys(placeholders).map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
   let rest = prompt;
-  const pattern = /"@@P@@"|"@@T@@"|@@M@@/;
   for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
     if (match.index > 0) parts.push(`Part::Text(${str(rest.slice(0, match.index))})`);
-    parts.push(`Part::${PLACEHOLDERS[match[0]]}`);
+    parts.push(`Part::${placeholders[match[0]]}`);
     rest = rest.slice(match.index + match[0].length);
   }
   if (rest.length > 0) parts.push(`Part::Text(${str(rest)})`);
-  if (prompt.includes("@@") && parts.filter((p) => !p.startsWith("Part::Text")).length === 0)
-    throw new Error("title prompt placeholders not found");
   return `&[\n${parts.map((p) => `    ${p},`).join("\n")}\n]`;
+}
+function promptParts(input) {
+  return partsOf(prompts.buildThreadTitlePrompt({ message: "@@M@@", ...input }).prompt, PLACEHOLDERS);
+}
+function commitParts(includeBranch, policy) {
+  return partsOf(prompts.buildCommitMessagePrompt({branch:"@@BRANCH@@",stagedSummary:"@@SUMMARY@@",stagedPatch:"@@PATCH@@",includeBranch,...(policy ? {policy:{commitInstructions:"@@POLICY@@"}} : {})}).prompt,
+    {"@@BRANCH@@":"Branch", "@@SUMMARY@@":"Summary", "@@PATCH@@":"Patch", "@@POLICY@@":"Policy"});
 }
 // The title's output schema as T3 writes it for a CLI (`toJsonSchemaObject`, then
 // `JSON.stringify`): Codex reads it from `--output-schema`.
@@ -542,6 +549,7 @@ const titleOutputSchema = JSON.stringify(
     prompts.buildThreadTitlePrompt({ message: "" }).outputSchema,
   ),
 );
+const presets = await importSource("apps/server/src/textGeneration/TextGenerationPresets.ts");
 const titlePromptsRs = rustfmt(
   [
     ...HEADER,
@@ -556,7 +564,7 @@ const titlePromptsRs = rustfmt(
     "    /// `JSON.stringify` of the previous title.",
     "    Previous,",
     "    /// The (limited) message or thread contents.",
-    "    Message,",
+    "    Message, Branch, Summary, Patch, Policy,",
     "}",
     "",
     `pub(super) const INITIAL_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@" })};`,
@@ -566,13 +574,32 @@ const titlePromptsRs = rustfmt(
     "",
     "/// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).",
     `pub(crate) const TITLE_OUTPUT_SCHEMA: &str = ${str(titleOutputSchema)};`,
+    `pub(crate) const COMMIT_POLICIES: [&str; 2] = [${str(presets.conventionalCommitsTextGenerationPolicy.commitInstructions)},${str(presets.repositoryConventionsTextGenerationPolicy.commitInstructions)}];`,
+    `pub(super) const COMMIT_PROMPTS: [[&[Part]; 2]; 2] = [${[false,true].map(includeBranch => `[${[false,true].map(policy => commitParts(includeBranch,policy)).join(",")}]`).join(",")}];`,
+    `pub(crate) const COMMIT_SCHEMAS: [&str; 2] = [${[false,true].map(includeBranch => str(JSON.stringify(textGenerationUtils.toJsonSchemaObject(prompts.buildCommitMessagePrompt({branch:null,stagedSummary:"",stagedPatch:"",includeBranch}).outputSchema)))).join(",")}];`,
     "",
   ].join("\n"),
 );
 
 // ---- Write or check ----------------------------------------------------------------------
 
+const vcsSource = NodeFS.readFileSync(inMonorepo("apps/server/src/vcs/GitVcsDriverCore.ts"), "utf8");
+const patchLimit = vcsSource.match(/const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = ([\d_]+);/);
+if (!patchLimit) throw new Error("commit patch limit moved");
+const pathFunctions = await importSource("packages/shared/src/path.ts");
+const folds = new Map();
+for (let code = 128; code <= 0x1eff; code++) {
+  const raw = String.fromCodePoint(code);
+  const folded = pathFunctions.foldLatinDiacritics(raw);
+  if (raw !== folded && /^[a-zA-Z]+$/.test(folded)) folds.set(folded, (folds.get(folded) ?? "") + raw);
+}
+const gitRulesRs = rustfmt([...HEADER,
+  `pub const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES: usize = ${patchLimit[1].replaceAll("_", "")};`,
+  `pub const LATIN_FOLDS: &[(&str, &str)] = &[${[...folds].map(([folded, raw]) => `(${str(raw)},${str(folded)})`).join(",")}];`,
+].join("\n"));
+
 const outputs = {
+  "crates/conn-vcs/src/generated.rs": gitRulesRs,
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,

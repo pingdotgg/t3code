@@ -25,7 +25,7 @@ mod secrets;
 mod tasks;
 mod test_logins;
 mod threads;
-mod worktree;
+pub(crate) mod worktree;
 
 pub(crate) type Args = Map<String, Value>;
 

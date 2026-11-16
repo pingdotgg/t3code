@@ -73,10 +73,10 @@ fn decode_json(text: &str) -> HostResult<Value> {
 
 /// `GitHubRepositoryLocator`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Locator {
-    host: String,
-    owner: String,
-    name: String,
+pub(crate) struct Locator {
+    pub(crate) host: String,
+    pub(crate) owner: String,
+    pub(crate) name: String,
 }
 
 /// `.git` off the end of a path, before trailing slashes (`/\.git\/*$/i`).
@@ -113,7 +113,7 @@ fn http_url_parts(text: &str) -> Option<(String, &str)> {
 }
 
 /// `parseGitHubRepositorySelector`.
-fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
+pub(crate) fn parse_selector(selector: &str, default_host: &str) -> Option<Locator> {
     let trimmed = selector.trim();
     if let Some((host, path)) = http_url_parts(trimmed) {
         let parts: Vec<&str> = without_git_suffix(path)
@@ -207,11 +207,15 @@ fn fetch_remotes(stdout: &str) -> Vec<(String, String)> {
 
 /// The host part of `resolveRepository`: `GH_REPO`, else the checkout's GitHub remote
 /// (origin first). `None` when neither names a repository.
-async fn resolve_repository_host(ctx: DiscoveryContext<'_>, default_host: &str) -> Option<String> {
+pub(crate) async fn resolve_repository(ctx: DiscoveryContext<'_>) -> HostResult<Locator> {
+    let default_host = ctx
+        .env
+        .non_blank("GH_HOST")
+        .unwrap_or_else(|| "github.com".into());
     if let Some(repository) = ctx.env.non_blank("GH_REPO")
-        && let Some(locator) = parse_selector(&repository, default_host)
+        && let Some(locator) = parse_selector(&repository, &default_host)
     {
-        return Some(locator.host);
+        return Ok(locator);
     }
     let read = |args: Vec<String>| {
         let mut call = CliCall::new(
@@ -248,12 +252,21 @@ async fn resolve_repository_host(ctx: DiscoveryContext<'_>, default_host: &str) 
         .or_else(|| hosts.iter().find(|(_, host)| host.is_some()))
         .and_then(|(_, host)| host.clone())
         .unwrap_or_else(|| default_host.to_owned());
-    let names_repository = remotes.iter().any(|(_, url)| {
-        api_host_for_remote(url).as_deref() == Some(host.as_str())
-            && crate::remote::parse_git_remote_repository(url)
-                .is_some_and(|(_, path)| path.split('/').count() == 2)
-    });
-    names_repository.then_some(host)
+    remotes
+        .iter()
+        .find_map(|(_, url)| {
+            (api_host_for_remote(url).as_deref() == Some(&host))
+                .then(|| {
+                    let (_, path) = crate::remote::parse_git_remote_repository(url)?;
+                    parse_selector(&path, &host)
+                })
+                .flatten()
+        })
+        .ok_or_else(|| {
+            HostFailure::new(format!(
+                "No GitHub repository on {host} was found among this checkout's git remotes."
+            ))
+        })
 }
 
 fn gh_host(ctx: DiscoveryContext<'_>) -> Option<String> {
@@ -299,11 +312,14 @@ async fn github_viewer(ctx: DiscoveryContext<'_>, host: &str) -> HostResult<Stri
 
 /// `RawRepositorySchema` and `repositoryCloneUrls`.
 fn github_urls(response: &HttpResponse) -> HostResult<CloneUrls> {
-    let value = decode_json(&response.text())?;
+    github_urls_value(&decode_json(&response.text())?)
+}
+
+pub(crate) fn github_urls_value(value: &Value) -> HostResult<CloneUrls> {
     match (
-        trimmed_field(&value, "full_name"),
-        trimmed_field(&value, "html_url"),
-        trimmed_field(&value, "ssh_url"),
+        trimmed_field(value, "full_name"),
+        trimmed_field(value, "html_url"),
+        trimmed_field(value, "ssh_url"),
     ) {
         (Some(name_with_owner), Some(url), Some(ssh_url)) => Ok(CloneUrls {
             name_with_owner,
@@ -324,8 +340,9 @@ fn repo_path(owner: &str, name: &str) -> String {
 
 async fn github_clone_urls(ctx: DiscoveryContext<'_>, repository: &str) -> HostResult<CloneUrls> {
     let env_default = gh_host(ctx).unwrap_or_else(|| "github.com".into());
-    let fallback_host = resolve_repository_host(ctx, &env_default.to_lowercase())
+    let fallback_host = resolve_repository(ctx)
         .await
+        .map(|locator| locator.host)
         .unwrap_or(env_default)
         .to_lowercase();
     // `bareName`: `/\.git$/i` off the trimmed name.
@@ -400,6 +417,25 @@ async fn github_create(
     );
     let response = github_rest(ctx, &host, Method::Post, &path, Some(body)).await?;
     github_urls(&response)
+}
+
+pub(crate) async fn checkout_clone_urls(
+    ctx: DiscoveryContext<'_>,
+    host: &str,
+    repository: &str,
+) -> HostResult<CloneUrls> {
+    let locator = parse_selector(repository, host)
+        .ok_or_else(|| HostFailure::new("Repositories are named owner/name."))?;
+    let value = github::api_json(
+        ctx,
+        ctx.cwd,
+        &locator.host,
+        &repo_path(&locator.owner, &locator.name),
+        None,
+        "Repository not found. Check the owner and name and try again.",
+    )
+    .await?;
+    github_urls_value(&value)
 }
 
 #[cfg(test)]

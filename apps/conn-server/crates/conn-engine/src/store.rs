@@ -349,18 +349,7 @@ impl Store {
         .into_iter()
         .filter(|row| row["archivedAt"].is_null())
         .collect();
-        let mut stmt = self
-            .conn
-            .prepare("SELECT body FROM projects ORDER BY rowid")
-            .map_err(err)?;
-        let projects: Vec<Value> = json_rows(
-            stmt.query_map([], |row| row.get::<_, String>(0))
-                .map_err(err)?,
-        )?
-        .into_iter()
-        .filter(|project| project["deletedAt"].is_null())
-        .map(|project| shell_project(&project))
-        .collect();
+        let projects = self.projects_snapshot()?;
         Ok(json!({
             "schemaVersion": 2,
             "snapshotSequence": self.high_water(),
@@ -368,6 +357,22 @@ impl Store {
             "archivedThreads": [],
             "projects": projects,
         }))
+    }
+
+    pub(crate) fn projects_snapshot(&self) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT body FROM projects ORDER BY rowid")
+            .map_err(err)?;
+        let projects = json_rows(
+            stmt.query_map([], |row| row.get::<_, String>(0))
+                .map_err(err)?,
+        )?
+        .into_iter()
+        .filter(|project| project["deletedAt"].is_null())
+        .map(|project| shell_project(&project))
+        .collect();
+        Ok(projects)
     }
 
     /// Shell changes after `after`, or `None` when retention already dropped some of them.

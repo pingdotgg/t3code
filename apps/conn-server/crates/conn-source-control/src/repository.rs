@@ -673,7 +673,7 @@ async fn with_config_retry(command: GitCommand) -> Result<(), ProcessError> {
 
 /// `ensureRemote`: the remote that already points at the repository, else a new one named
 /// after `preferred` (with `-1`, `-2`, ... when the name is taken).
-async fn ensure_remote(
+pub(crate) async fn ensure_remote(
     ctx: ServiceContext<'_>,
     cwd: &Path,
     preferred: &str,

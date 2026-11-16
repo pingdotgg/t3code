@@ -13,6 +13,7 @@ pub mod keybindings;
 pub mod limits;
 pub mod methods;
 pub mod model_manifest;
+mod project;
 pub mod routes;
 pub mod scopes;
 pub mod serve;
