@@ -30,7 +30,7 @@ So every running child needs the v2 listener below. It follows new runs and chec
 
 ### Children on another machine
 
-`t3_thread_wait`, `t3_thread_send`, `t3_thread_read` and the `t3_task_read` sweep take `environmentId`. If a call returns `thread_not_found`, fall back to `t3_get_thread` / `t3_get_messages` / `t3_send_message` with `environmentId`. Record each remote child's `environmentId` in PIPELINE.md and pass it to the listener (add `environmentId` to every t3 call in the template).
+`t3_thread_wait`, `t3_thread_send`, `t3_thread_read` and the `t3_task_read` sweep take `environmentId`. If a call returns `thread_not_found`, fall back to `t3_get_thread` / `t3_get_messages` / `t3_send_message` with `environmentId`. Record each remote child's `environmentId` in PIPELINE.md and pass it to the listener (add `environmentId` to every tool call in the template).
 
 ## Arm: one v2 listener per child
 
