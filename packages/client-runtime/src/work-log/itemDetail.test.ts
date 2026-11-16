@@ -79,6 +79,17 @@ describe("tool image output parsing", () => {
       ).toBe("File contents");
     },
   );
+  it("reads an MCP result the same with or without the SDK's _meta", () => {
+    const structuredContent = {
+      check: "Server tests 7",
+      message: "expected [ 60 ]\nto equal [ 59 ]",
+    };
+    const result = { content: JSON.stringify(structuredContent), structuredContent };
+    const meta = { "io.modelcontextprotocol/serverInfo": { name: "T3 Code", version: "1" } };
+    const plain = turnItemOutputText(toolItem(result));
+    expect(plain).toContain('"check": "Server tests 7"');
+    expect(turnItemOutputText(toolItem({ ...result, _meta: meta }))).toBe(plain);
+  });
   it.each(["array", "content", "structured"] as const)(
     "keeps markers for images beyond the served positions in %s output",
     (shape) => {
