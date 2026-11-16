@@ -28,8 +28,8 @@
 //   node tools/canary.mjs watch <root>       scans <root>/tmp until <root>/stop exists
 //   node tools/canary.mjs mark <root> <check> after each check: names the decoy files it read
 //   node tools/canary.mjs verify <root> <output log> [more folders to scan]
-// Outside calls and real CLIs: marker executables named claude, codex, grok and gh go first
-// on PATH and log each run; every Node process loads a hook
+// Provider and host CLI marker executables go first on PATH and log each run, including
+// the upstream hosts: comparison checks still start the full T3 server. Every Node process loads a hook
 // (NODE_OPTIONS=--import) that refuses and logs a socket or DNS lookup outside loopback; our
 // server refuses and logs one when CONN_NETWORK_LOG is set (conn_source_control::http). A
 // program that is none of these (git, cargo, a CLI found before the markers on a tool's own
@@ -48,7 +48,7 @@ const OLD_ATIME = new Date("2000-01-01T00:00:00Z");
 const SCAN_LIMIT = 16 << 20;
 
 /** CLIs a check must never run for real: marker executables by these names go first on PATH. */
-const MARKER_CLIS = ["claude", "codex", "grok", "gh"];
+const MARKER_CLIS = ["claude", "codex", "grok", "gh", "glab", "fj", "tea", "az", "cafe"];
 
 /** Logs of things a check must never do, each named per check by `mark`. */
 const EVENT_LOGS = [
@@ -127,6 +127,7 @@ const MARKER_VARIABLES = [
   "XAI_API_KEY",
   "GH_TOKEN",
   "GITHUB_TOKEN",
+  "GITLAB_TOKEN",
   "T3CODE_HOME",
   "CONN_CANARY",
 ];
@@ -146,6 +147,7 @@ function decoyFiles(token) {
     { path: ".grok/user-settings.json", kind: "locked", body: `{"apiKey":"${m("grok-key")}"}\n` },
     { path: ".config/gh/config.yml", kind: "read", body: `editor: ${m("gh-config")}\n` },
     { path: ".config/gh/hosts.yml", kind: "locked", body: `github.com:\n  oauth_token: ${m("gh-hosts")}\n` },
+    { path: ".config/glab-cli/config.yml", kind: "locked", body: `token: ${m("glab")}\n` },
     { path: ".netrc", kind: "locked", body: `machine github.com login x password ${m("netrc")}\n` },
     { path: ".t3/settings.json", kind: "read", body: `{"canary":"${m("t3-settings")}"}\n` },
     { path: ".t3/userdata/settings.json", kind: "read", body: `{"canary":"${m("t3-userdata-settings")}"}\n` },

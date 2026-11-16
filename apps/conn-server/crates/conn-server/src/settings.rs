@@ -660,8 +660,10 @@ fn derive_legacy_project_overrides(settings: &mut Map<String, Value>) {
 }
 
 pub(super) fn retain_supported_hosts(settings: &mut Map<String, Value>) {
-    if let Some(Value::Object(hosts)) = settings.get_mut("sourceControlHosts") {
-        hosts.retain(|kind, _| kind == "github");
+    for key in ["sourceControlHosts", "offeredSourceControlProviders"] {
+        if let Some(Value::Object(hosts)) = settings.get_mut(key) {
+            hosts.retain(|kind, _| kind == "github");
+        }
     }
 }
 
@@ -940,6 +942,9 @@ mod tests {
             "gitcafe": {"token": "old"},
             "forgejo": {"tokens": {"codeberg.org": "old"}},
             "azure-devops": {}, "cursor-origin": {}
+        }, "offeredSourceControlProviders": {
+            "github": false, "gitlab": true, "bitbucket": true,
+            "forgejo": true, "gitcafe": true, "azure-devops": true, "cursor-origin": true
         }});
         fs::write(dir.join("settings.json"), old.to_string()).expect("settings");
         let store = SettingsStore::open(dir.join("settings.json"));
@@ -955,7 +960,19 @@ mod tests {
             store.for_client()["sourceControlHosts"],
             json!({"github": {"tokens": {"github.com": SECRET_REDACTED}}})
         );
+        assert_eq!(
+            store.for_client()["offeredSourceControlProviders"],
+            json!({"github": false})
+        );
         let answer = store.update(old, None).expect("update");
+        assert_eq!(
+            answer["offeredSourceControlProviders"],
+            json!({"github": false})
+        );
+        assert_eq!(
+            on_disk(&dir)["offeredSourceControlProviders"],
+            json!({"github": false})
+        );
         assert_eq!(
             answer["sourceControlHosts"],
             json!({"github": {"tokens": {"github.com": SECRET_REDACTED}}})

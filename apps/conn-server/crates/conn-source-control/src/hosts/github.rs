@@ -43,7 +43,6 @@ fn spec() -> CliSpec {
             "--json".into(),
             "hosts".into(),
         ],
-        auth_retry_args: None,
         probe_timeout: DEFAULT_PROBE_TIMEOUT,
         install_hint: INSTALL_HINT,
     }

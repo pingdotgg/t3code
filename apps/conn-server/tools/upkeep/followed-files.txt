@@ -121,7 +121,6 @@ apps/server/src/worktreesDirectory.ts
 apps/server/src/sourceControl
 apps/server/src/pullRequest
 packages/source-control-core
-packages/source-control-definitions
 packages/source-control-github
 
 [crates/conn-files]

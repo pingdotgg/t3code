@@ -245,7 +245,6 @@ async fn an_unbuilt_host_fails_as_unregistered() {
             failure.detail,
             format!("No {kind} source control provider is registered.")
         );
-        assert_eq!(failure.user_facing, None);
         let failure = hosts
             .create_repository(kind, &stubs.dir, "o/r", Visibility::Private)
             .await

@@ -192,7 +192,7 @@ fn repository_failure(error: &RepositoryError) -> Failure {
 }
 
 /// `sourceControl.lookupRepository`, `cloneRepository`, `publishRepository`
-/// (`SourceControlRepositoryService.ts`), for all seven hosts.
+/// (`SourceControlRepositoryService.ts`), for GitHub.
 fn register_repositories(table: &mut MethodTable, inputs: &HostInputs, deps: &Deps) {
     let host = inputs.clone();
     table.unary(
@@ -371,7 +371,7 @@ async fn starred(
     .await
 }
 
-/// `SourceControlDiscovery.discover`: `git` and `jj`, and every host, all at once.
+/// `SourceControlDiscovery.discover`: `git`, `jj` and GitHub.
 async fn discover(
     cwd: &Path,
     home: Option<&Path>,
@@ -435,7 +435,7 @@ mod tests {
         assert_eq!(events.borrow().len(), 2);
     }
 
-    /// The answer has git and jj, then all seven hosts in the T3 server's order. No host CLI
+    /// The answer has git, jj and GitHub. No host CLI
     /// runs (the children's `PATH` is an empty folder) and no variable is read, so nothing on
     /// this machine is asked about its logins.
     #[tokio::test(flavor = "current_thread")]

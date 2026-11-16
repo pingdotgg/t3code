@@ -128,7 +128,7 @@ function expectedSecrets(tag) {
 }
 
 const secretValues = (tag) =>
-  [`pw-${tag}`, `env-${tag}`, `tg-${tag}`, `ghp-${tag}`, `bb-${tag}`, `voice-${tag}`, `mk-${tag}`, `eas-${tag}`, `sim-${tag}`];
+  [`pw-${tag}`, `env-${tag}`, `tg-${tag}`, `ghp-${tag}`, `voice-${tag}`, `mk-${tag}`, `eas-${tag}`, `sim-${tag}`];
 
 /** A T3 home: the state folder is `<base>/userdata`, as `deriveServerPaths` makes it. */
 function newHome() {

@@ -116,13 +116,13 @@ In CI, `.github/workflows/conn-server-ci.yml` runs the Rust jobs on changes to
 **The canary.** `tools/check.sh` runs every check with a decoy HOME (marker files where
 `~/.claude`, `~/.codex`, `~/.grok`, `~/.config/gh`, `~/.gitconfig`, `~/.netrc` and `~/.t3` would
 be; the credential files mode 000), marker values in `ANTHROPIC_*`, `OPENAI_API_KEY`,
-`CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `T3CODE_HOME` and
+`CODEX_HOME`, `XAI_API_KEY`, `GH_TOKEN`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `T3CODE_HOME` and
 `CONN_CANARY`, a stand-in `SHELL`, and a `TMPDIR` that the canary scans twice a second. Cargo
 and rustup keep their real folders (`CARGO_HOME`, `RUSTUP_HOME`), and cargo runs without the
 global git configuration. Reads are seen by access time (a self-test fails the check on a
 `noatime` file system), opens of a mode-000 file only when the error names the decoy path, and
 a stat or a file that lived less than half a second without printing a marker not at all. Marker
-executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`) go first on `PATH` and fail the canary when run; a Node hook
+executables named after the provider and host CLIs (`claude`, `codex`, `grok`, `gh`, `glab`, `fj`, `tea`, `az`, `cafe`) go first on `PATH` and fail the canary when run; a Node hook
 (`NODE_OPTIONS=--import`) and `CONN_NETWORK_LOG` in our server refuse and record any
 connection outside loopback. `mark` names the check behind each record.
 
