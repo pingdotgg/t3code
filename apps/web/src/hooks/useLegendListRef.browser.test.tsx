@@ -1,6 +1,6 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { createRef, useState, type RefObject } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { useLegendListRef } from "./useLegendListRef";
 
@@ -43,10 +43,11 @@ it("stacks rows by their layout height while an ancestor is scaled", async () =>
       />
     </div>,
   );
-  await expect.element(screen.getByText("Row 5")).toBeVisible();
-  const first = screen.getByText("Row 0").element().getBoundingClientRect();
-  const last = screen.getByText("Row 5").element().getBoundingClientRect();
-  expect((last.top - first.top) / 0.98).toBeCloseTo(200, 0);
+  await vi.waitFor(() => {
+    const first = screen.getByText("Row 0").element().getBoundingClientRect();
+    const last = screen.getByText("Row 5").element().getBoundingClientRect();
+    expect((last.top - first.top) / 0.98).toBeCloseTo(200, 0);
+  });
 });
 
 it("refreshes list edges after content shrinks without scrolling and after the list reopens", async () => {
