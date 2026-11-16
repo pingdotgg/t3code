@@ -112,14 +112,10 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
   if (projection.thread.historyOrigin === "v1_import" || projection.runs.length === 0) return true;
 
   // Detaching a stopped session removes it from the projection. The server still
-  // hands off from saved app history, which needs the source provider thread but
-  // not its native ref.
-  return projection.providerThreads.some(
-    (thread) =>
-      thread.id === projection.thread.activeProviderThreadId &&
-      thread.appThreadId === projection.thread.id &&
-      thread.providerInstanceId === projection.thread.modelSelection.instanceId,
-  );
+  // hands off from saved app history. A switch whose first turn failed (a limit hit
+  // right away) leaves the selection on an instance with no matching provider
+  // thread; any provider thread of this app thread is enough to hand off from.
+  return projection.providerThreads.some((thread) => thread.appThreadId === projection.thread.id);
 }
 
 export function getUserQueuedThreadRuns(
