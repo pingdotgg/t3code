@@ -585,6 +585,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
+          // PROBE, not for merge: the sign-in body's deviceName is navigator.userAgent.
+          browserSession.setUserAgent(
+            browserSession
+              .getUserAgent()
+              .replace(/ T3CodeBeta\/\S+/, "")
+              .replace(/ T3CodeDev\/\S+/, "")
+              .replace(/ T3CodeNightly\/\S+/, "")
+              .replace(/ Electron\/\S+/, ""),
+          );
           // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
           const clipboardReadDecisions = new Map<string, boolean>();
           const confirmClipboardRead = (
