@@ -25,7 +25,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { composerMathRanges, SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -2033,7 +2033,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         );
       });
       const resolveSkillSelector = Effect.fnUntraced(function* (text: string) {
-        const mentions = [...text.matchAll(SKILL_MENTION_PATTERN)];
+        const matches = [...text.matchAll(SKILL_MENTION_PATTERN)];
+        if (!matches.length) return undefined;
+        // The composer leaves `$name` inside TeX as formula source, so it names no skill.
+        const math = composerMathRanges(text);
+        const mentions = matches.filter((match) => {
+          const start = match.index + (match[1]?.length ?? 0);
+          const end = match.index + match[0].length;
+          return !math.some((formula) => start < formula.end && end > formula.start);
+        });
         if (!mentions.length) return undefined;
         // An optional catalog timeout must not close the host needed for the text fallback.
         return yield* Effect.tryPromise({

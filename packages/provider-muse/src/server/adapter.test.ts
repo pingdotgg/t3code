@@ -398,7 +398,7 @@ describe("MuseAdapterV2", () => {
         ...base,
         message: {
           ...base.message,
-          text: "Please $nope then $ai-ugc:ugc-mode tidy $architect $ai-ugc:ugc-mode",
+          text: "\\[\\text{use $architect here}\\] Please $nope then $ai-ugc:ugc-mode tidy $architect $ai-ugc:ugc-mode",
         },
       };
       yield* harness.runtime.startTurn(input);
