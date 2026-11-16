@@ -6045,9 +6045,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each([false, true])(
-    "keeps commands interrupted after native thread closure (persistent tool: %s)",
-    (retainContext) =>
+  it.effect.each(
+    [false, true].flatMap((retainContext) =>
+      [false, true].map((archive) => ({ retainContext, archive })),
+    ),
+  )(
+    "keeps commands interrupted after native thread closure (persistent tool: $retainContext, archive: $archive)",
+    ({ retainContext, archive }) =>
       Effect.gen(function* () {
         const notification = (method: string, params: unknown) => ({
           type: "emit_inbound" as const,
@@ -6081,25 +6085,55 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             frame: { id, result: { status: "notSubscribed" } },
           },
         ];
+        const archiveThread = (
+          id: number,
+          failed: boolean,
+          notifications: ReturnType<typeof notification>[] = [],
+        ) => [
+          {
+            type: "expect_outbound" as const,
+            label: `archive-${id}`,
+            frame: { id, method: "thread/archive", params: { threadId: BG_NATIVE_THREAD } },
+          },
+          ...notifications,
+          {
+            type: "emit_inbound" as const,
+            label: `archive-result-${id}`,
+            frame: {
+              id,
+              ...(failed ? { error: { code: -32603, message: "Archive failed" } } : { result: {} }),
+            },
+          },
+        ];
         const closed = notification("thread/closed", { threadId: BG_NATIVE_THREAD });
+        const lateCompletions = [
+          notification("item/completed", {
+            threadId: BG_NATIVE_THREAD,
+            turnId: BG_NATIVE_TURN,
+            item: backgroundCommandItem("completed"),
+          }),
+          ...(retainContext ? [monitor("completed")] : []),
+        ];
         const transcript = makeCodexReplayTranscript({
-          scenario: `codex-background-thread-closed-${retainContext}`,
+          scenario: `codex-background-thread-closed-${retainContext}-${archive}`,
           entries: [
             ...backgroundExecTranscript.entries.slice(0, -2),
             ...(retainContext ? [monitor("inProgress")] : []),
             backgroundExecTranscript.entries.at(-2)!,
-            ...unsubscribe(4),
-            ...unsubscribe(5, [notification("thread/closed", { threadId: "unrelated-thread" })]),
-            ...unsubscribe(6, [closed]),
-            ...unsubscribe(7, [
-              closed,
-              notification("item/completed", {
-                threadId: BG_NATIVE_THREAD,
-                turnId: BG_NATIVE_TURN,
-                item: backgroundCommandItem("completed"),
-              }),
-              ...(retainContext ? [monitor("completed")] : []),
-            ]),
+            ...(archive
+              ? [
+                  ...archiveThread(4, true),
+                  ...archiveThread(5, false),
+                  ...archiveThread(6, false, lateCompletions),
+                ]
+              : [
+                  ...unsubscribe(4),
+                  ...unsubscribe(5, [
+                    notification("thread/closed", { threadId: "unrelated-thread" }),
+                  ]),
+                  ...unsubscribe(6, [closed]),
+                  ...unsubscribe(7, [closed, ...lateCompletions]),
+                ]),
           ],
         });
         const interrupted = yield* Deferred.make<void>();
@@ -6127,17 +6161,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
         );
         yield* harness.firstTerminal;
-        const unload = harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        const unload = harness.runtime.unloadThread!({
+          providerThread: harness.providerThread,
+          archive,
+        });
         yield* harness.runtime.awaitBackgroundTasks!({
           providerThread: harness.providerThread,
           taskIds: ["4242"],
           awaited: true,
         });
         yield* harness.until(() => harness.pendingBackgroundTasks().length === 1);
-        yield* unload;
+        if (archive) assert.isTrue(Exit.isFailure(yield* Effect.exit(unload)));
+        else yield* unload;
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        yield* unload;
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.lengthOf(harness.pendingBackgroundTasks(), 1);
+        if (!archive) {
+          yield* unload;
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }
         yield* unload;
         assert.equal(yield* harness.hasPendingBackgroundWork, retainContext);
         yield* Deferred.await(interrupted);

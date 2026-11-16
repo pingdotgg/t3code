@@ -5361,6 +5361,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
         });
 
+        const clearSettledCommands = Effect.fn("CodexAdapterV2.clearSettledCommands")(function* (
+          nativeThreadId: string,
+        ) {
+          const completedAt = yield* DateTime.now;
+          for (const context of (yield* Ref.get(settledTurns)).values()) {
+            if (context.providerThread.nativeThreadRef?.nativeId !== nativeThreadId) continue;
+            const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(context.nativeTurnId);
+            if (commands !== undefined) {
+              context.closedCommandItemIds = new Set(commands.keys());
+            }
+            yield* terminalizeRunningCommandItems(
+              context,
+              context.nativeTurnId,
+              "interrupted",
+              completedAt,
+            );
+            yield* Ref.update(runningCommandItemsByTurn, (current) => {
+              const updated = new Map(current);
+              updated.delete(context.nativeTurnId);
+              return updated;
+            });
+            yield* releaseSettledTurnIfIdle(context.nativeTurnId);
+          }
+        });
+
         // Unloading an idle thread kills its terminals without completing
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
@@ -5368,28 +5393,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const closing = threadClosings.get(payload.threadId);
             threadClosings.delete(payload.threadId);
             if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
-            const completedAt = yield* DateTime.now;
-            for (const context of (yield* Ref.get(settledTurns)).values()) {
-              if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
-              const commands = (yield* Ref.get(runningCommandItemsByTurn)).get(
-                context.nativeTurnId,
-              );
-              if (commands !== undefined) {
-                context.closedCommandItemIds = new Set(commands.keys());
-              }
-              yield* terminalizeRunningCommandItems(
-                context,
-                context.nativeTurnId,
-                "interrupted",
-                completedAt,
-              );
-              yield* Ref.update(runningCommandItemsByTurn, (current) => {
-                const updated = new Map(current);
-                updated.delete(context.nativeTurnId);
-                return updated;
-              });
-              yield* releaseSettledTurnIfIdle(context.nativeTurnId);
-            }
+            yield* clearSettledCommands(payload.threadId);
           }).pipe(Effect.orDie, turnTerminalizationPermit.withPermits(1)),
         );
 
@@ -8225,6 +8229,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               // unarchives it on the next turn.
               if (unloadInput.archive === true) {
                 yield* client.request("thread/archive", { threadId: nativeThreadId });
+                yield* turnTerminalizationPermit.withPermits(1)(
+                  clearSettledCommands(nativeThreadId),
+                );
               } else {
                 // A resume may already wait on the pending entry; replacing it would strand that wait.
                 if (!threadClosings.has(nativeThreadId)) {
