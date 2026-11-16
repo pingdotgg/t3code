@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderInstanceId,
   ServerProvider,
@@ -112,6 +113,7 @@ const seed = Effect.fn("test.seedEvaluationRun")(function* (
     readonly subagent?: boolean;
     readonly existingThread?: OrchestrationV2AppThread;
     readonly requestedAt?: DateTime.Utc;
+    readonly notification?: OrchestrationV2ConversationMessage["notification"];
   } = {},
 ) {
   const project = options.project ?? projectId;
@@ -217,6 +219,9 @@ const seed = Effect.fn("test.seedEvaluationRun")(function* (
           : "I am DeepSeek on OpenCode. Added the named export; existing callers remain compatible.",
       streaming: false,
       attachments: [],
+      ...(role === "user" && options.notification !== undefined
+        ? { notification: options.notification }
+        : {}),
       createdAt:
         role === "user"
           ? (options.requestedAt ?? at)
@@ -901,3 +906,34 @@ it.effect("ranks scored guidance ahead of newer single samples and drops unscore
     ),
   );
 });
+
+it.effect.each(["command", "monitor", "group", "delegated_task"] as const)(
+  "records a %s wake as skipped and does not judge it",
+  (kind) => {
+    const calls: string[] = [];
+    return Effect.gen(function* () {
+      yield* seed({
+        notification: {
+          source:
+            kind === "delegated_task" ? { kind, taskIds: [NodeId.make("wake-task")] } : { kind },
+          outcome: "completed",
+          summary: "Background work finished",
+        },
+      });
+      const service = yield* ModelEvaluations.ModelEvaluations;
+      yield* service.evaluateRun(input);
+      assert.deepEqual(calls, []);
+      const record = (yield* service.list(scope)).records[0]!;
+      assert.equal(record.status, "skipped");
+      assert.match(record.reason ?? "", /automated wake/);
+      assert.deepEqual((yield* service.list(scope)).guidance, []);
+    }).pipe(
+      Effect.provide(
+        makeLayer((request) => {
+          calls.push("judge");
+          return Effect.succeed(verdict(request.packet));
+        }),
+      ),
+    );
+  },
+);
