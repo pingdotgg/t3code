@@ -16,16 +16,3 @@ export function retainedModelWhileProviderLocked(
   if (entry.driverKind === "opencode" || entry.driverKind === "antigravity") return undefined;
   return entry.models.find((candidate) => candidate.slug === model) ?? { slug: model, name: model };
 }
-
-/** Shows a notice once however many instances raise it, listing the ones the caller named. */
-export function groupUpdateRequiredNotices(
-  notices: ReadonlyArray<{ readonly notice: string; readonly instanceName?: string | undefined }>,
-): ReadonlyArray<{ readonly notice: string; readonly instanceNames: ReadonlyArray<string> }> {
-  const namesByNotice = new Map<string, string[]>();
-  for (const { notice, instanceName } of notices) {
-    const names = namesByNotice.get(notice) ?? [];
-    if (instanceName) names.push(instanceName);
-    namesByNotice.set(notice, names);
-  }
-  return Array.from(namesByNotice, ([notice, instanceNames]) => ({ notice, instanceNames }));
-}

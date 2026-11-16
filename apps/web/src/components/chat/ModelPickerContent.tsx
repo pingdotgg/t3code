@@ -24,7 +24,6 @@ import {
 } from "react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
-import { groupUpdateRequiredNotices } from "./ProviderModelPicker.logic";
 import { useProviderWorkspaceSnapshotRefresh } from "./useProviderWorkspaceSnapshotRefresh";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
 import {
@@ -206,7 +205,7 @@ function ModelPickerProviderNotices({
 }: {
   setupEntries: ReadonlyArray<ProviderInstanceEntry>;
   emptyLabel: string;
-  updateRequiredNotices: ReturnType<typeof groupUpdateRequiredNotices>;
+  updateRequiredNotices: ReadonlyArray<string>;
   onRequestClose: (() => void) | undefined;
   onOpenProviderSetup: ((instanceId: ProviderInstanceId) => void) | undefined;
 }) {
@@ -235,12 +234,11 @@ function ModelPickerProviderNotices({
       ) : (
         <ComboboxEmpty className="empty:h-0">{emptyLabel}</ComboboxEmpty>
       )}
-      {updateRequiredNotices.map(({ notice, instanceNames }) => (
+      {updateRequiredNotices.map((notice) => (
         <p
           key={notice}
           className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
         >
-          {instanceNames.length > 0 ? `${instanceNames.join(", ")}: ` : null}
           {notice}{" "}
           <InlineButton
             onClick={() => {
@@ -732,17 +730,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
-  const updateRequiredNotices = groupUpdateRequiredNotices(
-    instanceEntries.flatMap((entry) => {
-      const shown = isSearching
-        ? matchesLockedProvider(entry)
-        : entry.instanceId === selectedEntry?.instanceId;
-      const notice = shown ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery) : null;
-      if (!notice) return [];
-      // A search spans instances, so the notice names the ones a model row would badge.
-      const named = isSearching && shouldShowInstanceBadge(entry, instanceEntries);
-      return [{ notice, instanceName: named ? entry.displayName : undefined }];
-    }),
+  // Instances of one driver raise the same notice; a search would otherwise repeat it per instance.
+  const updateRequiredNotices = Array.from(
+    new Set(
+      instanceEntries.flatMap((entry) => {
+        const shown = isSearching
+          ? matchesLockedProvider(entry)
+          : entry.instanceId === selectedEntry?.instanceId;
+        const notice = shown
+          ? formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery)
+          : null;
+        return notice ? [notice] : [];
+      }),
+    ),
   );
 
   const modelJumpModelKeys = visibleModels
