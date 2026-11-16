@@ -5,6 +5,7 @@ import {
   TextGenerationError,
   type AcpRegistryOperationError,
   type AcpRegistryProbeModel,
+  type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -97,7 +98,7 @@ export function isAcpRegistryCacheValid(
 export function updateAcpRegistryEnrichmentCache(input: {
   readonly cache: AcpRegistryEnrichmentCache;
   readonly configuration: AcpRegistryLiveConfiguration;
-  readonly customModels: ReadonlyArray<string>;
+  readonly customModels: ReadonlyArray<CustomModelSetting>;
   readonly now: number;
 }): AcpRegistryEnrichmentCache {
   const { cache, configuration, customModels, now } = input;
@@ -157,7 +158,7 @@ function modelsFromDiscovery(
         "models" | "currentModelId" | "configOptions" | "modelOptionIds"
       >
     | undefined,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = [],
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
@@ -349,7 +350,7 @@ export function applyAcpRegistryAvailableCommands(
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
-  customModels: ReadonlyArray<string>,
+  customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
