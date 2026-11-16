@@ -188,14 +188,25 @@ function formatNumericDate(date: Date, sameYear: boolean, timeZone: string | und
   }).format(date);
 }
 
+// Hosts with an unset or invalid TZ report "Etc/Unknown", which Intl rejects.
+function supportedTimeZone(timeZone: string | undefined): string | undefined {
+  if (!timeZone) return undefined;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
 export function formatDayAwareTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
-  timeZone?: string,
+  requestedTimeZone?: string,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
+  const timeZone = supportedTimeZone(requestedTimeZone);
   const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
 
   const today = calendarDay(new Date(nowMs), timeZone);
@@ -212,10 +223,11 @@ export function formatUpcomingTimestamp(
   isoDate: string,
   timestampFormat: TimestampFormat,
   nowMs: number = Date.now(),
-  timeZone?: string,
+  requestedTimeZone?: string,
 ): string {
   const date = parseTimestampDate(isoDate);
   if (!date) return "";
+  const timeZone = supportedTimeZone(requestedTimeZone);
   const time = getTimestampFormatter(timestampFormat, false, timeZone).format(date);
 
   const today = calendarDay(new Date(nowMs), timeZone);
