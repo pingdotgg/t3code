@@ -1089,7 +1089,10 @@ const endUnregisteredLiveActivityInBackground = Effect.fn(
   "remoteRegistration.endUnregisteredLiveActivityInBackground",
 )(function* (activityId: string, activity: LiveActivity<AgentActivityProps>) {
   // Back in the foreground the refresh keeps registering the card instead.
-  if (!unregisteredStartedLiveActivities.has(activityId) || AppState.currentState === "active") {
+  if (
+    !unregisteredStartedLiveActivities.has(activityId) ||
+    AppState.currentState !== "background"
+  ) {
     return;
   }
   yield* Effect.tryPromise({

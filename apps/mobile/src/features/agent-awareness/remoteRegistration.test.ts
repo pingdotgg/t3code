@@ -618,7 +618,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
 
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     return Effect.gen(function* () {
+      // iOS reports inactive while Control Center or a call covers the app.
+      appStateMock.currentState = "inactive";
       yield* armCardOnSend(activity);
+      expect(activity.end).not.toHaveBeenCalled();
 
       appStateMock.currentState = "background";
       for (const listener of appStateMock.listeners) listener("background");
