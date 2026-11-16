@@ -17,6 +17,7 @@ import {
   modelEvaluationAwaitsSubagents,
   validateModelEvaluationVerdict,
 } from "@t3tools/provider-core/server/modelEvaluation";
+import { REASONING_EFFORT_OPTION_IDS } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -54,7 +55,7 @@ const decodeSelection = Schema.decodeUnknownEffect(Schema.fromJsonString(ModelSe
 const isModelEvaluationError = Schema.is(ModelEvaluationError);
 
 // fastMode, serviceTier, contextWindow, and ultracode change latency, billing, or capacity, not output quality.
-const QUALITY_OPTION_IDS = new Set(["effort", "reasoningEffort", "reasoning_effort"]);
+const QUALITY_OPTION_IDS = new Set<string>(REASONING_EFFORT_OPTION_IDS);
 
 const EVALUATOR_FAILURE_DETAIL_LIMIT = 120;
 
