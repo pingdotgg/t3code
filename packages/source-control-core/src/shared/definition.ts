@@ -9,7 +9,11 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import {
+  canonicalRepositoryPath,
+  normalizeGitRemoteUrl,
+  parseGitRemoteRepository,
+} from "@t3tools/shared/git";
 import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -69,6 +73,7 @@ export type ChangeRequestHostIdentity =
   | {
       readonly canonicalKey?: string | undefined;
       readonly locator?: { readonly remoteUrl: string } | undefined;
+      readonly webUrl?: string | undefined;
     }
   | null
   | undefined;
@@ -338,10 +343,9 @@ export interface SourceControlDefinition {
    */
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
-   * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
+   * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
+   * Null when the key is not this host's. Persisted keys are built with it: output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -380,7 +384,7 @@ export function parseCommitPath(url: URL, route: RegExp): CommitLink | null {
   return repository && sha && FULL_COMMIT_SHA.test(sha)
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         sha: sha.toLowerCase(),
         ...(url.port ? { authority: url.host.toLowerCase() } : {}),
       }
@@ -418,7 +422,7 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
   return repository && Number.isSafeInteger(number) && number > 0
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         number,
         repositoryUrl: `${url.origin}/${repository}`,
       }
@@ -514,7 +518,7 @@ export function isChangeRequestInProjectRepository(
   const repository = projectRepositoryPath(identity);
   return (
     repository !== null &&
-    repository.toLowerCase() === link.repository.toLowerCase() &&
+    canonicalRepositoryPath(repository) === canonicalRepositoryPath(link.repository) &&
     isChangeRequestOnProjectHost(projectHost, identity, link)
   );
 }
@@ -705,7 +709,15 @@ export function makeSourceControlDefinitionRegistry(
   }
   const claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
   const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
-  const repositoryKeyOwner = (key: string) => {
+  // Keys persisted before paths had one spelling still compare equal.
+  const canonicalKeyPath = (key: string) => {
+    const slash = key.indexOf("/");
+    return slash < 0
+      ? key
+      : `${key.slice(0, slash)}/${canonicalRepositoryPath(key.slice(slash + 1))}`;
+  };
+  const repositoryKeyOwner = (written: string) => {
+    const key = canonicalKeyPath(written);
     for (const definition of definitions) {
       const canonical = definition.canonicalRepositoryKey?.(key);
       if (canonical != null) return { definition, canonical };
@@ -804,14 +816,15 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      const written = parseGitRemoteRepository(remoteUrl, { keepGitSuffix: true });
+      if (written === null) return key;
       for (const definition of definitions) {
-        const spelled = definition.repositoryKeyFromRemote?.(key);
+        const spelled = definition.repositoryKeyFromRemote?.(`${written.host}/${written.path}`);
         if (spelled != null) return spelled;
       }
       return key;
     },
-    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key,
+    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? canonicalKeyPath(key),
     findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
     repositorySelector: (identity) =>
       identity?.provider === undefined
