@@ -3477,6 +3477,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             {row}
                             <ThreadDetailsSidebarSlot
                               threadRef={scopeThreadRef(thread.environmentId, thread.id)}
+                              hidden={dragState !== null}
                             />
                           </Fragment>
                         ) : (

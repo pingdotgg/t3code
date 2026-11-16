@@ -69,6 +69,7 @@ export function WallpaperSettingsRows() {
     <>
       <SettingsRow
         {...searchableSetting("wallpaper")}
+        devicePreference
         description="Show a picture behind the sidebar and chat."
         resetAction={
           wallpaper !== DEFAULT_UNIFIED_SETTINGS.wallpaper ? (
@@ -90,7 +91,7 @@ export function WallpaperSettingsRows() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Wallpaper">
+              <SelectTrigger size="sm" aria-label="Wallpaper">
                 <SelectValue>{WALLPAPER_LABELS[wallpaper]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -105,6 +106,7 @@ export function WallpaperSettingsRows() {
         <>
           <SettingsRow
             {...searchableSetting("setting-wallpaper-blur")}
+            devicePreference
             description="Blur the wallpaper so text in front of it is easier to read."
             resetAction={
               blur !== DEFAULT_UNIFIED_SETTINGS.wallpaperBlur ? (
@@ -129,6 +131,7 @@ export function WallpaperSettingsRows() {
           />
           <SettingsRow
             {...searchableSetting("setting-wallpaper-dim")}
+            devicePreference
             description="Darken the wallpaper toward the theme's background."
             resetAction={
               dim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim ? (

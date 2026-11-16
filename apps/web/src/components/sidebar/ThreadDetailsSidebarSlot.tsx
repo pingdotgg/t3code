@@ -7,13 +7,24 @@ import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore
 import { registerThreadDetailsSidebarSlot } from "../chat/threadDetailsSidebarSlot";
 
 /** Holds the open thread's details card under its sidebar row; the chat view renders into it. */
-export function ThreadDetailsSidebarSlot({ threadRef }: { threadRef: ScopedThreadRef }) {
+export function ThreadDetailsSidebarSlot({
+  threadRef,
+  hidden,
+}: {
+  threadRef: ScopedThreadRef;
+  /** Set while rows are dragged: the sorting strategy measures only sortable rows. */
+  hidden: boolean;
+}) {
   const open = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
   );
   const threadKey = scopedThreadKey(threadRef);
   return (
-    <li role="presentation" className="mb-1 ms-3 border-s border-sidebar-border ps-1">
+    <li
+      role="presentation"
+      hidden={hidden}
+      className="mb-1 ms-3 border-s border-sidebar-border ps-1"
+    >
       <button
         type="button"
         aria-expanded={open}

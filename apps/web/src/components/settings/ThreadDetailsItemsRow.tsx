@@ -59,6 +59,7 @@ export function ThreadDetailsInSidebarRow() {
   return (
     <SettingsRow
       {...searchableSetting("thread-details-in-sidebar")}
+      devicePreference
       description="Show thread details under the open thread in the sidebar instead of over the chat. They move back to the chat while the sidebar is hidden."
       resetAction={
         inSidebar === DEFAULT_UNIFIED_SETTINGS.threadDetailsInSidebar ? null : (

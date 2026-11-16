@@ -344,6 +344,8 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     // Prefixed because the slider control already owns the `wallpaper-blur` id.
     id: "setting-wallpaper-blur",
+    // The row shows only while a wallpaper is set; the picker is always there.
+    targetId: "wallpaper",
     title: "Wallpaper blur",
     to: "/settings/appearance",
     searchTerms: ["background blur difuminado soften readability"],
@@ -351,6 +353,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     // Prefixed because the slider control already owns the `wallpaper-dim` id.
     id: "setting-wallpaper-dim",
+    targetId: "wallpaper",
     title: "Wallpaper dimming",
     to: "/settings/appearance",
     searchTerms: ["background darken dim brightness readability"],

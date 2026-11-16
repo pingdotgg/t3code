@@ -7,7 +7,7 @@ import {
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ThreadId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import {
@@ -288,6 +288,24 @@ layer("CommandOutputHub", (it) => {
 
       yield* TestClock.adjust("1 second");
       yield* hub.finish({ threadId, itemId: ITEM_ID });
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "❯ refresh.spec.ts 25/31" });
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        items: [{ itemId: ITEM_ID, completed: 25, total: 31 }],
+      });
+
+      // Newer commands in another thread evict this one's tail, and its count with it.
+      yield* TestClock.adjust("1 second");
+      const otherThreadId = ThreadId.make("thread-other");
+      for (let index = 0; index < 64; index += 1) {
+        yield* hub.append({
+          threadId: otherThreadId,
+          itemId: TurnItemId.make(`turn-item:other-${index}`),
+          chunk: "x",
+        });
+      }
       assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
     }),
   );
