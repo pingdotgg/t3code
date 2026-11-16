@@ -36,6 +36,18 @@ const SETTINGS_SEARCH_TERMS = {
   SettingsLanguage: ["language", "locale", "translation", "english"],
   SettingsNavigation: ["tabs", "tab order", "reorder", "hide tabs"],
   SettingsKeyboard: ["return key", "send message", "new line", "hardware keyboard"],
+  SettingsSpeech: [
+    "tts",
+    "text to speech",
+    "read aloud",
+    "response playback",
+    "playback speed",
+    "Piper",
+    "OpenAI",
+    "ElevenLabs",
+    "voice",
+    "speaker",
+  ],
   SettingsVoice: [
     "microphone",
     "dictation",

@@ -68,14 +68,29 @@ export class VoiceOutputController {
     this.publish({ owner, phase: "loading", error: null });
     try {
       const chunks = speechTextChunks(markdown);
-      if (!chunks.length) throw new Error("This response has no readable text.");
-      for (const text of chunks) {
+      const first = chunks[0];
+      if (!first) throw new Error("This response has no readable text.");
+      // Settle prefetch failures even when playback stops before consuming them.
+      const prepare = async (text: string) => {
+        try {
+          request.signal.throwIfAborted();
+          const audio = await synthesize(text, request.signal);
+          return { ok: true as const, audio };
+        } catch (error) {
+          return { ok: false as const, error };
+        }
+      };
+      let pending = prepare(first);
+      for (let index = 0; index < chunks.length; index++) {
         request.signal.throwIfAborted();
         this.publish({ owner, phase: "loading", error: null });
-        const audio = await synthesize(text, request.signal);
+        const prepared = await pending;
         request.signal.throwIfAborted();
+        if (!prepared.ok) throw prepared.error;
+        const next = chunks[index + 1];
+        if (next !== undefined) pending = prepare(next);
         await this.player.play(
-          audio,
+          prepared.audio,
           request.signal,
           () => {
             if (this.request === request) this.publish({ owner, phase: "playing", error: null });

@@ -99,6 +99,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     });
     return handlers
       .handle(
+        "elevenLabsVoices",
+        Effect.fn("environment.voice.elevenLabsVoices")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* synthesis.elevenLabsVoices(args.payload.pageToken).pipe(mapSynthesisError);
+        }),
+      )
+      .handle(
         "synthesisVoices",
         Effect.fn("environment.voice.synthesisVoices")(function* (args) {
           yield* guard(args.endpoint.name);

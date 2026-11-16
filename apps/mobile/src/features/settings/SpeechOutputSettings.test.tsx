@@ -23,6 +23,13 @@ vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
   updateMobilePreferencesAtom: {},
 }));
+vi.mock("expo-constants", () => ({ default: { expoConfig: { extra: {} } } }));
+vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
+vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
+vi.mock("../../components/ui/Dialog", () => ({ confirm: () => {} }));
+vi.mock("../voice-output/useElevenLabsVoices", () => ({
+  useElevenLabsVoices: () => ({ voices: [], loading: false, failed: false, connected: true }),
+}));
 vi.mock("../voice-output/SpeechPlaybackSpeed", () => ({ SpeechPlaybackSpeed: () => null }));
 vi.mock("../../components/ui/AppText", () => ({ AppTextInput: () => null }));
 vi.mock("../../components/ui/SecretTextInput", () => ({ SecretTextInput: () => null }));
@@ -64,7 +71,20 @@ vi.mock("../../components/ui/ListSection", () => ({
   ListSection: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
 }));
 vi.mock("../../components/ui/Sheet", () => ({
-  Sheet: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
+  Sheet: ({
+    children,
+    title,
+    onClose,
+  }: {
+    children?: ReactNode;
+    title: string;
+    onClose: () => void;
+  }) => (
+    <div>
+      <button onClick={onClose}>{`Close ${title}`}</button>
+      {children}
+    </div>
+  ),
 }));
 vi.mock("./LocalSpeechVoices", () => ({ LocalSpeechVoices: () => null }));
 vi.mock("./components/SettingsSection", () => ({
@@ -110,6 +130,34 @@ it("defaults off and changes the playback destination on this device without cha
     click("Server");
     expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "piper" });
     expect(container.textContent).toContain("Download Piper");
+    click("Read aloud with: Server");
+    click("OpenAI");
+    expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "piper" });
+    click("Close Add OpenAI API key");
+    click("Read aloud with: Server");
+    click("ElevenLabs");
+    expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "piper" });
+    click("Close Add ElevenLabs API key");
+    click("Read aloud with: Server");
+    click("OpenAI");
+    act(() => root.render(<SpeechOutputSettings key="reloaded" environments={[environment]} />));
+    expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "piper" });
+    expect(container.textContent).not.toContain("Save key");
+    const configured = {
+      ...environment,
+      serverConfig: {
+        ...environment.serverConfig!,
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          cloudSpeechCredentials: {
+            ...DEFAULT_SERVER_SETTINGS.cloudSpeechCredentials,
+            openai: "••••••",
+          },
+          speechOutput: { ...DEFAULT_SERVER_SETTINGS.speechOutput, elevenLabsApiKey: "••••••" },
+        },
+      },
+    };
+    act(() => root.render(<SpeechOutputSettings key="configured" environments={[configured]} />));
     click("Read aloud with: Server");
     click("OpenAI");
     expect(mocks.preferences.speechOutputDestination).toEqual({ environmentId, engine: "openai" });

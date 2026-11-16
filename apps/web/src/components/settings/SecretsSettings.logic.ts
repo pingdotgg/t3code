@@ -23,6 +23,7 @@ type SecretUseSettings = Pick<
   | "easDeviceHosts"
   | "simlockDeviceHosts"
   | "cloudSpeechCredentials"
+  | "speechOutput"
 >;
 
 interface SecretProviderUse {
@@ -113,5 +114,9 @@ export function secretProviderUses(
         ? [{ id: `voice:${provider}`, label: `Voice · ${CLOUD_SPEECH_LABELS[provider]}` }]
         : [];
     }),
+    ...(isSecretReference(settings.speechOutput.elevenLabsApiKey) &&
+    settings.speechOutput.elevenLabsApiKey.provider === providerId
+      ? [{ id: "speech:elevenlabs", label: "Speech · ElevenLabs" }]
+      : []),
   ];
 }

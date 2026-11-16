@@ -1,4 +1,3 @@
-import { SpeechOutputSettings } from "./SpeechOutputSettings";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
@@ -277,7 +276,6 @@ export function SettingsVoiceRouteScreen() {
         contentContainerClassName="gap-3 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        <SpeechOutputSettings environments={environments} />
         <SettingsSection title="Transcribe on">
           <ListChoiceRow
             label="This device"

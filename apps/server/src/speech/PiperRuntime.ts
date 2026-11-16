@@ -2,7 +2,6 @@
 import * as NodeCrypto from "node:crypto";
 import { SpeechSynthesisError, type PiperRuntimeStatus } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as ByteSize from "effect/ByteSize";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Context from "effect/Context";
@@ -12,9 +11,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpIncomingMessage } from "effect/http";
+import { HttpClient } from "effect/http";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { readBoundedSpeechBody } from "./httpBody.ts";
 import { PIPER_VERSION, piperArtifact } from "./piperArtifacts.ts";
 
 export class PiperRuntime extends Context.Service<
@@ -58,7 +58,7 @@ const make = Effect.gen(function* () {
             : ("not-installed" as const),
       ...(!artifact
         ? {
-            reason: `No managed Piper runtime is available for ${platformKey}${libc === "musl" ? " (musl)" : ""}. Choose another environment or OpenAI.`,
+            reason: `No managed Piper runtime is available for ${platformKey}${libc === "musl" ? " (musl)" : ""}. Choose another environment or a cloud provider.`,
           }
         : {}),
     };
@@ -75,11 +75,7 @@ const make = Effect.gen(function* () {
     const staging = yield* fs.makeTempDirectoryScoped({ directory: root, prefix: ".install-" });
     const response = yield* http.get(artifact.url);
     if (response.status !== 200) return yield* new SpeechSynthesisError({ reason: "unavailable" });
-    const bytes = new Uint8Array(
-      yield* response.arrayBuffer.pipe(
-        Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(128 * 1024 * 1024)),
-      ),
-    );
+    const bytes = yield* readBoundedSpeechBody(response, artifact.size);
     if (
       bytes.length !== artifact.size ||
       NodeCrypto.createHash("sha256").update(bytes).digest("hex") !== artifact.sha256

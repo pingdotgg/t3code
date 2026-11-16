@@ -228,6 +228,114 @@ it.effect.each(["openai", "elevenlabs"] as const)(
 );
 
 it.effect(
+  "loads ElevenLabs voices with the chosen key, validates pagination, and sanitizes failures",
+  () =>
+    Effect.gen(function* () {
+      const upstream = vi.fn<typeof fetch>(async () =>
+        Response.json({
+          voices: [{ voice_id: "voice-1", name: "  Faber  " }],
+          has_more: true,
+          next_page_token: "cursor&secret=kept",
+        }),
+      );
+      const context = yield* Layer.build(
+        SpeechSynthesisService.layer.pipe(
+          Layer.provideMerge(
+            ServerSettings.layerTest({
+              speechOutput: {
+                ...DEFAULT_SPEECH_OUTPUT_SETTINGS,
+                elevenLabsApiKey: "voice-fixture",
+              },
+              cloudSpeechCredentials: { openai: "other-key" },
+            }),
+          ),
+          Layer.provide(Layer.mock(ProcessRunner.ProcessRunner)({})),
+          Layer.provide(dependencies),
+        ),
+      );
+      const service = Context.get(context, SpeechSynthesisService.SpeechSynthesisService);
+      const settings = Context.get(context, ServerSettings.ServerSettingsService);
+      const load = (token?: string) =>
+        service
+          .elevenLabsVoices(token)
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const page = yield* load();
+      expect(page).toEqual({
+        voices: [{ id: "voice-1", name: "Faber" }],
+        nextPageToken: "cursor&secret=kept",
+      });
+      const [address, init] = upstream.mock.calls[0]!;
+      expect(String(address)).toBe("https://api.elevenlabs.io/v2/voices?page_size=100");
+      expect(init?.redirect).toBe("error");
+      const headers = new Headers(init?.headers);
+      expect(headers.get("xi-api-key")).toBe("voice-fixture");
+      expect(headers.get("authorization")).toBeNull();
+      expect(headers.get("traceparent")).toBeNull();
+      upstream.mockResolvedValueOnce(
+        Response.json({
+          voices: [{ voice_id: "voice-2", name: "George" }],
+          has_more: false,
+          next_page_token: null,
+        }),
+      );
+      expect(yield* load(page.nextPageToken)).toEqual({
+        voices: [{ id: "voice-2", name: "George" }],
+      });
+      const next = new URL(String(upstream.mock.calls[1]![0]));
+      expect(next.searchParams.get("next_page_token")).toBe("cursor&secret=kept");
+      expect(next.searchParams.has("secret")).toBe(false);
+      for (const body of [
+        { voices: [], has_more: true },
+        { voices: [], has_more: true, next_page_token: "same" },
+        { voices: [{ name: "No ID" }], has_more: false },
+      ]) {
+        upstream.mockResolvedValueOnce(Response.json(body));
+        expect(yield* Effect.flip(load("same"))).toMatchObject({ reason: "unavailable" });
+      }
+      for (const [status, reason] of [
+        [401, "rejected-key"],
+        [429, "rate-limit"],
+        [500, "unavailable"],
+      ] as const) {
+        upstream.mockResolvedValueOnce(new Response("private details", { status }));
+        const error = yield* Effect.flip(load());
+        expect(error).toMatchObject({ reason });
+        expect(JSON.stringify(error)).not.toMatch(/private details|voice-fixture/);
+      }
+      const overflow = Response.json({
+        voices: [],
+        has_more: false,
+        ignored: "x".repeat(2 * 1024 * 1024),
+      });
+      const source = new Uint8Array(yield* Effect.promise(() => overflow.arrayBuffer()));
+      let received = 0;
+      const cancelled = vi.fn();
+      upstream.mockResolvedValueOnce(
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                const end = Math.min(source.length, received + 600_000);
+                controller.enqueue(source.subarray(received, end));
+                received = end;
+                if (received === source.length) controller.close();
+              },
+              cancel: cancelled,
+            },
+            { highWaterMark: 0 },
+          ),
+        ),
+      );
+      expect(yield* Effect.flip(load())).toMatchObject({ reason: "unavailable" });
+      expect(cancelled).toHaveBeenCalledOnce();
+      yield* settings.updateSettings({ speechOutput: { elevenLabsApiKey: "" } });
+      upstream.mockClear();
+      expect(yield* Effect.flip(load())).toMatchObject({ reason: "not-configured" });
+      expect(upstream).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
   "installs complete voice bundles, selects them, and cleans up removal, failure, or cancellation",
   () =>
     Effect.gen(function* () {

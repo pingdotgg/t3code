@@ -8,6 +8,7 @@ import type {
   CloudSpeechProvider,
   SettingsSecretValue,
   SpeechSynthesisRequest,
+  ElevenLabsVoicePageRequest,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
@@ -325,6 +326,24 @@ export const synthesizeEnvironmentSpeech = (
     timeoutMs: 130_000,
     path: (urls) => urls.synthesize(),
     run: ({ client, headers }) => client.synthesize({ headers, payload }),
+  }).pipe(
+    Effect.mapError((error) =>
+      error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)
+        ? error.cause
+        : error,
+    ),
+  );
+
+export const getElevenLabsSpeechVoices = (
+  prepared: PreparedConnection,
+  payload: ElevenLabsVoicePageRequest = {},
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.elevenLabsVoices(),
+    run: ({ client, headers }) => client.elevenLabsVoices({ headers, payload }),
   }).pipe(
     Effect.mapError((error) =>
       error._tag === "RemoteEnvironmentAuthFetchError" && isSpeechSynthesisError(error.cause)

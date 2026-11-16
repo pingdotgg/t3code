@@ -372,11 +372,19 @@ effectIt.effect.each([false, true])(
     Effect.gen(function* () {
       const audio = new Uint8Array([1, 2, 3, 4]);
       const synthesize = vi.fn(() => Effect.succeed(audio));
+      const elevenLabsVoices = vi.fn(() =>
+        Effect.succeed({ voices: [{ id: "george", name: "George" }] }),
+      );
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
           Layer.provide(speechHttpApiLayer),
           Layer.provide(principal(...(operate ? [AuthOrchestrationOperateScope] : []))),
-          Layer.provide(Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({ synthesize })),
+          Layer.provide(
+            Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
+              synthesize,
+              elevenLabsVoices,
+            }),
+          ),
           Layer.provide(Layer.mock(SpeechService.SpeechService)({})),
           Layer.provide(dependencies),
           Layer.provide(HttpServer.layerServices),
@@ -407,6 +415,23 @@ effectIt.effect.each([false, true])(
         expect((yield* call("a".repeat(2001))).status).toBe(400);
       }
       expect(synthesize).not.toHaveBeenCalled();
+      const catalog = yield* Effect.promise(() =>
+        handler(
+          new Request("http://localhost/api/voice/synthesis/elevenlabs/voices", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ pageToken: "cursor" }),
+          }),
+          context,
+        ),
+      );
+      expect(catalog.status).toBe(operate ? 200 : 403);
+      if (operate) {
+        expect(elevenLabsVoices).toHaveBeenCalledWith("cursor");
+        expect(yield* Effect.promise(() => catalog.json())).toEqual({
+          voices: [{ id: "george", name: "George" }],
+        });
+      } else expect(elevenLabsVoices).not.toHaveBeenCalled();
     }).pipe(Effect.scoped),
 );
 

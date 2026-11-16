@@ -54,6 +54,8 @@ import {
 } from "./baseSchemas.ts";
 import {
   SpeechSynthesisRequest,
+  ElevenLabsVoicePageRequest,
+  ElevenLabsVoicePage,
   SpeechSynthesisVoices,
   SpeechSynthesisVoiceRequest,
   SpeechSynthesisError,
@@ -845,6 +847,17 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.post("elevenLabsVoices", "/api/voice/synthesis/elevenlabs/voices", {
+      headers: OptionalBearerHeaders,
+      payload: ElevenLabsVoicePageRequest,
+      success: ElevenLabsVoicePage,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        SpeechSynthesisError.pipe(HttpApiSchema.status(400)),
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("synthesisVoices", "/api/voice/synthesis/voices", {
       headers: OptionalBearerHeaders,

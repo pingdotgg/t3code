@@ -27,6 +27,7 @@ import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settin
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
 import { Route as ChatSettingsStorageRouteImport } from './routes/_chat.settings.storage'
+import { Route as ChatSettingsSpeechRouteImport } from './routes/_chat.settings.speech'
 import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.settings.source-control'
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
 import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings.secrets'
@@ -141,6 +142,11 @@ const ChatSettingsThreadsRoute = ChatSettingsThreadsRouteImport.update({
 const ChatSettingsStorageRoute = ChatSettingsStorageRouteImport.update({
   id: '/storage',
   path: '/storage',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
+const ChatSettingsSpeechRoute = ChatSettingsSpeechRouteImport.update({
+  id: '/speech',
+  path: '/speech',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
 const ChatSettingsSourceControlRoute =
@@ -312,6 +318,7 @@ export interface FileRoutesByFullPath {
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/settings/speech': typeof ChatSettingsSpeechRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
@@ -356,6 +363,7 @@ export interface FileRoutesByTo {
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/settings/speech': typeof ChatSettingsSpeechRoute
   '/settings/storage': typeof ChatSettingsStorageRoute
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
@@ -402,6 +410,7 @@ export interface FileRoutesById {
   '/_chat/settings/secrets': typeof ChatSettingsSecretsRoute
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
   '/_chat/settings/source-control': typeof ChatSettingsSourceControlRoute
+  '/_chat/settings/speech': typeof ChatSettingsSpeechRoute
   '/_chat/settings/storage': typeof ChatSettingsStorageRoute
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
@@ -448,6 +457,7 @@ export interface FileRouteTypes {
     | '/settings/secrets'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/speech'
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/voice'
@@ -492,6 +502,7 @@ export interface FileRouteTypes {
     | '/settings/secrets'
     | '/settings/snap-shot'
     | '/settings/source-control'
+    | '/settings/speech'
     | '/settings/storage'
     | '/settings/threads'
     | '/settings/voice'
@@ -537,6 +548,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/secrets'
     | '/_chat/settings/snap-shot'
     | '/_chat/settings/source-control'
+    | '/_chat/settings/speech'
     | '/_chat/settings/storage'
     | '/_chat/settings/threads'
     | '/_chat/settings/voice'
@@ -682,6 +694,13 @@ declare module '@tanstack/react-router' {
       path: '/storage'
       fullPath: '/settings/storage'
       preLoaderRoute: typeof ChatSettingsStorageRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/speech': {
+      id: '/_chat/settings/speech'
+      path: '/speech'
+      fullPath: '/settings/speech'
+      preLoaderRoute: typeof ChatSettingsSpeechRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/source-control': {
@@ -886,6 +905,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsSecretsRoute: typeof ChatSettingsSecretsRoute
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
   ChatSettingsSourceControlRoute: typeof ChatSettingsSourceControlRoute
+  ChatSettingsSpeechRoute: typeof ChatSettingsSpeechRoute
   ChatSettingsStorageRoute: typeof ChatSettingsStorageRoute
   ChatSettingsThreadsRoute: typeof ChatSettingsThreadsRoute
   ChatSettingsVoiceRoute: typeof ChatSettingsVoiceRoute
@@ -916,6 +936,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,
   ChatSettingsSourceControlRoute: ChatSettingsSourceControlRoute,
+  ChatSettingsSpeechRoute: ChatSettingsSpeechRoute,
   ChatSettingsStorageRoute: ChatSettingsStorageRoute,
   ChatSettingsThreadsRoute: ChatSettingsThreadsRoute,
   ChatSettingsVoiceRoute: ChatSettingsVoiceRoute,

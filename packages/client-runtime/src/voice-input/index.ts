@@ -18,6 +18,7 @@ export {
 export {
   synthesizeEnvironmentSpeech,
   getEnvironmentSpeechVoices,
+  getElevenLabsSpeechVoices,
   downloadEnvironmentSpeechVoice,
   cancelEnvironmentSpeechVoiceDownload,
   selectEnvironmentSpeechVoice,

@@ -3,10 +3,22 @@ import { ScrollView, View } from "react-native";
 import {
   AuthSettingsWriteScope,
   CloudSpeechApiKey,
+  isSecretReference,
+  type SecretProviderId,
+  type SettingsSecretValue,
   SpeechOutputSettings as SpeechOutputSchema,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import Constants from "expo-constants";
+import { Chip } from "../../components/ui/Chip";
 import { AppTextInput } from "../../components/ui/AppText";
+import {
+  configuredSecretSources,
+  secretRequestReference,
+} from "@t3tools/client-runtime/secret-request";
+import { ProviderIcon } from "../../components/ProviderIcon";
+import * as Dialog from "../../components/ui/Dialog";
+import { useElevenLabsVoices } from "../voice-output/useElevenLabsVoices";
 import { SecretTextInput } from "../../components/ui/SecretTextInput";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -23,7 +35,6 @@ import { SpeechPlaybackSpeed } from "../voice-output/SpeechPlaybackSpeed";
 import { LocalSpeechVoices } from "./LocalSpeechVoices";
 
 const isApiKey = Schema.is(CloudSpeechApiKey);
-const isVoiceId = Schema.is(Schema.toType(SpeechOutputSchema.fields.elevenLabsVoiceId));
 
 export function SpeechOutputSettings({
   environments,
@@ -32,6 +43,19 @@ export function SpeechOutputSettings({
 }) {
   const { destination, choose } = useSpeechOutputDestination();
   const [choosing, setChoosing] = useState(false);
+  const [pending, setPending] = useState<{
+    environment: EnvironmentPresentation;
+    engine: "openai" | "elevenlabs";
+  } | null>(null);
+  const selectCloud = (environment: EnvironmentPresentation, engine: "openai" | "elevenlabs") => {
+    const key =
+      engine === "openai"
+        ? environment.serverConfig?.settings.cloudSpeechCredentials.openai
+        : environment.serverConfig?.settings.speechOutput.elevenLabsApiKey;
+    if (key) choose({ environmentId: environment.environmentId, engine });
+    else setPending({ environment, engine });
+    setChoosing(false);
+  };
   const chosen = environments.find(
     (environment) => environment.environmentId === destination?.environmentId,
   );
@@ -92,18 +116,19 @@ export function SpeechOutputSettings({
               <ListSection key={environment.environmentId} title={`Cloud via ${environment.label}`}>
                 <ListChoiceRow
                   label="OpenAI"
+                  leading={<ProviderIcon provider="openai" size={20} />}
                   description="Sends response text to OpenAI. API charges apply."
                   selected={
                     destination?.engine === "openai" &&
                     destination.environmentId === environment.environmentId
                   }
                   onPress={() => {
-                    choose({ environmentId: environment.environmentId, engine: "openai" });
-                    setChoosing(false);
+                    selectCloud(environment, "openai");
                   }}
                 />
                 <ListChoiceRow
                   label="ElevenLabs"
+                  leading={<ProviderIcon provider="elevenlabs" size={20} />}
                   description="Sends response text to ElevenLabs. API charges apply."
                   separated
                   selected={
@@ -111,8 +136,7 @@ export function SpeechOutputSettings({
                     destination.environmentId === environment.environmentId
                   }
                   onPress={() => {
-                    choose({ environmentId: environment.environmentId, engine: "elevenlabs" });
-                    setChoosing(false);
+                    selectCloud(environment, "elevenlabs");
                   }}
                 />
               </ListSection>
@@ -123,11 +147,26 @@ export function SpeechOutputSettings({
       {chosen && destination ? (
         destination.engine === "piper" ? (
           <LocalPlaybackSettings key={chosen.environmentId} environment={chosen} />
-        ) : destination.engine === "elevenlabs" ? (
-          <ElevenLabsPlaybackSettings key={chosen.environmentId} environment={chosen} />
         ) : (
-          <OpenAiPlaybackSettings key={chosen.environmentId} environment={chosen} />
+          <CloudPlaybackSettings
+            key={`${chosen.environmentId}:${destination.engine}`}
+            environment={chosen}
+            engine={destination.engine}
+          />
         )
+      ) : null}
+      {pending ? (
+        <SpeechApiKeySheet
+          key={`${pending.environment.environmentId}:${pending.engine}`}
+          environment={pending.environment}
+          engine={pending.engine}
+          configured={false}
+          close={() => setPending(null)}
+          saved={() => {
+            choose({ environmentId: pending.environment.environmentId, engine: pending.engine });
+            setPending(null);
+          }}
+        />
       ) : null}
     </>
   );
@@ -189,10 +228,7 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
   if (!config) return null;
   return (
     <>
-      <SettingsSection
-        title="OpenAI voice"
-        footer={`Uses the API key saved under Cloud providers on ${environment.label}.`}
-      >
+      <SettingsSection title="OpenAI voice" footer="Choose the voice used for response playback.">
         <ListActionRow
           label="Voice"
           detail={config.voice}
@@ -231,83 +267,293 @@ function OpenAiPlaybackSettings({ environment }: { environment: EnvironmentPrese
   );
 }
 
-function ElevenLabsPlaybackSettings({ environment }: { environment: EnvironmentPresentation }) {
-  const config = environment.serverConfig?.settings.speechOutput;
+function CloudPlaybackSettings({
+  environment,
+  engine,
+}: {
+  environment: EnvironmentPresentation;
+  engine: "openai" | "elevenlabs";
+}) {
+  const settings = environment.serverConfig?.settings;
+  const configured = Boolean(
+    engine === "openai"
+      ? settings?.cloudSpeechCredentials.openai
+      : settings?.speechOutput.elevenLabsApiKey,
+  );
   const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const saveKey = async (key: string) => {
-    setSaving(true);
-    const result = await update({
-      environmentId: environment.environmentId,
-      input: { patch: { speechOutput: { elevenLabsApiKey: key } } },
-    });
-    setSaving(false);
-    if (result._tag === "Success") setDraft("");
-  };
-  if (!config) return null;
+  const [configuring, setConfiguring] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const label = engine === "openai" ? "OpenAI" : "ElevenLabs";
   return (
     <>
       <SettingsSection
-        title="ElevenLabs API key"
-        footer={`Stored on ${environment.label}. Sends response text to ElevenLabs. API charges apply.`}
+        title={label}
+        footer={`Response text is sent via ${environment.label} to ${label}. API charges apply.`}
       >
-        <View className="p-3">
-          <SecretTextInput
-            accessibilityLabel="ElevenLabs API key"
-            placeholder={
-              config.elevenLabsApiKey
-                ? "Stored secret, enter a new value to replace"
-                : "Enter API key"
-            }
-            value={draft}
-            onChangeText={setDraft}
-            editable={canManage && !saving}
-            onSubmitEditing={(value) => {
-              const key = value.trim();
-              if (isApiKey(key) && canManage && !saving) void saveKey(key);
-            }}
-          />
-        </View>
         <ListActionRow
-          label="Save key"
-          disabled={!canManage || saving || !isApiKey(draft.trim())}
-          onPress={() => void saveKey(draft.trim())}
+          label="API key"
+          leading={<ProviderIcon provider={engine} size={20} />}
+          detail={configured ? "Saved" : "Not set"}
+          description={configured ? "Tap to manage key" : "Add an API key to choose a voice"}
+          disabled={!canManage}
+          onPress={() => setConfiguring(true)}
         />
-        {config.elevenLabsApiKey ? (
-          <ListActionRow
-            label="Remove key"
-            tone="danger"
-            disabled={!canManage || saving}
-            onPress={() => void saveKey("")}
-          />
-        ) : null}
       </SettingsSection>
-      <SettingsSection
-        title="ElevenLabs voice ID"
-        footer="Copy a voice ID from your ElevenLabs voice library. George is selected by default."
+      {configured ? (
+        engine === "openai" ? (
+          <OpenAiPlaybackSettings environment={environment} />
+        ) : (
+          <ElevenLabsVoiceSettings key={revision} environment={environment} />
+        )
+      ) : null}
+      {configuring ? (
+        <SpeechApiKeySheet
+          environment={environment}
+          engine={engine}
+          configured={configured}
+          close={() => setConfiguring(false)}
+          saved={() => {
+            setRevision((value) => value + 1);
+            setConfiguring(false);
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function SpeechApiKeySheet({
+  environment,
+  engine,
+  configured,
+  close,
+  saved,
+}: {
+  environment: EnvironmentPresentation;
+  engine: "openai" | "elevenlabs";
+  configured: boolean;
+  close: () => void;
+  saved: () => void;
+}) {
+  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const original =
+    engine === "openai"
+      ? environment.serverConfig?.settings.cloudSpeechCredentials.openai
+      : environment.serverConfig?.settings.speechOutput.elevenLabsApiKey;
+  const sources =
+    Constants.expoConfig?.extra?.secretsFeatureEnabled === true &&
+    environment.serverConfig?.secretReferences
+      ? configuredSecretSources(environment.serverConfig.settings.secretProviders)
+      : [];
+  const reference =
+    isSecretReference(original) && sources.some((source) => source.id === original.provider)
+      ? original
+      : null;
+  const [sourceId, setSourceId] = useState<SecretProviderId | null>(reference?.provider ?? null);
+  const [draft, setDraft] = useState(reference?.reference ?? "");
+  const source = sources.find((source) => source.id === sourceId);
+  const credentialFor = (value: string) =>
+    sourceId !== null
+      ? source && secretRequestReference(source, value)
+      : isApiKey(value.trim())
+        ? value.trim()
+        : undefined;
+  const credential = credentialFor(draft);
+  const [busy, setBusy] = useState(false);
+  const label = engine === "openai" ? "OpenAI" : "ElevenLabs";
+  const commit = async (key: SettingsSecretValue) => {
+    if (!canManage || busy) return;
+    setBusy(true);
+    const result = await update({
+      environmentId: environment.environmentId,
+      input: {
+        patch:
+          engine === "openai"
+            ? { cloudSpeechCredentials: { openai: key } }
+            : { speechOutput: { elevenLabsApiKey: key } },
+      },
+    });
+    setBusy(false);
+    if (result._tag === "Success") saved();
+  };
+  return (
+    <Sheet
+      title={`${configured ? "Manage" : "Add"} ${label} API key`}
+      dismissDisabled={busy}
+      onClose={close}
+    >
+      <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        contentContainerClassName="gap-4 px-5 pt-2 pb-8"
       >
-        <View className="p-3">
-          <AppTextInput
-            accessibilityLabel="ElevenLabs voice ID"
-            key={config.elevenLabsVoiceId}
-            defaultValue={config.elevenLabsVoiceId}
-            editable={canManage}
-            maxLength={128}
-            autoCorrect={false}
-            autoCapitalize="none"
-            onEndEditing={(event) => {
-              const elevenLabsVoiceId = event.nativeEvent.text.trim();
-              if (isVoiceId(elevenLabsVoiceId))
-                void update({
-                  environmentId: environment.environmentId,
-                  input: { patch: { speechOutput: { elevenLabsVoiceId } } },
-                });
+        <ListSection
+          title="API key"
+          footer={`Stored on ${environment.label}. Response text is sent to ${label}. API charges apply.${engine === "openai" ? " This key is shared with OpenAI transcription." : " Allow Voices: Read to list your voices."}`}
+        >
+          <View className="gap-3 px-4 py-3">
+            {sources.length > 0 ? (
+              <View className="flex-row flex-wrap gap-2">
+                <Chip
+                  label="Value"
+                  size="small"
+                  selected={sourceId === null}
+                  disabled={!canManage || busy}
+                  onPress={() => {
+                    setSourceId(null);
+                    setDraft("");
+                  }}
+                />
+                {sources.map((source) => (
+                  <Chip
+                    key={source.id}
+                    label={source.label}
+                    size="small"
+                    selected={sourceId === source.id}
+                    disabled={!canManage || busy}
+                    onPress={() => {
+                      setSourceId(source.id);
+                      setDraft("");
+                    }}
+                  />
+                ))}
+              </View>
+            ) : null}
+            {sourceId !== null ? (
+              <AppTextInput
+                accessibilityLabel={`${label} API key reference`}
+                value={draft}
+                placeholder={source?.referencePlaceholder}
+                editable={canManage && !busy}
+                autoCorrect={false}
+                autoCapitalize="none"
+                autoComplete="off"
+                maxLength={4096}
+                onChangeText={setDraft}
+                onSubmitEditing={(event) => {
+                  const key = credentialFor(event.nativeEvent.text);
+                  if (key && !busy) void commit(key);
+                }}
+              />
+            ) : (
+              <SecretTextInput
+                accessibilityLabel={`${label} API key`}
+                placeholder={
+                  configured ? "Saved key · enter a new one to replace" : "Enter API key"
+                }
+                value={draft}
+                onChangeText={setDraft}
+                editable={canManage && !busy}
+                onSubmitEditing={(value) => {
+                  const key = credentialFor(value);
+                  if (key && !busy) void commit(key);
+                }}
+              />
+            )}
+          </View>
+          <ListActionRow
+            label="Save key"
+            loading={busy}
+            disabled={!canManage || !credential}
+            onPress={() => {
+              if (credential) void commit(credential);
             }}
           />
-        </View>
+          {configured ? (
+            <ListActionRow
+              label="Remove key from environment"
+              tone="danger"
+              disabled={busy}
+              onPress={() =>
+                Dialog.confirm({
+                  title: `Remove the ${label} key from ${environment.label}?`,
+                  message: `Everyone using ${label} on this environment will lose access to this key.`,
+                  confirmText: "Remove key",
+                  destructive: true,
+                  onConfirm: () => void commit(""),
+                })
+              }
+            />
+          ) : null}
+        </ListSection>
+        <ListSection>
+          <ListActionRow label="Cancel" disabled={busy} onPress={close} />
+        </ListSection>
+      </ScrollView>
+    </Sheet>
+  );
+}
+
+function ElevenLabsVoiceSettings({ environment }: { environment: EnvironmentPresentation }) {
+  const config = environment.serverConfig?.settings.speechOutput;
+  const catalog = useElevenLabsVoices(environment.environmentId);
+  const canManage = useEnvironmentScope(environment.environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings);
+  const [choosing, setChoosing] = useState(false);
+  if (!config) return null;
+  const selected = catalog.voices.find((voice) => voice.id === config.elevenLabsVoiceId);
+  const status = !catalog.connected
+    ? "Connect with playback access to load voices."
+    : catalog.failed
+      ? "Could not load voices. Check the API key has Voices: Read permission, then try again."
+      : catalog.loading
+        ? "Loading voices…"
+        : catalog.voices.length === 0
+          ? "No voices are available for this API key."
+          : undefined;
+  return (
+    <>
+      <SettingsSection title="ElevenLabs voice" footer={status}>
+        <ListActionRow
+          label="Voice"
+          detail={selected?.name ?? "Current voice"}
+          disabled={!canManage || !catalog.connected || catalog.voices.length === 0}
+          onPress={() => setChoosing(true)}
+        />
+        <ListActionRow
+          label={catalog.failed ? "Try again" : "Refresh voices"}
+          disabled={!catalog.connected || catalog.loading}
+          onPress={catalog.refresh}
+        />
       </SettingsSection>
+      {choosing ? (
+        <Sheet title="ElevenLabs voice" onClose={() => setChoosing(false)}>
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerClassName="gap-3 p-4 pb-10"
+          >
+            <ListSection>
+              {catalog.voices.map((voice, index) => (
+                <ListChoiceRow
+                  key={voice.id}
+                  label={voice.name}
+                  separated={index > 0}
+                  selected={voice.id === config.elevenLabsVoiceId}
+                  disabled={!canManage}
+                  onPress={() => {
+                    void update({
+                      environmentId: environment.environmentId,
+                      input: { patch: { speechOutput: { elevenLabsVoiceId: voice.id } } },
+                    });
+                    setChoosing(false);
+                  }}
+                />
+              ))}
+              {catalog.hasMore ? (
+                <ListActionRow
+                  label="Load more voices"
+                  disabled={catalog.loading}
+                  onPress={catalog.loadMore}
+                />
+              ) : null}
+              {catalog.failed ? (
+                <ListActionRow label="Try again" onPress={catalog.refresh} />
+              ) : null}
+            </ListSection>
+          </ScrollView>
+        </Sheet>
+      ) : null}
     </>
   );
 }

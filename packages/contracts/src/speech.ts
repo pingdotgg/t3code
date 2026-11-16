@@ -422,7 +422,7 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
       case "rate-limit":
         return "The speech provider reached a usage limit. Check your quota or try again later.";
       case "not-configured":
-        return "Configure response playback in Settings → Voice on this environment first.";
+        return "Configure response playback in Settings → Speech on this environment first.";
       case "configuration-changed":
         return "The speech configuration changed. Start playback again.";
       case "invalid-text":
@@ -432,14 +432,24 @@ export class SpeechSynthesisError extends Schema.TaggedError<SpeechSynthesisErro
       case "voice-not-found":
         return "This voice is not in the speech catalog.";
       case "voice-not-installed":
-        return "Download this voice in Settings → Voice before using it.";
+        return "Download this voice in Settings → Speech before using it.";
       case "busy":
         return "Another voice download or playback operation is running. Try again when it finishes.";
       case "unavailable":
-        return "Speech synthesis failed. Check the engine and voice in Settings → Voice.";
+        return "Speech synthesis failed. Check the engine and voice in Settings → Speech.";
     }
   }
 }
+
+export const ElevenLabsVoicePageRequest = Schema.Struct({
+  pageToken: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(4096))),
+});
+export type ElevenLabsVoicePageRequest = typeof ElevenLabsVoicePageRequest.Type;
+export const ElevenLabsVoicePage = Schema.Struct({
+  voices: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+  nextPageToken: Schema.optionalKey(Schema.String),
+});
+export type ElevenLabsVoicePage = typeof ElevenLabsVoicePage.Type;
 
 export const SpeechSynthesisVoice = Schema.Struct({
   id: Schema.String,

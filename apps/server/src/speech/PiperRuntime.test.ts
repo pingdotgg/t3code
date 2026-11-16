@@ -89,6 +89,27 @@ it.effect(
       });
       expect(yield* fs.exists(binary)).toBe(false);
       corrupt = false;
+      let chunks = 0;
+      const cancelled = vi.fn();
+      fetch.mockResolvedValueOnce(
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                controller.enqueue(bytes);
+                if (++chunks === 3) controller.close();
+              },
+              cancel: cancelled,
+            },
+            { highWaterMark: 0 },
+          ),
+        ),
+      );
+      expect(yield* Effect.flip(provided(runtime.install))).toMatchObject({
+        reason: "unavailable",
+      });
+      expect(cancelled).toHaveBeenCalledOnce();
+      expect(chunks).toBe(2);
       block = true;
       const pending = yield* provided(runtime.install).pipe(Effect.forkChild);
       yield* Deferred.await(extracting);
