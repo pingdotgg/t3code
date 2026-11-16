@@ -1,4 +1,8 @@
-import type { TextGeneratorKind, TextGeneratorModel } from "@t3tools/contracts";
+import {
+  TextGenerationFailureKind,
+  type TextGeneratorKind,
+  type TextGeneratorModel,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -19,7 +23,11 @@ export interface TextGeneratorConnection {
 /** Why a model API call failed, worded for the person who configured it. */
 export class TextGeneratorRequestError extends Schema.TaggedError<TextGeneratorRequestError>()(
   "TextGeneratorRequestError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    detail: Schema.String,
+    kind: Schema.optional(TextGenerationFailureKind),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {}
 
 export interface TextGeneratorDriver {
@@ -96,6 +104,7 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
       (cause) =>
         new TextGeneratorRequestError({
           detail: `${label} returned a reply T3 Code couldn't read.`,
+          kind: "invalid-output",
           cause,
         }),
     ),
@@ -149,12 +158,20 @@ const openAICompatible: TextGeneratorDriver = {
         const text = choice?.message.content?.trim();
         if (choice?.finish_reason === "length") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
+            new TextGeneratorRequestError({
+              detail: `${label} reached its output limit.`,
+              kind: "output-limit",
+            }),
           );
         }
         return text
           ? Effect.succeed(text)
-          : Effect.fail(new TextGeneratorRequestError({ detail: `${label} returned no text.` }));
+          : Effect.fail(
+              new TextGeneratorRequestError({
+                detail: `${label} returned no text.`,
+                kind: "empty",
+              }),
+            );
       }),
       withTimeout(label, GENERATE_TIMEOUT),
     );
@@ -209,7 +226,10 @@ const anthropic: TextGeneratorDriver = {
       Effect.flatMap((message) => {
         if (message.stop_reason === "max_tokens") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
+            new TextGeneratorRequestError({
+              detail: `${label} reached its output limit.`,
+              kind: "output-limit",
+            }),
           );
         }
         const text = message.content
@@ -218,7 +238,12 @@ const anthropic: TextGeneratorDriver = {
           .trim();
         return text
           ? Effect.succeed(text)
-          : Effect.fail(new TextGeneratorRequestError({ detail: `${label} returned no text.` }));
+          : Effect.fail(
+              new TextGeneratorRequestError({
+                detail: `${label} returned no text.`,
+                kind: "empty",
+              }),
+            );
       }),
       withTimeout(label, GENERATE_TIMEOUT),
     );

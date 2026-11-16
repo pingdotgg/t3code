@@ -698,6 +698,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               new TextGenerationError({
                 operation,
                 detail: "Codex returned invalid structured output.",
+                kind: "invalid-output",
                 cause,
               }),
             ),

@@ -47,8 +47,16 @@ roots and the exact ranges beneath a roll-up are derived from the rows on every 
 stored, so there is no second owner of structure or validity to keep in sync. A roll-up is current
 only while every range beneath it is; a stale leaf therefore withholds its ancestors' text, and the
 pass deletes a dead roll-up (unless a handoff references it) so its current children become roots
-again. The pass generates any pending leaf before it rolls up: otherwise the old neighbours of a
-replaced leaf would roll up without it, and more than the broken path would be summarized again.
+again. The pass rolls up a run of four current roots when that run ends before the first uncovered
+gap, and makes a new leaf only after those runs. A gap keeps the roots on its far side out of
+that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
+them up early would summarize more than the broken path, which could then not be rebuilt alone.
+A stretch is skipped after two failed summaries, and a failure counts only when another summary
+succeeds in the same pass, so an outage skips nothing. A timeout or rejected request counts only
+when a summary succeeds after it, so a provider that answers once and then stalls skips nothing
+either. A skipped stretch gets no leaf, so it is not
+a gap and roll-ups proceed past it; delivery replays its items in full. Skips are keyed by the
+summary model, and turning summaries back on for the project clears them.
 A roll-up offer carries no delivered-knowledge evidence, unlike a leaf offer: the evidence of a few
 hundred items would never fit beside it. Roll-ups are capped by rendered bytes, as delivery
 measures them, so several fit beside the verbatim tail of a 16 KB handoff.

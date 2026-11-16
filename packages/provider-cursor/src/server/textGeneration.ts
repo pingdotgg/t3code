@@ -247,6 +247,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         return yield* new TextGenerationError({
           operation,
           detail: cursorSdkResultDetail(promptResult),
+          ...(promptResult.status === "finished" ? { kind: "empty" as const } : {}),
           ...(promptResult.error ? { cause: promptResult.error } : {}),
         });
       }

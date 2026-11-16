@@ -48,12 +48,16 @@ it.effect.each([
     path: "/v1/chat/completions",
     auth: ["authorization", "Bearer secret"],
     reply: { choices: [{ finish_reason: "stop", message: { content: '{"title":"Fix login"}' } }] },
+    empty: { choices: [{ finish_reason: "stop", message: { content: "  " } }] },
+    cutOff: { choices: [{ finish_reason: "length", message: { content: '{"title":' } }] },
   },
   {
     kind: "anthropic",
     path: "/v1/messages",
     auth: ["x-api-key", "secret"],
     reply: { stop_reason: "end_turn", content: [{ type: "text", text: '{"title":"Fix login"}' }] },
+    empty: { stop_reason: "end_turn", content: [] },
+    cutOff: { stop_reason: "max_tokens", content: [{ type: "text", text: '{"title":' }] },
   },
 ] as const)("$kind generates structured text with its API's request shape", (api) =>
   Effect.gen(function* () {
@@ -84,6 +88,17 @@ it.effect.each([
       run!(request).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
     );
     expect(failure.detail).toMatch(/rejected the API key: Incorrect API key provided$/);
+    expect(failure.kind).toBeUndefined();
+
+    const kindOf = (reply: unknown) => {
+      upstream.mockResolvedValueOnce(Response.json(reply));
+      return Effect.flip(
+        run!(request).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+      ).pipe(Effect.map((error) => error.kind));
+    };
+    expect(yield* kindOf(api.empty)).toBe("empty");
+    expect(yield* kindOf({ unexpected: true })).toBe("invalid-output");
+    expect(yield* kindOf(api.cutOff)).toBe("output-limit");
   }),
 );
 

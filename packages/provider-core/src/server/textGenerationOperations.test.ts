@@ -154,6 +154,7 @@ it.effect("rejects extra evaluator output fields before a decoder can discard th
         JSON.stringify(output),
       ).pipe(Effect.flip);
       expect(error.detail).toContain("invalid structured output");
+      expect(error.kind).toBe("invalid-output");
     }
   }),
 );

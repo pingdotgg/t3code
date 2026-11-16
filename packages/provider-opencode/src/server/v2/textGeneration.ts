@@ -235,6 +235,7 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
     return yield* new TextGenerationError({
       operation: input.operation,
       detail: "OpenCode returned empty output.",
+      kind: "empty",
     });
   }
   return result.text;

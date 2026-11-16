@@ -493,6 +493,48 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     ),
   );
 
+  // Error results exit 1, as in the failure fixtures above.
+  it.effect.each([
+    [
+      "an unreadable success payload",
+      { type: "result", subtype: "success", structured_output: { title: 42 } },
+      0,
+      "invalid-output",
+    ],
+    ["running out of structured output retries", structuredOutputFailure, 1, "invalid-output"],
+    [
+      "an execution error",
+      { type: "result", subtype: "error_during_execution", is_error: true, errors: [apiError] },
+      1,
+      undefined,
+    ],
+    [
+      "an API error result",
+      { type: "result", subtype: "success", is_error: true, result: apiError },
+      1,
+      undefined,
+    ],
+  ] as const)("labels %s by whether the model answered", ([, result, exitCode, kind]) =>
+    withFakeClaudeEnv(
+      { output: JSON.stringify([{ type: "system", subtype: "init" }, result]), exitCode },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const error = yield* Effect.flip(
+            textGeneration.generateThreadTitle({
+              cwd: process.cwd(),
+              message: "Name this thread",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            }),
+          );
+
+          expect(error.kind).toBe(kind);
+        }),
+    ),
+  );
+
   it.effect("does not report the raw result JSON when a failed run writes nothing to stderr", () =>
     withFakeClaudeEnv(
       { output: JSON.stringify(structuredOutputFailure), exitCode: 1 },

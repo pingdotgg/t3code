@@ -393,11 +393,23 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   }
 }
 
+/**
+ * A reply the model produced but that held no text, no readable result, or was cut off at its
+ * output limit. Unlike an outage or a timeout, the same input may keep producing it.
+ */
+export const TextGenerationFailureKind = Schema.Literals([
+  "empty",
+  "invalid-output",
+  "output-limit",
+]);
+export type TextGenerationFailureKind = typeof TextGenerationFailureKind.Type;
+
 export class TextGenerationError extends Schema.TaggedError<TextGenerationError>()(
   "TextGenerationError",
   {
     operation: Schema.String,
     detail: Schema.String,
+    kind: Schema.optional(TextGenerationFailureKind),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

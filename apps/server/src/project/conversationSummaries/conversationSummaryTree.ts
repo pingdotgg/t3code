@@ -1,5 +1,6 @@
 import {
   conversationSummarySourceIdentity,
+  conversationSummarySourceKey,
   type ConversationSummaryRangeRef,
   type ConversationSummarySourceRef,
 } from "@t3tools/contracts";
@@ -7,7 +8,7 @@ import {
 import { sourcesCoverWholeItems } from "./conversationSummarySources.ts";
 
 /** One roll-up call absorbs exactly this many adjacent summaries. */
-const CONDENSE_FAN_IN = 4;
+export const CONDENSE_FAN_IN = 4;
 
 /** What the tree needs from a stored row. Statements are not loaded. */
 export interface StoredSummary {
@@ -125,6 +126,35 @@ export function buildSummaryTree(
 }
 
 /**
+ * Current roots whose ranges all end before the first uncovered source. A gap splits the forest,
+ * so a roll-up cannot join the neighbours of a missing leaf. Skipped sources will get no leaf, so
+ * they split nothing.
+ */
+export function rootsBeforeFirstGap(input: {
+  readonly roots: ReadonlyArray<SummaryNode>;
+  readonly order: ReadonlyArray<string>;
+  readonly covered: ReadonlySet<string>;
+  readonly skipped: ReadonlySet<string>;
+}): ReadonlyArray<SummaryNode> {
+  const gapAt = input.order.findIndex((key) => !input.covered.has(key) && !input.skipped.has(key));
+  if (gapAt === -1) return input.roots;
+  const indexByKey = new Map(input.order.map((key, index) => [key, index]));
+  const prefix: Array<SummaryNode> = [];
+  for (const root of input.roots) {
+    const positions = root.leafSources.map((source) =>
+      indexByKey.get(conversationSummarySourceKey(source)),
+    );
+    if (
+      positions.length === 0 ||
+      positions.some((position) => position === undefined || position >= gapAt)
+    )
+      break;
+    prefix.push(root);
+  }
+  return prefix;
+}
+
+/**
  * The next roots to condense, or null. It takes the oldest run of four adjacent roots in which at
  * least three share the run's greatest depth, preferring the lowest such depth. That keeps depth
  * near log4 of the leaf count. Three of four, rather than four of one depth, lets the odd root a
@@ -132,6 +162,7 @@ export function buildSummaryTree(
  */
 export function planCondensation(
   roots: ReadonlyArray<SummaryNode>,
+  accept: (group: ReadonlyArray<SummaryNode>) => boolean = () => true,
 ): ReadonlyArray<SummaryNode> | null {
   let best: { readonly start: number; readonly depth: number } | null = null;
   for (let start = 0; start + CONDENSE_FAN_IN <= roots.length; start++) {
@@ -139,6 +170,7 @@ export function planCondensation(
     const depth = Math.max(...run.map((node) => node.depth));
     if (
       run.filter((node) => node.depth === depth).length >= CONDENSE_FAN_IN - 1 &&
+      accept(run) &&
       (best === null || depth < best.depth)
     )
       best = { start, depth };

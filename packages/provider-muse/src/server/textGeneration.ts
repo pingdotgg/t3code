@@ -281,6 +281,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
           new TextGenerationError({
             operation,
             detail: "Muse returned invalid structured output.",
+            kind: "invalid-output",
             cause,
           }),
       ),
