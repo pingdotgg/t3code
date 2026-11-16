@@ -158,7 +158,10 @@ const openAICompatible: TextGeneratorDriver = {
         const text = choice?.message.content?.trim();
         if (choice?.finish_reason === "length") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
+            new TextGeneratorRequestError({
+              detail: `${label} reached its output limit.`,
+              kind: "output-limit",
+            }),
           );
         }
         return text
@@ -223,7 +226,10 @@ const anthropic: TextGeneratorDriver = {
       Effect.flatMap((message) => {
         if (message.stop_reason === "max_tokens") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
+            new TextGeneratorRequestError({
+              detail: `${label} reached its output limit.`,
+              kind: "output-limit",
+            }),
           );
         }
         const text = message.content

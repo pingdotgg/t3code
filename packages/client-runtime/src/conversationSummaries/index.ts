@@ -36,7 +36,7 @@ export function conversationSummaryPassLabel(pass: ConversationSummaryPass): str
       : ` ${pass.waitingMessages} older ${pass.waitingMessages === 1 ? "source waits" : "sources wait"} for a summary.`;
   switch (pass.result) {
     case "ran":
-      return `Last pass wrote ${pass.generated} ${pass.generated === 1 ? "summary" : "summaries"}.${waiting}`;
+      return `Last pass wrote ${pass.generated} ${pass.generated === 1 ? "summary" : "summaries"}.${pass.reason ? ` ${pass.reason}` : ""}${waiting}`;
     case "skipped":
       return `Last pass wrote nothing. ${pass.reason ?? ""}${waiting}`.trim();
     case "failed":

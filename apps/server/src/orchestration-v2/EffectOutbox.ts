@@ -668,7 +668,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         `;
         if (requeuedRows.length > 0 || coveredRows.length > 0)
           yield* notifyAvailable(requeuedRows.length + coveredRows.length);
-        return { requeued: requeuedRows.length, cancelled: cancelledRows.length };
+        return {
+          requeued: requeuedRows.length,
+          cancelled: cancelledRows.length + coveredRows.length,
+        };
       }).pipe(
         Effect.mapError(
           (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),

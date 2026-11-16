@@ -23,6 +23,7 @@ import {
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
   type RunId,
+  type ServerSettings as ServerSettingsValue,
   type ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -42,9 +43,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
+import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
@@ -66,6 +69,7 @@ import {
 import {
   buildSummaryTree,
   childIds,
+  CONDENSE_FAN_IN,
   condensedPosition,
   handoffCover,
   isRangeRef,
@@ -835,6 +839,40 @@ const make = Effect.gen(function* () {
     `;
   });
 
+  // Turning summaries back on is how a user retries skipped stretches.
+  const forgetFailuresOnReenable = Effect.fn("ConversationSummaries.forgetFailuresOnReenable")(
+    function* (before: ServerSettingsValue, after: ServerSettingsValue) {
+      const enabled = (settings: ServerSettingsValue, projectId: ProjectId) =>
+        resolveProjectSettings(settings, projectId).settings.enableConversationSummaries;
+      const rows = yield* sql<{ readonly project_id: ProjectId }>`
+        SELECT DISTINCT project_id FROM conversation_summary_passes
+        WHERE json_extract(payload_json, '$.chunkFailures') IS NOT NULL
+      `;
+      const reenabled = rows
+        .map((row) => row.project_id)
+        .filter((projectId) => !enabled(before, projectId) && enabled(after, projectId));
+      if (reenabled.length === 0) return;
+      yield* sql`
+        UPDATE conversation_summary_passes
+        SET payload_json = json_remove(payload_json, '$.chunkFailures')
+        WHERE ${sql.in("project_id", reenabled)}
+      `;
+    },
+  );
+  const settingsChanges = yield* serverSettings.subscribeChanges;
+  let lastSettings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+  yield* forkParked(
+    Stream.runForEach(settingsChanges, (settings) => {
+      const before = lastSettings;
+      lastSettings = settings;
+      return forgetFailuresOnReenable(before, settings).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not reset summary failures for re-enabled projects.", cause),
+        ),
+      );
+    }),
+  );
+
   const summarizeThread: ConversationSummaries["Service"]["summarizeThread"] = Effect.fn(
     "ConversationSummaries.summarizeThread",
   )(
@@ -902,8 +940,10 @@ const make = Effect.gen(function* () {
           Effect.andThen(DateTime.now),
           Effect.flatMap((now) => {
             const failures = [...chunkFailures.values()];
+            const open = failures.filter((failure) => failure.skipped !== true);
             const stored = [
-              ...failures.filter((failure) => failure.skipped !== true),
+              ...open.filter((failure) => failure.failures === 0),
+              ...open.filter((failure) => failure.failures > 0),
               ...failures.filter((failure) => failure.skipped === true).slice(-MAX_SKIPPED_CHUNKS),
             ].slice(-MAX_CHUNK_FAILURES);
             return recordPass(projectId, threadId, {
@@ -1018,17 +1058,7 @@ const make = Effect.gen(function* () {
           for (const source of root.leafSources) covered.add(conversationSummarySourceKey(source));
       };
       rebuild();
-      const waiting = () =>
-        new Set(
-          settled
-            .filter((source) => !covered.has(conversationSummarySourceKey(source.ref)))
-            .map((source) => conversationSummarySourceIdentity(source.ref)),
-        ).size;
       let generated = 0;
-      const failPass = (reason: string) =>
-        finish("failed", reason.slice(0, 300), generated, waiting()).pipe(
-          Effect.andThen(Effect.fail(new ConversationSummaryPassError({ runId, cause: reason }))),
-        );
 
       const publish = Effect.fnUntraced(function* (input: {
         readonly messages: ReadonlyArray<{
@@ -1186,8 +1216,8 @@ const make = Effect.gen(function* () {
       const rollupKey = (group: ReadonlyArray<SummaryNode>) =>
         group.map((node) => node.row.id).join("\n");
       for (const chunk of planLeafChunks({ settled, covered })) yield* keyOf(leafChunkKey(chunk));
-      for (let start = 0; start + 4 <= tree.roots.length; start++)
-        yield* keyOf(rollupKey(tree.roots.slice(start, start + 4)));
+      for (let start = 0; start + CONDENSE_FAN_IN <= tree.roots.length; start++)
+        yield* keyOf(rollupKey(tree.roots.slice(start, start + CONDENSE_FAN_IN)));
       const live = new Set(keys.values());
       for (const key of chunkFailures.keys()) if (!live.has(key)) chunkFailures.delete(key);
 
@@ -1196,6 +1226,23 @@ const make = Effect.gen(function* () {
         return key === undefined ? undefined : chunkFailures.get(key);
       };
       const isSkipped = (raw: string) => failureOf(raw)?.skipped === true;
+      const skippedSources = (chunks: ReadonlyArray<ReadonlyArray<SummarySource>>) =>
+        new Set(
+          chunks
+            .filter((chunk) => isSkipped(leafChunkKey(chunk)))
+            .flatMap((chunk) => chunk.map((source) => conversationSummarySourceKey(source.ref))),
+        );
+      const waiting = () => {
+        const skipped = skippedSources(planLeafChunks({ settled, covered }));
+        return new Set(
+          settled
+            .filter((source) => {
+              const key = conversationSummarySourceKey(source.ref);
+              return !covered.has(key) && !skipped.has(key);
+            })
+            .map((source) => conversationSummarySourceIdentity(source.ref)),
+        ).size;
+      };
       // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
       // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
       // A skipped stretch gets no replacement, so it is no gap.
@@ -1207,13 +1254,7 @@ const make = Effect.gen(function* () {
             roots: tree.roots,
             order: settled.map((source) => conversationSummarySourceKey(source.ref)),
             covered,
-            skipped: new Set(
-              chunks
-                .filter((chunk) => isSkipped(leafChunkKey(chunk)))
-                .flatMap((chunk) =>
-                  chunk.map((source) => conversationSummarySourceKey(source.ref)),
-                ),
-            ),
+            skipped: skippedSources(chunks),
           }),
           (run) => !held(rollupKey(run)),
         );
@@ -1225,17 +1266,29 @@ const make = Effect.gen(function* () {
       };
       const isSuspect = (raw: string) => failureOf(raw)?.suspect === true;
       // Until a summary succeeds, suspects go last, so work that failed together cannot hold the
-      // front of every pass, and one suspect is enough to test a model that may be down.
+      // front of every pass, and one suspect is enough to test a model that may be down. That one
+      // is the suspect that waited longest, so a stretch that keeps failing cannot hold every pass.
       let suspectTried = false;
       const selectWork = (blocked: ReadonlySet<string>) => {
         if (generated > 0) return selectFrom((raw) => blocked.has(raw));
-        return (
-          selectFrom((raw) => blocked.has(raw) || isSuspect(raw)) ??
-          (suspectTried ? null : selectFrom((raw) => blocked.has(raw)))
-        );
+        const fresh = selectFrom((raw) => blocked.has(raw) || isSuspect(raw));
+        if (fresh !== null || suspectTried) return fresh;
+        for (const failure of chunkFailures.values()) {
+          if (failure.suspect !== true) continue;
+          const work = selectFrom(
+            (raw) => blocked.has(raw) || (isSuspect(raw) && keys.get(raw) !== failure.key),
+          );
+          if (work !== null) return work;
+        }
+        return null;
       };
       const blocked = new Set<string>();
-      const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
+      const failed: Array<{
+        readonly raw: string;
+        readonly reason: string;
+        readonly countable: boolean;
+      }> = [];
+      let stoppedBy: string | undefined;
       let attempts = 0;
       while (generated < MAX_SUMMARIES_PER_PASS && attempts < MAX_SUMMARIES_PER_PASS) {
         const work = selectWork(blocked);
@@ -1245,9 +1298,17 @@ const make = Effect.gen(function* () {
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
-          if (!published.unusableReply) return yield* failPass(published.reason);
-          failed.push({ raw: work.key, reason: published.reason });
+          failed.push({
+            raw: work.key,
+            reason: published.reason,
+            countable: published.unusableReply,
+          });
           blocked.add(work.key);
+          // An outage or a rejected request fails the pass so it retries, but its work goes last.
+          if (!published.unusableReply) {
+            stoppedBy = published.reason;
+            break;
+          }
           continue;
         }
         const key = keys.get(work.key);
@@ -1269,14 +1330,21 @@ const make = Effect.gen(function* () {
           reason: reason.slice(0, 300),
         });
       };
-      for (const { raw, reason } of failed) charge(yield* keyOf(raw), reason, generated === 0);
+      for (const { raw, reason, countable } of failed)
+        charge(yield* keyOf(raw), reason, !countable || generated === 0);
+      if (stoppedBy !== undefined)
+        return yield* finish("failed", stoppedBy.slice(0, 300), generated, waiting()).pipe(
+          Effect.andThen(
+            Effect.fail(new ConversationSummaryPassError({ runId, cause: stoppedBy })),
+          ),
+        );
       if (generated === 0 && failed.length > 0)
         return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
       const skipped = [...chunkFailures.values()].filter((failure) => failure.skipped);
       const skipReason =
         skipped.length === 0
           ? null
-          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} empty or invalid summaries. ${skipped[0]!.reason}`.slice(
+          : `Skipped ${skipped.length === 1 ? "a stretch" : `${skipped.length} stretches`} after ${CHUNK_FAILURES_BEFORE_SKIP} unusable summaries. ${skipped[0]!.reason}`.slice(
               0,
               300,
             );

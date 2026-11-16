@@ -8,7 +8,7 @@ import {
 import { sourcesCoverWholeItems } from "./conversationSummarySources.ts";
 
 /** One roll-up call absorbs exactly this many adjacent summaries. */
-const CONDENSE_FAN_IN = 4;
+export const CONDENSE_FAN_IN = 4;
 
 /** What the tree needs from a stored row. Statements are not loaded. */
 export interface StoredSummary {
