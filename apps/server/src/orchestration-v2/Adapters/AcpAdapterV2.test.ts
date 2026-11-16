@@ -4532,6 +4532,14 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      assert.isFalse(
+        items.some(
+          (item) =>
+            item.type === "file_search" &&
+            item.results?.some((result) => result.fileName === "top story on Hacker News today"),
+        ),
+        "a web search query must not become a file search result",
+      );
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>

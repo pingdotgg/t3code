@@ -1268,6 +1268,15 @@ const program = Effect.gen(function* () {
             status: "completed",
             rawInput: { query: "TODO", path: "apps/web" },
           },
+          // Antigravity's search_web: a query, no workspace location, no backend variant.
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-web-search",
+            title: 'Searching the web for "top story on Hacker News today"',
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
+          },
           // Grok backend searches: the query only arrives in the completed rawOutput.
           {
             sessionUpdate: "tool_call_update",
