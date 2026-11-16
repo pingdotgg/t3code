@@ -10,7 +10,10 @@ import {
   type AuthMcpClientAccess,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as AgentSessionImporter from "../../../project/AgentSessionImporter.ts";
 import * as AgentSessionScanner from "../../../project/AgentSessionScanner.ts";
@@ -160,6 +163,49 @@ it.effect.each(accessCases)(
           : { code: "capability_denied" },
       );
     }).pipe(Effect.provide(layerToolkit)),
+);
+
+it.effect.each([
+  { runtimeMode: "approval-required", interactionMode: "default" },
+  { runtimeMode: "full-access", interactionMode: "plan" },
+] as const)("stops an import after a downgrade to $runtimeMode/$interactionMode", (modes) =>
+  Effect.gen(function* () {
+    const shell = yield* Ref.make(liveThreadShell(threadId));
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const reading = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const toolkit = yield* AgentSessionsToolkit;
+    const pending = yield* toolkit.handle("t3_agent_sessions_import", { projectId }).pipe(
+      Stream.unwrap,
+      Stream.runCollect,
+      Effect.provideService(
+        ThreadManagement.ThreadManagementService,
+        ThreadManagement.ThreadManagementService.of({
+          ...threads,
+          getThreadShell: () => Ref.get(shell),
+        }),
+      ),
+      Effect.provideService(
+        AgentSessionImporter.AgentSessionImporter,
+        AgentSessionImporter.AgentSessionImporter.of({
+          importRecentAgentThreads: (_input, check = Effect.void) =>
+            Deferred.succeed(reading, undefined).pipe(
+              Effect.andThen(Deferred.await(resume)),
+              Effect.andThen(check),
+              Effect.as({ importedCount: 1, skippedCount: 0 }),
+            ),
+          importNativeHistory: () => Effect.die("Native history is not used"),
+        }),
+      ),
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(reading);
+    yield* Ref.set(shell, liveThreadShell(threadId, modes));
+    yield* Deferred.succeed(resume, undefined);
+    expect((yield* Fiber.join(pending)).at(-1)?.result).toMatchObject({
+      code: "capability_denied",
+    });
+  }).pipe(Effect.scoped, Effect.provide(layerToolkit)),
 );
 
 it.effect("does not disclose internal scan or import failures", () =>

@@ -14,17 +14,19 @@ export const layer = McpToolAccess.toLayer(AgentSessionsToolkit, {
       return yield* scanner.scan.pipe(Effect.mapError(unavailable));
     }),
   ),
-  t3_agent_sessions_import: McpToolAccess.writesEnvironment((input) =>
+  t3_agent_sessions_import: McpToolAccess.writesEnvironment((input, check) =>
     Effect.gen(function* () {
       const importer = yield* AgentSessionImporter.AgentSessionImporter;
       return yield* importer
-        .importRecentAgentThreads(input)
+        .importRecentAgentThreads(input, check)
         .pipe(
           Effect.mapError((error) =>
-            error._tag === "AgentSessionImportProjectNotFoundError" ||
-            error._tag === "AgentSessionImportProjectChangedError"
-              ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
-              : unavailable(),
+            error._tag === "OrchestratorMcpFailure"
+              ? error
+              : error._tag === "AgentSessionImportProjectNotFoundError" ||
+                  error._tag === "AgentSessionImportProjectChangedError"
+                ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+                : unavailable(),
           ),
         );
     }),

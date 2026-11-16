@@ -27,6 +27,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -278,6 +279,7 @@ const makeImporter = Effect.fn(function* (
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
   return {
+    importRecentAgentThreads: importer.importRecentAgentThreads,
     run: importer.importRecentAgentThreads({ projectId }),
     importNativeHistory: importer.importNativeHistory,
     published,
@@ -421,6 +423,37 @@ it.effect("tolerates a missing transcript owner but propagates failed ownership 
         cause: { _tag: "ProjectionStoreReadError" },
       },
     });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("stops subsequent import writes when authorization is revoked", () =>
+  Effect.gen(function* () {
+    const first = candidate(CODEX_MODEL_SELECTION, "authorized");
+    const second = candidate(CODEX_MODEL_SELECTION, "revoked");
+    const importer = yield* makeImporter([first, second]);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventStore.EventStoreV2;
+    const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+    const denied = new Error("Import access revoked");
+    const check = Effect.gen(function* () {
+      const completed = yield* runtimes.list();
+      if (completed.some((runtime) => runtime.threadId === importId(first))) {
+        const payload = AgentSessionScanner.decodeImportedTranscriptPayload(
+          completed[0]!.runtimePayload,
+        );
+        if (Option.isSome(payload) && payload.value.importedTranscripts?.length) {
+          return yield* Effect.fail(denied);
+        }
+      }
+    });
+    const result = yield* Effect.result(importer.importRecentAgentThreads({ projectId }, check));
+    expect(result).toEqual(Result.fail(denied));
+    expect(yield* events.read({ threadId: importId(first) }).pipe(Stream.runCollect)).toHaveLength(
+      6,
+    );
+    expect(yield* events.read({ threadId: importId(second) }).pipe(Stream.runCollect)).toEqual([]);
+    expect(yield* Effect.option(projections.getThread(importId(second)))).toEqual(Option.none());
+    expect((yield* runtimes.list()).map((runtime) => runtime.threadId)).toEqual([importId(first)]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
