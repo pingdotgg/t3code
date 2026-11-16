@@ -125,26 +125,28 @@ describe("MediaVideoPlayer", () => {
   });
 
   it("pauses a playing video that leaves fullscreen while it is out of view", async () => {
-    const subscriptions: Array<{
+    const observers: Array<{
       readonly callback: IntersectionObserverCallback;
-      target: Element;
+      target: Element | null;
     }> = [];
-    class OffscreenObserver {
-      constructor(private readonly callback: IntersectionObserverCallback) {}
+    class RecordingObserver {
+      readonly callback: IntersectionObserverCallback;
+      target: Element | null = null;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
       observe(target: Element) {
-        subscriptions.push({ callback: this.callback, target });
+        this.target = target;
       }
       unobserve() {}
       disconnect() {}
     }
-    using _observer = stubGlobal("IntersectionObserver", OffscreenObserver);
+    using _observer = stubGlobal("IntersectionObserver", RecordingObserver);
     using _hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
     const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
     using pause = vi.spyOn(video, "pause");
-    using _rect = vi
-      .spyOn(video, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, -300, 320, 180));
     Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
     await act(() => {
       video.dispatchEvent(new Event("play"));
@@ -152,9 +154,10 @@ describe("MediaVideoPlayer", () => {
 
     // The fullscreen player keeps playing even though the inline box left the viewport.
     await act(() => {
-      for (const { callback, target } of subscriptions) {
-        callback(
-          [{ target, isIntersecting: false } as IntersectionObserverEntry],
+      for (const observer of observers) {
+        if (!observer.target) continue;
+        observer.callback(
+          [{ target: observer.target, isIntersecting: false } as IntersectionObserverEntry],
           undefined as unknown as IntersectionObserver,
         );
       }
@@ -165,42 +168,56 @@ describe("MediaVideoPlayer", () => {
       value: false,
       configurable: true,
     });
+    const checks = observers.length;
     await act(() => {
       video.dispatchEvent(new Event("webkitendfullscreen"));
+    });
+
+    // The exit starts a fresh check, since the shared observer cannot re-report.
+    expect(observers.length).toBeGreaterThan(checks);
+    const fresh = observers.at(-1);
+    await act(() => {
+      fresh?.callback(
+        [{ target: video, isIntersecting: false } as unknown as IntersectionObserverEntry],
+        undefined as unknown as IntersectionObserver,
+      );
     });
     expect(pause).toHaveBeenCalled();
   });
 
   it("keeps a playing video that leaves fullscreen while it is still in view", async () => {
-    const subscriptions: Array<{
+    const observers: Array<{
       readonly callback: IntersectionObserverCallback;
-      target: Element;
+      target: Element | null;
     }> = [];
-    class OffscreenObserver {
-      constructor(private readonly callback: IntersectionObserverCallback) {}
+    class RecordingObserver {
+      readonly callback: IntersectionObserverCallback;
+      target: Element | null = null;
+      constructor(callback: IntersectionObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
       observe(target: Element) {
-        subscriptions.push({ callback: this.callback, target });
+        this.target = target;
       }
       unobserve() {}
       disconnect() {}
     }
-    using _observer = stubGlobal("IntersectionObserver", OffscreenObserver);
+    using _observer = stubGlobal("IntersectionObserver", RecordingObserver);
     using _hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
     await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
     const video = screen.getByLabelText("clip").element() as HTMLVideoElement;
     using pause = vi.spyOn(video, "pause");
-    using _rect = vi
-      .spyOn(video, "getBoundingClientRect")
-      .mockReturnValue(new DOMRect(0, 100, 320, 180));
     Object.defineProperty(video, "webkitDisplayingFullscreen", { value: true, configurable: true });
     await act(() => {
       video.dispatchEvent(new Event("play"));
     });
 
     await act(() => {
-      for (const { callback, target } of subscriptions) {
-        callback(
-          [{ target, isIntersecting: false } as IntersectionObserverEntry],
+      for (const observer of observers) {
+        if (!observer.target) continue;
+        observer.callback(
+          [{ target: observer.target, isIntersecting: false } as IntersectionObserverEntry],
           undefined as unknown as IntersectionObserver,
         );
       }
@@ -209,8 +226,19 @@ describe("MediaVideoPlayer", () => {
       value: false,
       configurable: true,
     });
+    const checks = observers.length;
     await act(() => {
       video.dispatchEvent(new Event("webkitendfullscreen"));
+    });
+
+    // The exit starts a fresh check, since the shared observer cannot re-report.
+    expect(observers.length).toBeGreaterThan(checks);
+    const fresh = observers.at(-1);
+    await act(() => {
+      fresh?.callback(
+        [{ target: video, isIntersecting: true } as unknown as IntersectionObserverEntry],
+        undefined as unknown as IntersectionObserver,
+      );
     });
 
     expect(pause).not.toHaveBeenCalled();
