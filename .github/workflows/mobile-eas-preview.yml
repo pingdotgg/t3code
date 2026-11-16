@@ -638,7 +638,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/t3code-preview.ipa" | awk '/^Payload\/[^/]+\.app\/embedded.mobileprovision$/')"
+          profile_path="$(unzip -Z -1 "$RUNNER_TEMP/t3code-preview.ipa" | grep -E '^Payload/[^/]+\.app/embedded\.mobileprovision$')"
           test -n "$profile_path"
           unzip -p "$RUNNER_TEMP/t3code-preview.ipa" "$profile_path" > "$RUNNER_TEMP/preview.mobileprovision"
           security cms -D -i "$RUNNER_TEMP/preview.mobileprovision" > "$RUNNER_TEMP/preview-profile.plist"
