@@ -283,10 +283,16 @@ describe("the Idle shelf", () => {
       </SidebarProvider>,
     );
 
-    const header = screen.container.querySelector<HTMLElement>('[data-sidebar-row="shelf:idle"]');
-    expect(header).not.toBeNull();
-    const row = screen.container.querySelector<HTMLElement>('[data-sidebar-parent="shelf:idle"]');
-    expect(row).not.toBeNull();
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLElement>('[data-sidebar-row="shelf:idle"]'),
+      ).not.toBeNull(),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLElement>('[data-sidebar-parent="shelf:idle"]'),
+      ).not.toBeNull(),
+    );
   });
 
   it("keeps a running thread visible when the shelf folds", async () => {
