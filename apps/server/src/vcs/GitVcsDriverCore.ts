@@ -63,6 +63,7 @@ import {
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import * as ServerConfig from "../config.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { windowsMountFor } from "../workspace/windowsDriveMount.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** T3's record of the branch, named as on the host, that a branch was cut from. */
@@ -1024,16 +1025,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
-  // WSL Git reading an index written by Git for Windows sees every inode, owner and ctime differ.
-  // Polls never save a refreshed index, so each would re-read every file; elsewhere keep the full
-  // check, which also catches same-size replacements that keep their mtime. Guards always keep it.
-  const isWsl =
-    hostPlatform === "linux" &&
-    (yield* fileSystem.readFileString("/proc/sys/kernel/osrelease").pipe(
-      Effect.map((release) => release.toLowerCase().includes("microsoft")),
-      Effect.orElseSucceed(() => false),
-    ));
-  const pollStatConfig = isWsl ? ["-c", "core.checkStat=minimal"] : [];
+  // WSL Git reading an index Git for Windows wrote on a drive mount sees every inode, owner and
+  // ctime differ, and polls never save the refresh, so each would re-read every file. Elsewhere the
+  // full check stays: it catches same-size replacements that keep their mtime. Guards always keep it.
+  const driveMountInfo =
+    hostPlatform === "linux"
+      ? yield* fileSystem
+          .readFileString("/proc/self/mountinfo")
+          .pipe(Effect.orElseSucceed(() => ""))
+      : "";
+  const pollStatConfig = (cwd: string) =>
+    windowsMountFor(driveMountInfo, cwd) === undefined ? [] : ["-c", "core.checkStat=minimal"];
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
     claimed: Deferred.Deferred<void>;
@@ -2364,7 +2366,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ),
     );
     const statusArgs = [
-      ...pollStatConfig,
+      ...pollStatConfig(cwd),
       "status",
       "--porcelain=2",
       "--branch",
@@ -2431,7 +2433,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       executeGitWithStableDiagnostics(
         "GitVcsDriver.statusDetails.numstat",
         cwd,
-        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig(cwd), "diff-index", "-M", "--numstat", "-z", ref, "--"],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.
@@ -3957,7 +3959,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
         // Plumbing: porcelain diff refreshes and rewrites the real index, taking index.lock.
-        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig(cwd), "diff-index", "-M", "--numstat", "-z", ref, "--"],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,

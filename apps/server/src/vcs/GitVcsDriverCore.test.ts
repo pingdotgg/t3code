@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -65,8 +66,8 @@ const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-// Status relaxes its stat check only on WSL, so these pin the platform and kernel release.
-const layerLinuxKernelTest = (kernelRelease: string) =>
+// Status relaxes its stat check only on a WSL drive mount, so these pin the platform and mounts.
+const layerMountInfoTest = (mountInfo: string) =>
   GitVcsDriver.layer.pipe(
     Layer.provideMerge(layerServerConfig),
     Layer.provideMerge(
@@ -75,8 +76,8 @@ const layerLinuxKernelTest = (kernelRelease: string) =>
         Effect.map(FileSystem.FileSystem, (fileSystem) => ({
           ...fileSystem,
           readFileString: (path: string, encoding?: string) =>
-            path === "/proc/sys/kernel/osrelease"
-              ? Effect.succeed(`${kernelRelease}\n`)
+            path === "/proc/self/mountinfo"
+              ? Effect.succeed(mountInfo)
               : fileSystem.readFileString(path, encoding),
         })),
       ),
@@ -482,6 +483,12 @@ it.effect.each(["root", "nested", "worktree"] as const)(
 );
 
 // Same size and mtime, new inode: what Linux Git sees in an index written by Git for Windows.
+const wslMountInfo = (driveMountPoint: string) =>
+  [
+    "1 0 8:32 / / rw,relatime - ext4 /dev/sdc rw",
+    `2 1 0:52 / ${driveMountPoint} rw,noatime - 9p C:\\134 rw,aname=drvfs;path=C:\\;uid=1000`,
+  ].join("\n");
+
 const replaceKeepingStat = (filePath: string, contents: string) => {
   NodeFS.writeFileSync(`${filePath}.copy`, contents);
   NodeFS.utimesSync(`${filePath}.copy`, 1, 1);
@@ -489,7 +496,7 @@ const replaceKeepingStat = (filePath: string, contents: string) => {
 };
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "does not re-read a file that only differs from the index by inode under WSL",
+  "does not re-read a file that only differs from the index by inode on a WSL drive mount",
   () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -514,11 +521,11 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       assert.isFalse(status.hasWorkingTreeChanges);
       assert.isFalse(yield* fs.exists(runsPath));
-    }).pipe(Effect.provide(layerLinuxKernelTest("6.6.87.2-microsoft-standard-WSL2"))),
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(NodeOS.tmpdir())))),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "reports a same-size replacement that kept its mtime outside WSL",
+  "reports a same-size replacement that kept its mtime in a WSL distro-local clone",
   () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
@@ -539,7 +546,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
         status.workingTree.files.map((file) => file.path),
         ["asset.txt"],
       );
-    }).pipe(Effect.provide(layerLinuxKernelTest("6.8.0-45-generic"))),
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo("/mnt/c")))),
 );
 
 it.effect.each(["origin", "github"] as const)(
