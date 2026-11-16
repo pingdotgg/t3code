@@ -1576,6 +1576,10 @@ function acpRootSessionUpdateIngestsOutput(
   }
 }
 
+/** Monitor wakes arrive as their own chunk led by a tagged `<monitor-event task_id=…>`; bare mentions are content. */
+const acpIsMonitorChatter = (text: string) =>
+  /^\s*(?:<monitor-event\s|Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended)/i.test(text);
+
 export function acpPostSettleWakeEvidence(
   notification: EffectAcpSchema.SessionNotification,
   flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundToolMutation"> = {},
@@ -1590,9 +1594,7 @@ export function acpPostSettleWakeEvidence(
     const text = update.content.text;
     if ((flavor.extractBackgroundToolMutation?.(text) ?? []).length > 0) return false;
     if (update.sessionUpdate === "agent_message_chunk" && text.trim().length === 0) return false;
-    if (/<monitor-event\b/i.test(text) || /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text)) {
-      return false;
-    }
+    if (acpIsMonitorChatter(text)) return false;
   }
   return true;
 }
@@ -5536,10 +5538,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               for (const lateBackgroundMutation of lateBackgroundMutations) {
                 yield* applyLateBackgroundMutation(notification.sessionId, lateBackgroundMutation);
               }
-              const lateMonitorChatter =
-                /<monitor-event\b/i.test(text) ||
-                /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
-              if (lateBackgroundMutations.length === 0 && !lateMonitorChatter) {
+              if (lateBackgroundMutations.length === 0 && !acpIsMonitorChatter(text)) {
                 yield* appendLoadedHistory(
                   notification,
                   update.sessionUpdate === "user_message_chunk"
