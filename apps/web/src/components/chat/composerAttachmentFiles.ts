@@ -264,10 +264,10 @@ export function shouldHandleComposerAttachmentPaste(input: {
 export function claimsAttachmentPaste(
   clipboardData: Pick<DataTransfer, "getData">,
   { files, folders }: TransferredFiles,
-  hasActiveThread: boolean,
+  attachFiles: boolean,
 ): boolean {
   if (folders.length > 0) return true;
-  if (!hasActiveThread || files.length === 0) return false;
+  if (!attachFiles || files.length === 0) return false;
   return shouldHandleComposerAttachmentPaste({
     files,
     plainText: clipboardData.getData("text/plain"),

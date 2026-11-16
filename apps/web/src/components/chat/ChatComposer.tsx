@@ -1,9 +1,10 @@
+import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
-import { BackgroundThreadContext } from "./backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -19,11 +20,17 @@ import {
   useQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import type {
+  KeybindingCommand,
+  AssistantCitation,
+  ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
   EnvironmentId,
   ModelSelection,
   ProjectId,
+  PreviewAnnotationPayload,
+  ThreadContextRecord,
+  EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   RuntimeRequestId,
@@ -100,9 +107,12 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  readComposerDraftPrompt,
+  resolveLiveComposerDraftTarget,
   useComposerDraftStore,
   useComposerThreadDraft,
 } from "../../composerDraftStore";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../../threadRoutes";
 import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -142,6 +152,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import {
+  formatComposerContextReference,
   threadContextRecord,
   toKindScopedComposerContextId,
 } from "@t3tools/shared/composerContextReferences";
@@ -261,6 +272,7 @@ import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
 import { useRestingComposerControlsLayout } from "./useRestingComposerControlsLayout";
@@ -280,13 +292,74 @@ import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useSendAfterPreparingImages } from "./useSendAfterPreparingImages";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
-export type { ChatComposerHandle } from "./chatComposerHandle";
-import type { ChatComposerHandle } from "./chatComposerHandle";
-
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
   deadline.current = 0;
   return armed;
+}
+
+export interface ChatComposerHandle {
+  focusAtEnd: () => void;
+  focusAt: (cursor: number) => void;
+  addDroppedFiles: (files: File[]) => void;
+  addDroppedFolders: (folders: File[]) => void;
+  hasPendingAttachments: () => boolean;
+  insertTextAtEnd: (
+    text: string,
+    options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
+  ) => boolean;
+  pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  /** Attaches a paste's images, files and folders; false leaves the paste to text handling. */
+  pasteAttachmentsAtEnd: (
+    clipboardData: DataTransfer,
+    transferred: TransferredFiles,
+    options?: { bypassAutoAttachment?: boolean },
+  ) => boolean;
+  citeAssistantText: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor,
+  ) => boolean;
+  replyToResponse: (response: ResponseContextRecord) => boolean;
+  openModelPicker: () => void;
+  stepReasoningEffort: (direction: 1 | -1) => void;
+  toggleModelPicker: () => void;
+  openControl: (command: KeybindingCommand) => void;
+  isModelPickerOpen: () => boolean;
+  isCaretAtStart: () => boolean;
+  compactContext: () => void;
+  readSnapshot: () => {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+    contextIds: string[];
+  };
+  resetCursorState: (options?: {
+    cursor?: number;
+    prompt?: string;
+    detectTrigger?: boolean;
+  }) => void;
+  addTerminalContext: (selection: TerminalContextSelection) => void;
+  getSendContext: () => {
+    answeringPendingUserInput: boolean;
+    prompt: string;
+    images: ComposerImageAttachment[];
+    files: ComposerFileAttachment[];
+    terminalContexts: TerminalContextDraft[];
+    previewAnnotations: PreviewAnnotationPayload[];
+    reviewComments: ReviewCommentContext[];
+    threadContexts: ThreadContextRecord[];
+    environmentContexts: EnvironmentContextRecord[];
+    selectedPromptEffort: string | null;
+    selectedModelSelection: ModelSelection;
+    multipleModelSelections: ReadonlyArray<ModelSelection> | null;
+    providerAvailable: boolean;
+    selectedProvider: ProviderDriverKind;
+    selectedModel: string;
+    selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
+    shownPendingApprovalIds: ReadonlyArray<RuntimeRequestId>;
+  };
+  validateProviderInput: (providerInput: string) => boolean;
+  setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
 }
 
 export interface ChatComposerProps {
@@ -656,7 +729,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
-      const preview = buildExpandedImagePreview(composerImages, imageId);
+      const preview = buildExpandedImagePreview(
+        composerImages,
+        imageId,
+        copyComposerSnapshotStable,
+      );
       if (preview) onExpandImage(preview);
     },
     openFile: setPreviewFileId,
@@ -985,6 +1062,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
 
   const backgroundThread = use(BackgroundThreadContext);
+  const hiddenThread = use(HiddenThreadContext);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to keydown, window blur and the desktop paste-as-text event to arm plain-text paste
   useEffect(() => {
     // A background composer listens on its own form, so it never hears the main composer's keys.
@@ -1273,7 +1351,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               : null);
           if (!record) return [];
           if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
-          return [record];
+          return [
+            record.kind === "image" && attachment.type === "image" && attachment.source
+              ? { ...record, source: attachment.source }
+              : record,
+          ];
         }),
     ];
     if (records.length === 0) return null;
@@ -1285,6 +1367,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (fragment) rememberCopiedComposerAttachments(environmentId, copiedFiles);
     return fragment;
   };
+  const copyComposerSnapshot = async (imageId: string) => {
+    const image = composerImages.find((candidate) => candidate.id === imageId);
+    if (!image) throw new Error("Snapshot is no longer available.");
+    const contextId = toKindScopedComposerContextId("image", image.id);
+    const fragment = buildContextClipboardFragment([contextId]);
+    if (!fragment || !image.previewUrl) throw new Error("The snapshot is not ready to copy.");
+    await copySnapshot(
+      image.previewUrl,
+      formatComposerContextReference({ kind: "image", contextId, label: image.name }),
+      fragment,
+    );
+  };
+  const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
   const {
     loadThreadTranscript,
@@ -1762,6 +1857,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
+    label: activeThread?.title ?? null,
+    presented: !hiddenThread,
+    // A question's answer lives only in this composer, so only the thread draft outlives it.
+    persistentDraft: questionAttachmentTarget
+      ? undefined
+      : {
+          readStoredText: () => readComposerDraftPrompt(composerDraftTarget),
+          commitStoredText: (text) => {
+            const live = resolveLiveComposerDraftTarget(composerDraftTarget);
+            if (live !== null) setComposerDraftPrompt(live, text);
+          },
+          // The route, not the draft target: a queued-message edit has a draft id but no route.
+          open: () =>
+            void (routeKind === "draft" && typeof composerDraftTarget === "string"
+              ? navigate({
+                  to: "/draft/$draftId",
+                  params: buildDraftThreadRouteParams(composerDraftTarget),
+                })
+              : navigate({
+                  to: "/$environmentId/$threadId",
+                  params: buildThreadRouteParams(routeThreadRef),
+                })),
+        },
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -2352,6 +2470,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         allImages={composerImages}
         resolvedTheme={resolvedTheme}
         onExpandImage={onExpandImage}
+        onCopySnapshot={copyComposerSnapshotStable}
         onShowMore={expandMobileComposer}
       />
     ) : null;
@@ -2692,13 +2811,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
 
+  const hasPastedContext = (clipboardData: DataTransfer) =>
+    !isLiteralPendingAnswer && (readPastedComposerContext(clipboardData)?.records.length ?? 0) > 0;
   // Takes the files already read: a dictation tool may replace the clipboard after the first read.
   const pasteComposerAttachments = (
     clipboardData: DataTransfer,
     transferred: TransferredFiles,
     bypassAutoAttachment: boolean,
   ): boolean => {
-    if (!claimsAttachmentPaste(clipboardData, transferred, Boolean(activeThreadId))) return false;
+    const attachFiles = Boolean(activeThreadId) && !hasPastedContext(clipboardData);
+    if (!claimsAttachmentPaste(clipboardData, transferred, attachFiles)) return false;
     const { files, folders } = transferred;
     if (folders.length > 0) addComposerFoldersStable(folders);
     if (files.length > 0) {
@@ -2718,7 +2840,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const plainText = event.clipboardData.getData("text/plain");
 
-    if ((readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0) return;
+    if (hasPastedContext(event.clipboardData)) return;
     if (!foldPastedText(plainText, bypassAutoAttachment)) {
       return;
     }
@@ -3268,6 +3390,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         environmentId={environmentId}
         attachmentDraftTarget={attachmentDraftTarget}
         canOperateThread={canOperateThread}
+        onCopySnapshot={copyComposerSnapshotStable}
         onExpandImage={onExpandImage}
         onFileOpen={onFileOpen}
         onRemoveImage={removeComposerImage}
@@ -3752,6 +3875,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           finishShortcutLabel={dictationShortcutLabel}
                           cancelShortcutLabel="Esc"
                           level={speechInput.level}
+                          recordingStartedAt={speechInput.recordingStartedAt}
                           disabled={dictationDisabled}
                           onStart={() => void speechInput.start()}
                           onStop={() => void speechInput.stop()}
