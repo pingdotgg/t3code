@@ -355,6 +355,7 @@ it.effect(
 it.effect.each([
   "provider-error",
   "provider-stderr",
+  "provider-unavailable",
   "unsupported-citation",
   "abstention",
   "missing-reply",
@@ -378,7 +379,11 @@ it.effect.each([
       0,
     );
     if (kind !== "abstention") assert.isNull(record.verdict);
-    if (kind === "provider-error" || kind === "provider-stderr") {
+    if (
+      kind === "provider-error" ||
+      kind === "provider-stderr" ||
+      kind === "provider-unavailable"
+    ) {
       assert.include(record.reason ?? "", "TextGenerationError");
       assert.notInclude(record.reason ?? "", "Codex CLI request timed out");
       assert.notInclude(record.reason ?? "", "Claude CLI command failed");
@@ -389,17 +394,24 @@ it.effect.each([
     }
     if (kind === "provider-error") assert.match(record.reason ?? "", /timed out/);
     if (kind === "provider-stderr") assert.match(record.reason ?? "", /provider command failed/);
+    if (kind === "provider-unavailable") assert.match(record.reason ?? "", /provider unavailable/);
   }).pipe(
     Effect.provide(
       makeLayer((request) => {
-        if (kind === "provider-error" || kind === "provider-stderr")
+        if (
+          kind === "provider-error" ||
+          kind === "provider-stderr" ||
+          kind === "provider-unavailable"
+        )
           return Effect.fail(
             new TextGenerationError({
               operation: "generateModelEvaluation",
               detail:
                 kind === "provider-stderr"
                   ? "Claude CLI command failed: Error: leaked sk-live-SECRET from provider stderr"
-                  : `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
+                  : kind === "provider-unavailable"
+                    ? "The selected evaluator is unavailable. Choose an enabled, installed, authenticated provider that supports blind evaluation."
+                    : `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
               cause: "FULL_MODEL_RESPONSE",
             }),
           );
@@ -546,7 +558,7 @@ it.effect(
 );
 
 it.effect(
-  "pools latency and capacity options, and keeps effort, judges, scope, and observed scores separate",
+  "pools latency and capacity options, and keeps behavior, effort, judges, scope, and observed scores separate",
   () =>
     Effect.gen(function* () {
       const service = yield* ModelEvaluations.ModelEvaluations;
@@ -569,6 +581,8 @@ it.effect(
         { options: [{ id: "thinking", value: true }] },
         { options: [{ id: "thinking", value: false }] },
         { options: [{ id: "thinking_level", value: "high" }] },
+        { options: [{ id: "agent", value: "plan" }] },
+        { options: [{ id: "mode", value: "architect" }] },
         { options: [], switchJudge: true },
         { options: [], subagent: true },
       ];
@@ -595,8 +609,9 @@ it.effect(
         report.guidance.filter((group) =>
           (group.modelSelection.options ?? []).some((option) => option.id === id),
         );
-      assert.equal(report.guidance.length, 10);
+      assert.equal(report.guidance.length, 12);
       const learned = report.guidance.find((group) => group.sampleCount === 6)!;
+      assert.deepEqual(learned.modelSelection, modelSelection);
       assert.equal(learned.confidence, "observed");
       assert.equal(learned.meanScores.taskCompletion, 3);
       assert.equal(learned.scoreCounts.taskCompletion, 6);
@@ -608,6 +623,8 @@ it.effect(
       assert.equal(groupsWith("reasoning_effort").length, 1);
       assert.equal(groupsWith("thinking").length, 2);
       assert.equal(groupsWith("thinking_level").length, 1);
+      assert.equal(groupsWith("agent").length, 1);
+      assert.equal(groupsWith("mode").length, 1);
       assert.equal(report.guidance.filter((group) => group.scope === "subagent").length, 1);
       yield* settings.updateSettings({ enableModelEvaluations: false });
       assert.deepEqual(yield* service.guidance(scope), []);
@@ -1167,48 +1184,74 @@ it.effect("enqueues one refresh after every delegated child settles", () =>
   }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
 );
 
-it.effect("scores a turn whose child settles before the evaluation is stored", () =>
-  Effect.gen(function* () {
-    const reached = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    const calls: Array<Parameters<Generate>[0]> = [];
-    const readProviders = Effect.gen(function* () {
-      yield* Deferred.succeed(reached, undefined);
-      yield* Deferred.await(release);
-      return [];
-    });
-    return yield* Effect.gen(function* () {
-      yield* seed();
-      yield* recordChild("racing-child", "running", null, 2);
-      const service = yield* ModelEvaluations.ModelEvaluations;
-      const sql = yield* SqlClient.SqlClient;
-      const fiber = yield* Effect.forkChild(service.evaluateRun(input));
-      yield* Deferred.await(reached);
-      yield* recordChild("racing-child", "completed", "settled-result-token", 2);
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(fiber);
-      const ids = yield* sql<{ effect_id: string }>`
+it.effect.each(["completed", "cancelled", "idle"] as const)(
+  "scores a turn whose child ends %s before the evaluation is stored",
+  (settledStatus) =>
+    Effect.gen(function* () {
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const calls: Array<Parameters<Generate>[0]> = [];
+      const readProviders = Effect.gen(function* () {
+        yield* Deferred.succeed(reached, undefined);
+        yield* Deferred.await(release);
+        return [];
+      });
+      return yield* Effect.gen(function* () {
+        yield* seed();
+        yield* recordChild("racing-child", "running", null, 2);
+        const service = yield* ModelEvaluations.ModelEvaluations;
+        const sql = yield* SqlClient.SqlClient;
+        const fiber = yield* Effect.forkChild(service.evaluateRun(input));
+        yield* Deferred.await(reached);
+        yield* recordChild(
+          "racing-child",
+          settledStatus,
+          settledStatus === "completed" ? "settled-result-token" : null,
+          2,
+        );
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(fiber);
+        const ids = yield* sql<{ effect_id: string }>`
         SELECT effect_id FROM orchestration_v2_effect_outbox
         WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}
         ORDER BY effect_id
       `;
-      assert.equal(calls.length, 0);
-      assert.equal(ids.length, 1);
-      yield* service.evaluateRun(input);
-      assert.equal(packetsWith(calls, "settled-result-token").length, 1);
-      assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
-    }).pipe(
-      Effect.provide(
-        makeLayer(
-          (request) => {
-            calls.push(request);
-            return Effect.succeed(verdict(request.packet));
-          },
-          true,
-          [],
-          readProviders,
+        assert.equal(calls.length, 0);
+        assert.equal(ids.length, 1);
+        yield* service.evaluateRun(input);
+        assert.equal(calls.length, 1);
+        if (settledStatus === "completed")
+          assert.equal(packetsWith(calls, "settled-result-token").length, 1);
+        assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+      }).pipe(
+        Effect.provide(
+          makeLayer(
+            (request) => {
+              calls.push(request);
+              return Effect.succeed(verdict(request.packet));
+            },
+            true,
+            [],
+            readProviders,
+          ),
+        ),
+      );
+    }),
+);
+
+it.effect("checks every revised source message through the message-revision index", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN
+      SELECT evaluation.run_id FROM model_evaluations AS evaluation
+      WHERE ${ModelEvaluations.sourceMessageRevised(sql)}`;
+    assert.isTrue(
+      plan.some((row) =>
+        row.detail.includes(
+          "model_evaluation_message_revision (stream_id=? AND <expr>=? AND sequence>?)",
         ),
       ),
+      JSON.stringify(plan),
     );
-  }),
+  }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
 );
