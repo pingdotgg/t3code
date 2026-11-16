@@ -4,6 +4,10 @@ import { gradeCondensed, gradeLeaf } from "./grade.ts";
 
 const [reversal, control] = condensedCases;
 const [peerLeaf, ordinaryLeaf] = leafCases;
+const userAcceptedPostgres =
+  "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b";
+const agentProposedPostgres =
+  "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b";
 
 it("passes a roll-up that keeps the reversal, the attribution and the open item", () => {
   expect(
@@ -57,22 +61,18 @@ it("passes a leaf that names the peer and leaves the choice open", () => {
 });
 
 it("fails a leaf that records the peer proposal as the user's decision", () => {
+  const text = "The user decided to use Postgres for sessions.";
   expect(
     gradeLeaf(peerLeaf!, [
-      { text: "The user decided to use Postgres for sessions.", citations: ["M2"] },
+      { text, citations: ["M2"] },
       { text: "The agent wants to keep Redis.", citations: ["M3"] },
     ]),
   ).toEqual([
     "missing Astra",
-    "Postgres|[Dd]rop Redis without Astra: The user decided to use Postgres for sessions.",
-    "[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis): The user decided to use Postgres for sessions.",
+    `[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis): ${text}`,
+    `${userAcceptedPostgres}: ${text}`,
   ]);
 });
-
-const userAcceptedPostgres =
-  "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b";
-const agentProposedPostgres =
-  "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b";
 
 it("does not treat an open Postgres choice as the peer's proposal", () => {
   expect(

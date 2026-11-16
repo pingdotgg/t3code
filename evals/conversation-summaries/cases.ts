@@ -39,10 +39,17 @@ export const leafCases: ReadonlyArray<LeafCase> = [
       },
     ],
     mustMention: ["Astra", "Postgres"],
-    attributed: [{ when: "Postgres|[Dd]rop Redis", require: "Astra" }],
+    attributed: [
+      {
+        when: "(?:[Pp]ropos|[Ss]uggest)\\w*[^.]{0,80}Postgres|Postgres[^.]{0,80}(?:[Pp]ropos|[Ss]uggest)\\w*",
+        require: "Astra",
+      },
+    ],
     mustNot: [
       "[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis)",
       "[Uu]ser's decision to (drop Redis|use Postgres|keep Redis)",
+      "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b",
+      "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b",
     ],
   },
   {
