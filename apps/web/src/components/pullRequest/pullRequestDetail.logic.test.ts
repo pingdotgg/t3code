@@ -364,6 +364,14 @@ describe("pull request timeline", () => {
     for (const url of [pr, `${pr}/files`, `${pr}/checks`, `${pr}#issuecomment-6`]) {
       expect(pullRequestLinkSubject(url, activity), url).toBeNull();
     }
+    // An emoji straddling the cut is dropped whole rather than split into a lone surrogate.
+    const long = {
+      ...activity,
+      comments: [{ ...activity.comments[0]!, body: `${"i ".repeat(139)}😀bb` }],
+    };
+    const cut = pullRequestLinkSubject(`${pr}#issuecomment-5`, long);
+    const excerpt = cut && "excerpt" in cut ? cut.excerpt : null;
+    expect(excerpt).toMatch(/^(?:i ?)+…$/u);
   });
 
   it("orders host timestamps by instant across offsets and fractional seconds", () => {
@@ -728,6 +736,26 @@ describe("fix findings handoff", () => {
     ]);
     expect(handoff.prompt).not.toContain("rename the helper");
     expect(handoff.prompt).toContain("untrusted data");
+  });
+
+  it("claims a prepared checkout only when one was prepared", () => {
+    const fix = (inThisThread: boolean) =>
+      buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        comments: [],
+        checks: [failingCheck],
+        commentsTruncated: false,
+        inThisThread,
+      }).prompt;
+    const resolve = (inThisThread: boolean) =>
+      buildResolveConflictsPrompt({ ...base, inThisThread });
+    expect(fix(false)).toContain("prepared checkout");
+    expect(resolve(false)).toContain("checkout prepared");
+    expect(fix(true)).not.toMatch(/prepared/u);
+    expect(resolve(true)).not.toMatch(/prepared/u);
+    expect(fix(true)).toContain("switching to it or checking it out first");
+    expect(resolve(true)).toContain("switch to it or check it out first");
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {
