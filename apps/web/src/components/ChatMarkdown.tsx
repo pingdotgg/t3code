@@ -201,6 +201,7 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
+import { FAST_MARKDOWN } from "../markdown/fastMarkdownSetting";
 import { chatRenderHast } from "../markdown/chatHast";
 import {
   type MarkdownIslandOptions,
@@ -1856,6 +1857,7 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   let renderer = byRehype.get(rehypePlugins);
   if (!renderer) {
     renderer = createMarkdownRenderer({
+      fastParse: FAST_MARKDOWN,
       remarkPlugins,
       rehypePlugins,
       directHast: directHastFor(rehypePlugins),
@@ -1866,9 +1868,6 @@ function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: Pluggable
   }
   return renderer;
 }
-
-// VITE_T3_MARKDOWN_ISLANDS=0 measures against rendering every element with React.
-const MARKDOWN_ISLANDS = import.meta.env.VITE_T3_MARKDOWN_ISLANDS !== "0";
 
 type ChatMarkdownComponentState = ReturnType<typeof useChatMarkdownState>["componentState"];
 
@@ -1999,6 +1998,7 @@ const MarkdownSource = memo(function MarkdownSource({
   const render = shared
     ? markdownRenderer(remarkPlugins, rehypePlugins)
     : createMarkdownRenderer({
+        fastParse: FAST_MARKDOWN,
         remarkPlugins,
         rehypePlugins,
         directHast: directHastFor(rehypePlugins),
@@ -2010,7 +2010,7 @@ const MarkdownSource = memo(function MarkdownSource({
   useEffect(() => {
     if (shared && cache) render.remember(text, entry);
   }, [render, text, entry, shared, cache]);
-  const islandState = MARKDOWN_ISLANDS ? use(ChatMarkdownRendererContext) : null;
+  const islandState = FAST_MARKDOWN ? use(ChatMarkdownRendererContext) : null;
   return (
     <ChatMarkdownTextContext value={text}>
       {islandState

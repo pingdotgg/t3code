@@ -12,12 +12,11 @@ import { VFile } from "vfile";
 import { remarkFastParse } from "../../markdown/remarkFastParse";
 import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
 
-// VITE_T3_MARKDOWN_PARSER=remark measures against micromark and the rehype plugins.
-const FAST_PARSE = import.meta.env?.VITE_T3_MARKDOWN_PARSER !== "remark";
-
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
+  /** Parse with parseMarkdown and build hast with `directHast`, instead of micromark and the rehype plugins. */
+  readonly fastParse: boolean;
   readonly remarkPlugins: PluggableList;
   readonly rehypePlugins: PluggableList;
   /** Builds what `rehypePlugins` would, or null to run them. */
@@ -56,6 +55,7 @@ function remember(key: string, entry: Rendered) {
 
 /** Renders markdown as react-markdown does, with one processor per plugin set. */
 export function createMarkdownRenderer({
+  fastParse,
   remarkPlugins,
   rehypePlugins,
   components,
@@ -65,7 +65,7 @@ export function createMarkdownRenderer({
   const remark = unified()
     .use(remarkParse)
     .use(remarkParseWithoutUnusedSyntax)
-    .use(FAST_PARSE ? [remarkFastParse] : [])
+    .use(fastParse ? [remarkFastParse] : [])
     .use(remarkPlugins)
     .freeze();
   const rehype = unified()
@@ -74,7 +74,7 @@ export function createMarkdownRenderer({
     .freeze();
   const toHast = (file: VFile): Root => {
     const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
-    return (FAST_PARSE && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);
+    return (fastParse && directHast?.(mdast)) || (rehype.runSync(mdast as never, file) as Root);
   };
   const keyPrefix = `${nextRendererId++}\u0000`;
 

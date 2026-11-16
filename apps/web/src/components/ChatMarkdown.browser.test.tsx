@@ -19,6 +19,10 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
   filesystemMetadata: vi.fn(),
 }));
+vi.mock(import("../markdown/fastMarkdownSetting"), async (original) => ({
+  ...(await original()),
+  FAST_MARKDOWN: true,
+}));
 const parsedSources = vi.hoisted(() => [] as string[]);
 vi.mock(import("../markdown/parseMarkdown"), async (original) => {
   const actual = await original();

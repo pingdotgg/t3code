@@ -12,6 +12,7 @@ import { searchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
+import { FAST_MARKDOWN, setFastMarkdown } from "~/markdown/fastMarkdownSetting";
 
 /** Features still settling in. */
 export function LabsSettingsPanel() {
@@ -19,6 +20,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
+        <FastMarkdownRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -69,6 +71,23 @@ function BoringSidebarMultilineRow() {
             updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
           }
           aria-label="Two-line folder rows"
+        />
+      }
+    />
+  );
+}
+
+/** This device only. Switching reloads the window. */
+function FastMarkdownRow() {
+  return (
+    <SettingsRow
+      {...searchableSetting("fast-markdown")}
+      description="Render Markdown in chat and pull requests with a faster renderer built into T3 Code. Long threads open and stream with less work. Switching reloads the window."
+      control={
+        <Switch
+          checked={FAST_MARKDOWN}
+          onCheckedChange={(checked) => setFastMarkdown(Boolean(checked))}
+          aria-label="Fast Markdown rendering"
         />
       }
     />

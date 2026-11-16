@@ -480,6 +480,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "fast-markdown",
+    title: "Fast Markdown rendering",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta markdown renderer parser speed performance chat messages pull request comments",
+    ],
+  },
+  {
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/chat",
