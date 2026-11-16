@@ -108,6 +108,16 @@ async fn answer(case: &Value, state_dir: &std::path::Path) -> Result<Value, Stri
                 .await?;
             Ok(json!(title))
         }
+        "commitPrompt" => {
+            let input = &case["input"];
+            Ok(json!(prompts::commit_message_prompt(
+                input.get("branch").and_then(Value::as_str),
+                &text(input, "stagedSummary"),
+                &text(input, "stagedPatch"),
+                &text(input, "policy"),
+                input.get("includeBranch") == Some(&Value::Bool(true))
+            )))
+        }
         "prompt" => {
             let input = &case["input"];
             let prompt = prompts::thread_title_prompt(&TitlePromptInput {

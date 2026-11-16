@@ -15,9 +15,9 @@
 //! - **Diffs.** `getTurnDiff` and `getFullThreadDiff` compare two checkpoints, at most 10 MB.
 
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -25,10 +25,10 @@ use conn_support::ids::join_id;
 use conn_vcs::checkpoint as git;
 use serde_json::{Value, json};
 
+use crate::EngineError;
 use crate::commands::{self, Effect};
 use crate::engine::Inner;
 use crate::store::{Draft, StoreResult, Tx};
-use crate::{EngineError, lock};
 
 /// `BASELINE_CAPTURE_BUDGET`.
 const BASELINE_BUDGET: Duration = Duration::from_secs(5);
@@ -38,48 +38,7 @@ const MAX_WIRE_FILES: usize = 200;
 /// `MAX_PATHSPEC_CHARS` (`CheckpointDiffQuery.ts`).
 const MAX_PATHSPEC_CHARS: usize = 24_000;
 
-/// Per-workspace locks, so two captures of one folder do not race (`withWorkspaceLock`).
-/// An entry lives while someone holds or waits for it.
-#[derive(Debug, Default)]
-pub(crate) struct Checkpoints {
-    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-}
-
-pub(crate) struct WorkspaceLock<'a> {
-    owner: &'a Checkpoints,
-    key: String,
-    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
-}
-
-impl Drop for WorkspaceLock<'_> {
-    fn drop(&mut self) {
-        drop(self.guard.take());
-        let mut locks = lock(&self.owner.locks);
-        if locks
-            .get(&self.key)
-            .is_some_and(|entry| Arc::strong_count(entry) == 1)
-        {
-            locks.remove(&self.key);
-        }
-    }
-}
-
-impl Checkpoints {
-    pub(crate) async fn workspace(&self, cwd: &str) -> WorkspaceLock<'_> {
-        let entry = lock(&self.locks).entry(cwd.to_owned()).or_default().clone();
-        let guard = entry.lock_owned().await;
-        WorkspaceLock {
-            owner: self,
-            key: cwd.to_owned(),
-            guard: Some(guard),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn held(&self) -> usize {
-        lock(&self.locks).len()
-    }
-}
+pub(crate) use conn_vcs::locks::WorkspaceLocks as Checkpoints;
 
 pub(crate) fn scope_id(thread_id: &str) -> String {
     join_id("checkpoint-scope", &["thread", thread_id, "name", "root"])

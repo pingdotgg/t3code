@@ -307,6 +307,15 @@ const decodeEach = (client) =>
       title: "Repo",
       workspaceRoot: repo,
     });
+    yield* call("git.resolvePullRequest", { cwd: repo, reference: "42" });
+    yield* call("git.preparePullRequestThread", { cwd: repo, reference: "42", mode: "worktree" });
+    git(repo, "config", "user.name", "test");
+    git(repo, "config", "user.email", "test@example.com");
+    NodeFS.writeFileSync(NodePath.join(repo, "commit-proof.txt"), "commit proof\n");
+    const commitEvents = yield* Stream.runCollect(client["git.runStackedAction"]({ cwd: repo, actionId: "decode-commit", action: "commit", commitMessage: "Decode commit" }));
+    const finishedCommit = commitEvents.find((event) => event.kind === "action_finished");
+    check("git.runStackedAction commits and decodes final result", finishedCommit?.result.commit.status === "created");
+    decodedTags.add("git.runStackedAction");
     // Scheduled tasks. `runNow` names a missing task: a run would start a real provider.
     const scheduled = yield* call("scheduledTasks.upsert", {
       commandId: "effect-client-task",

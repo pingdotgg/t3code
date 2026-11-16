@@ -330,7 +330,7 @@ impl SqliteEngine {
     pub(crate) async fn test_hold_workspace(
         &self,
         cwd: &str,
-    ) -> crate::checkpoint::WorkspaceLock<'_> {
+    ) -> conn_vcs::locks::WorkspaceLock<'_> {
         self.inner
             .checkpoints
             .as_ref()
@@ -1206,6 +1206,17 @@ impl Engine for SqliteEngine {
         Box::pin(async move {
             self.inner
                 .db(|store| store.shell_snapshot())
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
+    fn projects_snapshot(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(|store| store.projects_snapshot())
                 .await
                 .map_err(EngineError::Internal)
         })

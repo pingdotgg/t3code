@@ -195,6 +195,19 @@ impl std::fmt::Debug for McpService {
 }
 
 impl McpService {
+    pub async fn run_worktree_setup(
+        &self,
+        thread: &str,
+        path: &str,
+        project: &Value,
+    ) -> Result<(), String> {
+        let Some(config) = &self.config.worktrees else {
+            return Ok(());
+        };
+        tools::worktree::setup(config, thread, project, path).await?;
+        Ok(())
+    }
+
     pub fn new(config: McpConfig) -> Arc<Self> {
         Arc::new(Self {
             config,

@@ -100,6 +100,7 @@ packages/shared/src/keybindings.ts
 packages/contracts/src/keybindings.ts
 
 [crates/conn-server/src/text_generation]
+apps/server/src/textGeneration/TextGenerationPresets.ts
 apps/server/src/textGeneration/TextGenerators.ts
 apps/server/src/textGeneration/textGeneratorDrivers.ts
 apps/server/src/textGeneration/ThreadTitleLinks.ts
@@ -117,6 +118,9 @@ packages/shared/src/shell.ts
 apps/server/src/sourceControl/SourceControlDiscovery.ts
 
 [crates/conn-vcs]
+packages/shared/src/git.ts
+packages/shared/src/path.ts
+packages/shared/src/serverSettings.ts
 apps/server/src/vcs
 apps/server/src/git
 apps/server/src/review

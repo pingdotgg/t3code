@@ -16,8 +16,8 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 | `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for GitHub (see "Repositories") |
 | The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
 | Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
-| GitHub's GraphQL operations | Generated from the monorepo; panel reads and viewed-file mutations send them. |
-| `git.*` (3) | Not served |
+| GitHub's GraphQL operations | Generated from the monorepo; panel reads, viewed-file mutations and PR resolution send them. |
+| `git.*` (3) | GitHub PR resolution and checkout; commit-only stacked actions in `conn-server` |
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | GitHub: the 20 panel read/refresh methods served; the 15 action/guide methods remain unregistered. |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
@@ -27,6 +27,7 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 
 | Module | Holds |
 | --- | --- |
+| `checkout.rs` | GitHub PR resolution, local checkout and worktree reuse |
 | `secret.rs` | `Secret`: a token with a redacted `Debug` and `Display` |
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
 | `settings.rs` | GitHub's saved fields (`hosts`, `tokens`, `signIns`), secret references |

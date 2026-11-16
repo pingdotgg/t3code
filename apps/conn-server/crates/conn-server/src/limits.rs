@@ -37,6 +37,7 @@ struct RawLimit {
     non_blank: bool,
     min_length: Option<usize>,
     max_length: Option<usize>,
+    items: Option<Box<RawLimit>>,
     pattern: Option<String>,
     max_properties: Option<usize>,
     #[serde(default)]
@@ -53,6 +54,7 @@ struct Limit {
     non_blank: bool,
     min_length: Option<usize>,
     max_length: Option<usize>,
+    items: Option<Box<Limit>>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
     int: bool,
@@ -91,6 +93,7 @@ impl Limit {
             non_blank: raw.non_blank,
             min_length: raw.min_length,
             max_length: raw.max_length,
+            items: raw.items.map(|i| Box::new(Self::build(*i))),
             pattern,
             max_properties: raw.max_properties,
             int: raw.int,
@@ -114,6 +117,28 @@ impl Limit {
                 self.text_problem(text, path)
             }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
+            Value::Array(items) => {
+                if self.min_length.is_some_and(|min| items.len() < min) {
+                    return Some(at(
+                        format!(
+                            "an array with at least {} items",
+                            self.min_length.unwrap_or_default()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(limit) = &self.items {
+                    for (index, item) in items.iter_mut().enumerate() {
+                        path.push(index.to_string());
+                        let problem = limit.problem(item, path);
+                        path.pop();
+                        if problem.is_some() {
+                            return problem;
+                        }
+                    }
+                }
+                None
+            }
             Value::Object(map) => {
                 if let Some(Value::String(tag)) = map.get("_tag")
                     && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
@@ -259,6 +284,7 @@ mod tests {
             limit.variants.values().for_each(walk);
             limit.keys.iter().for_each(|k| walk(k));
             limit.values.iter().for_each(|v| walk(v));
+            limit.items.iter().for_each(|item| walk(item));
         }
         raw.values().for_each(walk);
         assert!(raw.contains_key("terminal.open") && raw.contains_key("assets.createUrl"));
@@ -310,6 +336,12 @@ mod tests {
             text,
             r#"expected a value with a length of at most 1024, got 1025 at ["resource"]["path"]"#
         );
+        let text = problem(
+            "git.resolvePullRequest",
+            json!({"cwd":"/repo","reference":"  "}),
+        )
+        .expect("blank reference");
+        assert_eq!(text, r#"expected a non-blank string at ["reference"]"#);
         let env = json!({ "threadId": "t", "terminalId": "d", "cwd": "/", "env": { "A": "v".repeat(8193) } });
         let text = problem("terminal.open", env).expect("over the limit");
         assert!(text.ends_with(r#"at ["env"]["A"]"#), "{text}");
