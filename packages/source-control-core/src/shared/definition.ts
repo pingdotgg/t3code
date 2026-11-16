@@ -9,7 +9,11 @@ import {
   TrimmedNonEmptyString,
   TrimmedString,
 } from "@t3tools/contracts";
-import { normalizeGitRemoteUrl, parseGitRemoteRepository } from "@t3tools/shared/git";
+import {
+  canonicalRepositoryPath,
+  normalizeGitRemoteUrl,
+  parseGitRemoteRepository,
+} from "@t3tools/shared/git";
 import { userlessScpRemoteHost } from "@t3tools/shared/sourceControl";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -69,6 +73,7 @@ export type ChangeRequestHostIdentity =
   | {
       readonly canonicalKey?: string | undefined;
       readonly locator?: { readonly remoteUrl: string } | undefined;
+      readonly webUrl?: string | undefined;
     }
   | null
   | undefined;
@@ -259,6 +264,12 @@ export interface SourceControlDefinition {
   /** Null when the URL is not one of this host's change requests. */
   readonly parseChangeRequestUrl: (url: URL) => ParsedChangeRequestUrl | null;
   /**
+   * The repository URL when `url` is a page inside one of this host's repositories. `known` is set
+   * when the caller already knows this host serves the URL's repository. Off a known host, return
+   * `url.href` when the path may already be a clone URL, so no rewrite happens.
+   */
+  readonly repositoryUrlFromPage?: (url: URL, known: boolean) => string | null;
+  /**
    * The change request URL a `reference` autolink might name, such as a GitHub `#123` written
    * through the issue route. Only a candidate: the caller must read it as a change request
    * before treating it as one.
@@ -332,10 +343,9 @@ export interface SourceControlDefinition {
    */
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
-   * For a host that spells one repository differently over SSH and on the web: the web spelling
-   * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
-   * the key is not this host's. Persisted repository keys are built with it, so its output must
-   * not change.
+   * The key of a remote's lower case `host/path`, `.git` suffix kept, for a host that spells it
+   * apart from `normalizeGitRemoteUrl`: over SSH and the web, or with `.git` as part of the name.
+   * Null when the key is not this host's. Persisted keys are built with it: output must not change.
    */
   readonly repositoryKeyFromRemote?: (key: string) => string | null;
   /**
@@ -348,6 +358,15 @@ export interface SourceControlDefinition {
    * media itself, so it asks the server, whose driver for this host fetches it.
    */
   readonly mediaUrl?: (url: URL) => SourceControlMediaUrl | null;
+  /**
+   * A URL `mediaUrl` claims for the bytes of `path` at full commit `sha` in the repository at
+   * `repositoryUrl`. Null or absent when the host cannot serve one.
+   */
+  readonly rawFileUrl?: (input: {
+    readonly repositoryUrl: string;
+    readonly sha: string;
+    readonly path: string;
+  }) => string | null;
   readonly settings?: SourceControlHostSettingsSchema;
 }
 
@@ -365,7 +384,7 @@ export function parseCommitPath(url: URL, route: RegExp): CommitLink | null {
   return repository && sha && FULL_COMMIT_SHA.test(sha)
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         sha: sha.toLowerCase(),
         ...(url.port ? { authority: url.host.toLowerCase() } : {}),
       }
@@ -403,11 +422,23 @@ export function parseChangeRequestPath(url: URL, route: RegExp): ParsedChangeReq
   return repository && Number.isSafeInteger(number) && number > 0
     ? {
         host: url.hostname.toLowerCase(),
-        repository: repository.toLowerCase(),
+        repository: canonicalRepositoryPath(repository),
         number,
         repositoryUrl: `${url.origin}/${repository}`,
       }
     : null;
+}
+
+/** Reads a repository page from `url` with `route`, whose first group is the repository path. */
+export function repositoryUrlFromPagePath(url: URL, route: RegExp): string | null {
+  const repository = route.exec(url.pathname)?.[1];
+  if (!repository) return null;
+  // Keeps the credentials and port a private clone relies on.
+  const repositoryUrl = new URL(url);
+  repositoryUrl.pathname = `/${repository}`;
+  repositoryUrl.search = "";
+  repositoryUrl.hash = "";
+  return repositoryUrl.href;
 }
 
 export function changeRequestUrlBelow(webUrl: string, route: string): string {
@@ -487,7 +518,7 @@ export function isChangeRequestInProjectRepository(
   const repository = projectRepositoryPath(identity);
   return (
     repository !== null &&
-    repository.toLowerCase() === link.repository.toLowerCase() &&
+    canonicalRepositoryPath(repository) === canonicalRepositoryPath(link.repository) &&
     isChangeRequestOnProjectHost(projectHost, identity, link)
   );
 }
@@ -615,6 +646,8 @@ export interface SourceControlDefinitionRegistry {
   readonly hostLabelForChangeRequestUrl: (url: string) => string;
   readonly isSameChangeRequest: (left: string, right: string) => boolean;
   readonly changeRequestUrlFromReferenceAutolink: (url: string) => string | null;
+  /** The repository a page URL copied from a browser is in, such as a branch or file view. */
+  readonly repositoryUrlFromPage: (url: string) => string | null;
   /**
    * The host a remote is on, from the first definition in recognition order that claims it, or an
    * unknown host. Null when the remote names no host.
@@ -676,13 +709,23 @@ export function makeSourceControlDefinitionRegistry(
   }
   const claimOrder = inOrder(definitions, options?.claimChangeRequestUrlsFirst);
   const recognitionOrder = inOrder(definitions, options?.recognizeRemotesIn);
-  const repositoryKeyOwner = (key: string) => {
+  // Keys persisted before paths had one spelling still compare equal.
+  const canonicalKeyPath = (key: string) => {
+    const slash = key.indexOf("/");
+    return slash < 0
+      ? key
+      : `${key.slice(0, slash)}/${canonicalRepositoryPath(key.slice(slash + 1))}`;
+  };
+  const repositoryKeyOwner = (written: string) => {
+    const key = canonicalKeyPath(written);
     for (const definition of definitions) {
       const canonical = definition.canonicalRepositoryKey?.(key);
       if (canonical != null) return { definition, canonical };
     }
     return undefined;
   };
+  const remoteOwner = (remote: GitRemoteHost) =>
+    recognitionOrder.find((definition) => definition.recognizeRemote(remote) !== null);
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
     if (url === null) return null;
@@ -744,6 +787,24 @@ export function makeSourceControlDefinitionRegistry(
       }
       return null;
     },
+    repositoryUrlFromPage: (value) => {
+      const url = httpUrl(value);
+      if (url === null) return null;
+      // A recognized host's paths are its own, so another host's any-host route never rewrites them.
+      const remote = parseGitRemoteHost(value);
+      const owner = remote === null ? undefined : remoteOwner(remote);
+      if (owner) return owner.repositoryUrlFromPage?.(url, true) ?? null;
+      // Elsewhere a path ending in `.git` is already a clone URL, whatever routes it contains.
+      if (url.pathname.replace(/\/$/u, "").endsWith(".git")) return null;
+      // On an unrecognized host, only rewrite when every route that matches agrees. A route that
+      // answers with the page itself says it may already be the clone URL.
+      const [repositoryUrl, ...others] = new Set(
+        claimOrder.flatMap((definition) => definition.repositoryUrlFromPage?.(url, false) ?? []),
+      );
+      return repositoryUrl !== undefined && repositoryUrl !== url.href && others.length === 0
+        ? repositoryUrl
+        : null;
+    },
     recognizeRemote: (remoteUrl) => {
       const remote = parseGitRemoteHost(remoteUrl);
       if (remote === null) return null;
@@ -755,14 +816,15 @@ export function makeSourceControlDefinitionRegistry(
     },
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
-      if (parseGitRemoteRepository(remoteUrl) === null) return key;
+      const written = parseGitRemoteRepository(remoteUrl, { keepGitSuffix: true });
+      if (written === null) return key;
       for (const definition of definitions) {
-        const spelled = definition.repositoryKeyFromRemote?.(key);
+        const spelled = definition.repositoryKeyFromRemote?.(`${written.host}/${written.path}`);
         if (spelled != null) return spelled;
       }
       return key;
     },
-    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? key,
+    canonicalRepositoryKey: (key) => repositoryKeyOwner(key)?.canonical ?? canonicalKeyPath(key),
     findByRepositoryKey: (key) => repositoryKeyOwner(key)?.definition,
     repositorySelector: (identity) =>
       identity?.provider === undefined

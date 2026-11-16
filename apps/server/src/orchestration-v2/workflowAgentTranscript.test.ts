@@ -60,6 +60,6 @@ it.layer(NodeServices.layer)("readWorkflowAgentTranscript", (it) => {
       assert.equal(NodeFS.statSync(file).ino, replaced.cursor.identity?.ino);
       const shrunk = yield* read(replaced.cursor);
       assert.deepEqual(uuids(shrunk.lines), ["d"], "a shrunk file reads from 0");
-    }).pipe(Effect.scoped),
+    }),
   );
 });
