@@ -21,8 +21,7 @@ import { environmentServerConfigsAtom } from "./server";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
-  threadOutboxRevision,
-  updateThreadOutboxMessage,
+  modifyThreadOutboxMessage,
   type QueuedThreadMessage,
 } from "./thread-outbox";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
@@ -138,29 +137,26 @@ function withUploadedAttachment(
 async function recordQueuedAttachmentUpload(
   environmentId: EnvironmentId,
   uploaded: DraftComposerAttachment,
-): Promise<boolean> {
-  const awaiting = () => {
-    const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
-    return flattenQueuedThreadMessages(
-      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-    ).flatMap((message) => {
-      if (message.environmentId !== environmentId || editing[message.messageId]) return [];
-      const updated = withUploadedAttachment(message, uploaded);
-      return updated === null
-        ? []
-        : [{ updated, revision: threadOutboxRevision(message.messageId) }];
-    });
-  };
-  let recorded = false;
-  // A sibling attachment finishing at the same time bumps the revision; reread and retry.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const pending = awaiting();
-    if (pending.length === 0) break;
-    for (const { updated, revision } of pending) {
-      recorded = (await updateThreadOutboxMessage(updated, revision)) || recorded;
-    }
-  }
-  return recorded;
+): Promise<void> {
+  const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
+  const holders = flattenQueuedThreadMessages(
+    appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+  ).filter(
+    (message) =>
+      message.environmentId === environmentId &&
+      !editing[message.messageId] &&
+      withUploadedAttachment(message, uploaded) !== null,
+  );
+  await Promise.all(
+    holders.map((message) =>
+      // An editor that opened meanwhile owns the message; its draft records the upload.
+      modifyThreadOutboxMessage(message.messageId, (current) =>
+        appAtomRegistry.get(editingQueuedMessageIdsAtom)[current.messageId]
+          ? null
+          : withUploadedAttachment(current, uploaded),
+      ),
+    ),
+  );
 }
 
 // Each connected environment's session is read here so a granted or revoked
