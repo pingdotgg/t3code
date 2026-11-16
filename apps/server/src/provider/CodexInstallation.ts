@@ -390,6 +390,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
   const acquire = Effect.fn("CodexInstallation.acquire")(function* () {
+    // Before the gate: the probe's own update takes it.
+    yield* initialized;
     return yield* Effect.acquireRelease(
       gate.withPermit(
         resolve().pipe(
@@ -520,6 +522,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     Effect.orElseSucceed(() => null),
   );
   const resolve = Effect.fn("CodexInstallation.resolve")(function* () {
+    yield* initialized;
     const local = yield* resolveLocal();
     return local ?? (yield* resolveManaged());
   });
@@ -850,6 +853,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     .pipe(Effect.mapError(wrapFailure("start", "Could not start the Codex installation.")));
 
   const cancel = Effect.fn("CodexInstallation.cancel")(function* (operationId: string) {
+    yield* initialized;
     return yield* gate.withPermit(
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
@@ -869,6 +873,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
 
   const remove = Effect.fn("CodexInstallation.remove")(
     function* (protectedBinaryPaths: ReadonlyArray<string> = []) {
+      yield* initialized;
       yield* gate.withPermit(
         Effect.gen(function* () {
           if (isRunning(yield* SubscriptionRef.get(state)) || leases > 0) {
@@ -918,7 +923,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
 
-  yield* Effect.gen(function* () {
+  // The local probe starts Codex twice, so it runs beside server startup and every reader waits for it.
+  // The probe must not call resolve, acquire, cancel or remove, and they wait for it outside the gate.
+  const initializing = yield* Effect.gen(function* () {
     // Shared-home installs do not refresh parent mtimes; remove only staging directories far older than the 45-minute download cap.
     let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
@@ -974,18 +981,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           }) satisfies ProviderInstallState,
       ),
     ),
+    Effect.forkIn(serviceScope),
   );
+  const initialized = Fiber.join(initializing);
 
   return CodexInstallation.of({
     managedDirectory,
     resolve,
     acquire,
     compatibility,
-    start,
+    start: Effect.andThen(initialized, start),
     cancel,
-    state: SubscriptionRef.get(state),
-    changes: SubscriptionRef.changes(state),
-    checkForUpdate,
+    state: Effect.andThen(initialized, SubscriptionRef.get(state)),
+    changes: Stream.unwrap(Effect.as(initialized, SubscriptionRef.changes(state))),
+    checkForUpdate: Effect.andThen(initialized, checkForUpdate),
     remove,
   });
 });

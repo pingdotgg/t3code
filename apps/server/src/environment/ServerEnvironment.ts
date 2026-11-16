@@ -193,8 +193,10 @@ export const make = Effect.gen(function* () {
   const hostLibc = hostPlatform === "linux" ? yield* HostProcess.LinuxLibc : undefined;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
-  const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
-  const machine = yield* detectServerEnvironmentMachineKind();
+  const [label, machine] = yield* Effect.all(
+    [resolveServerEnvironmentLabel({ cwdBaseName }), detectServerEnvironmentMachineKind()],
+    { concurrency: "unbounded" },
+  );
   const launcher = yield* resolveServiceLauncherMode();
   const serverSelfUpdate = resolveServerSelfUpdateCapability({
     desktopManaged: serverConfig.mode === "desktop",
