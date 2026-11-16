@@ -200,6 +200,11 @@ export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> 
   return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);
 }
 
+/** Tasks linked environments run for a listed thread, by thread key; lists show them under it. */
+export function useDelegatedUnderParent(): ReadonlySet<string> {
+  return useAtomValue(environmentThreadShells.delegatedUnderParentAtom);
+}
+
 export function useNavigationThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.navigationThreadShellsAtom);
 }

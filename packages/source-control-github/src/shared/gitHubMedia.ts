@@ -46,6 +46,14 @@ function rawFile(fetchUrl: string): SourceControlMediaUrl {
   return media(fetchUrl, COMMIT_SHA_PATTERN.test(ref) ? { immutable: true } : {});
 }
 
+/** Where GitHub serves a Git LFS object; a raw read of an LFS-tracked file returns its pointer. */
+export function gitHubLfsMediaUrl(rawUrl: string): string | null {
+  const url = URL.parse(rawUrl);
+  return url?.protocol === "https:" && url.hostname.toLowerCase() === RAW_HOST
+    ? `https://${LFS_HOST}/media${url.pathname}${url.search}`
+    : null;
+}
+
 export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
   if (url.protocol !== "https:") return null;
   const host = url.hostname.toLowerCase();
@@ -63,4 +71,20 @@ export function gitHubMediaUrl(url: URL): SourceControlMediaUrl | null {
   return repositoryFile
     ? rawFile(`https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`)
     : null;
+}
+
+export function gitHubRawFileUrl(input: {
+  readonly repositoryUrl: string;
+  readonly sha: string;
+  readonly path: string;
+}): string | null {
+  if (!COMMIT_SHA_PATTERN.test(input.sha)) return null;
+  const path = input.path.split("/").map(encodeURIComponent).join("/");
+  let url: URL;
+  try {
+    url = new URL(`${input.repositoryUrl}/raw/${input.sha}/${path}`);
+  } catch {
+    return null;
+  }
+  return gitHubMediaUrl(url) === null ? null : url.toString();
 }

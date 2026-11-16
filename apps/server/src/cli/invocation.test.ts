@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { posixLauncherScript } from "../cloud/pinnedRuntime.ts";
 import {
   resolveHostCliCommand,
   resolveRootCliCommand,
@@ -53,7 +54,7 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
           path: yield* pathWithT3,
         }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("keeps the arguments, so root runs setup on the same T3 home", () =>
@@ -70,7 +71,7 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
       expect(
         yield* rootCommand({ node: "/opt/t3/t3", entry: "/opt/t3/t3", executable: true, args }),
       ).toBe("sudo /opt/t3/t3 browser setup --base-dir '/srv/t3 home'");
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("names this install's launcher when t3 is not on PATH", () =>
@@ -109,10 +110,41 @@ it.layer(NodeServices.layer)("root CLI commands", (it) => {
         }),
       ).toBe("sudo /opt/t3/t3 browser setup");
 
+      // A standalone executable started directly (systemd, no launcher) is still this install.
+      expect(
+        yield* rootCommand({
+          node: "/opt/t3/t3",
+          entry: "/opt/t3/t3",
+          executable: true,
+          path: yield* pathWithT3,
+        }),
+      ).toBe("sudo /opt/t3/t3 browser setup");
+
+      // A global npm launcher runs the downloaded executable; PATH's `t3` is that launcher.
+      const prefix = path.join(home, "npm");
+      const npmLauncher = path.join(prefix, "lib/node_modules/t3/bin/t3.mjs");
+      yield* fs.makeDirectory(path.dirname(npmLauncher), { recursive: true });
+      yield* fs.makeDirectory(path.join(prefix, "bin"));
+      yield* fs.writeFileString(npmLauncher, "", { mode: 0o755 });
+      yield* fs.writeFileString(
+        path.join(prefix, "lib/node_modules/t3/package.json"),
+        `{"name":"t3","version":"${packageJson.version}"}`,
+      );
+      yield* fs.symlink(npmLauncher, path.join(prefix, "bin/t3"));
+      expect(
+        yield* rootCommand({
+          node: "/home/theo/.t3/runtime/versions/1.0.0/t3",
+          entry: "/home/theo/.t3/runtime/versions/1.0.0/t3",
+          executable: true,
+          path: path.join(prefix, "bin"),
+          env: { T3CODE_NPM_LAUNCHER_PATH: npmLauncher },
+        }),
+      ).toBe('sudo env "PATH=$PATH" t3 browser setup');
+
       expect(
         yield* rootCommand({ ...desktop, env: { T3CODE_CLI_PATH: path.join(home, "gone") } }),
       ).toBe('sudo env "PATH=$PATH" t3 browser setup');
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -153,7 +185,7 @@ it.layer(NodeServices.layer)("host CLI commands", (it) => {
       expect((yield* hostCommand("linux", { T3CODE_CLI_PATH: shim })).command).toMatch(
         / doctor --base-dir 'C:\\Users\\Jane Doe\\\.t3'$/,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -257,6 +289,57 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
         );
         expect(yield* resolve).toEqual(expected);
       }
+    }),
+  );
+
+  it.effect("names the launcher that started a downloaded runtime", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+      // The install script's launcher names ~/.t3, which here links to a home elsewhere.
+      const executable = path.join(root, "data/t3/runtime/versions/1.0.0/t3");
+      const launcher = path.join(root, "bin/t3");
+      const copy = path.join(root, "bin/t3-copy");
+      yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(executable, "", { mode: 0o755 });
+      yield* fs.writeFileString(copy, "", { mode: 0o755 });
+      yield* fs.symlink(path.join(root, "data/t3"), path.join(root, ".t3"));
+      yield* fs.symlink(path.join(root, ".t3/runtime/versions/1.0.0/t3"), launcher);
+      // Earlier PATH entries hold a directory and a non-executable file named t3.
+      yield* fs.makeDirectory(path.join(root, "shadow-dir/t3"), { recursive: true });
+      yield* fs.makeDirectory(path.join(root, "shadow-file"));
+      yield* fs.writeFileString(path.join(root, "shadow-file/t3"), "");
+      const resolve = (invokedAs: string, PATH = "shadow-dir:shadow-file:bin") =>
+        resolveServerInstallation.pipe(
+          Effect.provideService(HostProcess.ExecutablePath, executable),
+          Effect.provideService(HostProcess.IsExecutable, true),
+          Effect.provideService(HostProcess.InvokedAs, invokedAs),
+          Effect.provideService(HostProcess.WorkingDirectory, root),
+          Effect.provideService(HostProcess.Environment, { PATH }),
+          Effect.provideService(HostProcess.HomeDirectory, root),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+      const baseDir = path.join(root, ".t3");
+
+      expect(yield* resolve("t3")).toEqual({ kind: "t3-launcher", launcher, baseDir });
+      expect(yield* resolve(launcher)).toEqual({ kind: "t3-launcher", launcher, baseDir });
+      expect(yield* resolve(executable)).toBeNull();
+      expect(yield* resolve(copy)).toBeNull();
+
+      // The script launcher execs the runtime by absolute path, so argv0 names the runtime.
+      yield* fs.remove(launcher);
+      yield* fs.writeFileString(
+        launcher,
+        posixLauncherScript(path.join(root, ".t3/runtime/versions/1.0.0/t3")),
+        { mode: 0o755 },
+      );
+      expect(yield* resolve(executable, path.join(root, "bin"))).toEqual({
+        kind: "t3-launcher",
+        launcher,
+        baseDir,
+      });
     }),
   );
 

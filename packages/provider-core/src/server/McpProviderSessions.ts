@@ -96,6 +96,10 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
       ? [index]
       : [],
   );
+  // Identical pages are interchangeable, so repeats are taken in publish order.
+  if (matches.length > 1 && matches.every((index) => kept[index]!.htmlHash === htmlHash)) {
+    return matches[0]!;
+  }
   return matches.length === 1 ? matches[0]! : -1;
 };
 

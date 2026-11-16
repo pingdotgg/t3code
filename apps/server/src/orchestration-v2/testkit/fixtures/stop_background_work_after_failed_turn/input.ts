@@ -16,7 +16,7 @@ export function stopBackgroundWorkAfterReleaseInput(): OrchestratorFixtureInput 
   return {
     steps: [
       { type: "message", text: STOP_BACKGROUND_WORK_AFTER_FAILED_TURN_PROMPT },
-      { type: "advance_clock", duration: "31 minutes" },
+      { type: "advance_clock", duration: "31 minutes", releasesProviderSession: true },
       { type: "stop_background_work", targetRunIndex: 1 },
     ],
   };

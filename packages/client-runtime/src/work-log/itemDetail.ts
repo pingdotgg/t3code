@@ -1,5 +1,11 @@
 import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
-import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
+import { commandItemOutput } from "@t3tools/shared/commandOutput";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
+import {
+  mcpToolResultOutput,
+  toolOutputImageBlocks,
+  toolOutputImages,
+} from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -66,14 +72,33 @@ export function isJsonToolText(text: string): boolean {
   return documents.length > 1 && documents.every((document) => parseJson(document) !== undefined);
 }
 
+// Strings match whole so numbers inside them are skipped. Scan only parsed JSON: every string closes.
+const JSON_STRING_OR_NUMBER = /"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+/** JSON.parse rounds integers beyond 2^53 and overflows to Infinity, so reformatting would change the value. */
+function hasLossyJsonNumber(json: string): boolean {
+  for (const [token] of json.matchAll(JSON_STRING_OR_NUMBER)) {
+    if (token.startsWith('"')) continue;
+    const value = Number(token);
+    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function prettyJsonText(text: string): string {
   const trimmed = text.trim();
   if (!/^[[{]/.test(trimmed)) return text;
   const whole = parseJson(trimmed);
-  if (whole !== undefined) return JSON.stringify(whole, null, 2);
+  if (whole !== undefined) {
+    return hasLossyJsonNumber(trimmed) ? text : JSON.stringify(whole, null, 2);
+  }
   const lines = trimmed.split("\n").filter((line) => line.trim());
   const documents = lines.map((line) => parseJson(line.trim()));
-  if (documents.some((document) => document === undefined)) return text;
+  if (documents.some((document) => document === undefined) || hasLossyJsonNumber(trimmed)) {
+    return text;
+  }
   return documents.map((document) => JSON.stringify(document, null, 2)).join("\n\n");
 }
 
@@ -90,10 +115,14 @@ function formatJsonValue(value: unknown): string | null {
   return json;
 }
 
-function formatToolValue(value: unknown, hasImagePreview = false): string | null {
+function formatToolValue(
+  value: unknown,
+  hasImagePreview = false,
+  previewedImageBlocks = toolOutputImageBlocks(value),
+): string | null {
   if (value === undefined || value === null) return null;
   if (hasImagePreview && isRecord(value) && value.type === "image") return null;
-  const text = textFromBlocks(value, 0, toolOutputImageBlocks(value));
+  const text = textFromBlocks(value, 0, previewedImageBlocks);
   if (text !== null) return text.trim() ? prettyJsonText(text) : null;
   return formatJsonValue(value);
 }
@@ -161,30 +190,26 @@ export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean
   }
 }
 
-function commandOutputText(output: string): string {
-  if (!output.trimStart().startsWith('{"stdout"')) return output;
-  const parsed = parseJson(output.trim());
-  if (
-    !isRecord(parsed) ||
-    typeof parsed.stdout !== "string" ||
-    typeof parsed.stderr !== "string" ||
-    typeof parsed.interrupted !== "boolean"
-  ) {
-    return output;
+// App calls store the provider result beside the app reference; its images get no preview.
+function dynamicToolOutputText(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>,
+): string | null {
+  const output = item.output;
+  if (!isRecord(output) || !(MCP_APP_OUTPUT_KEY in output) || !("result" in output)) {
+    return formatToolValue(output, item.viewedImagePath !== undefined);
   }
-  return [parsed.stdout, parsed.stderr]
-    .filter((part): part is string => typeof part === "string" && part.trim().length > 0)
-    .join("\n");
+  const result = output.result;
+  return formatToolValue(isRecord(result) ? mcpToolResultOutput(result) : result, false, []);
 }
 
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
-    case "command_execution":
-      return item.output?.trim() ? commandOutputText(item.output) || null : null;
+    case "command_execution": {
+      const output = commandItemOutput(item);
+      return output?.trim() ? output : null;
+    }
     case "dynamic_tool":
-      return item.outputOmitted === true
-        ? null
-        : formatToolValue(item.output, item.viewedImagePath !== undefined);
+      return item.outputOmitted === true ? null : dynamicToolOutputText(item);
     case "file_search":
       return item.results?.length
         ? item.results

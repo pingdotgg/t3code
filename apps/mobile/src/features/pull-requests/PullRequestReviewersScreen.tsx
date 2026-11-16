@@ -1,3 +1,4 @@
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { AppBar, type AppBarSearch } from "../../components/ui/AppBar";
 import { AsyncResult } from "effect/reactivity";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -11,14 +12,22 @@ import {
   reviewerCandidateView,
   type ReviewerTruncation,
 } from "@t3tools/client-runtime/pull-request-reviewers";
+import {
+  emptySelection,
+  isSelected,
+  changeBatches,
+  selectionChanges,
+  toggleSelection,
+} from "@t3tools/client-runtime/pull-request-selection";
 import type { PullRequestReviewerCandidate } from "@t3tools/contracts";
-import { useRef, useState } from "react";
-import { FlatList, Pressable, ScrollView, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Pressable, ScrollView, View } from "react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useContentTopInset, useSearchToolbarInset } from "../../components/ui/useBarInset";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { Button } from "../../components/ui/Button";
+import * as Dialog from "../../components/ui/Dialog";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -40,7 +49,7 @@ const TRUNCATED_LABELS: Record<ReviewerTruncation, (error: string | null) => str
 export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequestParams>) {
   const navigation = useNavigation();
   const contentTopInset = useContentTopInset();
-  const listRef = useRef<FlatList<PullRequestReviewerCandidate>>(null);
+  const listRef = useRef<LegendListRef>(null);
   const target = pullRequestTarget(route.params);
   const detail = useEnvironmentQuery(composerPullRequests.detail(target));
   const pr = detail.data;
@@ -67,6 +76,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const [draft, setDraft] = useState(emptySelection<PullRequestReviewerCandidate>);
   const debouncedQuery = useDebouncedValue(query.trim(), 250);
   const searchInput = {
     loaded: result.data,
@@ -99,6 +109,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       animated: false,
     });
   };
+  // Hosts that cannot list candidates take one typed id at a time.
   const update = async (
     candidate: Pick<PullRequestReviewerCandidate, "id" | "kind" | "isRequested">,
   ) => {
@@ -123,13 +134,60 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
       );
       return;
     }
-    if (hostQuery !== null) searchResult.refresh();
-    if (!pr?.capabilities.reviewers.listCandidates) {
-      search("");
-      detail.refresh();
-    }
+    search("");
+    detail.refresh();
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
+  // Loaded rows first: they carry the request state mutations update.
+  const latest = [...(result.data?.candidates ?? []), ...(searchResult.data?.candidates ?? [])];
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
+  useEffect(
+    () =>
+      navigation.addListener("beforeRemove", () => {
+        const { add, remove } = selectionChanges(
+          draft,
+          (key, person) =>
+            latest.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
+            person.isRequested,
+        );
+        const sendBatch = async (
+          people: ReadonlyArray<PullRequestReviewerCandidate>,
+          requested: boolean,
+        ) => {
+          const response = await request({
+            ...target,
+            input: {
+              ...target.input,
+              reviewers: people.map(({ id, kind }) => ({ id, kind })),
+              requested,
+            },
+          });
+          if (!AsyncResult.isFailure(response)) return;
+          const cause = squashAtomCommandFailure(response);
+          const logins = people.map((person) => person.login).join(", ");
+          Dialog.alert(
+            requested
+              ? `Couldn't request a review from ${logins}`
+              : `Couldn't remove the review request from ${logins}`,
+            cause instanceof Error ? cause.message : "The provider refused the change.",
+          );
+        };
+        const send = async (
+          people: ReadonlyArray<PullRequestReviewerCandidate>,
+          requested: boolean,
+        ) => {
+          for (const batch of changeBatches(people)) await sendBatch(batch, requested);
+        };
+        // A search result is keyed by what was typed, so the writes do not reach it on their own.
+        const refreshSearch =
+          hostQuery !== null && add.length + remove.length > 0 ? searchResult.refresh : null;
+        // Removing first lets a host that keeps one reviewer take the new one.
+        void send(remove, false)
+          .then(() => send(add, true))
+          .then(() => refreshSearch?.());
+      }),
+    [navigation, draft, latest, request, target, hostQuery, searchResult.refresh],
+  );
   const reviewerSearch: AppBarSearch | undefined = listCandidates
     ? {
         mode: "inline",
@@ -150,10 +208,13 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         search={reviewerSearch}
       />
       {listCandidates ? (
-        <FlatList
+        <LegendList
           ref={listRef}
           data={candidates}
           keyExtractor={(candidate) => `${candidate.kind}:${candidate.id}`}
+          extraData={{ allowed, draft }}
+          estimatedItemSize={64}
+          recycleItems
           renderScrollComponent={NativeScrollView}
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets
@@ -164,28 +225,27 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             <View className="gap-3 px-4 py-4">
               <Text className="text-xs text-foreground-muted">
                 Tap someone to request a review. Tap a requested reviewer to remove the request.
+                Changes are sent when you close this sheet.
               </Text>
               {!allowed ? (
                 <Text className="text-xs text-foreground-muted">
                   Requesting reviews requires write access and an open {singular}.
                 </Text>
               ) : null}
-              {error ? (
-                <Text selectable className="text-sm text-danger-foreground">
-                  {error}
-                </Text>
-              ) : null}
             </View>
           }
           renderItem={({ item }) => {
             const id = `${item.kind}:${item.id}`;
+            const requested = isSelected(draft, id, item.isRequested);
             return (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${item.isRequested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
-                accessibilityState={{ disabled: !allowed || pending !== null }}
-                disabled={!allowed || pending !== null}
-                onPress={() => void update(item)}
+                accessibilityLabel={`${requested ? "Remove review request from" : "Request review from"} ${item.login}${item.kind === "team" ? " team" : ""}`}
+                accessibilityState={{ disabled: !allowed }}
+                disabled={!allowed}
+                onPress={() =>
+                  setDraft((current) => toggleSelection(current, id, item, item.isRequested))
+                }
                 className="min-h-16 flex-row items-center gap-3 border-b border-border-subtle px-4 py-3 active:opacity-70"
               >
                 <PullRequestAvatar actor={item} size={32} />
@@ -198,9 +258,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
                     {item.kind === "team" ? " · Team" : ""}
                   </Text>
                 </View>
-                {pending === id ? (
-                  <AppActivityIndicator />
-                ) : item.isRequested ? (
+                {requested ? (
                   <View className="flex-row items-center gap-1.5">
                     <Text className="text-xs text-foreground-muted">Requested</Text>
                     <SymbolView name="checkmark" size={14} tintColorClassName="accent-icon" />

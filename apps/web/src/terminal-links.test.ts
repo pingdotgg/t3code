@@ -5,6 +5,7 @@ import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
   isTerminalUrl,
+  resolveTerminalLinkTarget,
   type TerminalBufferLineLike,
 } from "./terminal-links";
 
@@ -64,6 +65,10 @@ describe("extractTerminalLinks", () => {
     expect(extractTerminalLinks(`see ${quote}${text}${quote}.`)).toEqual([
       { kind: "path", text, start: 5, end: 5 + text.length },
     ]);
+    const atText = "src/my contact@support.vue:12:3";
+    expect(extractTerminalLinks(`see ${quote}${atText}${quote}.`)).toEqual([
+      { kind: "path", text: atText, start: 5, end: 5 + atText.length },
+    ]);
   });
 
   it.each([
@@ -78,9 +83,18 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
-  it("does not treat quoted prose as a path", () => {
-    expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
-    expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
+  it.each([
+    'error: "something went wrong"',
+    'error: "something went wrong."',
+    "see README.md, Node.js v22 on 127.0.0.1:3000",
+    "README.md(42,7): see details",
+    "main.cs(42,7): error CS1002: expected semicolon",
+    "Connecting to api.example.com:443...",
+    "dial tcp: lookup db.internal:5432: no such host",
+    "redis.local:6379> PING",
+    "postgres@db.internal:5432",
+  ])("does not treat prose or unsupported locations as a path: %s", (line) => {
+    expect(extractTerminalLinks(line)).toEqual([]);
   });
 
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
@@ -120,6 +134,20 @@ describe("extractTerminalLinks", () => {
   });
 
   it.each([
+    ["https://example.com/a(b)c)", "https://example.com/a(b)c"],
+    ["https://example.com/(docs)", "https://example.com/(docs)"],
+    ["https://example.com/docs)}])", "https://example.com/docs)"],
+    ["https://example.com/docs):", "https://example.com/docs):"],
+    ["/tmp/a[b]c]", "/tmp/a[b]c"],
+    ["/tmp/docs)}])", "/tmp/docs)"],
+    ["/tmp/docs):", "/tmp/docs"],
+  ])("trims only unbalanced closing delimiters from %s", (raw, text) => {
+    expect(extractTerminalLinks(`see ${raw}`)).toEqual([
+      { kind: isTerminalUrl(text) ? "url" : "path", text, start: 4, end: 4 + text.length },
+    ]);
+  });
+
+  it.each([
     "src/żółć.ts:12:7",
     "żółć/main.ts:12",
     String.raw`żółć\main.ts:12`,
@@ -127,8 +155,18 @@ describe("extractTerminalLinks", () => {
     "src/𐐀.ts:12",
     "src/app/[id]/page.tsx:3:10",
     "src/routes/(app)/+page.svelte:12:4",
+    "src/routes/(app)/+page@.svelte:12:3",
+    "src/contact@support.vue:12:3",
+    String.raw`src\contact@support.ts:12:3`,
+    "src/équipe@home.ts:12:3",
+    "src/foo$contact@support.ts:12:3",
     "node_modules/.pnpm/react@18.3.1/node_modules/react/index.js:12:5",
     "app/routes/posts.$id.tsx:5",
+    "main.c:1:25",
+    "page.test.tsx:5:3",
+    "foo$bar.ts:12:3",
+    "+page.svelte:12:4",
+    "contact@support.ts:12:3",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },
@@ -198,6 +236,8 @@ describe("extractTerminalLinks", () => {
     "    at main (file:///Users/jane/app/src/index.mjs:3:7)",
     "+redis://localhost:6379/0",
     "-redis://localhost:6379/0",
+    "git clone git@github.com:acme/widgets.git",
+    "remote: git@gitlab.com:group/sub/project.git",
   ])("does not turn part of a non-web URL into an editor link: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);
   });
@@ -279,17 +319,66 @@ describe("resolvePathLinkTarget", () => {
     );
   });
 
-  it("keeps Windows absolute paths with forward slashes unchanged", () => {
-    expect(
-      resolvePathLinkTarget("C:/Users/julius/project/src/main.ts:12", "C:\\Users\\julius\\project"),
-    ).toBe("C:/Users/julius/project/src/main.ts:12");
-  });
-
   // regression: #13408 terminal links kept a trailing colon
   it("keeps the line and column of a compiler diagnostic", () => {
     const [link] = extractTerminalLinks("/Users/julius/project/main.c:10:5: error: expected ';'");
     expect(resolvePathLinkTarget(link?.text ?? "", "/Users/julius/project")).toBe(
       "/Users/julius/project/main.c:10:5",
+    );
+  });
+
+  it.each([
+    ["src/main.ts", "/repo/src/main.ts"],
+    ["/repo/src/main.ts", "/repo/src/main.ts"],
+    [String.raw`C:\repo\src\main.ts`, String.raw`C:\repo\src\main.ts`],
+    ["app/(auth)/page.tsx", "/repo/app/(auth)/page.tsx"],
+  ])("preserves a TypeScript compiler location on %s", (path, target) => {
+    const text = `${path}(42,7)`;
+    const links = extractTerminalLinks(`${text}: error TS2322: Type mismatch`);
+    expect(links).toEqual([{ kind: "path", text: `${path}:42:7`, start: 0, end: text.length }]);
+    expect(resolveTerminalLinkTarget(links[0]?.text ?? "", "/repo")).toBe(`${target}:42:7`);
+  });
+
+  it.each([
+    [String.raw`PS C:\dev\folder (42,7)> `, String.raw`C:\dev\folder (42,7)`],
+    ["/tmp/report(42,7)", "/tmp/report(42,7)"],
+    ["src/Program.cs(3,10): error CS1002: x", "/repo/src/Program.cs"],
+  ])("preserves existing path targets in %s", (line, target) => {
+    const [link] = extractTerminalLinks(line);
+    expect(resolveTerminalLinkTarget(link?.text ?? "", "/repo")).toBe(target);
+  });
+
+  // regression: #36005 OSC 8 file URIs were joined onto the cwd as relative paths
+  it("does not resolve an OSC 8 file URI target against the cwd", () => {
+    expect(resolveTerminalLinkTarget("file:///var/tmp/report.txt", "/workspace/project")).toBe(
+      "file:///var/tmp/report.txt",
+    );
+    expect(
+      resolveTerminalLinkTarget("file://remote.invalid/var/tmp/report.txt", "/workspace/project"),
+    ).not.toMatch(/^\/workspace\/project\//);
+    expect(
+      resolveTerminalLinkTarget(
+        "file://myhost/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
+    expect(
+      resolveTerminalLinkTarget(
+        "file://foreign/var/tmp/report.txt:12#L5",
+        "/workspace/project",
+        "myhost",
+      ),
+    ).toBe("file://foreign/var/tmp/report.txt:12#L5");
+    for (const name of ["report.txt:12-64", "report.txt:0", "report.txt:12"]) {
+      const uri = `file:///var/tmp/${encodeURIComponent(name)}`;
+      expect(resolveTerminalLinkTarget(uri, "/workspace/project")).toBe(uri);
+    }
+    expect(
+      resolveTerminalLinkTarget("file:///var/tmp/report.txt:12#L5", "/workspace/project"),
+    ).toBe("file:///var/tmp/report.txt:12#L5");
+    expect(resolvePathLinkTarget("file:notes.md", "/workspace/project")).toBe(
+      "/workspace/project/file:notes.md",
     );
   });
 });
