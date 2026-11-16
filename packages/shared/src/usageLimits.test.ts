@@ -1018,6 +1018,45 @@ describe("pools", () => {
     ).toContainEqual(["pro@example.com", 95]);
   });
 
+  it("weights pooled Claude weekly quota by the plan labels the provider reports", () => {
+    const [pool] = collectLimitPools(
+      collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              ...laptop,
+              serverConfig: {
+                providers: [],
+                usageLimitSources: [
+                  {
+                    ...source,
+                    accounts: [
+                      ["ultra", "Claude Ultra Subscription", 100],
+                      ["pro", "Claude Pro Subscription", 0],
+                    ].map(([id, plan, usedPercent]) => ({
+                      id: String(id),
+                      email: `${id}@example.com`,
+                      driver: claude,
+                      plan: String(plan),
+                      usageLimits: {
+                        checkedAt,
+                        windows: [{ ...weekly, usedPercent: Number(usedPercent) }],
+                      },
+                    })),
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      ),
+      now,
+    );
+    // Ultra holds 10 of the pool's 11 capacity parts.
+    expect(pool?.windows[0]?.remainingPercent).toBe(9);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [

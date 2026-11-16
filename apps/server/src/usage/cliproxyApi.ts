@@ -106,6 +106,16 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        organization_type: Schema.optional(Schema.NullOr(Schema.String)),
+        rate_limit_tier: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -123,6 +133,25 @@ const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
+
+/** Names the tier the way the native Claude provider does, so pools weight both alike. */
+function claudeHubPlanLabel(profile: typeof ClaudeProfile.Type | undefined): string {
+  const organization = profile?.organization;
+  if (organization?.rate_limit_tier?.includes("max_20x")) return "Claude Ultra Subscription";
+  switch (organization?.organization_type) {
+    case "claude_max":
+      return "Claude Max Subscription";
+    case "claude_pro":
+      return "Claude Pro Subscription";
+    case "claude_team":
+      return "Claude Team Subscription";
+    case "claude_enterprise":
+      return "Claude Enterprise Subscription";
+    default:
+      return "Claude Subscription";
+  }
+}
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
@@ -309,9 +338,18 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         "User-Agent": "claude-code/2.1.273",
       }),
       read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-        const usage = yield* decodeClaudeUsage(
-          yield* call("https://api.anthropic.com/api/oauth/usage"),
+        const [body, profile] = yield* Effect.all(
+          [
+            call("https://api.anthropic.com/api/oauth/usage"),
+            // The tier only weights pools, so a failed read keeps the usage.
+            call("https://api.anthropic.com/api/oauth/profile").pipe(
+              Effect.flatMap(decodeClaudeProfile),
+              Effect.orElseSucceed(() => undefined),
+            ),
+          ],
+          { concurrency: 2 },
         );
+        const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -332,7 +370,7 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         };
         return {
           ...listedIdentity(account),
-          plan: "Claude Subscription",
+          plan: claudeHubPlanLabel(profile),
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
             response: { rate_limits_available: true, rate_limits: rateLimits },
