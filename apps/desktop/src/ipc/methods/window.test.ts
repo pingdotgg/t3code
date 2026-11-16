@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
@@ -27,6 +28,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
@@ -236,6 +238,7 @@ describe("installRelayTelemetryEnabled", () => {
     env: NodeJS.ProcessEnv,
     policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
     afterInstall: (env: NodeJS.ProcessEnv) => void = () => undefined,
+    shellDiscovery: Effect.Effect<boolean> = Effect.succeed(true),
   ) =>
     Effect.gen(function* () {
       const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
@@ -247,6 +250,12 @@ describe("installRelayTelemetryEnabled", () => {
       };
       yield* installRelayTelemetryEnabled().pipe(
         Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
+          installIntoProcess: Effect.succeed(true),
+          awaitDiscovery: shellDiscovery,
+          awaitUserShellDiscovery: shellDiscovery,
+          updates: Stream.empty,
+        }),
         Effect.provide(
           Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
@@ -267,6 +276,8 @@ describe("installRelayTelemetryEnabled", () => {
           env.T3CODE_TELEMETRY_ENABLED = "false";
         }),
       );
+      // Until the login shell has answered, its opt-out may still be on the way.
+      assert.isFalse(yield* relayTelemetryEnabled({}, undefined, undefined, Effect.never));
     }),
   );
 

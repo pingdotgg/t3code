@@ -33,6 +33,7 @@ import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironm
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopPrimaryPaste from "../../app/DesktopPrimaryPaste.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -83,7 +84,7 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
 /**
  * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
  * stops them. The policy is read once here: a sync IPC handler cannot wait on the filesystem. The
- * environment is read per call because the login shell's variables land in it later.
+ * login shell can opt out too, so relay tracing stays off until its first probe has settled.
  */
 export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
   function* () {
@@ -93,11 +94,21 @@ export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.instal
       Effect.map((found) => found?.document.limits?.telemetry !== false),
       Effect.orElseSucceed(() => false),
     );
+    let shellSettled = false;
+    yield* (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitDiscovery.pipe(
+      Effect.andThen(
+        Effect.sync(() => {
+          shellSettled = true;
+        }),
+      ),
+      Effect.forkScoped({ startImmediately: true }),
+    );
     yield* ipc.handleSync(
       DesktopIpc.makeSyncIpcMethod({
         channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
         result: Schema.Boolean,
-        handler: () => Effect.sync(() => policyAllows && isRelayTracingEnabled(env)),
+        handler: () =>
+          Effect.sync(() => shellSettled && policyAllows && isRelayTracingEnabled(env)),
       }),
     );
   },
