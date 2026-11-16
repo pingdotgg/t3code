@@ -2144,6 +2144,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
       });
 
+      // Extensions can move Pi to another session file (ctx.newSession); resume that one.
+      const adoptLiveSessionFile = (state: PiThreadState, stateData: unknown) => {
+        const sessionFile = recordString(stateData, "sessionFile");
+        const previousFile = state.providerThread.nativeThreadRef?.nativeId;
+        if (sessionFile === undefined || sessionFile === previousFile) return;
+        if (previousFile != null) state.supersededSessionFiles.add(previousFile);
+        state.supersededSessionFiles.delete(sessionFile);
+        state.providerThread = {
+          ...state.providerThread,
+          nativeThreadRef: providerRef(sessionFile),
+        };
+        lastNativeThreadId = sessionFile;
+      };
+
       const scheduleSettleProbe = (
         turn: ActivePiTurn,
         settleAfterAgentActivity = false,
@@ -2501,7 +2515,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           case "agent_settled": {
             if (turn?.interrupted === true) {
-              if (state !== null) yield* finalizeTurn(state);
+              if (state === null) return;
+              const liveState = yield* request({ type: "get_state" }, 2_000).pipe(
+                Effect.orElseSucceed(() => undefined),
+              );
+              adoptLiveSessionFile(state, liveState);
+              yield* finalizeTurn(state);
               return;
             }
             if (turn !== null) {
@@ -2735,18 +2754,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ) {
               turn.settleWhenIdle = false;
               if (state === null) return;
-              // Extensions can move Pi to another session file (ctx.newSession); resume that one.
-              const sessionFile = recordString(data, "sessionFile");
-              const previousFile = state.providerThread.nativeThreadRef?.nativeId;
-              if (sessionFile !== undefined && sessionFile !== previousFile) {
-                if (previousFile != null) state.supersededSessionFiles.add(previousFile);
-                state.supersededSessionFiles.delete(sessionFile);
-                state.providerThread = {
-                  ...state.providerThread,
-                  nativeThreadRef: providerRef(sessionFile),
-                };
-                lastNativeThreadId = sessionFile;
-              }
+              adoptLiveSessionFile(state, data);
               yield* finalizeTurn(state);
             }
             return;
