@@ -743,7 +743,14 @@ it.effect("skips nothing while every summary comes back empty", () => {
   );
   return Effect.gen(function* () {
     yield* seedThread(5 * 24 + 6);
-    for (let pass = 0; pass < 3; pass++) assert.isFalse((yield* summarize).hasMore);
+    const callsPerPass: Array<number> = [];
+    for (let pass = 0; pass < 3; pass++) {
+      const before = model.calls.length;
+      assert.isFalse((yield* summarize).hasMore);
+      callsPerPass.push(model.calls.length - before);
+    }
+    // Once every stretch is a suspect, one call per pass tests the model.
+    assert.deepEqual(callsPerPass, [3, 3, 1]);
     assert.deepEqual((yield* list).summaries, []);
 
     down = false;
