@@ -39,8 +39,9 @@ const CAPABILITIES: PullRequestCapabilities = {
 
 const UNAVAILABLE_REQUIREMENT = {
   missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  // Also covers a missing token: Bitbucket answers anonymous requests with 429, not 401.
   unauthenticated:
-    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    "Bitbucket has no working API credentials on the server. Add or check them in Settings → Source Control.",
 };
 
 /**
