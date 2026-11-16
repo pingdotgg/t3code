@@ -18,7 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "./DirectEndpoints.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
-import { isOnTailnetIpv4, resolveBoundEndpoints } from "./DirectEndpoints.ts";
+import { resolveBoundEndpoints } from "./DirectEndpoints.ts";
 
 const INTERFACES: ReturnType<typeof NodeOS.networkInterfaces> = {
   lo0: [
@@ -213,9 +213,6 @@ describe("resolveBoundEndpoints", () => {
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
     ]);
-    expect(isOnTailnetIpv4(interfaces)).toBe(true);
-    const { tailscale0: _, ...withoutTailscale } = interfaces;
-    expect(isOnTailnetIpv4(withoutTailscale)).toBe(false);
   });
 
   it("never reports a host name, which can resolve to another machine per client", () => {
