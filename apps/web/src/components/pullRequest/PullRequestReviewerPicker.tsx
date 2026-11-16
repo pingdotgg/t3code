@@ -111,7 +111,11 @@ export function PullRequestReviewerPicker({
   const onOpenChange = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (nextOpen) return;
-    const latest = candidatesQuery.data?.candidates ?? [];
+    // Loaded rows first: they carry the request state mutations update.
+    const latest = [
+      ...(candidatesQuery.data?.candidates ?? []),
+      ...(searchResult.data?.candidates ?? []),
+    ];
     const { add, remove } = selectionChanges(
       draft,
       (key, person) =>

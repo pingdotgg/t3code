@@ -138,7 +138,8 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
     detail.refresh();
   };
   const listCandidates = pr?.capabilities.reviewers.listCandidates === true;
-  const latest = result.data?.candidates;
+  // Loaded rows first: they carry the request state mutations update.
+  const latest = [...(result.data?.candidates ?? []), ...(searchResult.data?.candidates ?? [])];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- picks are sent when the sheet leaves the navigation stack, however it is dismissed
   useEffect(
     () =>
@@ -146,7 +147,7 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
         const { add, remove } = selectionChanges(
           draft,
           (key, person) =>
-            latest?.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
+            latest.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
             person.isRequested,
         );
         const sendBatch = async (
