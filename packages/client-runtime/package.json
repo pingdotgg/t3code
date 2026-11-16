@@ -91,6 +91,10 @@
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"
     },
+    "./scheduled-task-edit": {
+      "types": "./src/scheduledTaskEdit.ts",
+      "default": "./src/scheduledTaskEdit.ts"
+    },
     "./scheduled-task-time-zone": {
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"

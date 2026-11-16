@@ -2339,46 +2339,64 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
-        const workspaceStrategy =
-          (threadId === null) === (existing.threadId === null)
-            ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
-        const upsertInput: ScheduledTaskUpsertInput = {
-          id: existing.id,
-          title: input.title ?? existing.title,
-          prompt: input.prompt ?? existing.prompt,
-          enabled: input.enabled ?? existing.enabled,
-          schedule: input.schedule ?? existing.schedule,
-          projectId: existing.projectId,
-          threadId,
-          threadMode:
-            input.freshSession === undefined && input.bindToCurrentThread === undefined
-              ? scheduledTaskThreadMode(existing)
-              : (input.freshSession ??
-                  (input.bindToCurrentThread !== false &&
-                    scheduledTaskThreadMode(existing) === "fresh_session"))
-                ? "fresh_session"
-                : threadId === null &&
-                    (input.bindToCurrentThread === false ||
-                      scheduledTaskThreadMode(existing) === "new_thread")
-                  ? "new_thread"
-                  : "continue",
-          workspaceStrategy,
-          modelSelection: existing.modelSelection,
-          runtimeMode: existing.runtimeMode,
-          interactionMode: existing.interactionMode,
-          createdBy: existing.createdBy,
-          creationSource: existing.creationSource,
-        };
-        const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+        const storedThreadMode = scheduledTaskThreadMode(existing);
+        const threadMode =
+          input.freshSession === undefined && input.bindToCurrentThread === undefined
+            ? storedThreadMode
+            : (input.freshSession ??
+                (input.bindToCurrentThread !== false && storedThreadMode === "fresh_session"))
+              ? "fresh_session"
+              : threadId === null &&
+                  (input.bindToCurrentThread === false || storedThreadMode === "new_thread")
+                ? "new_thread"
+                : "continue";
+        const updated = yield* scheduledTasks
+          .update({
+            id: existing.id,
+            projectId: existing.projectId,
+            // loadScheduledTask authorized these modes; a raise committed since must fail the
+            // edit rather than apply the caller's patch above its limits.
+            expectedThreadId: existing.threadId,
+            expectedRuntimeMode: existing.runtimeMode,
+            expectedInteractionMode: existing.interactionMode,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+            ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
+            ...(input.bindToCurrentThread === undefined ? {} : { threadId }),
+            // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
+            ...((threadId === null) === (existing.threadId === null)
+              ? {}
+              : {
+                  workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(
+                    threadId !== null,
+                    existing.projectId,
+                  ),
+                }),
+            // A mode only derived from the binding, resent unchanged, would undo one committed since the load.
+            ...(input.freshSession === undefined && threadMode === storedThreadMode
+              ? {}
+              : { threadMode }),
+          })
           .pipe(
-            Effect.mapError((error) =>
-              failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
-            ),
+            Effect.provideService(DispatchModeLimit, limits),
+            Effect.catchTags({
+              ScheduledTaskError: (error) =>
+                Effect.fail(
+                  failure(
+                    "orchestration_error",
+                    `Could not update scheduled task: ${error.message}`,
+                  ),
+                ),
+            }),
           );
-        return scheduledTaskSummary(task, false);
+        if (Option.isNone(updated)) {
+          return yield* failure(
+            "task_not_found",
+            `Scheduled task ${input.scheduledTaskId} was not found.`,
+          );
+        }
+        return scheduledTaskSummary(updated.value.task, false);
       },
     ),
     deleteScheduledTask: Effect.fn("OrchestratorMcpService.deleteScheduledTask")(
@@ -2386,13 +2404,27 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
-        yield* scheduledTasks
-          .delete({ id: existing.id })
+        const deleted = yield* scheduledTasks
+          .delete({
+            id: existing.id,
+            projectId: existing.projectId,
+            expectedThreadId: existing.threadId,
+            expectedRuntimeMode: existing.runtimeMode,
+            expectedInteractionMode: existing.interactionMode,
+          })
           .pipe(
-            Effect.mapError((error) =>
-              failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),
-            ),
+            Effect.provideService(DispatchModeLimit, limits),
+            Effect.catchTags({
+              ScheduledTaskError: (error) =>
+                failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),
+            }),
           );
+        if (Option.isNone(deleted)) {
+          return yield* failure(
+            "task_not_found",
+            `Scheduled task ${input.scheduledTaskId} was not found.`,
+          );
+        }
         return { scheduledTaskId: existing.id, deleted: true };
       },
     ),

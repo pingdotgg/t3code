@@ -35,6 +35,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { scheduledTaskEditPatch } from "@t3tools/client-runtime/scheduled-task-edit";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
@@ -1388,6 +1389,11 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
+  const updateTask = useAtomCommand(serverEnvironment.updateScheduledTask, {
+    label: "scheduled task update",
+  });
+  const offersUpdate =
+    environment?.serverConfig?.environment.capabilities.scheduledTaskUpdate === true;
   const webhookDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "webhookTasks");
   const [draft, setDraft] = useState<DraftState>(() =>
     task
@@ -1555,7 +1561,11 @@ function ScheduledTaskEditorForm({
     // Lock before React renders, and keep successful creates locked until the form closes.
     submissionPending.current = true;
     setSaving(true);
-    const result = await upsertTask({ environmentId, input });
+    // An edit sends only the fields this form changed, so it keeps edits made elsewhere since.
+    const result =
+      task !== null && task.id === draft.editingId && offersUpdate
+        ? await updateTask({ environmentId, input: scheduledTaskEditPatch(task, input) })
+        : await upsertTask({ environmentId, input });
     setSaving(false);
     if (result._tag === "Failure") {
       submissionPending.current = false;

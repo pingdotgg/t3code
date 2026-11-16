@@ -3461,6 +3461,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               list: () => Effect.succeed({ tasks }),
               upsert: () =>
                 Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: saved })),
+              update: () =>
+                Ref.update(upserted, (count) => count + 1).pipe(
+                  Effect.as(Option.some({ task: saved })),
+                ),
             }),
           ),
         ),
@@ -3594,8 +3598,10 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [bound] }),
-                    upsert: () =>
-                      Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: bound })),
+                    update: () =>
+                      Ref.update(upserted, (count) => count + 1).pipe(
+                        Effect.as(Option.some({ task: bound })),
+                      ),
                   }),
                 ),
               ),
@@ -3700,6 +3706,24 @@ describe("OrchestratorMcpService provider resolution", () => {
                   ),
                   Effect.as({ task }),
                 ),
+              update: (input) => {
+                const merged = {
+                  ...task,
+                  workspaceStrategy: input.workspaceStrategy ?? task.workspaceStrategy,
+                  threadMode: input.threadMode,
+                };
+                return Ref.update(saved, (strategies) => [
+                  ...strategies,
+                  merged.workspaceStrategy,
+                ]).pipe(
+                  Effect.andThen(
+                    inputs === undefined
+                      ? Effect.void
+                      : Ref.update(inputs, (all) => [...all, merged]),
+                  ),
+                  Effect.as(Option.some({ task })),
+                );
+              },
             }),
           ),
         ),
@@ -3864,17 +3888,28 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
 
-    it.effect("keeps the saved workspace when an unbound task stays unbound", () =>
+    it.effect("keeps the saved workspace and session mode when an unbound task stays unbound", () =>
       Effect.gen(function* () {
         const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
         const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
-          Effect.provide(service(masterRepository, saved)),
+          Effect.provide(service(masterRepository, saved, existing, inputs)),
         );
         yield* mcp.updateScheduledTask(client, {
           scheduledTaskId: existing.id,
           bindToCurrentThread: false,
         });
-        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }]);
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          freshSession: false,
+        });
+        assert.deepEqual(yield* Ref.get(saved), [{ type: "root" }, { type: "root" }]);
+        // A derived, unchanged mode is left to the server so a change committed since the load
+        // survives; an explicit freshSession is always sent.
+        assert.deepEqual(
+          (yield* Ref.get(inputs)).map((input) => input.threadMode),
+          [undefined, "new_thread"],
+        );
       }),
     );
 

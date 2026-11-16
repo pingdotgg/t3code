@@ -1049,9 +1049,9 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
                   scheduledTask("task-auto", "auto"),
                 ],
               }),
-            upsert: (input) =>
-              Effect.succeed({
-                task: { ...(scheduledTask(input.id ?? "task-auto", "auto") as object), ...input },
+            update: (input) =>
+              Effect.succeedSome({
+                task: { ...(scheduledTask(input.id, "auto") as object), ...input },
               } as never),
           }),
         ),

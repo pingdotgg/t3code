@@ -6,6 +6,7 @@ import { assert, it } from "@effect/vitest";
 import {
   type ManagedPolicyDocument,
   ScheduledTaskUpsertInput,
+  SecretRef,
   ScheduledTaskWebhookDeliveryId,
   SecretRequestError,
 } from "@t3tools/contracts";
@@ -17,6 +18,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Option from "effect/Option";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -2062,6 +2064,66 @@ it.effect("checks filters after the signature and max age, and runs only matchin
         [true, "Filter 1 (headers.x-github-event) did not match."],
         [true, "Filter 2 (body.action) did not match."],
       ]);
+    }),
+  ),
+);
+
+it.effect("webhook edits keep the URL and secret, and a secretRef replaces the secret", () =>
+  withService(({ service, launches, secretsByRef }) =>
+    Effect.gen(function* () {
+      const signature = {
+        header: "x-hub-signature-256",
+        encoding: "hex",
+        prefix: "sha256=",
+      } as const;
+      const { task } = yield* service.upsert(
+        yield* webhookTaskInput({
+          schedule: {
+            type: "webhook",
+            signature: { ...signature, secret: "original-secret" },
+          },
+        }),
+      );
+      const scope = { id: task.id, projectId: task.projectId };
+      const edited = Option.getOrThrow(
+        yield* service.update({
+          ...scope,
+          title: "Renamed",
+          schedule: { type: "webhook", signature, maxDeliveryAgeMinutes: 30 },
+        }),
+      ).task;
+      assert.equal(edited.webhook?.path, task.webhook?.path);
+      assert.isTrue(edited.webhook?.hasSecret);
+      assert.equal(
+        (yield* service.triggerWebhook(
+          requestFor(edited, {
+            headers: { "x-hub-signature-256": githubSignature("original-secret") },
+          }),
+        ))._tag,
+        "accepted",
+      );
+      yield* Queue.take(launches);
+
+      const secretRef = SecretRef.make("secret-ref:00000000000000000000000000000003");
+      secretsByRef.set(secretRef, "replacement-secret");
+      const replaced = Option.getOrThrow(
+        yield* service.update({
+          ...scope,
+          schedule: { type: "webhook", signature: { ...signature, secretRef } },
+        }),
+      ).task;
+      assert.isFalse(secretsByRef.has(secretRef));
+      assert.equal(replaced.webhook?.path, task.webhook?.path);
+      assert.isFalse(JSON.stringify(replaced).includes("replacement-secret"));
+      assert.equal(
+        (yield* service.triggerWebhook(
+          requestFor(replaced, {
+            headers: { "x-hub-signature-256": githubSignature("replacement-secret") },
+          }),
+        ))._tag,
+        "accepted",
+      );
+      yield* Queue.take(launches);
     }),
   ),
 );

@@ -28,6 +28,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
+import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
@@ -348,6 +349,216 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+const atomicTaskId = ScheduledTaskId.make("atomic-task");
+const atomicProjectId = ProjectId.make("project:test");
+const atomicScope = { id: atomicTaskId, projectId: atomicProjectId };
+const atomicDependencies = Layer.mergeAll(
+  NodeCrypto.layer,
+  Scheduler.layer,
+  ManagedPolicy.layerTest(),
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+    isNonGitProject: () => Effect.succeed(false),
+  }),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({
+    getThreadShell: () => Effect.succeed(threadShell(atomicProjectId)),
+  }),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
+);
+const atomicLayer = ScheduledTaskService.layer.pipe(
+  Layer.provide(atomicDependencies),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
+);
+const seedAtomicTask = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* insertRow(
+    sql,
+    {
+      id: atomicTaskId,
+      next: "2026-09-09T12:01:00.000Z",
+      enabled: 1,
+      status: "never",
+    },
+    "2026-09-09T12:00:00.000Z",
+  );
+  return (yield* (yield* ScheduledTaskService.ScheduledTaskService).list()).tasks[0]!;
+});
+
+it.effect("partial updates preserve concurrent fields and the pending run", () =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    const before = yield* seedAtomicTask;
+    const results = yield* Effect.all(
+      [
+        service.update({ ...atomicScope, title: "Renamed" }),
+        service.update({ ...atomicScope, prompt: "Changed elsewhere", runtimeMode: "auto" }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    assert.isTrue(results.every(Option.isSome));
+    const { tasks } = yield* service.list();
+    assert.deepEqual(tasks, [
+      {
+        ...before,
+        title: "Renamed",
+        prompt: "Changed elsewhere",
+        runtimeMode: "auto",
+        updatedAt: tasks[0]!.updatedAt,
+      },
+    ]);
+  }).pipe(Effect.provide(atomicLayer)),
+);
+
+it.effect("concurrent schedule, pause and sparse workspace edits preserve each other", () =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    const before = yield* seedAtomicTask;
+    yield* service.upsert({
+      ...before,
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: true,
+        branch: "keep",
+      },
+    });
+    yield* Effect.all(
+      [
+        service.update({
+          ...atomicScope,
+          schedule: { type: "interval", everyMs: 3_600_000 },
+          workspaceStrategyPatch: { baseRef: "develop" },
+        }),
+        service.update({
+          ...atomicScope,
+          enabled: false,
+          workspaceStrategyPatch: { startFromOrigin: false },
+        }),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const {
+      tasks: [after],
+    } = yield* service.list();
+    assert.equal(after?.enabled, false);
+    assert.isNull(after?.nextRunAt);
+    assert.deepEqual(after?.schedule, { type: "interval", everyMs: 3_600_000 });
+    assert.deepEqual(after?.workspaceStrategy, {
+      type: "worktree",
+      baseRef: "develop",
+      startFromOrigin: false,
+      branch: "keep",
+    });
+  }).pipe(Effect.provide(atomicLayer)),
+);
+
+it.effect("a deleted task stays deleted after concurrent and stale edits", () =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    yield* seedAtomicTask;
+    yield* Effect.all(
+      [service.update({ ...atomicScope, title: "Racing edit" }), service.delete(atomicScope)],
+      { concurrency: "unbounded" },
+    );
+    assert.deepEqual((yield* service.list()).tasks, []);
+    assert.isTrue(Option.isNone(yield* service.update({ ...atomicScope, title: "Stale edit" })));
+    assert.deepEqual((yield* service.list()).tasks, []);
+  }).pipe(Effect.provide(atomicLayer)),
+);
+
+it.effect("a move needs a live destination, and the old project can no longer edit or delete", () =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedAtomicTask;
+    const missing = yield* service
+      .update({ ...atomicScope, nextProjectId: ProjectId.make("project:missing") })
+      .pipe(Effect.flip);
+    assert.include(missing.message, "destination project does not exist");
+    yield* sql`
+      INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('project:destination', 'Destination', '/repo/destination', '[]',
+        '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:00.000Z')
+    `;
+    const moved = Option.getOrThrow(
+      yield* service.update({
+        ...atomicScope,
+        nextProjectId: ProjectId.make("project:destination"),
+      }),
+    ).task;
+    assert.equal(moved.projectId, "project:destination");
+    assert.isTrue(Option.isNone(yield* service.update({ ...atomicScope, title: "Stale edit" })));
+    assert.isTrue(Option.isNone(yield* service.delete(atomicScope)));
+    assert.deepEqual((yield* service.list()).tasks, [moved]);
+  }).pipe(Effect.provide(atomicLayer)),
+);
+
+it.effect("guarded mutations reject changed bindings and current or new bound-thread modes", () =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    yield* seedAtomicTask;
+    for (const id of ["bound-a", "bound-b"]) {
+      yield* sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, payload_json
+        ) VALUES (
+          ${id}, ${atomicProjectId}, 'Thread', 'codex', 'approval-required', 'default',
+          '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:00.000Z', '{}'
+        )
+      `;
+    }
+    const first = ThreadId.make("bound-a");
+    const second = ThreadId.make("bound-b");
+    yield* service.update({ ...atomicScope, runtimeMode: "approval-required", threadId: first });
+    yield* service.update({ ...atomicScope, threadId: second });
+    const guard = {
+      ...atomicScope,
+      expectedThreadId: first,
+      expectedRuntimeMode: "approval-required" as const,
+    };
+    assert.isTrue(
+      isScheduledTaskError(yield* service.update({ ...guard, prompt: "Stale" }).pipe(Effect.flip)),
+    );
+    assert.isTrue(isScheduledTaskError(yield* service.delete(guard).pipe(Effect.flip)));
+    yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'full-access' WHERE thread_id = ${second}`;
+    const unchangedBinding = { ...guard, expectedThreadId: second };
+    const limit = { runtimeMode: "approval-required", interactionMode: "default" } as const;
+    assert.isTrue(
+      isScheduledTaskError(
+        yield* service
+          .update({ ...unchangedBinding, prompt: "Stale" })
+          .pipe(Effect.provideService(DispatchModeLimit, limit), Effect.flip),
+      ),
+    );
+    assert.isTrue(
+      isScheduledTaskError(
+        yield* service
+          .delete(unchangedBinding)
+          .pipe(Effect.provideService(DispatchModeLimit, limit), Effect.flip),
+      ),
+    );
+    assert.equal((yield* service.list()).tasks[0]?.prompt, "Run task");
+    const unbound = Option.getOrThrow(
+      yield* service.update({ ...atomicScope, threadMode: "new_thread" }),
+    ).task;
+    assert.isNull(unbound.threadId);
+    yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode = 'full-access' WHERE thread_id = ${first}`;
+    assert.isTrue(
+      isScheduledTaskError(
+        yield* service
+          .update({ ...guard, expectedThreadId: null, threadId: first, title: "Stale rebind" })
+          .pipe(Effect.provideService(DispatchModeLimit, limit), Effect.flip),
+      ),
+    );
+    assert.deepEqual((yield* service.list()).tasks, [unbound]);
+  }).pipe(Effect.provide(atomicLayer)),
 );
 
 it.effect("thread cleanup notifies subscribers and a finishing run cannot recreate the task", () =>

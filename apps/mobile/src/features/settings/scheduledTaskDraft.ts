@@ -6,12 +6,14 @@ import type {
   RuntimeMode,
   ScheduledTask,
   ScheduledTaskThreadMode,
+  ScheduledTaskUpsertInput,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
   ThreadId,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { scheduledTaskEditPatch } from "@t3tools/client-runtime/scheduled-task-edit";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -28,6 +30,7 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
 } from "../../lib/modelOptions";
+import { withImplicitFastModeSelection } from "../../lib/providerOptions";
 
 export function scheduledTaskDefaultModel(
   config: ServerConfig | null,
@@ -333,4 +336,19 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         : true,
     runtimeMode: task.runtimeMode,
   };
+}
+
+/** The save adds an implicit fast mode to the model, so the opened task is read the same way. */
+export function scheduledTaskEditPatchFor(
+  opened: ScheduledTask,
+  save: ScheduledTaskUpsertInput,
+  providers: Parameters<typeof withImplicitFastModeSelection>[1],
+) {
+  return scheduledTaskEditPatch(
+    {
+      ...opened,
+      modelSelection: withImplicitFastModeSelection(opened.modelSelection, providers),
+    },
+    save,
+  );
 }

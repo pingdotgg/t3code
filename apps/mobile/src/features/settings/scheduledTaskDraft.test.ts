@@ -5,12 +5,16 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
+  type ScheduledTask,
+  ScheduledTaskId,
 } from "@t3tools/contracts";
+import { withImplicitFastModeSelection } from "../../lib/providerOptions";
 import {
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
+  scheduledTaskEditPatchFor,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -206,4 +210,58 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("scheduledTaskEditPatchFor", () => {
+  it("leaves an untouched model out when the save adds the implicit fast mode", () => {
+    const modelSelection = { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" };
+    const providers = [
+      {
+        instanceId: modelSelection.instanceId,
+        models: [
+          {
+            slug: modelSelection.model,
+            capabilities: {
+              optionDescriptors: [
+                { id: "fastMode", label: "Fast", type: "boolean", currentValue: true } as const,
+              ],
+            },
+          },
+        ],
+      },
+    ];
+    const opened: ScheduledTask = {
+      id: ScheduledTaskId.make("scheduled-task:mobile"),
+      title: "Nightly",
+      prompt: "Check the build",
+      enabled: true,
+      schedule: { type: "interval", everyMs: 3_600_000 },
+      projectId: ProjectId.make("project:mobile"),
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "user",
+      creationSource: "mobile",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    };
+    const patch = scheduledTaskEditPatchFor(
+      opened,
+      {
+        ...opened,
+        id: opened.id,
+        title: "Renamed",
+        modelSelection: withImplicitFastModeSelection(modelSelection, providers),
+      },
+      providers,
+    );
+    expect(patch).toEqual({ id: opened.id, projectId: opened.projectId, title: "Renamed" });
+  });
 });

@@ -97,6 +97,7 @@ import {
   PersistChatAttachmentsError,
   RpcClientId,
   EnvironmentAuthorizationError,
+  ScheduledTaskError,
   ThreadId,
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
@@ -2296,6 +2297,21 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
+        [WS_METHODS.scheduledTasksUpdate]: (input) =>
+          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(scheduledTasks.update(input)),
+            Effect.flatMap((updated) =>
+              Effect.fromOption(updated).pipe(
+                Effect.mapError(
+                  () =>
+                    new ScheduledTaskError({
+                      message: "Schedule task not found in this project.",
+                      taskId: input.id,
+                    }),
+                ),
+              ),
+            ),
+          ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.setEnabled(input)),
@@ -2303,6 +2319,18 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
+            Effect.flatMap((deleted) =>
+              Option.isSome(deleted)
+                ? Effect.succeed(deleted.value)
+                : input.projectId === undefined
+                  ? Effect.succeed({ id: input.id })
+                  : Effect.fail(
+                      new ScheduledTaskError({
+                        message: "Schedule task not found.",
+                        taskId: input.id,
+                      }),
+                    ),
+            ),
           ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
