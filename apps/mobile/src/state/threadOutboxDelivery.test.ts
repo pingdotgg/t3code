@@ -770,6 +770,37 @@ describe("thread outbox recovery rollback", () => {
     ).toEqual({ message: "rejected", messageId: message.messageId });
   });
 
+  it("restores a server-rejected upload without its ID so the next send uploads fresh", async () => {
+    const base = withReusedFileUpload(
+      queuedMessage({
+        messageId: "message-claim-rejected",
+        text: "two reports",
+        fileUri: "file:///a.pdf",
+      }),
+      "pending-kept",
+    );
+    const rejected = {
+      ...base.attachments[0]!,
+      id: "file-rejected",
+      fileUri: "file:///b.pdf",
+      uploadedAttachmentId: "pending-rejected",
+    };
+    const message = { ...base, attachments: [base.attachments[0]!, rejected] };
+    await harness.manager.enqueue(message);
+
+    await expect(
+      restoreRejectedQueuedMessage(message, "rejected", "pending-rejected"),
+    ).resolves.toBe("restored");
+
+    const restored = composerDrafts.getComposerDraftSnapshot(
+      `${message.environmentId}:${message.threadId}`,
+    ).attachments;
+    expect(restored.map((attachment) => attachment.uploadedAttachmentId)).toEqual([
+      "pending-kept",
+      undefined,
+    ]);
+  });
+
   it("leaves no error when the restored text is resent before recovery finishes", async () => {
     const message = queuedMessage({ messageId: "message-resent", text: "resend me" });
     const threadKey = `${message.environmentId}:${message.threadId}`;

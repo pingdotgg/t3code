@@ -400,9 +400,28 @@ export async function recoverEditedCreationAfterDelivery(
   }
 }
 
+/** A server claim rejected this upload; restore with local bytes so the next send uploads fresh. */
+function withoutRejectedUpload(
+  attachments: QueuedThreadMessage["attachments"],
+  rejectedAttachmentId: string | undefined,
+): QueuedThreadMessage["attachments"] {
+  if (rejectedAttachmentId === undefined) return attachments;
+  return attachments.map((attachment) => {
+    const hasLocalBytes =
+      attachment.fileUri !== undefined ||
+      (attachment.type === "image" && attachment.dataUrl !== undefined);
+    if (attachment.uploadedAttachmentId !== rejectedAttachmentId || !hasLocalBytes) {
+      return attachment;
+    }
+    const { uploadedAttachmentId: _id, uploadEnvironmentId: _environmentId, ...rest } = attachment;
+    return rest;
+  });
+}
+
 export async function restoreRejectedQueuedMessage(
   queuedMessage: QueuedThreadMessage,
   message: string,
+  rejectedAttachmentId?: string,
 ): Promise<"restored" | "deferred" | "blocked" | "retry"> {
   const draftKey = recoveryDraftKey(queuedMessage);
   const threadKey = scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId);
@@ -447,7 +466,7 @@ export async function restoreRejectedQueuedMessage(
       await mergeComposerDraftContent(draftKey, {
         text: queuedMessage.text,
         context: queuedMessage.context,
-        attachments: queuedMessage.attachments,
+        attachments: withoutRejectedUpload(queuedMessage.attachments, rejectedAttachmentId),
       });
     } finally {
       // Capture rollback in finally because merge publishes even on persistence failure; undo must preserve concurrent edits.
@@ -651,7 +670,11 @@ function reportCommandFailure(
   queuedMessage: QueuedThreadMessage,
   commandResult: AtomCommandResult<unknown, unknown>,
   stage: ThreadOutboxCommandStage,
-): { readonly action: "retry" | "restore"; readonly message: string } | null {
+): {
+  readonly action: "retry" | "restore";
+  readonly message: string;
+  readonly rejectedAttachmentId?: string;
+} | null {
   if (!AsyncResult.isFailure(commandResult)) {
     return null;
   }
@@ -670,6 +693,12 @@ function reportCommandFailure(
   return {
     action,
     message: error instanceof Error ? error.message : "The message could not be sent.",
+    ...(typeof error === "object" &&
+    error !== null &&
+    "attachmentId" in error &&
+    typeof error.attachmentId === "string"
+      ? { rejectedAttachmentId: error.attachmentId }
+      : {}),
   };
 }
 
@@ -751,8 +780,9 @@ export function createThreadOutboxDelivery(): {
   const restoreQueuedMessage = async (
     queuedMessage: QueuedThreadMessage,
     message: string,
+    rejectedAttachmentId?: string,
   ): Promise<boolean> => {
-    const result = await restoreRejectedQueuedMessage(queuedMessage, message);
+    const result = await restoreRejectedQueuedMessage(queuedMessage, message, rejectedAttachmentId);
     if (result !== "blocked") {
       return result !== "retry";
     }
@@ -967,7 +997,7 @@ export function createThreadOutboxDelivery(): {
       return false;
     }
     if (failure?.action === "restore") {
-      return restoreQueuedMessage(persistedMessage, failure.message);
+      return restoreQueuedMessage(persistedMessage, failure.message, failure.rejectedAttachmentId);
     }
     acknowledgedExistingThreadMessageIds.add(persistedMessage.messageId);
     const delivered =
@@ -1139,7 +1169,7 @@ export function createThreadOutboxDelivery(): {
       return false;
     }
     if (failure?.action === "restore") {
-      return restoreQueuedMessage(persistedMessage, failure.message);
+      return restoreQueuedMessage(persistedMessage, failure.message, failure.rejectedAttachmentId);
     }
     recordPendingThreadCreationOutcome({ kind: "delivered", message: persistedMessage });
     const outcome = await completeQueuedMessageDelivery(
