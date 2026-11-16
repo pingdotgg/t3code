@@ -18,29 +18,35 @@ which keeps account authentication while disabling custom instructions and exten
 
 After a task ends, T3 Code gives the judge the request, relevant conversation context, and available
 outcome evidence with model and provider labels removed. The same process covers subagent threads
-run through T3's orchestration. Model names mentioned inside free-form text may be harder to remove
-completely, and tool output keeps its structure and any token, cost, or timing figures a tool
-reports. Those can hint at which harness ran the task, so blind evaluation reduces identity cues
-without guaranteeing anonymity.
+run through T3's orchestration. A task that delegated work is evaluated once that delegated work
+finishes, so its result counts. A turn started by an automated wake, such as a finished background
+command, is recorded as skipped rather than scored, because it was not a request you wrote. Model
+names mentioned inside free-form text may be harder to remove completely, and tool output keeps its
+structure and any token, cost, or timing figures a tool reports. Those can hint at which harness ran
+the task, so blind evaluation reduces identity cues without guaranteeing anonymity.
 
 The judge scores task completion, correctness, instruction following, and verification from 0 to 4.
 When the evidence cannot establish a score, that dimension stays unscored. A claim that tests passed
 is not the same as a recorded test result. Failed evaluation calls and insufficient evidence remain
-visible in recent evaluations, instead of becoming poor performance scores for the evaluated model.
+visible in recent evaluations with a short cause, such as a timeout or an unavailable judge, instead
+of becoming poor performance scores for the evaluated model.
 
 ## Inspect and use guidance
 
 Choose a project under **Learned guidance** to see its recent evaluations and accumulated strengths,
 limitations, and prompting advice. Results stay within that project and environment. T3 keeps
-separate groups for different model options, task categories, top-level versus subagent tasks,
-judges, and scoring rubrics, so a change of judge does not silently mix two scales.
+separate groups for different task categories, top-level versus subagent tasks, judges, scoring
+rubrics, and model options that can change the answer, such as reasoning effort or agent mode, so a
+change of judge does not silently mix two scales. Options that only change speed, cost, or context
+size, such as fast mode, share one group.
 
 Guidance reflects up to 200 observations from the past 90 days. The displayed sample counts show
 how much evidence supports each score. Small samples remain provisional, and all guidance is an
 aid to judgment rather than a guarantee about future tasks. Observed prompt lengths describe past
 requests; they do not measure a model's maximum context window or establish an ideal prompt length.
 
-Agents using T3's orchestration can retrieve this guidance when choosing models and framing delegated
-tasks. Your explicit model choice still wins. Turning evaluations off stops new evaluation calls
-and use of the guidance while leaving saved history available to inspect. **Clear project history**
-removes that project's scores and learned guidance; later tasks can collect new observations.
+Agents using T3's orchestration can retrieve this guidance when choosing models and framing
+delegated tasks. Groups backed by more scored tasks come first. Your explicit model choice still
+wins. Turning evaluations off stops new evaluation calls and use of the guidance while leaving saved
+history available to inspect. **Clear project history** removes that project's scores and learned
+guidance; later tasks can collect new observations.
