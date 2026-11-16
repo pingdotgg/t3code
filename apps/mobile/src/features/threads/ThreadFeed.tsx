@@ -3643,14 +3643,19 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     });
   };
 
-  const preserveDisclosurePosition = (anchorKey: string | null) => {
+  const anchorRow = (anchorKey: string) => {
     const list = listRef.current;
     const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
     // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
-    if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
+    if (list && !(working && list.getState().isFollowingEnd)) {
       list.cancelScroll();
       list.anchorVisibleContent({ key: anchorKey });
     }
+  };
+
+  const preserveDisclosurePosition = (anchorKey: string | null) => {
+    const list = listRef.current;
+    if (anchorKey !== null) anchorRow(anchorKey);
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
       const anchorIndex = state.indexByKey(anchorKey);
@@ -3864,12 +3869,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
-            onHtmlRenderInteraction: (rowId) => {
-              // A disclosure inside the WebView may resize its row after the touch.
-              const list = listRef.current;
-              list?.cancelScroll();
-              list?.anchorVisibleContent({ key: rowId });
-            },
+            // A disclosure inside the WebView may resize its row after the touch.
+            onHtmlRenderInteraction: anchorRow,
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,
