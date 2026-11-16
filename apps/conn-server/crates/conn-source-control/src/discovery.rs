@@ -503,7 +503,7 @@ pub(crate) mod stub {
     //! A stub executable that records its argv and chosen environment variables, and answers
     //! from a script keyed on its arguments.
 
-    use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+    use std::path::PathBuf;
 
     #[derive(Debug)]
     pub(crate) struct StubDir {
@@ -542,9 +542,7 @@ pub(crate) mod stub {
                 "#!/bin/sh\nrec='argv'\nfor a in \"$@\"; do\n  case \"$a\" in\n    ''|*' '*|*'\t'*|*\"'\"*|*'\"'*|*'\\'*|*'\n'*) {quote_arg} ;;\n    *) rec=\"$rec $a\" ;;\n  esac\ndone\nrec=\"$rec\n{env_lines}\"\nprintf '%s' \"$rec\" >> {log}\n{body}\n",
                 log = Self::sh_quote(&log.to_string_lossy())
             );
-            std::fs::write(&path, script).expect("write stub");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
-                .expect("chmod stub");
+            conn_support::test_util::executable(&path, &script).expect("write stub");
             path.to_string_lossy().into_owned()
         }
 
@@ -592,10 +590,7 @@ mod tests {
     fn stub_logs_quote_ambiguous_arguments() {
         let stubs = stub::StubDir::new("it's");
         let path = stubs.executable("tool", &[], "exit 0");
-        // Through `sh`, not exec: on Linux, exec of a file another test thread's fork still
-        // holds open for writing fails with ETXTBSY ("Text file busy").
-        let status = std::process::Command::new("/bin/sh")
-            .arg(&path)
+        let status = std::process::Command::new(&path)
             .args([
                 "plain",
                 "--x=1",

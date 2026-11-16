@@ -49,6 +49,20 @@ pub(crate) enum ToolError {
 
 pub(crate) type ToolResult = Result<Value, ToolError>;
 
+fn trim_non_blank(args: &mut Args, keys: &[&str]) -> Result<(), ToolError> {
+    for &key in keys {
+        if let Some(Value::String(value)) = args.get_mut(key) {
+            *value = value.trim().to_owned();
+            if value.is_empty() {
+                return Err(ToolError::InvalidParams(format!(
+                    "Expected a non-blank string\n  at [\"{key}\"]"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError {
     ToolError::Failure {
         code,

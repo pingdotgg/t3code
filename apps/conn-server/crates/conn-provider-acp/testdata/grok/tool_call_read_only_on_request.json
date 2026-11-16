@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
- "capturedOn": "2026-11-15",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at 18e031346e; driver dropped.",
+ "capturedOn": "2026-11-16",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -6987,7 +6987,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
+     "cwd": "<workspace>",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7016,7 +7016,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
+     "cwd": "<workspace>",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7166,7 +7166,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c",
+     "cwd": "<workspace>",
      "approvalPolicy": "on-request",
      "sandboxPolicy": {
       "type": "readOnly",
@@ -7184,7 +7184,7 @@
   {
    "method": "respondToRuntimeRequest",
    "input": {
-    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
+    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "decision": "accept"
    },
    "exit": {
@@ -7524,7 +7524,7 @@
     "type": "dynamic_tool",
     "toolName": "write",
     "input": {
-     "file_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
+     "file_path": "<workspace>/.codex-probe-write-action.txt",
      "content": "codex app-server approval fixture"
     }
    }
@@ -7575,14 +7575,14 @@
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "file_change",
-    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
-    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
+    "fileName": "<workspace>/.codex-probe-write-action.txt",
+    "diffStr": "--- <workspace>/.codex-probe-write-action.txt\n+++ <workspace>/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
    }
   },
   {
    "type": "node.updated",
    "node": {
-    "id": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
+    "id": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
     "runId": "run:thread:thread%3Afixture%3Atool_call_read_only_on_request%3Aproject%3Aproject%253Afixture%253Atool_call_read_only_on_request%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
     "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only_on_request%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only_on_request%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
@@ -7597,7 +7597,7 @@
      "nativeId": "call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0",
      "strength": "weak"
     },
-    "runtimeRequestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
+    "runtimeRequestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "checkpointScopeId": null,
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null
@@ -7607,8 +7607,8 @@
    "type": "runtime_request.updated",
    "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
    "runtimeRequest": {
-    "id": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
-    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
+    "id": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
     "nativeRequestRef": {
      "driver": "grok",
@@ -7628,10 +7628,10 @@
   {
    "type": "turn_item.updated",
    "turnItem": {
-    "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
+    "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
     "runId": "run:thread:thread%3Afixture%3Atool_call_read_only_on_request%3Aproject%3Aproject%253Afixture%253Atool_call_read_only_on_request%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
-    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
+    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only_on_request%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only_on_request%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
     "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
     "nativeItemRef": {
@@ -7647,7 +7647,7 @@
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "approval_request",
-    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
+    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
     "requestKind": "file-change",
     "prompt": "Changed files",
     "options": [
@@ -7716,8 +7716,8 @@
     "completedAt": "1970-01-01T00:00:00.003Z",
     "updatedAt": "1970-01-01T00:00:00.003Z",
     "type": "file_change",
-    "fileName": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt",
-    "diffStr": "--- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n+++ /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-tool_call_read_only_on_request-b7Gr9c/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
+    "fileName": "<workspace>/.codex-probe-write-action.txt",
+    "diffStr": "--- <workspace>/.codex-probe-write-action.txt\n+++ <workspace>/.codex-probe-write-action.txt\n@@ -0,0 +1,1 @@\n+codex app-server approval fixture\n\\ No newline at end of file\n"
    }
   },
   {

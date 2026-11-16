@@ -10,6 +10,8 @@ pub mod login_env;
 pub mod secret_store;
 pub mod spawn_guard;
 pub mod text;
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_util;
 pub mod time;
 pub mod url;
 

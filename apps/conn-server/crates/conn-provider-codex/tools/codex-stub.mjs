@@ -40,7 +40,7 @@ const configIndex = process.argv.indexOf("--stub-config");
 const config = JSON.parse(NodeFS.readFileSync(process.argv[configIndex + 1], "utf8"));
 const argv = process.argv.slice(configIndex + 2);
 const log = (entry) =>
-  NodeFS.appendFileSync(config.log, `${JSON.stringify({ t: Date.now(), ...entry })}\n`);
+  NodeFS.appendFileSync(config.log, `${JSON.stringify({ t: Date.now(), pid: process.pid, ...entry })}\n`);
 
 // `config.logEnv: false` keeps the environment out of the log (a check that needs no env diff).
 log({ kind: "start", argv, env: config.logEnv === false ? undefined : { ...process.env }, cwd: process.cwd(), pid: process.pid });
