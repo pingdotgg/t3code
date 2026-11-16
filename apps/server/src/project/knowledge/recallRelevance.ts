@@ -7,6 +7,7 @@ const RECALL_MIN_MATCHED_TERMS = 3;
 const RECALL_MIN_HIT = 10;
 const RECALL_TUNED_CORPUS_SIZE = 718;
 const RECALL_MIN_COVERAGE = 0.3;
+const RECALL_MIN_MESSAGE_COVERAGE = 0.03;
 // 40 hid a current fact behind near-duplicates. 100 and 200 delivered the same facts here, and 200 slowed the tail.
 export const RECALL_CANDIDATE_LIMIT = 100;
 
@@ -101,8 +102,10 @@ const recallHitFloor = (corpusSize: number) =>
 const phraseIn = (entity: string, message: string) => {
   const phrase = fold(entity.trim());
   if (phrase.length < 4) return false;
+  const foldedMessage = fold(message);
+  if (!foldedMessage.includes(phrase)) return false;
   const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(fold(message));
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(foldedMessage);
 };
 
 const factTerms = (fact: RecallFactText) => recallTerms([fact.content, ...fact.entities].join(" "));
@@ -133,11 +136,12 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
     const factCoverage = factMass === 0 ? 0 : hit / factMass;
     const relevance = Math.max(queryCoverage, factCoverage);
     const rare = matched.some((term) => stats.docs(term) <= rareCeiling);
-    const entity = fact.entities.some((value) => phraseIn(value, text));
+    const entity = !rare && fact.entities.some((value) => phraseIn(value, text));
     // A fact contained in the message stays eligible when every saved fact uses the same words and idf collapses.
     const passes =
       matched.length >= RECALL_MIN_MATCHED_TERMS &&
       relevance >= RECALL_MIN_COVERAGE &&
+      queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE &&
       (rare || entity) &&
       (hit >= floor || factCoverage >= RECALL_MIN_COVERAGE);
     return [{ fact, relevance, passes }];
