@@ -1313,46 +1313,90 @@ describe("relay environment unlink", () => {
     );
   });
 
-  it.effect("retries unlink cleanup when a concurrent tunnel release wins the first claim", () => {
-    let lookups = 0;
-    const targets: Array<ManagedEndpointProvider.ManagedEndpointDeprovisionTarget | undefined> = [];
-    const target = {
-      userId: "user-1",
-      environmentId: "environment-1",
-      hostname: "environment-1.example.test",
-      tunnelId: "tunnel-1",
-      tunnelName: "environment-1-tunnel",
-      dnsRecordId: "dns-1",
-      readyAt: "2026-07-28T00:00:00.000Z",
-      origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-      updatedAt: "original-generation",
-      generation: 1,
-      tunnelReleasedAt: null,
-    } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
+  it.effect(
+    "reports cleanup complete only after a claim succeeds or the allocation is gone",
+    () => {
+      const target = {
+        userId: "user-1",
+        environmentId: "environment-1",
+        hostname: "environment-1.example.test",
+        tunnelId: "tunnel-1",
+        tunnelName: "t3coderelay-managedendpoint-dev-0123456789abcdef",
+        dnsRecordId: "dns-1",
+        readyAt: "2026-07-28T00:00:00.000Z",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        updatedAt: "original-generation",
+        generation: 1,
+        tunnelReleasedAt: null,
+      } satisfies ManagedEndpointProvider.ManagedEndpointDeprovisionTarget;
 
-    return Effect.gen(function* () {
-      expect(
-        yield* unlinkEnvironmentRecord({
-          userId: "user-1",
-          environmentId: "environment-1",
-        }),
-      ).toBe(true);
-      expect(targets).toEqual([target, target]);
-    }).pipe(
-      Effect.provide(
-        layerRelayUnlinkTest({
-          getForUser: () => Effect.sync(() => (++lookups === 1 ? linkedEnvironmentRecord : null)),
-          revokeForUser: () => Effect.succeed(true),
-          prepareDeprovision: () => Effect.succeed(target),
-          deprovision: ({ target: captured }) =>
-            Effect.sync(() => {
-              targets.push(captured ?? undefined);
-              return targets.length > 1;
-            }),
-        }),
-      ),
-    );
-  });
+      return Effect.gen(function* () {
+        for (const cleanupOnly of [false, true]) {
+          for (const outcome of [
+            "complete",
+            "claim-lost",
+            "relinked",
+            "already-cleaned",
+          ] as const) {
+            let lookups = 0;
+            let preparations = 0;
+            const targets: Array<
+              ManagedEndpointProvider.ManagedEndpointDeprovisionTarget | undefined
+            > = [];
+            const cleared: Array<string> = [];
+            const result = yield* unlinkEnvironmentRecord({
+              userId: "user-1",
+              environmentId: "environment-1",
+              managedEndpointNamespace: "dev",
+              cleanupOnly,
+            }).pipe(
+              Effect.provide(
+                layerRelayUnlinkTest({
+                  getForUser: () =>
+                    Effect.sync(() => {
+                      lookups++;
+                      return (lookups === 1 && !cleanupOnly) ||
+                        (lookups > 1 && outcome === "relinked")
+                        ? linkedEnvironmentRecord
+                        : null;
+                    }),
+                  revokeForUser: () => Effect.succeed(true),
+                  prepareDeprovision: () =>
+                    Effect.sync(() =>
+                      ++preparations > 1 && outcome === "already-cleaned" ? null : target,
+                    ),
+                  deprovision: ({ target: captured }) =>
+                    Effect.sync(() => {
+                      targets.push(captured ?? undefined);
+                      return targets.length > 1 && outcome === "complete";
+                    }),
+                  clearInbox: ({ endpointKey }) =>
+                    Effect.sync(() => void cleared.push(endpointKey)),
+                }),
+              ),
+              Effect.match({
+                onFailure: (error) => ({ error: error._tag }),
+                onSuccess: (ok) => ({ ok }),
+              }),
+            );
+            const completed = outcome === "complete" || outcome === "already-cleaned";
+            expect(result).toEqual(
+              completed
+                ? { ok: !cleanupOnly }
+                : {
+                    error:
+                      outcome === "relinked" ? "Conflict" : "ManagedEndpointDeprovisioningFailed",
+                  },
+            );
+            expect(targets).toEqual(
+              outcome === "complete" || outcome === "claim-lost" ? [target, target] : [target],
+            );
+            expect(cleared).toEqual(completed ? ["0123456789abcdef"] : []);
+          }
+        }
+      });
+    },
+  );
 });
 
 describe("relay request tracing", () => {

@@ -533,11 +533,29 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
             environmentPublicKey: link.environmentPublicKey,
           });
     // Deprovision after revocation commits; retry even if already revoked to finish failed Cloudflare cleanup.
-    const deprovisioned = yield* managedEndpointProvider.deprovision({
+    let deprovisioned = yield* managedEndpointProvider.deprovision({
       userId: input.userId,
       environmentId: input.environmentId,
       target: deprovisionTarget,
     });
+    if (!deprovisioned) {
+      const key = { userId: input.userId, environmentId: input.environmentId };
+      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
+      if ((yield* links.getForUser(key)) !== null) {
+        return yield* new HttpApiError.Conflict({});
+      }
+      deprovisioned =
+        retryTarget === null
+          ? true
+          : yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
+      if (!deprovisioned) {
+        return yield* new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+          ...key,
+          stage: "claim-deprovision",
+          cause: "Cleanup claim was superseded",
+        });
+      }
+    }
     const endpointKey =
       deprovisionTarget && input.managedEndpointNamespace
         ? HeldHooks.endpointKeyForTunnelName(
@@ -555,13 +573,6 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
           }),
         ),
       );
-    }
-    if (!deprovisioned) {
-      const key = { userId: input.userId, environmentId: input.environmentId };
-      const retryTarget = yield* managedEndpointProvider.prepareDeprovision(key);
-      if (retryTarget !== null && (yield* links.getForUser(key)) === null) {
-        yield* managedEndpointProvider.deprovision({ ...key, target: retryTarget });
-      }
     }
     return unlinked;
   },
