@@ -1224,12 +1224,21 @@ export function threadErrorBannerRunId(
   let failed: (typeof runs)[number] | null = null;
   let completed: (typeof runs)[number] | null = null;
   for (const run of runs) {
-    if (run.status === "failed" && (failed === null || runRanAfter(run, failed))) failed = run;
-    if (run.status === "completed" && (completed === null || runRanAfter(run, completed)))
+    if (run.status === "failed" && (failed === null || endedAfter(run, failed))) failed = run;
+    if (run.status === "completed" && (completed === null || endedAfter(run, completed)))
       completed = run;
   }
-  if (failed !== null && (completed === null || !runRanAfter(completed, failed))) return failed.id;
+  if (failed !== null && (completed === null || !endedAfter(completed, failed))) return failed.id;
   return completed?.id ?? null;
+}
+
+// runRanAfter ranks a run without completedAt as still running, which a finished run is not.
+function endedAfter(
+  run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
+  other: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
+): boolean {
+  if (run.completedAt === null || other.completedAt === null) return run.ordinal > other.ordinal;
+  return runRanAfter(run, other);
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

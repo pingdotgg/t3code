@@ -1705,6 +1705,15 @@ describe("threadErrorBannerRunId", () => {
     ).toBe("run-b");
   });
 
+  it("keys by a later failed run even when an earlier failed run has no completion time", () => {
+    expect(
+      threadErrorBannerRunId([
+        run("run-a", "failed", 1),
+        run("run-b", "failed", 2, "2026-11-16T00:02:00Z"),
+      ]),
+    ).toBe("run-b");
+  });
+
   it("keys a repeated session error by a later completed run, so its earlier dismissal does not hide it", () => {
     expect(
       threadErrorBannerRunId([
