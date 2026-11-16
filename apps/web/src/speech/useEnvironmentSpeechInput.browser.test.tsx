@@ -442,10 +442,10 @@ it("finishes an off-screen recording with the keyboard while Settings is open", 
   await act(() => mocks.voice.start());
   await screen.rerender(
     <>
-      <Probe ownerKey="thread-b" persistent />
       <AppRouteModal label="Settings">
         <button type="button">Settings control</button>
       </AppRouteModal>
+      <GlobalVoiceInputIndicator hidden />
     </>,
   );
   await expect.element(page.getByRole("dialog", { name: "Settings" })).toHaveFocus();
