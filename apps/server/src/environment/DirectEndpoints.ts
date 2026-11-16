@@ -53,11 +53,8 @@ const isTailscaleInterface = (
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
-/**
- * Whether this machine holds a 100.64.0.0/10 address on Tailscale's interface.
- * Control servers like Headscale give nodes no *.ts.net name or fd7a:115c:a1e0::
- * address to recognize, so their peers are reached by these IPv4 addresses.
- */
+// Peers advertise their Tailscale IPv4 as a tailnet endpoint, and Headscale nodes
+// may have no *.ts.net name or IPv6 address to reach them by instead.
 export const isOnTailnetIpv4 = (interfaces: NetworkInterfacesMap): boolean =>
   Object.entries(interfaces).some(
     ([name, entries = []]) =>

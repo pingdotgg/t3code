@@ -213,19 +213,9 @@ describe("resolveBoundEndpoints", () => {
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
     ]);
-  });
-
-  it("is on a tailnet by IPv4 only through Tailscale's interface, not other VPNs in its range", () => {
-    expect(isOnTailnetIpv4({ en0: INTERFACES.en0, tailscale0: vpnInterface("100.64.0.6") })).toBe(
-      true,
-    );
-    expect(
-      isOnTailnetIpv4({
-        en0: INTERFACES.en0,
-        CloudflareWARP: vpnInterface("100.96.0.1"),
-        utun7: vpnInterface("100.85.0.1"),
-      }),
-    ).toBe(false);
+    expect(isOnTailnetIpv4(interfaces)).toBe(true);
+    const { tailscale0: _, ...withoutTailscale } = interfaces;
+    expect(isOnTailnetIpv4(withoutTailscale)).toBe(false);
   });
 
   it("never reports a host name, which can resolve to another machine per client", () => {
