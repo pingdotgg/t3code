@@ -23,15 +23,16 @@ The four judge criteria are distinct useful ideas, explicit engagement with a pe
 
 ## Run
 
-Put `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the repo root `.env`. The package script loads that file. Direct APIs are the default. `--proxy` explicitly uses the existing MCP eval's `vibeproxy` configuration for GPT models instead. `morph-` models, such as `morph-kimik31` and `morph-dsv41flash`, call Morph's free OpenAI-compatible API with `MORPH_API_KEY`, or the `morph` provider in `~/.config/opencode/opencode.json`. Missing credentials produce error rows, never model substitutions or passing samples.
+Put `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the repo root `.env`. The package script loads that file. Direct APIs are the default. `--proxy` explicitly uses the existing MCP eval's `vibeproxy` configuration for GPT models instead. `morph-` models, listed under Free in the table below, call Morph's free OpenAI-compatible API with `MORPH_API_KEY`, or the `morph` provider in OpenCode's config (`$XDG_CONFIG_HOME` or `~/.config`). Missing credentials produce error rows, never model substitutions or passing samples.
 
 The model IDs below are the intended design pairings. They are not cheap shell models.
 
-| Purpose     | Models                          |
-| ----------- | ------------------------------- |
-| Pairing 1   | `claude-opus-5-5,gpt-6-astra`   |
-| Pairing 2   | `claude-sonnet-5-5,gpt-6.1-sol` |
-| Blind judge | `claude-sonnet-5-5`             |
+| Purpose     | Models                                                 |
+| ----------- | ------------------------------------------------------ |
+| Pairing 1   | `claude-opus-5-5,gpt-6-astra`                          |
+| Pairing 2   | `claude-sonnet-5-5,gpt-6.1-sol`                        |
+| Blind judge | `claude-sonnet-5-5`                                    |
+| Free        | `morph-kimik31,morph-dsv41flash`, judge `morph-kimik3` |
 
 ```sh
 cd evals
@@ -40,7 +41,7 @@ pnpm group-conversation --out runs/group-small --model claude-opus-5-5,gpt-6-ast
 pnpm group-conversation --out runs/group-dry --model claude-opus-5-5,gpt-6-astra --judge claude-sonnet-5-5 --samples 1 --dry-run
 ```
 
-`--out` is required. `--model` accepts one model for behavior cases, or a comma-separated primary/seat pair for design cases. Repeat it for the two pairings. `--case` accepts comma-separated IDs. `--baseline <results.json>` compares behavior rates only with identical models, cases, settings, and grader hashes. Prompt hashes may differ because the purpose is to measure text changes. `--samples` defaults to 3. `--effort` defaults to high. The fixed reply budget is 220 words. Each API call has a 120-second deadline and no retries. Errors stay out of pass rates but prevent promotion. Existing output directories with results are rejected to prevent accidental overwrites.
+`--out` is required. `--model` accepts one model for behavior cases, or a comma-separated primary/seat pair for design cases. Repeat it for the two pairings. `--case` accepts comma-separated IDs. `--baseline <results.json>` compares behavior rates only with identical models, cases, settings, and grader hashes. Prompt hashes may differ because the purpose is to measure text changes. `--samples` defaults to 3. `--effort` defaults to high. The fixed reply budget is 220 words. Each request has a 120-second deadline. HTTP 429 and 5xx responses retry up to twice, waiting for `Retry-After` or 2 then 4 seconds, because they are transport, not model behaviour. Errors stay out of pass rates but prevent promotion. Existing output directories with results are rejected to prevent accidental overwrites.
 
 Start with one case and one sample, inspect all requests and outputs, then run the small set. The default set has three design cases and fourteen behavior cases. Three samples and both pairings cost at most 312 participant turns and 174 judge calls before tool continuations. PASS and early closure can reduce design calls. File operations and delegation are simulated in memory. No real agent, file write, or child task is launched by a participant. Tools in the simulation can still fail the case. A behavior case passes only when a strict majority of its samples pass; errors make it incomplete.
 
