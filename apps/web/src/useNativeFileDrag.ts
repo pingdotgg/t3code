@@ -35,6 +35,7 @@ export function useNativeFileDrag(
         const started = await window.desktopBridge?.startFileDrag({ environmentId, path });
         if (!started) throw new Error("The file is unavailable on this Mac.");
       })().catch((error: unknown) => {
+        if (released) return;
         toastManager.add({
           type: "error",
           title: "Unable to drag file",
