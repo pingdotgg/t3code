@@ -58,9 +58,9 @@ describe("deriveThreadUsageRows", () => {
     });
     expect(rows).toEqual([
       { label: "Context", value: "12k tokens" },
-      { label: "Last turn", value: "12K tokens" },
-      { label: "Input", value: "10K" },
-      { label: "Output", value: "2K" },
+      { label: "Last turn", value: "12k tokens" },
+      { label: "Input", value: "10k" },
+      { label: "Output", value: "2k" },
     ]);
   });
 

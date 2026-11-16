@@ -1137,3 +1137,59 @@ it.effect.each([
     });
   }),
 );
+
+it.effect(
+  "getThreadUsage with no active provider thread reads the newest turn of the whole thread",
+  () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:thread-management:usage-no-active");
+      const retiredId = ProviderThreadId.make(
+        "provider-thread:thread-management:usage-no-active:retired",
+      );
+      const updatedAt = DateTime.makeUnsafe("2026-01-01T00:00:00Z");
+      const providerTurns = [
+        {
+          providerThreadId: retiredId,
+          tokenUsage: { usedTokens: 5_000, updatedAt: "2026-01-01T00:00:00Z" },
+        },
+        {
+          providerThreadId: retiredId,
+          tokenUsage: { usedTokens: 7_000, updatedAt: "2026-01-01T00:01:00Z" },
+        },
+      ];
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: (_threadId, _fields, filter) =>
+              Effect.succeed({
+                thread: { id: threadId, activeProviderThreadId: null },
+                providerThreads: [{ id: retiredId, contextUsage: null, updatedAt }].filter(
+                  (thread) => filter?.providerThreadIds?.includes(thread.id) ?? true,
+                ),
+                providerTurns: providerTurns
+                  .filter(
+                    (turn) =>
+                      filter?.providerTurnThreadIds?.includes(turn.providerThreadId) ?? true,
+                  )
+                  .toSorted((a, b) => b.tokenUsage.updatedAt.localeCompare(a.tokenUsage.updatedAt))
+                  .slice(0, filter?.latestProviderTurnUsageOnly ? 1 : undefined),
+              } as unknown as OrchestrationV2ThreadProjection),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+
+      const result = yield* service.getThreadUsage(threadId);
+
+      expect(result).toStrictEqual({
+        threadId,
+        providerThread: null,
+        latestTurnTokenUsage: { usedTokens: 7_000, updatedAt: "2026-01-01T00:01:00Z" },
+      });
+    }),
+);

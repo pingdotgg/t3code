@@ -1,5 +1,4 @@
 import type { OrchestrationV2ThreadUsage } from "@t3tools/contracts";
-import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 
@@ -39,15 +38,21 @@ export function deriveThreadUsageRows(
   }
 
   if (turn !== null) {
-    rows.push({ label: "Last turn", value: `${formatTokens(turn.usedTokens)} tokens` });
+    rows.push({
+      label: "Last turn",
+      value: `${formatContextWindowTokens(turn.usedTokens)} tokens`,
+    });
     if (turn.inputTokens !== undefined) {
-      rows.push({ label: "Input", value: formatTokens(turn.inputTokens) });
+      rows.push({ label: "Input", value: formatContextWindowTokens(turn.inputTokens) });
     }
     if (turn.outputTokens !== undefined) {
-      rows.push({ label: "Output", value: formatTokens(turn.outputTokens) });
+      rows.push({ label: "Output", value: formatContextWindowTokens(turn.outputTokens) });
     }
     if (turn.cachedInputTokens !== undefined) {
-      rows.push({ label: "Cached input", value: formatTokens(turn.cachedInputTokens) });
+      rows.push({
+        label: "Cached input",
+        value: formatContextWindowTokens(turn.cachedInputTokens),
+      });
     }
   }
 
