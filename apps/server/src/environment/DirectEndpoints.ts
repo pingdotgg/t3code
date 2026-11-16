@@ -18,6 +18,7 @@ import * as NodeOS from "node:os";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   formatHostForUrl,
+  isSharedAddressSpaceHost,
   isTailnetHost,
   isWildcardHost,
 } from "@t3tools/shared/hostClassification";
@@ -51,6 +52,18 @@ const isTailscaleInterface = (
 ): boolean =>
   /^tailscale/i.test(name) ||
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
+
+/**
+ * Whether this machine holds a 100.64.0.0/10 address on Tailscale's interface.
+ * Control servers like Headscale give nodes no *.ts.net name or fd7a:115c:a1e0::
+ * address to recognize, so their peers are reached by these IPv4 addresses.
+ */
+export const isOnTailnetIpv4 = (interfaces: NetworkInterfacesMap): boolean =>
+  Object.entries(interfaces).some(
+    ([name, entries = []]) =>
+      isTailscaleInterface(name, entries) &&
+      entries.some((entry) => entry.family === "IPv4" && isSharedAddressSpaceHost(entry.address)),
+  );
 
 // Windows adapter names are mutable; Linux bridges can inherit these MACs.
 const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;

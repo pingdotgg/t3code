@@ -35,9 +35,15 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
-import { isLocalLoopbackHost, isTailnetHost } from "@t3tools/shared/hostClassification";
+import {
+  isLocalLoopbackHost,
+  isSharedAddressSpaceHost,
+  isTailnetHost,
+} from "@t3tools/shared/hostClassification";
+import * as NodeOS from "node:os";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { isOnTailnetIpv4 } from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -171,6 +177,7 @@ const failStorage = (cause: unknown) =>
  * The base URL a peer is reached at, normalised to its origin. The pairing
  * code and then the link's token travel to it, so plain http is accepted only
  * where the network already encrypts: this machine, or a Tailscale address.
+ * A 100.64.0.0/10 address counts only while this machine is on a tailnet too.
  */
 const peerOrigin = (url: string) => {
   const parsed = URL.parse(url);
@@ -186,7 +193,8 @@ const peerOrigin = (url: string) => {
   if (
     parsed.protocol === "http:" &&
     !isLocalLoopbackHost(parsed.hostname) &&
-    !isTailnetHost(parsed.hostname)
+    !isTailnetHost(parsed.hostname) &&
+    !(isSharedAddressSpaceHost(parsed.hostname) && isOnTailnetIpv4(NodeOS.networkInterfaces()))
   ) {
     return Effect.fail(
       new PeerLinkError({
