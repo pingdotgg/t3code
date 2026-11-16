@@ -464,6 +464,47 @@ it.effect(
   },
 );
 
+it.effect("attributes peer replies to their speaker in summary model input", () => {
+  const model = citing();
+  return Effect.gen(function* () {
+    yield* seed;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const peer = item(1);
+    if (peer.type !== "assistant_message") return yield* Effect.die("Expected a peer reply");
+    yield* projections.apply({
+      id: EventId.make("peer-reply-attribution"),
+      type: "turn-item.updated",
+      threadId,
+      providerInstanceId: instanceId,
+      occurredAt: at,
+      payload: { ...peer, speaker: { label: "Astra", model: "gpt-6-astra" } },
+    });
+    yield* summarize;
+    assert.deepEqual(model.calls[0]?.messages[1], {
+      ref: "M2",
+      role: "user",
+      text: `[Historical peer_reply; speaker=Astra (gpt-6-astra); thread=summary-thread; run=summary-run; item=item-1; provider-thread=none; status=completed]\n${rawText(1)}`,
+    });
+    assert.deepEqual(model.calls[0]?.messages[3], {
+      ref: "M4",
+      role: "assistant",
+      text: rawText(3),
+    });
+    const summary = yield* onlySummary;
+    const service = yield* ConversationSummaries.ConversationSummaries;
+    const expansion = yield* service.expand({
+      ...scope,
+      summaryId: summary.id,
+      offset: 1,
+      limit: 1,
+    });
+    assert.equal(
+      expansion.sources[0]?.result.state === "available" ? expansion.sources[0].result.text : null,
+      rawText(1),
+    );
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
   const model = citing();
   return Effect.gen(function* () {
