@@ -1652,7 +1652,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 }
 
 @media (width >= 48rem) {
-  [data-sidebar-state="collapsed"] [data-sidebar-control] {
+  [data-sidebar-state="collapsed"]
+    [data-slot="sidebar-inset"][data-strip-under-controls]
+    ~ [data-sidebar-control] {
     margin-inline-start: calc(1px - var(--workspace-titlebar-control-gap));
     padding-inline: var(--workspace-titlebar-control-gap);
     border-radius: var(--radius-pane);
@@ -1662,7 +1664,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     background-attachment: fixed;
   }
 
-  [data-chrome-art][data-sidebar-state="collapsed"] [data-sidebar-control] {
+  [data-chrome-art][data-sidebar-state="collapsed"]
+    [data-slot="sidebar-inset"][data-strip-under-controls]
+    ~ [data-sidebar-control] {
     background: var(--chrome-art-paint);
     background-attachment: fixed;
     background-blend-mode: var(--chrome-art-blend, normal);
