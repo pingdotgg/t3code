@@ -909,3 +909,58 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+// regression: #37540 retrying Publish after a failed first push failed on "name already exists"
+it.effect("finishes a retried publish when the repository already exists as the remote", () => {
+  let pushAttempts = 0;
+  return Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    const result = yield* service.publishRepository({
+      cwd: "/workspace",
+      provider: SourceControlProviderKind.make("github"),
+      repository: "octocat/t3code",
+      visibility: "private",
+      remoteName: "origin",
+    });
+
+    assert.strictEqual(result.status, "pushed");
+    assert.strictEqual(result.remoteName, "origin");
+    assert.strictEqual(pushAttempts, 1);
+  }).pipe(
+    Effect.provide(
+      layer({
+        provider: makeProvider({
+          createRepository: (input) =>
+            Effect.fail(
+              new SourceControlProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "createRepository",
+                cwd: input.cwd,
+                repository: input.repository,
+                detail:
+                  "GitHub API request failed (422): Repository creation failed.; name already exists on this account",
+              }),
+            ),
+        }),
+        git: {
+          execute: (input) =>
+            Effect.succeed(
+              input.args[0] === "remote"
+                ? { ...processOutput(), stdout: `${CLONE_URLS.url}\n` }
+                : processOutput(),
+            ),
+          pushCurrentBranch: () =>
+            Effect.sync(() => {
+              pushAttempts += 1;
+              return {
+                status: "pushed" as const,
+                branch: "main",
+                upstreamBranch: "origin/main",
+                setUpstream: true,
+              };
+            }),
+        },
+      }),
+    ),
+  );
+});
