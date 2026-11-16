@@ -494,6 +494,37 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("downloads the newest release published since the last check", () => {
+    // electron-updater downloads the release its last checkForUpdates found.
+    let published = "1.2.4";
+    let lastChecked: string | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        lastChecked = published;
+        harness.emit("update-available", { version: published });
+      }),
+      downloadUpdate: Effect.sync(() => {
+        harness.emit("update-downloaded", { version: lastChecked });
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
+
+        published = "1.2.5";
+        const result = yield* updates.download;
+        yield* flushCallbacks;
+        assert.isTrue(result.completed);
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores download state and permits retry after interruption", () =>
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();
