@@ -62,6 +62,10 @@ and `writing-for-agents`.
 - `diff-review`, `diagnosing-bugs`, `tdd`, `implement`, `codebase-design`, `retro`, and `to-spec`
   each gained one sentence citing the pstack principles that apply, by name when the principle is
   a visible skill and by `~/.agents/skills/principle-<name>/SKILL.md` when it is hidden.
+- `implement`, `implement-spec`, and `tdd` point at this fork's `validate-change` skill where they
+  pointed at `diff-review`. `validate-change` runs checks, simplify, a test-quality pass,
+  `no-comments`, and the harness's own reviewer, and still runs `diff-review` for its Spec axis
+  when the change implements an issue or spec.
 - `wayfinder` ends a finished map by filing implementation tickets with `to-tickets` and handing them
   to `maestro`, so charting runs straight into dispatch. One added step under "Work through the map".
 

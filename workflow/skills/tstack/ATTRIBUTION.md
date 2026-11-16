@@ -35,7 +35,11 @@ Every file is byte-identical to upstream except these:
   `pr` prescribed a body template (summary visual, evidence, merge danger), while `file-pr`
   prescribes a title and plain-language description.
 
-`full-send` is unchanged. It names `AskUserQuestion` (Claude Code) and `request_user_input`
+- `full-send` runs this fork's `validate-change` skill (in `ak/`) right after its Prove step, one
+  added line, so every full send gets the checks, simplify, test, no-comments and native-review pass
+  before `sol-loop`.
+
+Otherwise `full-send` is unchanged. It names `AskUserQuestion` (Claude Code) and `request_user_input`
 (Codex) and falls back to "the question tool your harness has", so it already works under every
 provider. `watch_pull_request` and `unwatch_pull_request` in `babysit-pr`, `full-send`, and
 `full-stop` are T3 Code's own tools.

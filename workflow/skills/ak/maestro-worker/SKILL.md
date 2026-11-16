@@ -3,7 +3,7 @@ name: maestro-worker
 description: Implement one GitHub issue as a maestro worker, from branch to merged PR. Use when a task says to use the maestro-worker skill for an issue.
 ---
 
-You are a maestro worker. Your task names the issue `<n>` and the repo. You own it end to end: implement, verify, open the PR, merge. The maestro reads GitHub, not this thread. You already run in an isolated checkout prepared for you.
+You are a maestro worker. Your task names the issue `<n>` and the repo. You own it end to end, through `full-send`: implement, prove, validate, open the PR, merge. The maestro reads GitHub, not this thread. You already run in an isolated checkout prepared for you.
 
 ## Pick up
 
@@ -12,33 +12,16 @@ You are a maestro worker. Your task names the issue `<n>` and the repo. You own 
 3. If `.t3/setup-done` is missing and `.t3/setup-running` names no live PID, run the repo's install step.
 4. If the issue lacks what you need to start, ask for help (below). Do not guess.
 
-## Implement
+## Ship it with full-send
 
-5. Implement the issue.
-6. Verify against the real artifact, per the `prove-it-works` skill, in order:
-   1. The project's lint and tests, until both pass.
-   2. A simplify pass over your diff: reuse, simplification, dead code, per the `laziness-protocol` skill and the subtract-before-you-add principle (`~/.agents/skills/principle-subtract-before-you-add/SKILL.md`). Do it yourself or delegate it to a subagent.
-   3. Judge every test you added or changed by the `principle-test-behavior-not-implementation` skill. Rewrite or delete the ones that fail it.
-   4. Delegate to a subagent (in T3 Code: `delegate_task`, `role: "review"`) that follows the `diff-review` skill against `origin/main`. Fix what it finds.
-   5. Lint and tests again.
-   6. If the change is visible in a UI, use the project's verification skill if it has one. Otherwise start the dev server, look at it with T3 Code's `preview_*` tools, exercise the change, read the console, and stop the server.
-7. Commit and push: `git push -u origin task/<n>`.
-
-## Merge
-
-8. `git fetch origin && git rebase origin/main`. Resolve obvious conflicts, rerun the tests, and `git push --force-with-lease`. If a conflict touches logic you do not understand, or resolving it would drop someone else's work, stop and ask for help.
-9. Open the PR and merge it. Do not wait for CI and do not watch the PR.
-
-   ```bash
-   gh pr create --fill --body "Closes #<n>. <what changed, a sentence or two>"
-   gh pr merge --squash --delete-branch
-   ```
-
-   The merge closes the issue. Stop.
+5. Follow the `full-send` skill from its step 1 to its merge. It runs `validate-change` and `sol-loop`, files the PR with `file-pr`, and merges once its merge gate passes. The issue's request is the user's request, and its merge closes the issue. Three overrides, because you are a delegated child:
+   - **Waiting.** Never call `watch_pull_request`. When the repo runs CI or review bots on the PR, wait with `~/.agents/skills/babysit-pr/scripts/pr-wait`, as `babysit-pr` describes. With neither, the gate needs only your proof, validation, and a mergeable branch.
+   - **Asking.** Wherever `full-send` would ask the user, ask for help (below) instead.
+   - **Reporting.** End with the final message below, not `full-send`'s report.
 
 ## Ask for help
 
-Do not merge when the change adds or edits a database migration, when the rebase in step 8 is not safe, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over:
+Do not merge when the change adds or edits a database migration, when a rebase conflict touches logic you do not understand or would drop someone else's work, or when you are stuck after a real attempt. Push what you have, open the PR if there is one, and hand over:
 
 ```bash
 gh issue edit <n> --add-label needs-help

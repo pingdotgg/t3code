@@ -1,6 +1,6 @@
 ---
 name: maestro
-description: Orchestrate parallel workers from GitHub issues inside T3 Code. The master (the user's thread) interviews requirements and files them as issues. A dedicated maestro thread dispatches one maestro-worker child per frontier issue. Workers implement, verify, and merge on their own, and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel, or when a thread is told to run as the maestro dispatcher. Do not use for a single task this session can do itself.
+description: Orchestrate parallel workers from GitHub issues inside T3 Code. The master (the user's thread) interviews requirements and files them as issues. A dedicated maestro thread dispatches one maestro-worker child per frontier issue. Workers ship through full-send (validate, review, merge) on their own, and label needs-help when a decision is needed. Use when the user asks to orchestrate parallel workers or to split a large body of work into issues that run in parallel, or when a thread is told to run as the maestro dispatcher. Do not use for a single task this session can do itself.
 ---
 
 Two roles, two threads. GitHub labels and native blocked-by edges are the only queue state, so the queue moves without the two threads talking.
@@ -59,7 +59,7 @@ Runs only in the maestro thread. There are no loops and no sleeps: each tick run
 1. Create the labels: `for l in ready-for-agent ready-for-human in-progress needs-help task epic; do gh label create "$l" --force --color ededed; done`
 2. Call `orchestrator_capabilities` once.
 3. Find your own thread id: `t3_thread_list` with `titleContains: "maestro <owner/repo>"`.
-4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue with no running child is an orphan; treat it under Requeue.
+4. Rebuild the worker map `taskId → {issue, childThreadId, nudges}` from open `in-progress` issues and your running child threads titled `mw-<n> …` (`t3_thread_list` with `includeSubagents`). An `in-progress` issue with no running child is an orphan. With `needs-help` too, its worker asked for help before this thread restarted: remove `in-progress` and notify the master (below). Otherwise treat it under Requeue.
 5. Reuse a `maestro tick` heartbeat from `list_scheduled_tasks` if one exists. Otherwise create it: `schedule_task` with `bindToCurrentThread: true`, `schedule: {type: "interval", everyMs: 300000}`, prompt `maestro tick`. Keep its `scheduledTaskId`.
 
 ### Each tick
@@ -68,7 +68,7 @@ Runs only in the maestro thread. There are no loops and no sleeps: each tick run
 
 - Closed: done. Drop it from the map.
 - Open with `needs-help`: done. Remove `in-progress` and notify the master (below).
-- Open without `needs-help`, task `completed`: the worker quit early. `t3_thread_send` its child thread: `#<n> is still open. Finish it: verify, push, open the PR, rebase on main, merge with gh pr merge --squash --delete-branch. If it needs a decision, label it needs-help with a comment.` The send starts a new task in the same context; record its `taskId`. After 3 nudges for the same issue, label it `needs-help` yourself (below) instead.
+- Open without `needs-help`, task `completed`: the worker quit early. `t3_thread_send` its child thread: `#<n> is still open. Finish it with the full-send skill, as maestro-worker says. If it needs a decision, label it needs-help with a comment.` The send starts a new task in the same context; record its `taskId`. After 3 nudges for the same issue, label it `needs-help` yourself (below) instead.
 - Open without `needs-help`, task `failed`, `interrupted` or `cancelled`: the worker vanished. Requeue.
 
 **2. Requeue.** An open orphan without `needs-help` or `ready-for-human` gets one retry. If the issue has no `maestro: requeued` comment, comment `maestro: requeued after the worker ended without finishing.` and `gh issue edit <n> --remove-label in-progress`. If it already has one, label it `needs-help` with `worker disappeared twice without finishing.`
@@ -96,7 +96,7 @@ Use the `maestro-worker` skill for issue #<n> in <owner/repo>. Maestro thread: <
 
 Name the skill; never paste its body. Use your own provider and model unless the issue has a `provider:<instanceId>` label, then set `target.providerInstanceId` to it. If that instance is not in `orchestrator_capabilities`, label `needs-help` with the reason.
 
-**4. Heartbeat.** Pause it (`schedule_task` with the id and `enabled: false`) when the frontier is empty and no worker runs; re-enable it on the next nudge. Delete it with `delete_scheduled_task` when no `ready-for-agent` issue is left open, then end.
+**4. Heartbeat.** Pause it (`schedule_task` with the id and `enabled: false`) when the frontier is empty, no worker runs, and no open issue is `needs-help` or blocked by an open issue, since finishing either can refill the frontier without anyone nudging you; re-enable it on the next nudge. Delete it with `delete_scheduled_task` when no `ready-for-agent` issue is left open, then end.
 
 ### Labelling needs-help
 
