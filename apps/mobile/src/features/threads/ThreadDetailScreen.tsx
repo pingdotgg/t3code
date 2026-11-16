@@ -1112,20 +1112,20 @@ function ThreadDetailBody(
   const reduceMotion = useReducedMotion();
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
   const floatingControlCoverage = useSharedValue(floatingCoverageTarget);
-  const feedReady = contentPresentationKind === "ready";
-  const feedWasReady = useRef(false);
+  const feedShown = contentPresentationKind === "ready" && selectedThreadFeed.length > 0;
+  const feedWasShown = useRef(false);
   // Coverage that arrives with the feed's first content must be in its first frame, or the
   // end-anchored feed paints and then scrolls. A layout effect lands it before that paint.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drives the UI-thread inset before the commit paints
   useLayoutEffect(() => {
-    const animate = feedWasReady.current;
-    feedWasReady.current = feedReady;
+    const animate = feedWasShown.current;
+    feedWasShown.current = feedShown;
     floatingControlCoverage.set(
       animate
         ? withTiming(floatingCoverageTarget, { duration: 180, reduceMotion: ReduceMotion.System })
         : floatingCoverageTarget,
     );
-  }, [floatingControlCoverage, floatingCoverageTarget, feedReady]);
+  }, [floatingControlCoverage, floatingCoverageTarget, feedShown]);
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
   const questionStatusSpace = useAnimatedStyle(() => ({ height: floatingControlCoverage.value }));
   const combinedContentInsetEndAdjustment = useSharedValue(estimatedOverlayHeight);
