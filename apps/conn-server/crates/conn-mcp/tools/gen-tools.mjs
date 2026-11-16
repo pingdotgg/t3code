@@ -268,7 +268,7 @@ const trimTransform = TrimmedString.ast.encoding[0].transformation;
 const expected = (ast) => ast.getExpected(expected).replaceAll("undefined","null");
 function inputRule(ast) {
   if (ast._tag === "Suspend") return inputRule(ast.thunk());
-  if (!["String","Number","Boolean","Null","Literal","Union","Objects","Arrays"].includes(ast._tag)) throw new Error(`thread tool input needs AST ${ast._tag}`);
+  if (!["Unknown","String","Number","Boolean","Null","Literal","Union","Objects","Arrays"].includes(ast._tag)) throw new Error(`thread tool input needs AST ${ast._tag}`);
   const rule = {kind:ast._tag, expected:expected(ast)};
   if (ast.context?.isOptional) {
     rule.optional = true;
@@ -300,10 +300,10 @@ function inputRule(ast) {
   return rule;
 }
 const threadInputs = {};
-for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"]]) {
+for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["panels","PanelsToolkit"]]) {
   const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
   for (const [name,tool] of Object.entries(toolkit.tools)) {
-    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list"].includes(name)) continue;
+    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","mcp_call","mcp_connect"].includes(name)) continue;
     threadInputs[name] = inputRule(tool.parametersSchema.ast);
   }
 }

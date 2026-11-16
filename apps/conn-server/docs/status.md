@@ -48,6 +48,15 @@ builder with a test that fails without the fix.
   `sourceControlHosts` and `offeredSourceControlProviders`. `registry-diff` (8,901 cases)
   compares against T3's registry with GitHub alone. `tools/check.sh` 44/44. The canary still
   trips on the other hosts' CLIs and tokens, since the diff checks start the full T3 server.
+- **MCP Apps** (PR #102): `mcpApps.*` and the desktop tools `mcp_call` / `mcp_connect`
+  through #100's panel broker. Claude reads its App capabilities from `system/init`; forged
+  `t3McpApp` results are stripped on every `mcp__*` result; failed Codex captures keep
+  `isError`. Known differences: bounds on App context (256 entries per conversation, 16,384
+  fork ancestors), SDK host replies (1,024) and native App calls (32 per query); capture waits
+  at most 20 s per session.
+- **Cleanup** (PR #110): one root fix for the stub ETXTBSY race; thread launch uses
+  `fetch_base`; pull requests run the Conn Server checks on the same paths as pushes; trims
+  from a retrospective review of #96-#103.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

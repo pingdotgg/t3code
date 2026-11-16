@@ -345,3 +345,5 @@ Secret-provider reference answers are not advertised. Browser URLs and tab ids f
 `capability_denied`: they need the desktop preview relay and current-tab pinning, which are
 not served. [conn-features](../conn-features/README.md#secret-requests-and-panels) lists the
 secret and panel bounds that differ from T3.
+`mcp_call` and `mcp_connect` go through the same panel broker, with T3's 90-second action
+timeout.

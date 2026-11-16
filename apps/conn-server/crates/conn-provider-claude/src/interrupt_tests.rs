@@ -33,11 +33,25 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       reply(cmd.id, null);
+      if (fs.existsSync(LOG + ".frames")) {
+        for (const frame of JSON.parse(fs.readFileSync(LOG + ".frames", "utf8")))
+          write({ch:"sdk",t:"msg",...sessions.get(cmd.sessionId),m:{...frame,session_id:cmd.message.session_id}});
+      }
       break;
     case "call":
       log(`call ${cmd.method}`);
       // A CLI still booting: `initializationResult` does not answer.
-      if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
+      if (["mcpServerStatus", "readMcpResource", "callMcpTool", "listPermissionRules"].includes(cmd.method)) log(`mcp ${JSON.stringify(cmd)}`);
+      if (fs.existsSync(LOG + ".errors")) {
+        const error = JSON.parse(fs.readFileSync(LOG + ".errors","utf8"))[cmd.method];
+        if (error) {write({ch:"reply",id:cmd.id,ok:false,error:{message:error}});break;}
+      }
+      if (cmd.method === "initializationResult" && !HANG_INIT) reply(cmd.id, {});
+      else if (cmd.method === "mcpServerStatus") reply(cmd.id, fs.existsSync(LOG + ".servers") ? JSON.parse(fs.readFileSync(LOG + ".servers","utf8")) : [{name:"weather",status:"connected",tools:[{name:"show",_meta:{ui:{resourceUri:"ui://weather"}},annotations:{readOnly:true}}]}]);
+      else if (cmd.method === "listPermissionRules") reply(cmd.id, fs.existsSync(LOG + ".rules") ? JSON.parse(fs.readFileSync(LOG + ".rules","utf8")) : []);
+      else if (cmd.method === "callMcpTool") reply(cmd.id, {content:[{type:"text",text:"sunny"}],_meta:{stub:true}});
+      else if (cmd.method === "readMcpResource") reply(cmd.id, {contents:[{uri:cmd.args[1],mimeType:"text/html;profile=mcp-app",text:"<h1>Weather</h1>"}]});
+      else if (!(HANG_INIT && cmd.method === "initializationResult")) reply(cmd.id, null);
       break;
     case "abort": {
       log("abort");
@@ -434,4 +448,258 @@ async fn an_abandoned_start_aborts_the_booting_query() {
     );
     assert!(session.live_query().is_none());
     session.close().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_apps_use_the_live_query_and_honor_permission_rules() {
+    use conn_provider::mcp_apps::{Operation, Request};
+    use serde_json::json;
+    let scratch = Scratch::new("mcp-apps");
+    let (helper, log) = fake_host(&scratch.0, true);
+    let recording: serde_json::Value =
+        serde_json::from_str(include_str!("../testdata/mcp-app.json")).unwrap();
+    std::fs::write(
+        log.with_extension("log.frames"),
+        serde_json::to_vec(&recording["frames"]).unwrap(),
+    )
+    .unwrap();
+    let (session, mut events) = session(&helper);
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    let request = |operation| Request {
+        provider_thread: thread.clone(),
+        server: "weather".into(),
+        operation,
+    };
+    assert!(matches!(
+        session.mcp_app_request(request(Operation::ListTools)).await,
+        Err(ProviderError::SessionStopped)
+    ));
+    session
+        .start_turn(turn(1, &thread, "one", "full-access", &cwd))
+        .await
+        .unwrap();
+    until(&mut events, is_terminal).await;
+    let tools = session
+        .mcp_app_request(request(Operation::ListTools))
+        .await
+        .unwrap();
+    assert_eq!(tools[0]["annotations"]["readOnlyHint"], true);
+    let source = session
+        .mcp_app_source(
+            json!({"toolName":"mcp__weather__show","runId":"run-1","status":"completed"}),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.resource_uri, "ui://weather");
+    let result = session
+        .mcp_app_request(request(Operation::CallTool {
+            tool: "show".into(),
+            arguments: json!({"city":"Amsterdam"}),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["content"][0]["text"], "sunny");
+    let result = session
+        .mcp_app_request(request(Operation::ReadResource {
+            uri: "ui://weather".into(),
+        }))
+        .await
+        .unwrap();
+    assert_eq!(result["contents"][0]["uri"], "ui://weather");
+    for (method, operation, detail) in [
+        (
+            "mcpServerStatus",
+            Operation::ListTools,
+            "Failed to list Claude MCP tools.",
+        ),
+        (
+            "callMcpTool",
+            Operation::CallTool {
+                tool: "show".into(),
+                arguments: json!({}),
+            },
+            "Claude MCP tool call failed.",
+        ),
+        (
+            "readMcpResource",
+            Operation::ReadResource {
+                uri: "ui://weather".into(),
+            },
+            "Claude MCP resource read failed.",
+        ),
+    ] {
+        std::fs::write(
+            log.with_extension("log.errors"),
+            json!({method:"SDK rejected the native control request"}).to_string(),
+        )
+        .unwrap();
+        let error = session
+            .mcp_app_request(request(operation))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error,ProviderError::Protocol {detail:ref got} if got == detail),
+            "{error}"
+        );
+    }
+    std::fs::remove_file(log.with_extension("log.errors")).unwrap();
+    let mut other = conn_contract::to_json(&thread);
+    other["nativeThreadRef"]["nativeId"] = json!("another-thread");
+    assert!(matches!(
+        session
+            .read_mcp_app_document(Request {
+                provider_thread: conn_contract::from_json(other).unwrap(),
+                server: "weather".into(),
+                operation: Operation::ReadResource {
+                    uri: "ui://weather".into()
+                }
+            })
+            .await,
+        Err(ProviderError::SessionStopped)
+    ));
+    std::fs::write(
+        log.with_extension("log.rules"),
+        json!([{"behavior":"deny","rule":"mcp__alias__tool"}]).to_string(),
+    )
+    .unwrap();
+    let tools = session
+        .mcp_app_request(request(Operation::ListTools))
+        .await
+        .unwrap();
+    assert!(tools[0]["annotations"].get("readOnlyHint").is_none());
+    assert!(
+        session
+            .mcp_app_request(request(Operation::CallTool {
+                tool: "show".into(),
+                arguments: json!({})
+            }))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("deny rule")
+    );
+    std::fs::write(log.with_extension("log.rules"), "[]").unwrap();
+    std::fs::write(log.with_extension("log.servers"),json!([{"name":"weather","status":"connected","tools":[{"name":"show.weather"},{"name":"show_weather","_meta":{"ui":{"resourceUri":"ui://weather"}}}]}]).to_string()).unwrap();
+    assert!(
+        session
+            .mcp_app_request(request(Operation::CallTool {
+                tool: "show.weather".into(),
+                arguments: json!({})
+            }))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("same Claude tool name")
+    );
+    assert!(
+        session
+            .mcp_app_source(json!({"toolName":"mcp__weather__show_weather","runId":"run-1","status":"completed"}))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    std::fs::write(
+        log.with_extension("log.servers"),
+        json!([{"name":"weather"},{"name":"weather__other"}]).to_string(),
+    )
+    .unwrap();
+    assert!(
+        session
+            .mcp_app_request(request(Operation::ListTools))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("overlap")
+    );
+    let transcript = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(
+        transcript
+            .lines()
+            .filter(|line| line.contains("call callMcpTool"))
+            .count(),
+        2
+    );
+    assert!(transcript.contains("mcp__weather__show"));
+    assert_eq!(
+        transcript
+            .lines()
+            .filter(|line| *line == "call initializationResult")
+            .count(),
+        0,
+        "App callbacks use streamed capabilities without SDK initialization calls"
+    );
+    session.close().await;
+    helper.stop().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mcp_apps_require_each_streamed_capability_and_skip_subagent_sources() {
+    use conn_provider::mcp_apps::{Operation, Request};
+    use serde_json::{Value, json};
+    let recording: Value = serde_json::from_str(include_str!("../testdata/mcp-app.json")).unwrap();
+    for missing in 0..4 {
+        let scratch = Scratch::new("mcp-init");
+        let (helper, log) = fake_host(&scratch.0, true);
+        let mut frames = recording["frames"].clone();
+        if missing < 3 {
+            frames[0]["capabilities"]
+                .as_array_mut()
+                .unwrap()
+                .remove(missing);
+        }
+        let mut duplicate = recording["frames"][0].clone();
+        if missing == 3 {
+            duplicate["capabilities"] = json!([]);
+        }
+        frames.as_array_mut().unwrap().insert(1, duplicate);
+        std::fs::write(
+            log.with_extension("log.frames"),
+            serde_json::to_vec(&frames).unwrap(),
+        )
+        .unwrap();
+        let (session, mut events) = session(&helper);
+        let cwd = scratch.cwd();
+        let thread = new_thread(&session, "full-access", &cwd).await;
+        session
+            .start_turn(turn(1, &thread, "one", "full-access", &cwd))
+            .await
+            .unwrap();
+        until(&mut events, is_terminal).await;
+        let result = session
+            .mcp_app_request(Request {
+                provider_thread: thread,
+                server: "weather".into(),
+                operation: Operation::ListTools,
+            })
+            .await;
+        assert_eq!(
+            result.is_ok(),
+            missing == 3,
+            "capability index {missing}: {result:?}"
+        );
+        let before = std::fs::read_to_string(&log).unwrap();
+        let source = session
+            .mcp_app_source(
+                json!({"toolName":"mcp__weather__show","runId":null,"status":"completed"}),
+            )
+            .await
+            .unwrap();
+        assert!(source.is_none(), "subagents cannot capture an App");
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap(),
+            before,
+            "subagent capture makes no SDK call"
+        );
+        assert_eq!(
+            before
+                .lines()
+                .filter(|line| *line == "call initializationResult")
+                .count(),
+            0
+        );
+        session.close().await;
+        helper.stop().await;
+    }
 }

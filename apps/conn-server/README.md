@@ -231,7 +231,7 @@ worker interrupts it (Claude aborts a booting CLI; ACP sends nothing more; Codex
 more, and stops a turn that its `turn/start`, already written, still started: a deliberate
 difference, `crates/conn-provider-codex/README.md`). Left out
 until needed: compact, rollback, fork, thread snapshots, history
-injection, background tasks, subagent stop, MCP apps.
+injection, background tasks, subagent stop.
 
 Adding a provider: one new crate that implements both traits.
 
