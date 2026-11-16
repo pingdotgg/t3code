@@ -211,15 +211,15 @@ async fn perform(cx: &Cx<'_>, args: &Args) -> ToolResult {
         ));
     }
     let branch = str_arg(args, "branch").unwrap_or_default();
-    let existing = refs::list_refs(
-        from_json(json!({"cwd":root,"query":branch,"refKind":"local"})).map_err(internal)?,
-    )
-    .await
-    .map_err(|e| operation("Unable to list branches", e))?;
     if repo::ref_exists(&root, &format!("refs/heads/{branch}"))
         .await
         .map_err(|e| operation("Unable to list branches", e))?
     {
+        let existing = refs::list_refs(
+            from_json(json!({"cwd":root,"query":branch,"refKind":"local"})).map_err(internal)?,
+        )
+        .await
+        .map_err(|e| operation("Unable to list branches", e))?;
         let checkout = existing
             .refs
             .iter()

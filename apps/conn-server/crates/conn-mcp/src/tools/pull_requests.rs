@@ -744,5 +744,21 @@ mod tests {
         );
         assert_eq!(listed["chains"][0]["numbers"], json!([1, 2]), "the chain");
         assert_eq!(listed["nextCursor"], Value::Null, "one page");
+        let mut tied = thread;
+        for link in tied["pullRequests"].as_array_mut().unwrap() {
+            link["linkedAt"] = json!("2026-01-01T00:00:00.000Z");
+        }
+        tied["pullRequests"][2]["repository"] = json!("g/s");
+        let tied = list(&tied, None, None);
+        assert_eq!(
+            tied["pullRequests"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(number)
+                .collect::<Vec<_>>(),
+            [3, 1, 2],
+            "equal timestamps sort by repository and number"
+        );
     }
 }

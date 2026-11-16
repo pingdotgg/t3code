@@ -1064,7 +1064,6 @@ async fn launch_prepares_a_worktree() {
     assert_eq!(host.requests.lock().unwrap().len(), 1);
 }
 
-/// The JSON-RPC error of a call the arguments check refused.
 /// A tool that acts as the calling thread is not offered to an outside client: as in
 /// `apps/server` (`hiddenFromOutsideClients`), a call to it is "not found".
 async fn not_offered(c: &mut Client<'_>, tool: &str, args: Value) {
@@ -1075,6 +1074,7 @@ async fn not_offered(c: &mut Client<'_>, tool: &str, args: Value) {
     );
 }
 
+/// The JSON-RPC error of a call the arguments check refused.
 async fn rpc_error(c: &mut Client<'_>, tool: &str, args: Value) -> (i64, String) {
     let reply = c
         .request("tools/call", json!({"name": tool, "arguments": args}))

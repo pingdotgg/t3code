@@ -8,8 +8,7 @@
 
 use std::{
     io::{BufRead, BufReader},
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     sync::mpsc,
     time::Duration,
@@ -23,11 +22,6 @@ impl Drop for TempDir {
     }
 }
 
-fn executable(path: &Path, text: &str) {
-    std::fs::write(path, text).expect("write a stub");
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod a stub");
-}
-
 #[test]
 fn codex_found_only_on_the_login_shell_path_is_a_provider() {
     let dir = TempDir(std::env::temp_dir().join(format!(
@@ -38,19 +32,21 @@ fn codex_found_only_on_the_login_shell_path_is_a_provider() {
     let bin = dir.0.join("login-bin");
     std::fs::create_dir_all(&bin).unwrap();
     // A stub that answers any call and does nothing.
-    executable(
+    conn_support::test_util::executable(
         &bin.join("codex"),
         "#!/bin/sh\necho 'codex-cli 0.0.0'\nexit 0\n",
-    );
+    )
+    .unwrap();
     // `<shell> -ilc <capture>`: the profile sets PATH, then the capture runs.
     let shell = dir.0.join("login-shell");
-    executable(
+    conn_support::test_util::executable(
         &shell,
         &format!(
             "#!/bin/sh\nPATH='{}:/usr/bin:/bin'; export PATH\nexec /bin/sh -c \"$2\"\n",
             bin.display()
         ),
-    );
+    )
+    .unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_conn-server"))
         .args([
             "serve",

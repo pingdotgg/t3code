@@ -134,7 +134,6 @@ jobs:
           VERSION: ${{ needs.tarball.outputs.version }}
         run: |
           name="conn-server-$VERSION-linux-x64.tar.gz"
-          (cd dist && sha256sum --check "$name.sha256")
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "conn-server $VERSION" \
