@@ -1458,3 +1458,35 @@ export function sortScopedProjectsForSidebar<
       left.id.localeCompare(right.id),
   );
 }
+
+/**
+ * The project the index opens a draft in: the most active one this window's sidebar scope shows.
+ * A scope waits for project snapshots, and falls back to all projects only once none of it resolves.
+ */
+export function resolveIndexLandingProject<
+  TProject extends ScopedSidebarProject & { archivedAt?: string | null | undefined },
+  TThread extends ScopedSidebarThread,
+>(input: {
+  readonly projects: readonly TProject[];
+  readonly threads: readonly TThread[];
+  readonly scopeKeys: readonly string[];
+  readonly scopedProjectKeys: ReadonlySet<string> | null;
+  readonly scopeReady: boolean;
+}): TProject | null {
+  if (input.scopeKeys.length > 0 && !input.scopeReady) return null;
+  const openProjects = input.projects.filter((project) => project.archivedAt == null);
+  const scopedProjectKeys = input.scopedProjectKeys;
+  const scopedProjects =
+    scopedProjectKeys === null
+      ? []
+      : openProjects.filter((project) =>
+          scopedProjectKeys.has(`${project.environmentId}:${project.id}`),
+        );
+  return (
+    sortScopedProjectsForSidebar(
+      scopedProjects.length > 0 ? scopedProjects : openProjects,
+      input.threads,
+      "updated_at",
+    )[0] ?? null
+  );
+}

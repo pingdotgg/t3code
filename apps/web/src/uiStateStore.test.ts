@@ -2,6 +2,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  adoptUiStateFromOtherWindow,
   legacyProjectCwdPreferenceKey,
   markThreadUnread,
   markThreadVisited,
@@ -13,13 +14,13 @@ import {
   resolveProjectExpanded,
   setProjectExpanded,
   type UiState,
+  useUiStateStore,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     projectExpandedById: {},
     projectOrder: [],
-    sidebarProjectScopeKeys: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -125,7 +126,6 @@ describe("parsePersistedState", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarProjectScopeKeys: [],
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -201,6 +201,7 @@ describe("uiStateStore persistence", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -236,8 +237,6 @@ describe("uiStateStore persistence", () => {
         "environment:thread-1": "2026-02-25T12:35:00.000Z",
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
-      sidebarProjectScopeKeys: [],
-      sidebarProjectScopeKey: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -250,27 +249,6 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
-  });
-
-  it("restores the sidebar project scope across reloads", () => {
-    const keys = ["github.com/pingdotgg/t3code", "github.com/pingdotgg/uploadthing"];
-    persistState(makeUiState({ sidebarProjectScopeKeys: keys }));
-
-    const persisted = JSON.parse(
-      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
-    ) as PersistedUiState;
-
-    expect(parsePersistedState(persisted).sidebarProjectScopeKeys).toEqual(keys);
-  });
-
-  it("keeps a single-project scope readable by older clients", () => {
-    persistState(makeUiState({ sidebarProjectScopeKeys: ["github.com/pingdotgg/t3code"] }));
-
-    const persisted = JSON.parse(
-      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
-    ) as PersistedUiState;
-
-    expect(persisted.sidebarProjectScopeKey).toBe("github.com/pingdotgg/t3code");
   });
 
   it("keeps legacy projects omitted from the expanded list collapsed across a save and reload", () => {
@@ -288,10 +266,58 @@ describe("uiStateStore persistence", () => {
     expect(resolveProjectExpanded(reloaded.projectExpandedById, [projectBKey])).toBe(false);
   });
 
-  it("restores a single-project scope saved before multi-project filtering", () => {
-    expect(
-      parsePersistedState({ sidebarProjectScopeKey: "github.com/pingdotgg/t3code" })
-        .sidebarProjectScopeKeys,
-    ).toEqual(["github.com/pingdotgg/t3code"]);
+  it("keeps another window's visit mark when this window writes over a stale copy", () => {
+    const loaded = makeUiState({ projectOrder: ["physical-a"] });
+    persistState(loaded);
+    const otherWindow = {
+      ...loaded,
+      threadLastVisitedAtById: { "environment:thread-2": "2026-02-25T12:35:00.000Z" },
+    };
+    localStorageStub.setItem(PERSISTED_STATE_KEY, JSON.stringify(otherWindow));
+
+    persistState({ ...loaded, projectOrder: ["physical-b", "physical-a"] });
+
+    const persisted = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
+    );
+    expect(persisted.projectOrder).toEqual(["physical-b", "physical-a"]);
+    expect(persisted.threadLastVisitedAtById).toEqual({
+      "environment:thread-2": "2026-02-25T12:35:00.000Z",
+    });
+  });
+
+  it("keeps a pending change when another window writes during the debounce", () => {
+    vi.useFakeTimers();
+    useUiStateStore.getState().setProjectExpanded("mine", false);
+    const otherWindow = JSON.stringify({
+      ...makeUiState(),
+      threadLastVisitedAtById: { "environment:thread-2": "2026-02-25T12:35:00.000Z" },
+    });
+    localStorageStub.setItem(PERSISTED_STATE_KEY, otherWindow);
+    adoptUiStateFromOtherWindow(otherWindow);
+
+    expect(useUiStateStore.getState().projectExpandedById.mine).toBe(false);
+    vi.advanceTimersByTime(500);
+
+    const persisted = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
+    );
+    expect(persisted.projectExpandedById.mine).toBe(false);
+    expect(persisted.threadLastVisitedAtById["environment:thread-2"]).toBe(
+      "2026-02-25T12:35:00.000Z",
+    );
+  });
+
+  it("schedules no write when it adopts another window's write", () => {
+    vi.useFakeTimers();
+    const otherWindow = JSON.stringify({ ...makeUiState(), projectOrder: ["physical-c"] });
+    localStorageStub.setItem(PERSISTED_STATE_KEY, otherWindow);
+    const setItem = vi.spyOn(localStorageStub, "setItem");
+
+    adoptUiStateFromOtherWindow(otherWindow);
+    vi.advanceTimersByTime(500);
+
+    expect(useUiStateStore.getState().projectOrder).toEqual(["physical-c"]);
+    expect(setItem).not.toHaveBeenCalled();
   });
 });

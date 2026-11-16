@@ -100,7 +100,8 @@ export class DesktopBrowserHost extends Context.Service<
     readonly events: Stream.Stream<Uint8Array>;
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
-    readonly detach: (key: DesktopBrowserTabKey) => void;
+    /** With `webContents`, detaches only while that guest is the attached debuggee. */
+    readonly detach: (key: DesktopBrowserTabKey, webContents?: Electron.WebContents) => void;
     readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
     /** Whether the client draws the guest at full detail while it is captured. */
@@ -504,10 +505,10 @@ export const make = Effect.gen(function* () {
     return true;
   };
 
-  const detach = (key: DesktopBrowserTabKey) => {
+  const detach = (key: DesktopBrowserTabKey, webContents?: Electron.WebContents) => {
     const id = keyOf(key);
     const tab = tabs.get(id);
-    if (!tab) return;
+    if (!tab || (webContents !== undefined && tab.debuggee.webContents !== webContents)) return;
     tabs.delete(id);
     const announced = tab.stopWaiting === null;
     tab.stopWaiting?.();

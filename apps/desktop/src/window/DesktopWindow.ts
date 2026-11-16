@@ -89,6 +89,7 @@ const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linu
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
 const MAIN_WINDOW_BOUNDS_PERSIST_DEBOUNCE_MS = 500;
+const SECONDARY_WINDOW_OFFSET_PX = 28;
 const DEVELOPMENT_LOAD_RETRY_DELAYS_MS = [100, 250, 500, 1_000, 2_000] as const;
 const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
@@ -127,6 +128,11 @@ export class DesktopWindow extends Context.Service<
     readonly createMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly ensureMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
     readonly revealOrCreateMain: Effect.Effect<Electron.BrowserWindow, DesktopWindowError>;
+    /** Opens a secondary app window; it is not restored on relaunch. */
+    readonly openAppWindow: (input: {
+      readonly projectScopeKeys: ReadonlyArray<string>;
+      readonly sourceWindow: Option.Option<Electron.BrowserWindow>;
+    }) => Effect.Effect<void, DesktopWindowError>;
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     readonly showConnectingSplash: Effect.Effect<void>;
@@ -260,6 +266,15 @@ export function resolveInitialMainWindowBounds(
     return persistedBounds;
   }
   return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
+}
+
+// The renderer takes the scope from the URL once; an empty value means all projects.
+function secondaryWindowUrl(isDevelopment: boolean, projectScopeKeys: ReadonlyArray<string>) {
+  const url = new URL(getDesktopUrl(isDevelopment));
+  for (const key of projectScopeKeys.length === 0 ? [""] : projectScopeKeys) {
+    url.searchParams.append("projectScope", key);
+  }
+  return url.href;
 }
 
 function buildConnectingSplashDataUrl(shouldUseDarkColors: boolean): string {
@@ -408,6 +423,7 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => pendingMainReveals.get(window) ?? electronWindow.reveal(window)),
   );
   let flushMainWindowBounds: Effect.Effect<void> = Effect.void;
+  const snapShotTargets = new Map<string, Electron.BrowserWindow>();
 
   const dismissConnectingSplash = Effect.gen(function* () {
     const splash = yield* Ref.getAndSet(splashWindowRef, Option.none());
@@ -415,18 +431,6 @@ export const make = Effect.gen(function* () {
       splash.value.close();
     }
   });
-
-  // Electron's first-window fallback can select the unregistered connecting splash; exclude it so main creation retries.
-  const withoutSplash = (window: Option.Option<Electron.BrowserWindow>) =>
-    Ref.get(splashWindowRef).pipe(
-      Effect.map((splash) =>
-        Option.isSome(splash) && Option.isSome(window) && window.value === splash.value
-          ? Option.none<Electron.BrowserWindow>()
-          : window,
-      ),
-    );
-
-  const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
   const zoomWindow = Effect.fn("desktop.window.zoomWindow")(function* (
     window: Electron.BrowserWindow,
@@ -441,18 +445,22 @@ export const make = Effect.gen(function* () {
     yield* previewManager.reapplyZoom();
   });
 
-  const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Option.Option<Electron.BrowserWindow>,
-    DesktopWindowError
-  > {
+  const createWindow = Effect.fn("desktop.window.createWindow")(function* (input: {
+    readonly primary: boolean;
+    readonly projectScopeKeys?: ReadonlyArray<string>;
+    readonly sourceWindow?: Option.Option<Electron.BrowserWindow>;
+  }): Effect.fn.Return<Option.Option<Electron.BrowserWindow>, DesktopWindowError> {
+    const { primary } = input;
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
-    const applicationUrl = getDesktopUrl(environment.isDevelopment);
+    const applicationUrl = primary
+      ? getDesktopUrl(environment.isDevelopment)
+      : secondaryWindowUrl(environment.isDevelopment, input.projectScopeKeys ?? []);
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedSettings = yield* desktopSettings.get;
-    const persistedBounds = persistedSettings.mainWindowBounds;
+    const persistedBounds = primary ? persistedSettings.mainWindowBounds : null;
     const displayBoundsResult = yield* Effect.sync(() => {
       try {
         return {
@@ -469,7 +477,17 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
+    const sourceBounds = Option.flatMap(input.sourceWindow ?? Option.none(), (source) =>
+      source.isDestroyed() ? Option.none() : Option.some(source.getBounds()),
+    );
+    const initialBounds = Option.match(sourceBounds, {
+      onNone: () => resolveInitialMainWindowBounds(persistedBounds, displayBounds),
+      onSome: (bounds) => ({
+        ...bounds,
+        x: bounds.x + SECONDARY_WINDOW_OFFSET_PX,
+        y: bounds.y + SECONDARY_WINDOW_OFFSET_PX,
+      }),
+    });
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
@@ -612,9 +630,9 @@ export const make = Effect.gen(function* () {
         fiber === undefined ? Effect.void : Fiber.join(fiber).pipe(Effect.asVoid),
       ),
     );
-    flushMainWindowBounds = flushBoundsPersist;
+    if (primary) flushMainWindowBounds = flushBoundsPersist;
 
-    yield* previewManager.setMainWindow(window);
+    yield* previewManager.registerAppWindow(window, { primary });
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
       return Option.none();
@@ -824,13 +842,15 @@ export const make = Effect.gen(function* () {
       event.preventDefault();
       window.setTitle(environment.displayName);
     });
-    window.on("resize", scheduleBoundsPersist);
-    window.on("move", scheduleBoundsPersist);
-    window.on("maximize", scheduleBoundsPersist);
-    window.on("unmaximize", scheduleBoundsPersist);
-    window.on("close", () => {
-      runFork(flushBoundsPersist);
-    });
+    if (primary) {
+      window.on("resize", scheduleBoundsPersist);
+      window.on("move", scheduleBoundsPersist);
+      window.on("maximize", scheduleBoundsPersist);
+      window.on("unmaximize", scheduleBoundsPersist);
+      window.on("close", () => {
+        runFork(flushBoundsPersist);
+      });
+    }
 
     if (environment.platform === "darwin") {
       // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
@@ -995,7 +1015,7 @@ export const make = Effect.gen(function* () {
       firstRevealComplete = true;
       pendingMainReveals.delete(window);
       window.webContents.setBackgroundThrottling(true);
-      if (persistedSettings.mainWindowMaximized) window.maximize();
+      if (primary && persistedSettings.mainWindowMaximized) window.maximize();
       yield* electronWindow.reveal(window);
       yield* dismissConnectingSplash;
     });
@@ -1005,25 +1025,24 @@ export const make = Effect.gen(function* () {
       void runPromise(revealWhenReady);
     });
 
-    // Desktop IPC only answers the main window, so register it before its renderer can call in.
-    yield* electronWindow.setMain(window);
+    // Desktop IPC only answers app windows, so register it before its renderer can call in.
+    yield* electronWindow.registerAppWindow(window, { primary });
     loadApplication();
-    if (environment.isDevelopment) {
+    if (primary && environment.isDevelopment) {
       window.webContents.openDevTools({ mode: "detach" });
     }
 
     window.on("closed", () => {
-      if (!backendHasStarted) mainClosedDuringStartup = true;
+      if (primary && !backendHasStarted) mainClosedDuringStartup = true;
       clearDevelopmentLoadRetry();
       clearBoundsPersist();
-      void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
     return Option.some(window);
   });
 
   const createMain = Effect.gen(function* () {
-    const window = yield* createWindow();
+    const window = yield* createWindow({ primary: true });
     if (Option.isSome(window)) {
       mainClosedDuringStartup = false;
       yield* logWindowInfo("main window created");
@@ -1117,14 +1136,24 @@ export const make = Effect.gen(function* () {
   const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
     channel: string,
     payload: unknown,
-    { reveal = true }: { readonly reveal?: boolean } = {},
+    {
+      reveal = true,
+      target,
+    }: { readonly reveal?: boolean; readonly target?: Electron.BrowserWindow } = {},
   ) {
-    if (yield* Ref.get(desktopState.quitting)) return;
-    // Only the main renderer loads the app preload that listens on these channels.
-    const existingWindow = yield* electronWindow.main;
-    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
+    if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
+    // Only app renderers load the app preload that listens on these channels.
+    const existingWindow =
+      target !== undefined && !target.isDestroyed()
+        ? Option.some(target)
+        : yield* electronWindow.main;
+    if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) {
+      return Option.none<Electron.BrowserWindow>();
+    }
     const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
-    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    if (Option.isNone(window) || window.value.isDestroyed()) {
+      return Option.none<Electron.BrowserWindow>();
+    }
     const targetWindow = window.value;
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
@@ -1135,24 +1164,28 @@ export const make = Effect.gen(function* () {
       : send;
     if (targetWindow.webContents.isLoadingMainFrame()) {
       targetWindow.webContents.once("did-finish-load", () => void runPromise(dispatch));
-      return;
+      return window;
     }
     yield* dispatch;
+    return window;
   });
 
   return DesktopWindow.of({
     createMain: createMain.pipe(Effect.flatMap(requireWindow)),
     ensureMain: ensureMain.pipe(Effect.flatMap(requireWindow)),
     revealOrCreateMain,
+    openAppWindow: Effect.fn("desktop.window.openAppWindow")(function* (input) {
+      yield* createWindow({ primary: false, ...input });
+    }),
     prepareCaptureReveal: Effect.gen(function* () {
-      const existingWindow = yield* currentMainWindow;
+      const existingWindow = yield* electronWindow.currentMainOrFirst;
       if (Option.isSome(existingWindow) && !pendingMainReveals.has(existingWindow.value)) {
         yield* electronWindow.prepareReveal(existingWindow.value);
       }
     }),
     activate: Effect.gen(function* () {
       if (yield* Ref.get(desktopState.quitting)) return;
-      const existingWindow = yield* currentMainWindow;
+      const existingWindow = yield* electronWindow.currentMainOrFirst;
       if (Option.isSome(existingWindow)) {
         yield* revealMain(existingWindow.value);
         return;
@@ -1194,9 +1227,16 @@ export const make = Effect.gen(function* () {
         event: event.type,
         captureId: "id" in event ? (event.id ?? null) : null,
       });
-      yield* dispatchRendererEvent(SNAP_SHOT_EVENT_CHANNEL, event, {
+      const captureId = "id" in event ? event.id : undefined;
+      const pinned = captureId === undefined ? undefined : snapShotTargets.get(captureId);
+      const target = yield* dispatchRendererEvent(SNAP_SHOT_EVENT_CHANNEL, event, {
         reveal: event.type === "started",
+        ...(pinned === undefined ? {} : { target: pinned }),
       });
+      if (captureId === undefined) return;
+      // A capture's later events go to the window that showed its first, even if focus moved.
+      if (event.type === "ready" || event.type === "failed") snapShotTargets.delete(captureId);
+      else if (Option.isSome(target)) snapShotTargets.set(captureId, target.value);
     }),
     zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
       yield* Effect.annotateCurrentSpan({ direction });

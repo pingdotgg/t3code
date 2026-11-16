@@ -11,6 +11,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { applyLanguage, m, onLocaleChange } from "../i18n/messages.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
@@ -39,7 +40,8 @@ export class DesktopApplicationMenu extends Context.Service<
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
-  | ElectronDialog.ElectronDialog;
+  | ElectronDialog.ElectronDialog
+  | ElectronWindow.ElectronWindow;
 
 const { logInfo: logUpdaterInfo } = makeComponentLogger("desktop-updater");
 
@@ -52,6 +54,20 @@ const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function
   yield* desktopWindow.dispatchMenuAction(action, {
     reveal: action !== "paste-as-text",
   });
+});
+
+// The renderer opens the window so it can pass on its own project scope.
+const openNewWindow = Effect.fn("desktop.menu.openNewWindow")(function* (): Effect.fn.Return<
+  void,
+  DesktopWindow.DesktopWindowError,
+  DesktopWindow.DesktopWindow | ElectronWindow.ElectronWindow
+> {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  if (Option.isNone(yield* (yield* ElectronWindow.ElectronWindow).main)) {
+    yield* desktopWindow.ensureMain;
+    return;
+  }
+  yield* desktopWindow.dispatchMenuAction("new-window");
 });
 
 const zoomMainWindow = Effect.fn("desktop.menu.zoomMainWindow")(function* (
@@ -197,6 +213,12 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    const newWindowItem: Electron.MenuItemConstructorOptions = {
+      label: "New Window",
+      click: () => {
+        runMenuEffect("new-window", openNewWindow());
+      },
+    };
     // Chromium and the renderer already handle this chord; injecting another paste duplicates text.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
@@ -248,6 +270,8 @@ export const make = Effect.gen(function* () {
           ...(environment.platform === "darwin"
             ? []
             : [
+                newWindowItem,
+                { type: "separator" as const },
                 {
                   label: m(msg("Settings...")),
                   accelerator: "CmdOrCtrl+,",
@@ -266,6 +290,7 @@ export const make = Effect.gen(function* () {
                 ?.closeDevTools();
             },
           },
+          ...(environment.platform === "darwin" ? [newWindowItem] : []),
           // Cmd/Ctrl+W belongs to the renderer's tab close; it must never close the window.
           environment.platform === "darwin"
             ? { label: m(msg("Close Window")), click: (_item, window) => window?.close() }
@@ -366,6 +391,8 @@ export const make = Effect.gen(function* () {
         // Electron's default Window submenu adds a Ctrl+W close role off macOS.
         role: "windowMenu",
         submenu: [
+          newWindowItem,
+          { type: "separator" },
           { role: "minimize" },
           { role: "zoom" },
           ...(environment.platform === "darwin"

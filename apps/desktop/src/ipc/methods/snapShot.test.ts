@@ -2,6 +2,8 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import type * as Electron from "electron";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
@@ -44,7 +46,12 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
+            appWindowFor: (sender) =>
+              Effect.succeed(
+                sender.id === 7
+                  ? Option.some({ webContents: { id: 7 } } as Electron.BrowserWindow)
+                  : Option.none(),
+              ),
           } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             previewConfig: () =>
@@ -81,7 +88,12 @@ describe("window capture IPC", () => {
       Effect.provide(
         Layer.mergeAll(
           Layer.succeed(ElectronWindow.ElectronWindow, {
-            main: Effect.succeedSome({ webContents: { id: 7 } }),
+            appWindowFor: (sender) =>
+              Effect.succeed(
+                sender.id === 7
+                  ? Option.some({ webContents: { id: 7 } } as Electron.BrowserWindow)
+                  : Option.none(),
+              ),
           } as ElectronWindow.ElectronWindow["Service"]),
           Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
             setup: (action: string) =>

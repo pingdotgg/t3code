@@ -30,9 +30,14 @@ import { useBrowserPointerStore } from "./browserPointerStore";
 import { HostedBrowserWebview } from "./HostedBrowserWebview";
 import { openUrlInPreview } from "./openFileInPreview";
 import { rendersServerTabNatively } from "./previewRuntime";
-import { previewRuntimeTabId } from "./previewRuntimeTabId";
+import {
+  ownedPreviewSessions,
+  startPreviewOwnership,
+  usePreviewOwnership,
+} from "./previewOwnership";
+import { previewRuntimeTabId, previewSessionKey } from "./previewRuntimeTabId";
 
-/** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
+/** Every active desktop-rendered session, in a fixed (non-display) order. */
 function hostedBrowserSessions(
   previewByThreadKey: Record<string, ThreadPreviewState>,
   primaryEnvironmentId: EnvironmentId | null,
@@ -50,6 +55,7 @@ function hostedBrowserSessions(
             threadRef,
             snapshot,
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
+            sessionKey: previewSessionKey(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
               previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
             zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
@@ -119,6 +125,7 @@ export function startElectronBrowserHost(): () => void {
       useBrowserPointerStore.getState().apply(event);
     }),
     preview.onOpenLink(openLinkInPreview),
+    startPreviewOwnership(preview),
   ];
   return () => {
     for (const dispose of disposers) dispose();
@@ -128,8 +135,13 @@ export function startElectronBrowserHost(): () => void {
 export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const ownership = usePreviewOwnership();
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
+  // A webview cannot move between windows, so each session renders only in the window owning it.
+  const sessions = ownedPreviewSessions(
+    hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId),
+    ownership,
+  );
 
   if (!isElectron) return null;
   return (

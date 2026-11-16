@@ -40,6 +40,7 @@ import * as Electron from "electron";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
 import { startMacModifierPairShortcutProcess } from "./MacModifierPairShortcutProcess.ts";
@@ -457,6 +458,7 @@ async function captureSource({
   regionSnapShotPool,
   prepareReveal,
   onLinuxFeedback,
+  currentAppWindow,
 }: {
   mode: DesktopSnapShotState["mode"];
   captureId: string;
@@ -472,14 +474,13 @@ async function captureSource({
   regionSnapShotPool: RegionSnapShotPool;
   prepareReveal: () => Promise<void>;
   onLinuxFeedback: (feedback: LinuxCaptureFeedback) => void;
+  currentAppWindow: Electron.BrowserWindow | undefined;
 }) {
   let active: ActiveWindow | undefined;
   let linuxWindow: LinuxWindowMetadata | undefined;
   let linuxFeedback: LinuxCaptureFeedback | undefined;
   let linuxActivationFailure: { readonly cause: unknown } | undefined;
-  const destinationWindow =
-    Electron.BrowserWindow.getFocusedWindow() ??
-    Electron.BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+  const destinationWindow = Electron.BrowserWindow.getFocusedWindow() ?? currentAppWindow;
   const destinationWindowBounds = destinationWindow?.getBounds();
   {
     const revealPreparation =
@@ -760,6 +761,7 @@ export const make = Effect.gen(function* () {
   const permissions = yield* MacPermissions.MacPermissions;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
@@ -924,6 +926,7 @@ export const make = Effect.gen(function* () {
       transition.dispose();
       yield* fileSystem.makeDirectory(captureDirectory, { recursive: true });
       yield* emit({ type: "requested", id: id as DesktopSnapShotId });
+      const currentAppWindow = Option.getOrUndefined(yield* electronWindow.currentMainOrFirst);
       const snapshot = yield* Effect.tryPromise({
         try: () =>
           captureSource({
@@ -943,6 +946,7 @@ export const make = Effect.gen(function* () {
             onLinuxFeedback: (feedback) => {
               linuxFeedback = { id, feedback };
             },
+            currentAppWindow,
           }),
         catch: (cause) => captureFailure(cause, id),
       });

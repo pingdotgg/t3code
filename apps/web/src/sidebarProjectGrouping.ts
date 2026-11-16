@@ -6,6 +6,7 @@ import type {
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  pickableProjectGroups,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -109,7 +110,7 @@ export function resolveSidebarProjectScopeKey(input: {
   return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 
-export function resolveSidebarProjectScopeKeys(input: {
+function resolveSidebarProjectScopeKeys(input: {
   readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
   readonly keys: ReadonlyArray<string>;
   readonly settings?: ProjectGroupingSettings;
@@ -118,6 +119,39 @@ export function resolveSidebarProjectScopeKeys(input: {
   return [
     ...new Set(input.keys.flatMap((key) => resolveSidebarProjectScopeKey({ ...input, key }) ?? [])),
   ];
+}
+
+/**
+ * The open groups a sidebar scope picks and their member projects as `environmentId:projectId`
+ * keys; `memberProjectKeys` is null when the scope shows all projects.
+ */
+export function resolveSidebarProjectScope<TGroup extends SidebarProjectSnapshot>(input: {
+  readonly groups: ReadonlyArray<TGroup>;
+  readonly keys: ReadonlyArray<string>;
+  readonly settings?: ProjectGroupingSettings;
+  readonly canClearMissingScope?: boolean;
+}): { keys: string[]; groups: TGroup[]; memberProjectKeys: Set<string> | null } {
+  const archivedProjectKeys = new Set(
+    input.groups.filter((project) => project.archived).map((project) => project.projectKey),
+  );
+  const keys = resolveSidebarProjectScopeKeys(input).filter((key) => !archivedProjectKeys.has(key));
+  const groups = pickableProjectGroups(input.groups).filter((project) =>
+    keys.includes(project.projectKey),
+  );
+  return {
+    keys,
+    groups,
+    memberProjectKeys:
+      groups.length === 0
+        ? null
+        : new Set(
+            groups.flatMap((project) =>
+              project.memberProjectRefs.map(
+                (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
+              ),
+            ),
+          ),
+  };
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {

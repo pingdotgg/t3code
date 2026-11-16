@@ -424,6 +424,7 @@ vi.mock("electron", () => {
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopSnapShot from "./DesktopSnapShot.ts";
 import * as SnapShotAccessibility from "./SnapShotAccessibility.ts";
@@ -507,6 +508,15 @@ const layerTest = (
             set: () => Effect.void,
           }),
         ),
+        Layer.mock(ElectronWindow.ElectronWindow)({
+          currentMainOrFirst: Effect.sync(() =>
+            Option.fromNullishOr(
+              allWindowsMock().find((window) => !window.isDestroyed()) as
+                | Electron.BrowserWindow
+                | undefined,
+            ),
+          ),
+        }),
         Layer.succeed(
           DesktopWindow.DesktopWindow,
           DesktopWindow.DesktopWindow.of({

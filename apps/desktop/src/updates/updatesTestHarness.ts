@@ -123,8 +123,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     main: Effect.succeedNone,
     currentMainOrFirst: Effect.succeedNone,
     focusedMainOrFirst: Effect.succeedNone,
-    setMain: () => Effect.void,
-    clearMain: () => Effect.void,
+    primary: Effect.succeedNone,
+    appWindows: Effect.succeed([]),
+    appWindowFor: () => Effect.succeedNone,
+    registerAppWindow: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
     reveal: () => Effect.void,
     sendAll: (_channel, state) =>

@@ -17,7 +17,6 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -28,6 +27,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
+import { makeReadyAppRenderers } from "./readyAppRenderers.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
@@ -287,7 +287,10 @@ export class DesktopAppActivation extends Context.Service<
   DesktopAppActivation,
   {
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    readonly setRendererReady: (
+      ready: boolean,
+      window: Electron.BrowserWindow,
+    ) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
@@ -301,7 +304,9 @@ export const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
   const userId = yield* HostProcess.UserId;
-  const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+  const context = yield* Effect.context<never>();
+  const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
   const address = resolveDesktopAppControlAddress({
     stateDir: path.resolve(desktopEnvironment.stateDir),
     platform: desktopEnvironment.platform,
@@ -309,8 +314,7 @@ export const make = Effect.gen(function* () {
     userId,
     joinPath: path.join,
   });
-  let registeredWebContents: Electron.WebContents | null = null;
-  let detachRendererListeners: (() => void) | null = null;
+  let dispatchedTo: Electron.WebContents | undefined;
 
   const broker = new DesktopAppActivationBroker({
     requestTimeoutMs: REQUEST_TIMEOUT_MS,
@@ -323,12 +327,21 @@ export const make = Effect.gen(function* () {
     },
   });
 
-  const clearRegisteredRenderer = () => {
-    detachRendererListeners?.();
-    detachRendererListeners = null;
-    registeredWebContents = null;
-    broker.clearRenderer();
+  const sendToReadyRenderer = (request: DesktopAppActivationRequest) => {
+    const target = renderers.pick(runSync(electronWindow.currentMainOrFirst));
+    // The broker treats a throw as no renderer and waits for the next one.
+    if (target === undefined) throw new Error("No app window is ready.");
+    dispatchedTo = target.webContents;
+    target.webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
   };
+
+  const renderers = makeReadyAppRenderers((webContents) => {
+    if (dispatchedTo !== webContents && renderers.size > 0) return;
+    // Fails a request still waiting on the dropped renderer; the rest go to another ready one.
+    dispatchedTo = undefined;
+    broker.clearRenderer();
+    if (renderers.size > 0) broker.registerRenderer(sendToReadyRenderer);
+  });
 
   return DesktopAppActivation.of({
     start: Effect.acquireRelease(
@@ -354,35 +367,14 @@ export const make = Effect.gen(function* () {
           Effect.ensuring(Effect.sync(() => broker.close())),
         ),
     ).pipe(Effect.asVoid),
-    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function* (ready) {
-      if (!ready) {
-        clearRegisteredRenderer();
-        return;
-      }
-      const main = yield* electronWindow.main;
-      if (Option.isNone(main)) return;
-      const webContents = main.value.webContents;
-      if (webContents.isDestroyed()) return;
-
-      if (registeredWebContents !== webContents) {
-        clearRegisteredRenderer();
-        registeredWebContents = webContents;
-        const onUnavailable = () => clearRegisteredRenderer();
-        const onNavigation = (
-          event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-        ) => {
-          if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
-        };
-        webContents.on("did-start-navigation", onNavigation);
-        webContents.once("destroyed", onUnavailable);
-        detachRendererListeners = () => {
-          webContents.removeListener("did-start-navigation", onNavigation);
-          webContents.removeListener("destroyed", onUnavailable);
-        };
-      }
-
-      broker.registerRenderer((request) => {
-        webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
+    setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function (ready, window) {
+      return Effect.sync(() => {
+        if (!ready) {
+          renderers.drop(window.webContents);
+          return;
+        }
+        renderers.add(window);
+        if (renderers.size > 0) broker.registerRenderer(sendToReadyRenderer);
       });
     }),
     // The IPC handler owns the activation-completion span.

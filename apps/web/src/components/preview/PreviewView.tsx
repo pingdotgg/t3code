@@ -81,7 +81,8 @@ import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browse
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
 import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
-import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { claimPreviewSession } from "~/browser/previewOwnership";
+import { previewRuntimeTabId, previewSessionKey } from "~/browser/previewRuntimeTabId";
 import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import type { MessageResolver } from "~/i18n/messages";
@@ -220,6 +221,12 @@ export function PreviewView({
   const snapshot = tabId ? (previewState.sessions[tabId] ?? null) : null;
   const nativeServerTab = useRendersServerTabNatively(threadRef.environmentId, snapshot);
   const isServerTab = snapshot?.runtime === "server" && !nativeServerTab;
+  const ownedSessionKey =
+    tabId && !isServerTab ? previewSessionKey(threadRef, previewState.serverEpoch, tabId) : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves the shown session's webview into this app window, which the desktop main process owns
+  useEffect(() => {
+    if (visible && ownedSessionKey !== null) claimPreviewSession(ownedSessionKey);
+  }, [visible, ownedSessionKey]);
   const serverOwnsRendering = snapshot?.runtime === "server";
   const serverSurfaceRef = useRef<ServerBrowserHandle | null>(null);
   const serverSurfaceBoxRef = useRef<HTMLDivElement | null>(null);
@@ -983,6 +990,9 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      onPointerDownCapture={
+        ownedSessionKey === null ? undefined : () => claimPreviewSession(ownedSessionKey)
+      }
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech

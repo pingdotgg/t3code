@@ -157,9 +157,19 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
-      unsubscribeOtherTabClientSettings ??= subscribeBrowserClientSettingsWrites(
-        refreshClientSettingsFromOtherTab,
-      );
+      if (unsubscribeOtherTabClientSettings === null) {
+        const unsubscribeTabs = subscribeBrowserClientSettingsWrites(
+          refreshClientSettingsFromOtherTab,
+        );
+        const unsubscribeWindows =
+          typeof window === "undefined"
+            ? undefined
+            : window.desktopBridge?.onClientSettingsChanged(refreshClientSettingsFromOtherTab);
+        unsubscribeOtherTabClientSettings = () => {
+          unsubscribeTabs();
+          unsubscribeWindows?.();
+        };
+      }
       setClientSettingsHydrationStatus("ready");
     } catch (error) {
       if (hydrationGeneration === clientSettingsHydrationGeneration) {

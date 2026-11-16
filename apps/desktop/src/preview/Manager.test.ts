@@ -560,6 +560,38 @@ const flushMicrotasks = function* () {
   for (let turn = 0; turn < 30; turn++) yield* Effect.promise(() => Promise.resolve());
 };
 
+const makeTestAppWindow = (id: number) => {
+  let closed: (() => void) | undefined;
+  let destroyed = false;
+  let ownershipSent = Promise.withResolvers<void>();
+  const throttling = vi.fn();
+  const window = {
+    isDestroyed: () => destroyed,
+    once: (event: string, listener: () => void) => {
+      if (event === "closed") closed = listener;
+    },
+    webContents: {
+      id,
+      setBackgroundThrottling: throttling,
+      send: () => ownershipSent.resolve(),
+    },
+  } as unknown as Electron.BrowserWindow;
+  return {
+    window,
+    throttling,
+    close: () => {
+      destroyed = true;
+      closed?.();
+    },
+    // Window-close cleanup ends by telling the remaining windows who owns what.
+    awaitOwnershipChange: () => {
+      ownershipSent = Promise.withResolvers<void>();
+      const sent = ownershipSent.promise;
+      return Effect.promise(() => sent);
+    },
+  };
+};
+
 const makeTestPictureInPictureWindow = (loadURL: () => Promise<void> = async () => undefined) => {
   const listeners = new Map<string, () => void>();
   const webContentsListeners = new Map<string, () => void>();
@@ -1968,11 +2000,14 @@ describe("PreviewManager", () => {
             .mockReturnValueOnce(first.promise)
             .mockReturnValueOnce(second.promise);
           const hostThrottling = vi.fn();
-          yield* manager.setMainWindow({
-            isDestroyed: () => false,
-            once: vi.fn(),
-            webContents: { setBackgroundThrottling: hostThrottling },
-          } as never);
+          yield* manager.registerAppWindow(
+            {
+              isDestroyed: () => false,
+              once: vi.fn(),
+              webContents: { id: 7, setBackgroundThrottling: hostThrottling },
+            } as never,
+            { primary: true },
+          );
           const one = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
           const two = yield* capture.pipe(Effect.forkChild({ startImmediately: true }));
           yield* TestClock.adjust(0);
@@ -2083,11 +2118,14 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_capture_throttling_2");
         yield* manager.registerWebview("tab_capture_throttling_1", 41);
         yield* manager.registerWebview("tab_capture_throttling_2", 42);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn(),
-          webContents: { setBackgroundThrottling },
-        } as never);
+        yield* manager.registerAppWindow(
+          {
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { id: 7, setBackgroundThrottling },
+          } as never,
+          { primary: true },
+        );
 
         yield* manager.startRecording("tab_capture_throttling_1");
         host.displayMediaHandler()?.({ frame: host.mainFrame }, () => {});
@@ -2120,11 +2158,14 @@ describe("PreviewManager", () => {
 
         yield* manager.createTab("tab_capture_throttling_failure");
         yield* manager.registerWebview("tab_capture_throttling_failure", 42);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn(),
-          webContents: { setBackgroundThrottling },
-        } as never);
+        yield* manager.registerAppWindow(
+          {
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { id: 7, setBackgroundThrottling },
+          } as never,
+          { primary: true },
+        );
 
         setBackgroundThrottling.mockImplementationOnce(() => {
           throw new Error("start throttling update failed");
@@ -2157,10 +2198,9 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("keeps frame capture closed when a replacement is destroyed during cleanup", () =>
+  effectIt.effect("releases a closed window's captures and refuses to restart them", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        const windowEvents = new Map<string, () => void>();
         const host = makeTestHostWebContents();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
@@ -2168,13 +2208,12 @@ describe("PreviewManager", () => {
         }));
         const guest = makeTestPreviewWebContents(capturePage, 42, host);
         fromId.mockReturnValue(guest);
+        const closing = makeTestAppWindow(7);
+        const remaining = makeTestAppWindow(8);
+        yield* manager.registerAppWindow(closing.window, { primary: true });
+        yield* manager.registerAppWindow(remaining.window, { primary: false });
         yield* manager.createTab("tab_shutdown");
         yield* manager.registerWebview("tab_shutdown", 42);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: (event: string, listener: () => void) => windowEvents.set(event, listener),
-          webContents: { setBackgroundThrottling: vi.fn() },
-        } as never);
         yield* manager.startRecording("tab_shutdown");
         const pip = makeTestPictureInPictureWindow();
         browserWindowConstructor.mockImplementation(function () {
@@ -2182,33 +2221,10 @@ describe("PreviewManager", () => {
         });
         yield* manager.openPictureInPicture("tab_shutdown");
         const capturesBeforeClose = capturePage.mock.calls.length;
-        const cleanupStarted = yield* Deferred.make<void>();
-        const releaseCleanup = yield* Deferred.make<void>();
-        yield* manager.subscribeStateChanges((_tabId, state) =>
-          state.pictureInPicture
-            ? Effect.void
-            : Deferred.succeed(cleanupStarted, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseCleanup)),
-              ),
-        );
 
-        windowEvents.get("closed")!();
-        yield* Deferred.await(cleanupStarted);
-        let destroyed = false;
-        const replacement = yield* manager
-          .setMainWindow({
-            isDestroyed: () => destroyed,
-            once: vi.fn(),
-            webContents: { setBackgroundThrottling: vi.fn() },
-          } as never)
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        try {
-          expect(replacement.pollUnsafe()).toBeUndefined();
-          destroyed = true;
-        } finally {
-          yield* Deferred.succeed(releaseCleanup, undefined);
-        }
-        yield* Fiber.join(replacement);
+        const cleanedUp = remaining.awaitOwnershipChange();
+        closing.close();
+        yield* cleanedUp;
 
         const restart = yield* Effect.exit(manager.startRecording("tab_shutdown"));
         expect(Exit.isFailure(restart)).toBe(true);
@@ -2228,39 +2244,116 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect("ignores close events from replaced main windows", () =>
+  effectIt.effect("keeps the first window's captures when a later window closes", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        let closeFirstWindow: (() => void) | undefined;
-        const firstWindowThrottling = vi.fn();
-        const replacementWindowThrottling = vi.fn();
         const capturePage = vi.fn(async () => ({
           toJPEG: () => Buffer.from("recording-frame"),
           getSize: () => ({ width: 1280, height: 720 }),
         }));
-        fromId.mockReturnValue(makeTestPreviewWebContents(capturePage));
+        const first = makeTestAppWindow(7);
+        const later = makeTestAppWindow(8);
+        const firstHost = makeTestHostWebContents();
+        const laterHost = { ...makeTestHostWebContents(), id: 8 };
+        const webContentsById = new Map([
+          [41, makeTestPreviewWebContents(capturePage, 41, firstHost)],
+          [42, makeTestPreviewWebContents(capturePage, 42, laterHost)],
+          [43, makeTestPreviewWebContents(capturePage, 43, { ...firstHost, id: 9 })],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+        yield* manager.registerAppWindow(first.window, { primary: true });
+        yield* manager.registerAppWindow(later.window, { primary: false });
+        yield* manager.createTab("tab_first");
+        yield* manager.createTab("tab_later");
+        yield* manager.createTab("tab_stranger");
+        yield* manager.registerWebview("tab_first", 41);
+        yield* manager.registerWebview("tab_later", 42);
+        const stranger = yield* Effect.exit(manager.registerWebview("tab_stranger", 43));
+        expect(Exit.isFailure(stranger)).toBe(true);
+        yield* manager.startRecording("tab_first");
+        const pip = makeTestPictureInPictureWindow();
+        browserWindowConstructor.mockImplementation(function () {
+          return pip.pictureInPictureWindow;
+        });
+        yield* manager.openPictureInPicture("tab_first");
 
-        yield* manager.createTab("tab_replaced_window_close");
-        yield* manager.registerWebview("tab_replaced_window_close", 42);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn((event: string, listener: () => void) => {
-            if (event === "closed") closeFirstWindow = listener;
-          }),
-          webContents: { setBackgroundThrottling: firstWindowThrottling },
-        } as never);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn(),
-          webContents: { setBackgroundThrottling: replacementWindowThrottling },
-        } as never);
+        const cleanedUp = first.awaitOwnershipChange();
+        later.close();
+        yield* cleanedUp;
 
-        closeFirstWindow?.();
-        yield* manager.startRecording("tab_replaced_window_close");
-        expect(firstWindowThrottling).not.toHaveBeenCalled();
-        expect(replacementWindowThrottling.mock.calls).toEqual([[false]]);
-        yield* manager.stopRecording("tab_replaced_window_close");
-        expect(replacementWindowThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(pip.pictureInPictureWindow.isDestroyed()).toBe(false);
+        const laterRecording = yield* Effect.exit(manager.startRecording("tab_later"));
+        expect(Exit.isFailure(laterRecording)).toBe(true);
+        expect(first.throttling.mock.calls).toEqual([[false]]);
+        yield* manager.closePictureInPicture("tab_first");
+        expect(first.throttling.mock.calls).toEqual([[false]]);
+        yield* manager.stopRecording("tab_first");
+        expect(first.throttling.mock.calls).toEqual([[false], [true]]);
+        expect(later.throttling).not.toHaveBeenCalled();
+      }),
+    ),
+  );
+
+  effectIt.effect.each([
+    {
+      name: "unclaimed sessions render in the primary window",
+      steps: [],
+      views: { 7: [true, [], []], 8: [false, [], []] },
+    },
+    {
+      name: "a claim moves a session to the claiming window",
+      steps: [["claim", 8, "s1"]],
+      views: { 7: [true, [], ["s1"]], 8: [false, ["s1"], []] },
+    },
+    {
+      name: "a later claim moves it again",
+      steps: [
+        ["claim", 8, "s1"],
+        ["claim", 7, "s1"],
+      ],
+      views: { 7: [true, ["s1"], []], 8: [false, [], ["s1"]] },
+    },
+    {
+      name: "closing the claiming window returns its sessions to the host",
+      steps: [
+        ["claim", 8, "s1"],
+        ["close", 8],
+      ],
+      views: { 7: [true, [], []], 8: [false, [], []] },
+    },
+    {
+      name: "closing the host hands unclaimed sessions to the next window",
+      steps: [
+        ["claim", 7, "s1"],
+        ["close", 7],
+      ],
+      views: { 7: [false, [], []], 8: [true, [], []] },
+    },
+  ] as const)("ownership: $name", ({ steps, views }) =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const windows = { 7: makeTestAppWindow(7), 8: makeTestAppWindow(8) };
+        yield* manager.registerAppWindow(windows[7].window, { primary: true });
+        yield* manager.registerAppWindow(windows[8].window, { primary: false });
+        const versions = [(yield* manager.getOwnership(7)).version];
+        for (const step of steps) {
+          if (step[0] === "claim") yield* manager.claimSession(step[1], step[2]);
+          else windows[step[1]].close();
+          versions.push((yield* manager.getOwnership(7)).version);
+        }
+        for (const [id, [isHost, claimedHere, claimedElsewhere]] of Object.entries(views)) {
+          const view = yield* manager.getOwnership(Number(id));
+          expect({ ...view, version: undefined }).toEqual({
+            version: undefined,
+            isHost,
+            claimedHere,
+            claimedElsewhere,
+          });
+        }
+        expect(versions).toEqual([...versions].sort((a, b) => a - b));
+        expect(new Set(versions).size).toBe(versions.length);
       }),
     ),
   );
@@ -2288,13 +2381,16 @@ describe("PreviewManager", () => {
         yield* manager.createTab("tab_window_close_race");
         yield* manager.registerWebview("tab_window_close_recording", 42);
         yield* manager.registerWebview("tab_window_close_race", 43);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn((event: string, listener: () => void) => {
-            if (event === "closed") closeMainWindow = listener;
-          }),
-          webContents: { setBackgroundThrottling: firstWindowThrottling },
-        } as never);
+        yield* manager.registerAppWindow(
+          {
+            isDestroyed: () => false,
+            once: vi.fn((event: string, listener: () => void) => {
+              if (event === "closed") closeMainWindow = listener;
+            }),
+            webContents: { id: 7, setBackgroundThrottling: firstWindowThrottling },
+          } as never,
+          { primary: true },
+        );
         yield* manager.startRecording("tab_window_close_recording");
         expect(firstWindowThrottling.mock.calls).toEqual([[false]]);
 
@@ -2314,11 +2410,14 @@ describe("PreviewManager", () => {
         host.displayMediaHandler()?.({ frame: host.mainFrame }, (value) => grants.push(value));
         expect(grants).toEqual([{}]);
 
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn(),
-          webContents: { setBackgroundThrottling: replacementWindowThrottling },
-        } as never);
+        yield* manager.registerAppWindow(
+          {
+            isDestroyed: () => false,
+            once: vi.fn(),
+            webContents: { id: 9, setBackgroundThrottling: replacementWindowThrottling },
+          } as never,
+          { primary: true },
+        );
         expect(replacementWindowThrottling).not.toHaveBeenCalled();
       }),
     ),
@@ -2349,13 +2448,16 @@ describe("PreviewManager", () => {
 
         yield* manager.createTab("tab_window_close_warmup");
         yield* manager.registerWebview("tab_window_close_warmup", 42);
-        yield* manager.setMainWindow({
-          isDestroyed: () => false,
-          once: vi.fn((event: string, listener: () => void) => {
-            if (event === "closed") closeMainWindow = listener;
-          }),
-          webContents: { setBackgroundThrottling: vi.fn() },
-        } as never);
+        yield* manager.registerAppWindow(
+          {
+            isDestroyed: () => false,
+            once: vi.fn((event: string, listener: () => void) => {
+              if (event === "closed") closeMainWindow = listener;
+            }),
+            webContents: { id: 7, setBackgroundThrottling: vi.fn() },
+          } as never,
+          { primary: true },
+        );
 
         const start = yield* manager
           .startRecording("tab_window_close_warmup")

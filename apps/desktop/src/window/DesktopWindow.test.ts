@@ -237,7 +237,7 @@ function layerTest(input: {
   readonly beforeMainWindowBoundsUpdate?: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
   ) => Effect.Effect<void>;
-  readonly setPreviewMainWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
+  readonly registerPreviewAppWindow?: (window: Electron.BrowserWindow) => Effect.Effect<void>;
   readonly destroyAll?: Effect.Effect<void>;
   readonly onWindowCreate?: Effect.Effect<void>;
   readonly openedExternalUrls?: unknown[];
@@ -246,7 +246,6 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
-  readonly fallbackWindow?: Electron.BrowserWindow;
   readonly platform?: NodeJS.Platform;
   readonly appearanceWindows?: ReadonlyArray<{
     readonly window: Electron.BrowserWindow;
@@ -300,15 +299,15 @@ function layerTest(input: {
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
-    currentMainOrFirst: Ref.get(input.mainWindow).pipe(
-      Effect.map(Option.orElse(() => Option.fromNullishOr(input.fallbackWindow ?? null))),
-    ),
+    currentMainOrFirst: Ref.get(input.mainWindow),
     focusedMainOrFirst:
       input.focusedWindow === undefined
         ? Ref.get(input.mainWindow)
         : Effect.succeedSome(input.focusedWindow),
-    setMain: (window) => Ref.set(input.mainWindow, Option.some(window)),
-    clearMain: () => Ref.set(input.mainWindow, Option.none()),
+    primary: Ref.get(input.mainWindow),
+    appWindows: Ref.get(input.mainWindow).pipe(Effect.map(Option.toArray)),
+    appWindowFor: () => Ref.get(input.mainWindow),
+    registerAppWindow: (window) => Ref.set(input.mainWindow, Option.some(window)),
     prepareReveal: () => Effect.succeed(false),
     reveal: (window) => Effect.sync(() => input.onReveal?.(window)),
     sendAll: () => Effect.void,
@@ -366,7 +365,7 @@ function layerTest(input: {
         }),
         Layer.mock(PreviewManager.PreviewManager)({
           getBrowserSession: () => Effect.succeed({} as Electron.Session),
-          setMainWindow: input.setPreviewMainWindow ?? (() => Effect.void),
+          registerAppWindow: input.registerPreviewAppWindow ?? (() => Effect.void),
           prepareWebview: () => Effect.void,
           isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
           getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
@@ -390,15 +389,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
     const fallbackWindow = createOutcomes.find(
       (window): window is Electron.BrowserWindow => window !== null,
     );
-
-    const currentMainOrFirst = Effect.gen(function* () {
-      const registered = yield* Ref.get(mainWindow);
-      if (Option.isSome(registered)) {
-        return registered;
-      }
-      const created = yield* Ref.get(createdWindows);
-      return Option.fromNullishOr(created[0] ?? null);
-    });
+    const currentMainOrFirst = Ref.get(mainWindow);
 
     const electronWindowShape = {
       create: () =>
@@ -437,8 +428,10 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
       main: Ref.get(mainWindow),
       currentMainOrFirst,
       focusedMainOrFirst: currentMainOrFirst,
-      setMain: (window) => Ref.set(mainWindow, Option.some(window)),
-      clearMain: () => Ref.set(mainWindow, Option.none()),
+      primary: currentMainOrFirst,
+      appWindows: currentMainOrFirst.pipe(Effect.map(Option.toArray)),
+      appWindowFor: () => currentMainOrFirst,
+      registerAppWindow: (window) => Ref.set(mainWindow, Option.some(window)),
       prepareReveal: () => Effect.succeed(false),
       reveal: (window) => Ref.update(revealedWindows, (windows) => [...windows, window]),
       sendAll: () => Effect.void,
@@ -478,7 +471,7 @@ const makeSplashScenario = (createOutcomes: readonly (Electron.BrowserWindow | n
           }),
           Layer.mock(PreviewManager.PreviewManager)({
             getBrowserSession: () => Effect.succeed({} as Electron.Session),
-            setMainWindow: () => Effect.void,
+            registerAppWindow: () => Effect.void,
             isBrowserPartition: (partition) => partition.startsWith("persist:t3code-preview-"),
             getBrowserPartition: () => Effect.succeed("persist:t3code-preview-test"),
           }),
@@ -617,7 +610,8 @@ describe("DesktopWindow", () => {
           fake.windowListeners.get("ready-to-show")?.();
           fake.isDestroyed.mockReturnValue(true);
           fake.windowListeners.get("closed")?.();
-          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          // The registry drops a closed app window.
+          yield* Ref.set(mainWindow, Option.none());
           if (activation === "after") {
             yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
             assert.equal(yield* Ref.get(createCount), 1);
@@ -881,36 +875,57 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("recreates main for Settings when only an unregistered popup survives", () =>
-    Effect.gen(function* () {
-      const main = makeFakeBrowserWindow();
-      const auxiliary = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+  it.effect(
+    "opens a secondary window beside its source, scoped by its URL, without restoring",
+    () =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const source = makeFakeBrowserWindow();
+        source.getBounds.mockReturnValue({ x: 100, y: 50, width: 1200, height: 800 });
+        const createdWindowOptions: Electron.BrowserWindowConstructorOptions[] = [];
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          yield* windows.openAppWindow({
+            projectScopeKeys: ["env:a", "env:b"],
+            sourceWindow: Option.some(source.window),
+          });
+          yield* windows.openAppWindow({ projectScopeKeys: [], sourceWindow: Option.none() });
+          fake.windowListeners.get("ready-to-show")?.();
 
-      yield* Effect.gen(function* () {
-        const windows = yield* DesktopWindow.DesktopWindow;
-        yield* windows.dispatchMenuAction("open-settings");
-        assert.deepEqual(main.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
-        assert.equal(auxiliary.send.mock.calls.length, 0);
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.strictEqual(yield* windows.ensureMain, main.window);
-        assert.equal(yield* Ref.get(createCount), 1);
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            window: main.window,
-            createCount,
-            mainWindow,
-            fallbackWindow: auxiliary.window,
-            desktopSettings: {
-              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-              localEnvironmentEnabled: false,
-            },
-          }),
-        ),
-      );
-    }),
+          assert.deepEqual(
+            createdWindowOptions.map(({ x, y, width, height }) => ({ x, y, width, height })),
+            [
+              { x: 128, y: 78, width: 1200, height: 800 },
+              { x: undefined, y: undefined, width: 1100, height: 780 },
+            ],
+          );
+          assert.deepEqual(
+            fake.loadURL.mock.calls.map((call) =>
+              new URL((call as unknown[])[0] as string).searchParams.getAll("projectScope"),
+            ),
+            [["env:a", "env:b"], [""]],
+          );
+          assert.isFalse(fake.windowListeners.has("resize"));
+          assert.equal(fake.maximize.mock.calls.length, 0);
+          assert.equal(fake.openDevTools.mock.calls.length, 0);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              window: fake.window,
+              createCount,
+              mainWindow,
+              createdWindowOptions,
+              desktopSettings: {
+                ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+                mainWindowBounds: { x: 300, y: 200, width: 900, height: 700 },
+                mainWindowMaximized: true,
+              },
+            }),
+          ),
+        );
+      }),
   );
 
   it.effect("does not open main or splash windows once quitting has started", () =>
@@ -1007,7 +1022,7 @@ describe("DesktopWindow", () => {
             ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
             localEnvironmentEnabled: false,
           },
-          setPreviewMainWindow: () =>
+          registerPreviewAppWindow: () =>
             Deferred.succeed(previewStarted, undefined).pipe(
               Effect.andThen(Deferred.await(releasePreview)),
             ),

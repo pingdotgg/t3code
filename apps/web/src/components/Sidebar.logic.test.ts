@@ -27,6 +27,7 @@ import {
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
   sortScopedProjectsForSidebar,
+  resolveIndexLandingProject,
   sortSidebarV2ProjectGroups,
   shouldNavigateAfterThreadPark,
   type SidebarListItem,
@@ -715,6 +716,47 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.make("thread-visible"));
+  });
+});
+
+describe("resolveIndexLandingProject", () => {
+  const projectA = makeProject({ id: ProjectId.make("project-a"), title: "A" });
+  const projectB = makeProject({ id: ProjectId.make("project-b"), title: "B" });
+  const threads = [
+    makeThread({
+      projectId: projectA.id,
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    }),
+    makeThread({
+      id: ThreadId.make("thread-b"),
+      projectId: projectB.id,
+      updatedAt: "2026-03-09T10:02:00.000Z",
+    }),
+  ];
+  const landing = (input: {
+    scopeKeys: string[];
+    scopedProjectKeys: Set<string> | null;
+    scopeReady: boolean;
+  }) => resolveIndexLandingProject({ projects: [projectA, projectB], threads, ...input })?.title;
+
+  it("opens the most recent project in this window's scope", () => {
+    expect(
+      landing({
+        scopeKeys: ["logical-b"],
+        scopedProjectKeys: new Set([`${localEnvironmentId}:${projectB.id}`]),
+        scopeReady: true,
+      }),
+    ).toBe("B");
+  });
+
+  it("waits for a scope to resolve, then falls back to every project", () => {
+    expect(landing({ scopeKeys: ["logical-b"], scopedProjectKeys: null, scopeReady: false })).toBe(
+      undefined,
+    );
+    expect(landing({ scopeKeys: ["logical-b"], scopedProjectKeys: null, scopeReady: true })).toBe(
+      "A",
+    );
+    expect(landing({ scopeKeys: [], scopedProjectKeys: null, scopeReady: false })).toBe("A");
   });
 });
 

@@ -312,7 +312,7 @@ describe("installRelayTelemetryEnabled", () => {
 });
 
 describe("readMedia", () => {
-  it.effect("reads http(s) media only for the main window", () =>
+  it.effect("reads http(s) media only for app windows", () =>
     Effect.gen(function* () {
       const mib = new Uint8Array(1024 * 1024);
       const fetch = vi.fn(async (url: string) => {
@@ -329,13 +329,14 @@ describe("readMedia", () => {
         webContents: { id: 1, session: { fetch } },
       } as unknown as Electron.BrowserWindow;
       const read = (url: string, senderId: number) =>
-        readMedia
-          .handler(url, { sender: { id: senderId } })
-          .pipe(
-            Effect.provide(
-              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
-            ),
-          );
+        readMedia.handler(url, { sender: { id: senderId } }).pipe(
+          Effect.provide(
+            Layer.mock(ElectronWindow.ElectronWindow)({
+              appWindowFor: (sender) =>
+                sender.id === 1 ? Effect.succeedSome(main) : Effect.succeedNone,
+            }),
+          ),
+        );
 
       assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
       assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
@@ -367,7 +368,7 @@ describe("pickProjectFavicon", () => {
     Layer.mergeAll(
       Layer.mock(ElectronDialog.ElectronDialog)({ pickFiles }),
       Layer.mock(ElectronWindow.ElectronWindow)({
-        focusedMainOrFirst: Effect.succeedNone,
+        appWindowFor: () => Effect.succeedNone,
       }),
       DesktopAppSettings.layerTest(settings),
     );
@@ -463,7 +464,9 @@ describe("syncHtmlFullscreen", () => {
         if (event === "leave-full-screen") leaveListeners.push(listener);
       },
     } as unknown as Electron.BrowserWindow;
-    const layer = Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) });
+    const layer = Layer.mock(ElectronWindow.ElectronWindow)({
+      appWindowFor: (sender) => (sender.id === 1 ? Effect.succeedSome(window) : Effect.succeedNone),
+    });
     return { window, setFullScreen, finishExit, layer };
   };
   const fromMainRenderer = { sender: { id: 1 } };

@@ -57,6 +57,7 @@ import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../state/server";
 import { readProject } from "../state/entities";
+import { useWindowProjectScopeStore } from "../windowProjectScope";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { isChunkLoadError } from "../lib/chunkReloadGuard";
@@ -391,6 +392,11 @@ function EventRouter({
         return;
       }
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+        return;
+      }
+      // A window opened for a project scope lands in that scope, not on the startup thread.
+      if (useWindowProjectScopeStore.getState().isSecondary) {
+        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
         return;
       }
       await navigate({

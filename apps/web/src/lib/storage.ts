@@ -1,4 +1,5 @@
 import { Debouncer } from "@tanstack/react-pacer";
+import * as Equal from "effect/Equal";
 
 export interface StateStorage<R = unknown> {
   getItem: (name: string) => string | null | Promise<string | null>;
@@ -70,4 +71,20 @@ export function createDeferredStorage<TValue>(
       debouncedSetItem.flush();
     },
   };
+}
+
+/** Applies the entries `local` changed since `baseline` (deletes included) over `stored`. */
+export function mergeRecordChanges<V>(
+  stored: Readonly<Record<string, V>> | undefined,
+  local: Readonly<Record<string, V>>,
+  baseline: Readonly<Record<string, V>>,
+): Record<string, V> {
+  const merged = { ...stored };
+  for (const key of new Set([...Object.keys(local), ...Object.keys(baseline)])) {
+    if (Equal.equals(local[key], baseline[key])) continue;
+    const value = local[key];
+    if (value === undefined) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged;
 }

@@ -58,6 +58,7 @@ import {
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
+import { startPreviewOwnership } from "./previewOwnership";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("host-webview-order"),
@@ -85,8 +86,17 @@ function setup(): Disposable {
     webPreferences: "contextIsolation=yes",
     preloadUrl: null,
   });
+  // The only app window hosts every session.
+  const stopOwnership = startPreviewOwnership({
+    onOwnershipChange: (listener) => {
+      listener({ version: 1, isHost: true, claimedHere: [], claimedElsewhere: [] });
+      return () => undefined;
+    },
+    getOwnership: () => new Promise(() => undefined),
+  } as Pick<DesktopPreviewBridge, "onOwnershipChange" | "getOwnership"> as DesktopPreviewBridge);
   return {
     [Symbol.dispose]() {
+      stopOwnership();
       resetPreviewStateForTests();
       __resetClientSettingsPersistenceForTests();
     },

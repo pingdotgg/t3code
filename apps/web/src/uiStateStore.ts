@@ -1,8 +1,11 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { PullRequestMergeMethod } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "@t3tools/client-runtime/state/projects";
+
+import { mergeRecordChanges } from "./lib/storage";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const THREAD_CHANGED_FILES_EXPANSION_VERSION = 2;
@@ -27,6 +30,7 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
+  /** Older clients kept the sidebar scope here; read once to migrate it to the window scope. */
   sidebarProjectScopeKey?: string | null;
   sidebarProjectScopeKeys?: string[];
   threadChangedFilesExpansionVersion?: number;
@@ -37,7 +41,6 @@ export interface PersistedUiState {
 export interface UiProjectState {
   projectExpandedById: Record<string, boolean>;
   projectOrder: string[];
-  sidebarProjectScopeKeys: string[];
 }
 
 export interface UiThreadState {
@@ -59,7 +62,6 @@ export interface UiState
 const initialState: UiState = {
   projectExpandedById: {},
   projectOrder: [],
-  sidebarProjectScopeKeys: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
@@ -150,9 +152,6 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
         ? sanitizePersistedThreadChangedFilesExpanded(parsed.threadChangedFilesExpandedById)
         : {},
     defaultAdvertisedEndpointKey: sanitizeOptionalKey(parsed.defaultAdvertisedEndpointKey),
-    sidebarProjectScopeKeys: sanitizeStringArray(
-      parsed.sidebarProjectScopeKeys ?? [parsed.sidebarProjectScopeKey],
-    ),
     pullRequestMergeMethod: isPullRequestMergeMethod(parsed.pullRequestMergeMethod)
       ? parsed.pullRequestMergeMethod
       : initialState.pullRequestMergeMethod,
@@ -209,29 +208,76 @@ function sanitizePersistedThreadChangedFilesExpanded(
   return nextState;
 }
 
+function pickUiState(state: UiState): UiState {
+  return {
+    projectExpandedById: state.projectExpandedById,
+    projectOrder: state.projectOrder,
+    threadLastVisitedAtById: state.threadLastVisitedAtById,
+    threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
+    defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
+    pullRequestMergeMethod: state.pullRequestMergeMethod,
+  };
+}
+
+/** Applies what this window changed since `baseline` over what other windows stored since. */
+function mergeUiStates(stored: UiState, local: UiState, baseline: UiState): UiState {
+  const pick = <K extends keyof UiState>(key: K): UiState[K] =>
+    Equal.equals(local[key], baseline[key]) ? stored[key] : local[key];
+  return {
+    projectExpandedById: mergeRecordChanges(
+      stored.projectExpandedById,
+      local.projectExpandedById,
+      baseline.projectExpandedById,
+    ),
+    projectOrder: pick("projectOrder"),
+    threadLastVisitedAtById: mergeRecordChanges(
+      stored.threadLastVisitedAtById,
+      local.threadLastVisitedAtById,
+      baseline.threadLastVisitedAtById,
+    ),
+    threadChangedFilesExpandedById: mergeRecordChanges(
+      stored.threadChangedFilesExpandedById,
+      local.threadChangedFilesExpandedById,
+      baseline.threadChangedFilesExpandedById,
+    ),
+    defaultAdvertisedEndpointKey: pick("defaultAdvertisedEndpointKey"),
+    pullRequestMergeMethod: pick("pullRequestMergeMethod"),
+  };
+}
+
+function readStoredUiState(raw: string | null): UiState | null {
+  if (!raw) return null;
+  try {
+    return parsePersistedState(JSON.parse(raw) as PersistedUiState);
+  } catch {
+    return null;
+  }
+}
+
+/** This window's state as of its last write, load, or adoption of another window's write. */
+let persistedBaseline = readPersistedState();
+
 export function persistState(state: UiState): void {
   if (typeof window === "undefined") {
     return;
   }
   try {
+    const local = pickUiState(state);
+    const stored = readStoredUiState(window.localStorage.getItem(PERSISTED_STATE_KEY));
+    const merged = stored ? mergeUiStates(stored, local, persistedBaseline) : local;
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
-        projectExpandedById: state.projectExpandedById,
-        projectOrder: state.projectOrder,
-        threadLastVisitedAtById: state.threadLastVisitedAtById,
-        defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
-        sidebarProjectScopeKeys: state.sidebarProjectScopeKeys,
-        // Older clients read only this field.
-        sidebarProjectScopeKey:
-          state.sidebarProjectScopeKeys.length === 1
-            ? (state.sidebarProjectScopeKeys[0] ?? null)
-            : null,
+        projectExpandedById: merged.projectExpandedById,
+        projectOrder: merged.projectOrder,
+        threadLastVisitedAtById: merged.threadLastVisitedAtById,
+        defaultAdvertisedEndpointKey: merged.defaultAdvertisedEndpointKey,
         threadChangedFilesExpansionVersion: THREAD_CHANGED_FILES_EXPANSION_VERSION,
-        threadChangedFilesExpandedById: state.threadChangedFilesExpandedById,
-        pullRequestMergeMethod: state.pullRequestMergeMethod,
+        threadChangedFilesExpandedById: merged.threadChangedFilesExpandedById,
+        pullRequestMergeMethod: merged.pullRequestMergeMethod,
       } satisfies PersistedUiState),
     );
+    persistedBaseline = local;
     if (!legacyKeysCleanedUp) {
       legacyKeysCleanedUp = true;
       for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
@@ -241,7 +287,10 @@ export function persistState(state: UiState): void {
   } catch {}
 }
 
-const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
+// Reads the store when it fires, so a write pending across an adoption carries the adopted state.
+const debouncedPersistState = new Debouncer(() => persistState(useUiStateStore.getState()), {
+  wait: 500,
+});
 
 export function markThreadVisited(state: UiState, threadId: string, visitedAt: string): UiState {
   const visitedAtMs = Date.parse(visitedAt);
@@ -322,20 +371,6 @@ function setDefaultAdvertisedEndpointKey(state: UiState, key: string | null): Ui
   return {
     ...state,
     defaultAdvertisedEndpointKey: nextKey,
-  };
-}
-
-function setSidebarProjectScopeKeys(state: UiState, projectKeys: readonly string[]): UiState {
-  const nextKeys = sanitizeStringArray(projectKeys);
-  if (
-    nextKeys.length === state.sidebarProjectScopeKeys.length &&
-    nextKeys.every((key, index) => key === state.sidebarProjectScopeKeys[index])
-  ) {
-    return state;
-  }
-  return {
-    ...state,
-    sidebarProjectScopeKeys: nextKeys,
   };
 }
 
@@ -427,7 +462,6 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
-  setSidebarProjectScopeKeys: (projectKeys: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -438,7 +472,7 @@ interface UiStateStore extends UiState {
 }
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
-  ...readPersistedState(),
+  ...persistedBaseline,
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>
@@ -447,8 +481,6 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
-  setSidebarProjectScopeKeys: (projectKeys) =>
-    set((state) => setSidebarProjectScopeKeys(state, projectKeys)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
@@ -458,10 +490,41 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     ),
 }));
 
-useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
+let applyingExternal = false;
+
+/** Takes another window's write, keeping this window's unwritten changes on top. */
+export function adoptUiStateFromOtherWindow(raw: string): void {
+  const incoming = readStoredUiState(raw);
+  if (!incoming) return;
+  const current = pickUiState(useUiStateStore.getState());
+  const next = mergeUiStates(incoming, current, persistedBaseline);
+  persistedBaseline = incoming;
+  // Unchanged fields keep their identity, so readers of them do not re-render for every write.
+  const changes = Object.fromEntries(
+    Object.entries(next).filter(
+      ([key, value]) => !Equal.equals(value, current[key as keyof UiState]),
+    ),
+  ) as Partial<UiState>;
+  if (Object.keys(changes).length === 0) return;
+  applyingExternal = true;
+  try {
+    useUiStateStore.setState(changes);
+  } finally {
+    applyingExternal = false;
+  }
+}
+
+useUiStateStore.subscribe(() => {
+  if (!applyingExternal) debouncedPersistState.maybeExecute();
+});
 
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
   window.addEventListener("beforeunload", () => {
     debouncedPersistState.flush();
+  });
+  window.addEventListener("storage", (event) => {
+    if (event.key === PERSISTED_STATE_KEY && event.newValue !== null) {
+      adoptUiStateFromOtherWindow(event.newValue);
+    }
   });
 }

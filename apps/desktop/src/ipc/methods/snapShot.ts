@@ -35,15 +35,14 @@ class SnapShotIpcUnauthorizedSenderError extends Schema.TaggedError<SnapShotIpcU
 
 const ensureTrustedSnapShotSender = Effect.fn("desktop.ipc.snapShot.ensureTrustedSender")(
   function* (event: DesktopIpc.DesktopIpcInvokeEvent | undefined) {
-    const main = yield* (yield* ElectronWindow.ElectronWindow).main;
-    if (
-      event === undefined ||
-      Option.isNone(main) ||
-      main.value.webContents.id !== event.sender.id
-    ) {
+    const window =
+      event === undefined
+        ? Option.none<Electron.BrowserWindow>()
+        : yield* (yield* ElectronWindow.ElectronWindow).appWindowFor(event.sender);
+    if (Option.isNone(window)) {
       return yield* new SnapShotIpcUnauthorizedSenderError();
     }
-    return main.value;
+    return window.value;
   },
 );
 

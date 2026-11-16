@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -207,19 +208,56 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("never falls back to an auxiliary window as the main window", () =>
+  it.effect("follows focus across app windows and falls back once they close", () =>
     Effect.gen(function* () {
+      const makeAppWindow = (id: number) => {
+        const listeners = new Map<string, () => void>();
+        let destroyed = false;
+        const listen = (event: string, listener: () => void) => void listeners.set(event, listener);
+        const window = {
+          id,
+          webContents: { id: id * 10 },
+          isDestroyed: () => destroyed,
+          on: listen,
+          once: listen,
+        } as unknown as Electron.BrowserWindow;
+        const close = () => {
+          destroyed = true;
+          listeners.get("closed")?.();
+        };
+        return { window, focus: () => listeners.get("focus")?.(), close };
+      };
       const electronWindow = yield* ElectronWindow.ElectronWindow;
-      const auxiliary = yield* electronWindow.create({}, { auxiliary: true });
-      const ordinary = { isDestroyed: () => false } as unknown as Electron.BrowserWindow;
-      Object.assign(auxiliary, { isDestroyed: () => false });
+      const primary = makeAppWindow(1);
+      const second = makeAppWindow(2);
+      const third = makeAppWindow(3);
+      const popup = { isDestroyed: () => false } as unknown as Electron.BrowserWindow;
+      yield* electronWindow.registerAppWindow(primary.window, { primary: true });
+      yield* electronWindow.registerAppWindow(second.window, { primary: false });
+      yield* electronWindow.registerAppWindow(third.window, { primary: false });
+      const current = () => Effect.map(electronWindow.main, Option.getOrNull);
 
-      getAllWindowsMock.mockReturnValue([auxiliary]);
-      assert.isTrue((yield* electronWindow.currentMainOrFirst)._tag === "None");
+      getFocusedWindowMock.mockReturnValue(popup);
+      assert.strictEqual(yield* current(), primary.window);
+      second.focus();
+      assert.strictEqual(yield* current(), second.window);
+      getFocusedWindowMock.mockReturnValue(third.window);
+      assert.strictEqual(yield* current(), third.window);
 
-      getAllWindowsMock.mockReturnValue([auxiliary, ordinary]);
-      const current = yield* electronWindow.currentMainOrFirst;
-      assert.isTrue(current._tag === "Some" && current.value === ordinary);
+      getFocusedWindowMock.mockReturnValue(popup);
+      second.close();
+      assert.strictEqual(yield* current(), primary.window);
+      primary.close();
+      assert.strictEqual(yield* current(), third.window);
+      assert.isTrue(Option.isNone(yield* electronWindow.primary));
+      assert.deepEqual(yield* electronWindow.appWindows, [third.window]);
+      assert.strictEqual(
+        Option.getOrNull(yield* electronWindow.appWindowFor({ id: 30 })),
+        third.window,
+      );
+      assert.isTrue(Option.isNone(yield* electronWindow.appWindowFor({ id: 20 })));
+      third.close();
+      assert.isNull(yield* current());
     }).pipe(Effect.provide(layerTest)),
   );
 });

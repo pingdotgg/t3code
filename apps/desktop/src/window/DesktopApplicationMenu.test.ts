@@ -16,6 +16,7 @@ vi.mock("electron", () => ({
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -62,6 +63,8 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
 interface MenuServices {
   readonly checkResult?: DesktopUpdateCheckResult;
   readonly shownMessageBox?: Deferred.Deferred<Electron.MessageBoxOptions>;
+  readonly appWindowOpen?: boolean;
+  readonly windowCalls?: string[];
 }
 
 const layerElectronDialog = ({ shownMessageBox }: MenuServices) =>
@@ -91,11 +94,17 @@ const layerDesktopUpdates = ({ checkResult }: MenuServices) =>
     installPrepared: () => Effect.die("unexpected installPrepared"),
   } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
-const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
+const layerDesktopWindow = (
+  selectedAction: Deferred.Deferred<string>,
+  { windowCalls }: MenuServices,
+) =>
   Layer.succeed(DesktopWindow.DesktopWindow, {
     createMain: Effect.die("unexpected createMain"),
-    ensureMain: Effect.die("unexpected ensureMain"),
+    ensureMain: Effect.sync(() => windowCalls?.push("ensureMain")).pipe(
+      Effect.as({} as Electron.BrowserWindow),
+    ),
     revealOrCreateMain: Effect.die("unexpected revealOrCreateMain"),
+    openAppWindow: () => Effect.die("unexpected openAppWindow"),
     activate: Effect.void,
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
@@ -103,7 +112,11 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,
     prepareCaptureReveal: Effect.void,
-    dispatchMenuAction: (action) => Deferred.succeed(selectedAction, action).pipe(Effect.asVoid),
+    dispatchMenuAction: (action) =>
+      Effect.sync(() => windowCalls?.push(`dispatch:${action}`)).pipe(
+        Effect.andThen(Deferred.succeed(selectedAction, action)),
+        Effect.asVoid,
+      ),
     dispatchSnapShotEvent: () => Effect.void,
     zoomMain: (direction) =>
       Deferred.succeed(selectedAction, `zoom-${direction}`).pipe(Effect.asVoid),
@@ -135,7 +148,15 @@ const configureMenu = (
     Effect.provide(
       DesktopApplicationMenu.layer.pipe(
         Layer.provideMerge(layerElectronMenu(applicationMenuTemplate)),
-        Layer.provideMerge(layerDesktopWindow(selectedAction)),
+        Layer.provideMerge(layerDesktopWindow(selectedAction, services)),
+        Layer.provideMerge(
+          Layer.mock(ElectronWindow.ElectronWindow)({
+            main:
+              services.appWindowOpen === false
+                ? Effect.succeedNone
+                : Effect.succeedSome({} as Electron.BrowserWindow),
+          }),
+        ),
         Layer.provideMerge(layerDesktopUpdates(services)),
         Layer.provideMerge(layerElectronDialog(services)),
         Layer.provideMerge(layerElectronApp),
@@ -320,6 +341,38 @@ describe("DesktopApplicationMenu", () => {
         allContents.mockReturnValue([appContents as unknown as Electron.WebContents]);
         closeTools?.click?.({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
         assert.equal(appContents.closeDevTools.mock.calls.length, 0);
+      }
+    }),
+  );
+
+  it.effect.each([
+    ["darwin", "File"],
+    ["darwin", "Window"],
+    ["linux", "File"],
+  ] as const)("opens New Window from the %s %s menu without a shortcut", ([platform, menu]) =>
+    Effect.gen(function* () {
+      for (const appWindowOpen of [true, false]) {
+        const windowCalls: string[] = [];
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(
+          yield* Deferred.make<string>(),
+          applicationMenuTemplate,
+          { platform },
+          { appWindowOpen, windowCalls },
+        );
+        const template = yield* Deferred.await(applicationMenuTemplate);
+        const submenu = template.find(
+          (item) => item.label === menu || (menu === "Window" && item.role === "windowMenu"),
+        )?.submenu;
+        if (!Array.isArray(submenu)) throw new Error(`Expected a ${menu} submenu.`);
+        const newWindow = submenu.find((item) => item.label === "New Window");
+        assert.isUndefined(newWindow?.accelerator);
+        if (typeof newWindow?.click !== "function") throw new Error("Expected New Window.");
+
+        newWindow.click({} as Electron.MenuItem, undefined, {} as KeyboardEvent);
+        // With no app window the first one opens; asking a renderer as well would open a second.
+        assert.deepEqual(windowCalls, appWindowOpen ? ["dispatch:new-window"] : ["ensureMain"]);
       }
     }),
   );

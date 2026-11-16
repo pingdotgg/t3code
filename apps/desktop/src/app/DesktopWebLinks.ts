@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
+import { makeReadyAppRenderers } from "./readyAppRenderers.ts";
 
 export const isWebLink = (value: string) => {
   if (!URL.canParse(value)) return false;
@@ -19,7 +20,10 @@ export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,
   {
     readonly receive: (url: string) => Effect.Effect<void>;
-    readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
+    readonly setRendererReady: (
+      ready: boolean,
+      window: Electron.BrowserWindow,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopWebLinks") {}
 
@@ -27,47 +31,16 @@ const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const pending: Array<string> = [];
-  let listening: Electron.WebContents | null = null;
-  let detachListening: (() => void) | null = null;
-
-  const stopListening = () => {
-    detachListening?.();
-    detachListening = null;
-    listening = null;
-  };
+  const renderers = makeReadyAppRenderers();
 
   const flush = Effect.gen(function* () {
-    if (listening === null || pending.length === 0) return;
-    const window = yield* electronWindow.currentMainOrFirst;
-    if (Option.isNone(window) || window.value.webContents !== listening) return;
-    if (listening.isDestroyed()) {
-      stopListening();
-      return;
-    }
-    for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
-    yield* desktopWindow.activate.pipe(Effect.ignore);
-  });
-
-  const startListening = Effect.gen(function* () {
-    const window = yield* electronWindow.currentMainOrFirst;
-    if (Option.isNone(window) || window.value.webContents.isDestroyed()) return;
-    const webContents = window.value.webContents;
-    if (listening === webContents) return;
-    stopListening();
-    listening = webContents;
-    const onNavigation = (
-      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-    ) => {
-      if (event.isMainFrame && !event.isSameDocument) stopListening();
-    };
-    webContents.on("did-start-navigation", onNavigation);
-    webContents.on("render-process-gone", stopListening);
-    webContents.once("destroyed", stopListening);
-    detachListening = () => {
-      webContents.removeListener("did-start-navigation", onNavigation);
-      webContents.removeListener("render-process-gone", stopListening);
-      webContents.removeListener("destroyed", stopListening);
-    };
+    if (pending.length === 0) return;
+    const current = yield* electronWindow.currentMainOrFirst;
+    const target = renderers.pick(current);
+    if (target === undefined) return;
+    for (const url of pending.splice(0)) target.webContents.send(WEB_LINK_OPEN_CHANNEL, url);
+    if (Option.contains(current, target)) yield* desktopWindow.activate.pipe(Effect.ignore);
+    else yield* electronWindow.reveal(target);
   });
 
   return DesktopWebLinks.of({
@@ -77,8 +50,11 @@ const make = Effect.gen(function* () {
         return flush;
       });
     }),
-    setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready) {
-      return ready ? startListening : Effect.sync(stopListening);
+    setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready, window) {
+      return Effect.sync(() => {
+        if (ready) renderers.add(window);
+        else renderers.drop(window.webContents);
+      });
     }, Effect.andThen(flush)),
   });
 });
