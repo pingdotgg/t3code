@@ -28,7 +28,13 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
+import {
+  currentWorkspaceSelections,
+  workspaceSelectionCheck,
+} from "./workspace/workspace-selection-store";
+import { workspaceTabColumns, workspaceTabPage } from "./workspace/workspace-tab-navigation";
+import { Platform, StyleSheet, View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -447,18 +453,13 @@ function WorkspaceColumns(
               <EmptyDetailHeader onCompose={detailCompose} />
             </PaneContext>
             <ColumnContent column="empty-detail">
-              {/* Settings opens a page as it's shown, so its hidden tab skips the placeholder. */}
-              {headerOnly && settingsOpen ? (
-                <View className="flex-1 bg-screen" />
-              ) : (
-                <WorkspaceEmptyDetail
-                  tab={settingsOpen ? "settings" : selectedTab}
-                  onStartNewTask={
-                    // Duo provides compose in the detail bar; iPad uses the empty-state action.
-                    detailCompose ? undefined : openNewTask
-                  }
-                />
-              )}
+              <WorkspaceEmptyDetail
+                tab={settingsOpen ? "settings" : selectedTab}
+                onStartNewTask={
+                  // Duo provides compose in the detail bar; iPad uses the empty-state action.
+                  detailCompose ? undefined : openNewTask
+                }
+              />
             </ColumnContent>
           </Split.Screen>
           {screens.routes.map((route) => {
@@ -563,13 +564,26 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
         }
       >
         {(slotWorkspace, headerOnly) => {
-          // A hidden tab only needs its header, not the shown tab's pages.
-          const detail = headerOnly ? [] : projection.detail;
+          // A tab not shown yet renders the page opening it shows, under the key it opens with,
+          // so that page is already on screen in the tab when it's selected.
+          const tab = slotWorkspace.settingsOpen ? "settings" : slotWorkspace.state.selectedTab;
+          const page = headerOnly
+            ? (workspaceTabPage(props.state, tab, currentWorkspaceSelections(), {
+                columns: workspaceTabColumns(Platform.OS, tab, layout.usesSplitView),
+                check: workspaceSelectionCheck,
+                seedPullRequest: withKnownPullRequestSummary,
+              }) as Route | undefined)
+            : undefined;
+          const detail = headerOnly ? (page ? [page] : []) : projection.detail;
+          const slotDescriptors =
+            page && !descriptors[page.key]
+              ? { ...descriptors, [page.key]: props.describe(page, true) }
+              : descriptors;
           return props.nativeColumns &&
             workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
             <WorkspaceColumns
               {...props}
-              descriptors={descriptors}
+              descriptors={slotDescriptors}
               primary={primaryRoute}
               detail={detail}
             />
@@ -578,7 +592,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
               {...props}
               onRootVisibilityChange={setPrimaryVisible}
               onNativePopChange={setNativelyPoppingWorkspaceRoute}
-              descriptors={descriptors}
+              descriptors={slotDescriptors}
               state={{
                 ...props.state,
                 routes: [primaryRoute, ...detail],

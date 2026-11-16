@@ -39,7 +39,6 @@ import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
-const HEADER_SETTLE_MS = 300;
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
@@ -47,7 +46,7 @@ function RetainedWorkspaceTab(props: {
   readonly slot: string;
   readonly tab: NavigationTab;
   readonly active: boolean;
-  /** Mount the header of a slot that hasn't been shown yet. */
+  /** Render a slot that hasn't been shown yet: its header, and the page it opens with. */
   readonly prewarm: boolean;
   readonly setMountedSlots: Dispatch<SetStateAction<ReadonlySet<string>>>;
   readonly setPrewarmRequests: Dispatch<SetStateAction<ReadonlyMap<string, number>>>;
@@ -62,12 +61,17 @@ function RetainedWorkspaceTab(props: {
   }, [props.active]);
   const isActive = () => activeRef.current;
   const [content, setContent] = useState(
-    props.active ? { workspace, children: props.children, headerOnly: false } : null,
+    props.active
+      ? { source: workspace, workspace, children: props.children, headerOnly: false }
+      : null,
   );
-  if (props.active && (content?.workspace !== workspace || content?.children !== props.children))
-    setContent({ workspace, children: props.children, headerOnly: false });
-  else if (!props.active && props.prewarm && content === null)
+  const stale = content?.source !== workspace || content?.children !== props.children;
+  if (props.active && (content?.headerOnly !== false || stale))
+    setContent({ source: workspace, workspace, children: props.children, headerOnly: false });
+  // A slot not shown yet follows the workspace, so the page it opens with stays current.
+  else if (!props.active && props.prewarm && (content === null || (content.headerOnly && stale)))
     setContent({
+      source: workspace,
       workspace: {
         ...workspace,
         settingsOpen: props.slot === "settings",
@@ -91,27 +95,28 @@ function RetainedWorkspaceTab(props: {
   const mounted = content !== null && !content.headerOnly;
   const headerOnly = content?.headerOnly === true;
   const { slot, setMountedSlots, setPrewarmRequests } = props;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which uncovers the tab then
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's mount to the host, which uncovers the tab then
   useEffect(() => {
     if (!mounted) return;
-    // UIKit fades in the bar items this mount's header options build (~14 frames) and moves the
-    // content under them, so the last tab's snapshot stays over the slot until that settles.
-    const timer = setTimeout(
-      () =>
-        setMountedSlots((current) => (current.has(slot) ? current : new Set(current).add(slot))),
-      HEADER_SETTLE_MS,
+    // Each header write commits in the render after it; the slot is ready once a frame passes
+    // without one, which is when its native header and content are in place.
+    const frame = requestAnimationFrame(() =>
+      setMountedSlots((current) => (current.has(slot) ? current : new Set(current).add(slot))),
     );
-    return () => {
-      clearTimeout(timer);
-      // A replacement slot (e.g. a re-enabled fourth tab) must report its own mount.
+    return () => cancelAnimationFrame(frame);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each header write re-arms the frame
+  }, [mounted, optionsByRoute, slot, setMountedSlots]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a replacement slot (e.g. a re-enabled fourth tab) must report its own mount
+  useEffect(
+    () => () =>
       setMountedSlots((current) => {
         if (!current.has(slot)) return current;
         const next = new Set(current);
         next.delete(slot);
         return next;
-      });
-    };
-  }, [mounted, slot, setMountedSlots]);
+      }),
+    [slot, setMountedSlots],
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks UIKit to prewarm a hidden header after each write, since bar items it rebuilds fade in on their own first entry
   useEffect(() => {
     if (!headerOnly || optionsByRoute.size === 0) return;
