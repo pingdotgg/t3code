@@ -237,6 +237,9 @@ export const deregisterManagedRelayEnvironment = Effect.fn(
     .pipe(
       Effect.map(() => ({ cleanup: "complete" as const })),
       Effect.catch((cause) => {
+        if (input.retryCleanup && isManagedRelayRequestFailedError(cause) && cause.status === 409) {
+          return Effect.fail(cause);
+        }
         const unconfirmed = { cleanup: "unconfirmed" as const, cause };
         // The account's list is authoritative: a link that is gone leaves only cleanup to retry.
         return relay.listEnvironments({ clerkToken }).pipe(

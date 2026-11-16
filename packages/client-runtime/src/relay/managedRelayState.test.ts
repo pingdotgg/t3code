@@ -189,6 +189,43 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
+  it.effect("preserves a cleanup conflict even when verification cannot confirm a live link", () =>
+    Effect.gen(function* () {
+      setSession();
+      const conflict = new ManagedRelay.ManagedRelayRequestFailedError({
+        action: "unlink relay environment",
+        cause: new Error("environment was linked again"),
+        status: 409,
+      });
+      for (const verificationAvailable of [false, true]) {
+        const result = yield* deregisterManagedRelayEnvironment(registry, {
+          accountId: "account-1",
+          environmentId: environment.environmentId,
+          retryCleanup: true,
+        }).pipe(
+          Effect.provideService(
+            ManagedRelay.ManagedRelayClient,
+            createClient({
+              unlinkEnvironment: () => Effect.fail(conflict),
+              listEnvironments: () =>
+                verificationAvailable
+                  ? Effect.succeed([])
+                  : Effect.fail(
+                      new ManagedRelay.ManagedRelayRequestFailedError({
+                        action: "list relay-managed environments",
+                        cause: new Error("listing unavailable"),
+                        status: 503,
+                      }),
+                    ),
+            }),
+          ),
+          Effect.match({ onFailure: (error) => error, onSuccess: () => null }),
+        );
+        expect(result).toBe(conflict);
+      }
+    }),
+  );
+
   it.effect("keeps cleanup retryable through another failure and failed verification", () =>
     Effect.gen(function* () {
       setSession();
