@@ -1,4 +1,5 @@
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { readWorktreeBaseBranch } from "../../worktreeRepositoryChoiceStore";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -807,6 +808,7 @@ export function useComposerSend(input: ComposerSendInput) {
       worktreePath: activeThread.worktreePath,
       activeThreadBranch,
       projectIsGitRepo: isGitRepo,
+      plainProjectBaseBranch: readWorktreeBaseBranch(activeProject),
       resumeCompactionTokens,
       keepFullHistory,
       phase,

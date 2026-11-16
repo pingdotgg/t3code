@@ -677,6 +677,7 @@ const make = Effect.gen(function* () {
                   plan: taskPlan,
                   branch: branch!,
                   projectStart: { refName: startRef, baseRefName },
+                  baseBranch: input.workspaceStrategy.baseRef,
                   startFromOrigin: input.workspaceStrategy.startFromOrigin === true,
                   projectProgress: progress,
                   onClaimed: (taskFolder, claimedBranch) =>

@@ -69,6 +69,7 @@ const tracked = (...folders: ReadonlyArray<string>): ReadonlyArray<ProjectTracke
 const create = Effect.fnUntraced(function* (
   branch: string,
   repositories?: ReadonlyArray<{ readonly path: string }>,
+  baseBranch?: string,
 ) {
   const taskFolders = yield* TaskFolders.TaskFolders;
   const plan = yield* taskFolders.plan({ projectId, repositories });
@@ -77,6 +78,7 @@ const create = Effect.fnUntraced(function* (
     plan: plan!,
     branch,
     projectStart: { refName: "main", baseRefName: "main" },
+    baseBranch,
     startFromOrigin: false,
   });
 });
@@ -291,6 +293,33 @@ it.live("treats a project folder inside a larger repository as plain", () =>
       // The parent repository is never checked out.
       assert.equal(yield* worktreeCount(big), 1);
       assert.equal(yield* worktreeCount(tool), 2);
+    }),
+  ),
+);
+
+it.live("starts each repository from the base branch where it has one", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { path, tmp, run, repository } = yield* fixture;
+      const api = yield* repository("shop/api");
+      const web = yield* repository("shop/web");
+      yield* run(api, "checkout", "-b", "release");
+      yield* run(api, "commit", "--allow-empty", "-m", "release work");
+      yield* run(api, "checkout", "main");
+      state.workspaceRoot = path.join(tmp, "shop");
+      state.trackedFolders = tracked(api, web);
+
+      const { taskFolder } = yield* create("feature", undefined, "release");
+
+      const head = (cwd: string, ref: string) => run(cwd, "rev-parse", ref);
+      assert.equal(
+        yield* head(path.join(taskFolder.root, "api"), "HEAD"),
+        yield* head(api, "release"),
+      );
+      assert.equal(
+        yield* head(path.join(taskFolder.root, "web"), "HEAD"),
+        yield* head(web, "main"),
+      );
     }),
   ),
 );

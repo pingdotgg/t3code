@@ -8,6 +8,12 @@ import { memo, useState } from "react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "../composerDraftStore";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
+import {
+  rememberWorktreeRepositories,
+  setWorktreeBaseBranch,
+  useRememberedWorktreeRepositories,
+  useWorktreeBaseBranch,
+} from "../worktreeRepositoryChoiceStore";
 import { cn } from "../lib/utils";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { ComposerControl } from "./chat/ComposerControl";
@@ -42,21 +48,29 @@ function matchesFilter(choice: WorktreeRepositoryChoice, filter: string): boolea
 export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesControl(props: {
   project: EnvironmentProject;
   draftTarget: ComposerThreadTarget;
+  /** A plain project folder has no branch picker of its own, so the base branch is named here. */
+  offersBaseBranch: boolean;
 }) {
+  const baseBranch = useWorktreeBaseBranch(props.project);
   const composerFloatingLayerProps = useComposerMenuProps();
   const { choices } = useWorktreeRepositoryChoices(props.project);
-  const chosen = useComposerDraftStore(
+  const drafted = useComposerDraftStore(
     (store) => store.getDraftThread(props.draftTarget)?.worktreeRepositories,
   );
+  // A new draft starts from the project's last choice.
+  const chosen = useRememberedWorktreeRepositories(props.project) ?? undefined;
+  const effective = drafted ?? chosen;
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [filter, setFilter] = useState("");
 
   if (choices === null || choices.length === 0) return null;
 
-  const selection = resolveWorktreeRepositorySelection({ choices, chosen });
+  const selection = resolveWorktreeRepositorySelection({ choices, chosen: effective });
   const selected = new Set(selection.selected);
-  const choose = (paths: ReadonlyArray<string>) =>
+  const choose = (paths: ReadonlyArray<string>) => {
     setDraftThreadContext(props.draftTarget, { worktreeRepositories: paths });
+    rememberWorktreeRepositories(props.project, paths);
+  };
   const normalizedFilter = filter.trim().toLowerCase();
   const visible =
     normalizedFilter === ""
@@ -120,6 +134,20 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
             </span>
           </MenuCheckboxItem>
         ))}
+        {props.offersBaseBranch ? (
+          <>
+            <MenuSeparator />
+            <MenuGroupLabel>Start from this branch where a repository has it</MenuGroupLabel>
+            <MenuSearchInput
+              value={baseBranch}
+              onChange={(event) =>
+                setWorktreeBaseBranch(props.project, event.currentTarget.value.trim())
+              }
+              placeholder="Each repository's default branch"
+              aria-label="Base branch"
+            />
+          </>
+        ) : null}
         <MenuSeparator />
         <MenuItem
           closeOnClick={false}

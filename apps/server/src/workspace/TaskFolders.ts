@@ -90,6 +90,11 @@ export class TaskFolders extends Context.Service<
       readonly branch: string;
       /** Where the project folder's branch starts; unused when it is not a repository. */
       readonly projectStart: { readonly refName: string; readonly baseRefName: string };
+      /**
+       * The branch the thread starts from. A repository that has it starts there; one that does
+       * not starts from its own default branch.
+       */
+      readonly baseBranch?: string | undefined;
       readonly startFromOrigin: boolean;
       readonly projectProgress?: GitVcsDriver.CreateWorktreeProgress;
       /** As soon as the folder is recorded, so a cancelled caller knows what to remove. */
@@ -332,13 +337,23 @@ const make = Effect.gen(function* () {
     );
   };
 
-  /** A repository's default branch, and the remote commit of it when starting from origin. */
+  /**
+   * Where a repository's branch starts: `baseBranch` when the repository has it, else its
+   * default branch. The remote commit of either when starting from origin.
+   */
   const repositoryStart = Effect.fn("TaskFolders.repositoryStart")(function* (
     cwd: string,
     startFromOrigin: boolean,
+    baseBranch?: string,
   ) {
+    const wanted = baseBranch?.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
     const defaultBranch =
-      (yield* gitDriver.resolveDefaultBranchName(cwd, "origin")) ?? (yield* git.currentBranch(cwd));
+      wanted !== undefined &&
+      ((yield* git.hasCommit({ cwd, refName: `refs/heads/${wanted}` })) ||
+        (yield* git.hasCommit({ cwd, refName: `refs/remotes/origin/${wanted}` })))
+        ? wanted
+        : ((yield* gitDriver.resolveDefaultBranchName(cwd, "origin")) ??
+          (yield* git.currentBranch(cwd)));
     let baseRef = "HEAD";
     if (defaultBranch !== null) {
       if (yield* git.hasCommit({ cwd, refName: `refs/heads/${defaultBranch}` }))
@@ -587,10 +602,11 @@ const make = Effect.gen(function* () {
     repository: ProjectTrackedFolder,
     branch: string,
     startFromOrigin: boolean,
+    baseBranch: string | undefined,
   ) {
     const worktreePath = mapped(taskFolder, repository.path);
     yield* fileSystem.makeDirectory(path.dirname(worktreePath), { recursive: true });
-    const start = yield* repositoryStart(repository.path, startFromOrigin);
+    const start = yield* repositoryStart(repository.path, startFromOrigin, baseBranch);
     yield* git.createWorktree({
       cwd: repository.path,
       refName: start.refName,
@@ -674,7 +690,13 @@ const make = Effect.gen(function* () {
           const exits = yield* Effect.forEach(
             levels.get(level)!,
             (repository) =>
-              createRepositoryWorktree(empty, repository, branch, input.startFromOrigin).pipe(
+              createRepositoryWorktree(
+                empty,
+                repository,
+                branch,
+                input.startFromOrigin,
+                input.baseBranch,
+              ).pipe(
                 Effect.tap((worktree) =>
                   Effect.suspend(() => {
                     created.push(worktree);
