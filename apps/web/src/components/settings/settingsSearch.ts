@@ -411,6 +411,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["reasoning effort thinking bars graph word label level composer"],
   },
   {
+    id: "app-icon",
+    title: "App icon",
+    to: "/settings/appearance",
+    searchTerms: ["dock taskbar favicon logo nightly blueprint sunrise orbital black classic"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",
@@ -550,6 +556,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
     targetId: "boring-sidebar",
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
+  },
+  {
+    id: "turn-work-fold",
+    title: "Fold each turn's work",
+    to: "/settings/labs",
+    searchTerms: [
+      "beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline",
+    ],
   },
   {
     id: "tool-call-visibility",

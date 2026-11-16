@@ -34,22 +34,21 @@ describe("detectComposerTrigger", () => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
   });
 
-  it("keeps a slash in the line-leading model picker query", () => {
-    expect(detectComposerTrigger("/model openai/gpt", 17)).toMatchObject({
-      kind: "slash-model",
-      query: "openai/gpt",
+  it.each([
+    ["/model", 0],
+    ["Question\n/MODEL", 9],
+  ])("offers typed %j as a slash command", (text, rangeStart) => {
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "slash-command",
+      query: text.slice(rangeStart + 1),
+      rangeStart,
+      rangeEnd: text.length,
     });
   });
 
-  it.each(["/Model opus", "/MODEL opus"])(
-    "opens the model picker for capitalized %j the same as /model",
-    (text) => {
-      expect(detectComposerTrigger(text, text.length)).toMatchObject({
-        kind: "slash-model",
-        query: "opus",
-      });
-    },
-  );
+  it("does not reopen a menu after /model arguments", () => {
+    expect(detectComposerTrigger("/Model opus", "/Model opus".length)).toBeNull();
+  });
 
   it.each(["Use /", "Use /review"])("detects the inline slash token in %j", (text) => {
     expect(detectComposerTrigger(text, text.length)).toEqual({

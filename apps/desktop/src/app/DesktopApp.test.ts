@@ -98,6 +98,7 @@ it.effect.each([false, true])(
           Effect.provideService(DesktopAppIdentity.DesktopAppIdentity, {
             resolveUserDataPath: Effect.succeed("/isolated/userdata"),
             configure: record("identity"),
+            applyAppIcon: () => Effect.void,
           } as DesktopAppIdentity.DesktopAppIdentity["Service"]),
           Effect.provideService(ElectronApp.ElectronApp, {
             setPath: () => Effect.void,
