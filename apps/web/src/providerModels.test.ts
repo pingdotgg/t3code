@@ -85,8 +85,6 @@ describe("getProviderModelCapabilities", () => {
         }),
       ];
 
-      // Falling back to another option would store an agent nobody picked, which then wins over
-      // the Plan toggle.
       const descriptor = getProviderModelCapabilities(models, "opencode/test", PROVIDER, false)
         .optionDescriptors?.[0];
       expect(
