@@ -220,13 +220,17 @@ export const refreshPathFromLoginShell = Effect.fn("refreshPathFromLoginShell")(
 });
 
 // Installers write PATH to the registry, which the server's launch-time PATH never sees again.
+// Returns whether PATH gained a directory.
 export const refreshWindowsPath = Effect.fn("refreshWindowsPath")(function* () {
-  if ((yield* HostProcess.Platform) !== "win32") return;
+  if ((yield* HostProcess.Platform) !== "win32") return false;
   const env = yield* HostProcess.Environment;
   const readEnvironment = yield* WindowsShellEnvironment;
   const { PATH: registryPath } = yield* readEnvironment(["PATH"], { loadProfile: false });
-  const mergedPath = mergePathValues(env.PATH ?? env.Path ?? env.path, registryPath, "win32");
-  if (mergedPath) setWindowsPath(env, mergedPath);
+  const currentPath = env.PATH ?? env.Path ?? env.path;
+  const mergedPath = mergePathValues(currentPath, registryPath, "win32");
+  if (!mergedPath || mergedPath === currentPath) return false;
+  setWindowsPath(env, mergedPath);
+  return true;
 });
 
 export const expandHomePath = Effect.fn(function* (input: string) {
