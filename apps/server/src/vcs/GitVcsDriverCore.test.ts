@@ -489,6 +489,12 @@ const wslMountInfo = (driveMountPoint: string) =>
     `2 1 0:52 / ${driveMountPoint} rw,noatime - 9p C:\\134 rw,aname=drvfs;path=C:\\;uid=1000`,
   ].join("\n");
 
+// Fixed before the layer reads mounts; real so macOS's symlinked tmpdir still sits under it.
+const wslDriveDir = NodePath.join(
+  NodeFS.realpathSync(NodeOS.tmpdir()),
+  `git-vcs-driver-wsl-drive-${process.pid}`,
+);
+
 const replaceKeepingStat = (filePath: string, contents: string) => {
   NodeFS.writeFileSync(`${filePath}.copy`, contents);
   NodeFS.utimesSync(`${filePath}.copy`, 1, 1);
@@ -502,7 +508,11 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const cwd = yield* makeTmpDir();
+      yield* fs.makeDirectory(wslDriveDir, { recursive: true });
+      yield* Effect.addFinalizer(() =>
+        fs.remove(wslDriveDir, { recursive: true }).pipe(Effect.ignore),
+      );
+      const cwd = yield* fs.makeTempDirectoryScoped({ directory: wslDriveDir });
       yield* initRepoWithCommit(cwd);
       yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
       yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
@@ -517,11 +527,14 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const runsPath = path.join(cwd, ".filter-runs");
       yield* fs.remove(runsPath, { force: true });
 
-      const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+      const alias = path.join(yield* makeTmpDir(), "alias");
+      NodeFS.symlinkSync(cwd, alias);
+
+      const status = yield* driver.statusDetailsLocal(alias, { includeBranchChanges: true });
 
       assert.isFalse(status.hasWorkingTreeChanges);
       assert.isFalse(yield* fs.exists(runsPath));
-    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(NodeOS.tmpdir())))),
+    }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo(wslDriveDir)))),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(

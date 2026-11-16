@@ -1034,8 +1034,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .readFileString("/proc/self/mountinfo")
           .pipe(Effect.orElseSucceed(() => ""))
       : "";
-  const pollStatConfig = (cwd: string) =>
-    windowsMountFor(driveMountInfo, cwd) === undefined ? [] : ["-c", "core.checkStat=minimal"];
+  // Untraced: it runs on every status poll, and off Linux it does no work.
+  const readPollStatConfig = Effect.fnUntraced(function* (cwd: string) {
+    if (driveMountInfo === "") return [];
+    // A symlinked alias must classify by the mount the checkout really lives on.
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
+    return windowsMountFor(driveMountInfo, physicalCwd) === undefined
+      ? []
+      : ["-c", "core.checkStat=minimal"];
+  });
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
     claimed: Deferred.Deferred<void>;
@@ -2365,8 +2372,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       ),
     );
+    const pollStatConfig = yield* readPollStatConfig(cwd);
     const statusArgs = [
-      ...pollStatConfig(cwd),
+      ...pollStatConfig,
       "status",
       "--porcelain=2",
       "--branch",
@@ -2433,7 +2441,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       executeGitWithStableDiagnostics(
         "GitVcsDriver.statusDetails.numstat",
         cwd,
-        [...pollStatConfig(cwd), "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.
@@ -3954,12 +3962,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
     }
     untrackedTotalsFailures.delete(cwd);
+    const pollStatConfig = yield* readPollStatConfig(cwd);
     const readNumstat = (ref: string) =>
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
         // Plumbing: porcelain diff refreshes and rewrites the real index, taking index.lock.
-        [...pollStatConfig(cwd), "diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
