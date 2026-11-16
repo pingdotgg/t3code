@@ -3246,6 +3246,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           turnEvent("turn/completed", turnIds[0]!),
           ...startTurn(1),
           patchDecision!,
+          // Full access answers new prompts itself; only the earlier patch reached the user.
+          ...approval({
+            id: 105,
+            turnId: turnIds[1]!,
+            kind: "commandExecution",
+            itemId: "full-access-command",
+            decision: "accept",
+          }),
+          ...approval({
+            id: 106,
+            turnId: turnIds[1]!,
+            kind: "fileChange",
+            itemId: "full-access-patch",
+            decision: "accept",
+          }),
           turnEvent("turn/completed", turnIds[1]!),
           ...startTurn(2),
           ...approval({
@@ -11691,22 +11706,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,
-            entries: [...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }), ...entries],
+            entries: [
+              ...codexReplayPreamble({
+                nativeThreadId,
+                nativeTurnId,
+                prompt,
+                // Full access answers approvals itself, so these prompts need a supervised turn.
+                turnPolicy: {
+                  approvalPolicy: "on-request",
+                  sandboxPolicy: { type: "workspaceWrite" },
+                },
+              }),
+              ...entries,
+            ],
           }),
           (event) =>
             event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
               ? Queue.offer(pending, event.runtimeRequest)
               : Effect.void,
         );
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`${scenario}-attempt`),
-            text: prompt,
-          }),
-        );
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`${scenario}-attempt`),
+          text: prompt,
+        });
+        yield* harness.runtime.startTurn({
+          ...turnInput,
+          runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "auto-accept-edits" },
+        });
         return {
           harness,
           answerNext: Queue.take(pending).pipe(
