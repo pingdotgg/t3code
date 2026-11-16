@@ -612,6 +612,8 @@ export interface AcpAdapterV2Flavor {
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
   readonly enablePostSettleContinuation?: boolean;
+  /** A native request after prompt settlement starts a continuation before it is handled. */
+  readonly wakeOnDetachedRequest?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -4000,6 +4002,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
         const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+          if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
           if (context.awaitingBackgroundHydration.size > 0) return true;
           if (context.pendingInjectedReport.size > 0) return true;
           for (const [taskId, toolCallId] of context.toolCallIdsByBackgroundTaskId) {
@@ -5248,7 +5251,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+          if (
+            !followsAgentWorkState &&
+            !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
+          )
+            return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -5271,7 +5278,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           (generation: number) =>
           <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             Effect.suspend(() =>
-              !followsAgentWorkState
+              !followsAgentWorkState &&
+              !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
                 ? effect
                 : Effect.acquireUseRelease(
                     runRuntimeCallbackAtGeneration(
@@ -5290,6 +5298,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           if (Option.isSome(token)) agentRequests.delete(token.value);
                           const context = yield* Ref.get(activeTurn);
                           if (context !== null) yield* settleIdleWork(context);
+                          if (context !== null && flavor.wakeOnDetachedRequest)
+                            yield* rearmDeferredFinalize(context);
                         }),
                       ).pipe(Effect.asVoid),
                   ),
@@ -6850,6 +6860,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
+              if (
+                postSettleContinuationEnabled &&
+                flavor.wakeOnDetachedRequest &&
+                nativeParams.sessionId !== (yield* Ref.get(activeSessionId))
+              ) {
+                return { outcome: { outcome: "cancelled" } } as const;
+              }
               const trackedTurn = yield* Ref.get(activeTurn);
               const params =
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
@@ -6887,7 +6904,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
+              if (
+                (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
+                (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
+              ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
