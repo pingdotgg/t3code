@@ -11,7 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { cloneUrlRepositoryPath } from "@t3tools/shared/cloneUrl";
-import { newProjectFolderName } from "@t3tools/shared/path";
+import { isExplicitRelativePath, isHostPath, newProjectFolderName } from "@t3tools/shared/path";
 import * as Arr from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
@@ -204,7 +204,10 @@ export function buildAddProjectRemoteSourceReadiness(
 
 export function getAddProjectInitialQuery(baseDirectory: string | null | undefined): string {
   const trimmed = baseDirectory?.trim() ?? "";
-  return trimmed.length === 0 ? "~/" : ensureBrowseDirectoryPath(trimmed);
+  if (trimmed.length === 0) return "~/";
+  // A bare relative setting such as `Desktop/dev` means a folder under home.
+  const isAnchored = trimmed === "~" || isHostPath(trimmed) || isExplicitRelativePath(trimmed);
+  return ensureBrowseDirectoryPath(isAnchored ? trimmed : `~/${trimmed}`);
 }
 
 export function getCloneDirectoryName(repositoryOrRemoteUrl: string | null | undefined): string {
