@@ -4,23 +4,29 @@ description: Removes the token actions/checkout leaves behind, so later steps ca
 # checkout keeps the token in a file under RUNNER_TEMP that .git/config includes, so
 # both go. `persist-credentials: false` fails in this repo: its cleanup runs `git
 # submodule foreach`, which stops at the vendored gitlinks under .repos (no .gitmodules).
-# Composite `bash` steps run with pipefail, and `git config --get-regexp` exits 1 when nothing matches.
 runs:
   using: composite
   steps:
     - name: Drop checkout credentials
       shell: bash
       run: |
+        # Status 1 means no match; any other failure stops the step.
+        lookup() {
+          local status=0
+          git -C "$dir" config --local "$@" || status=$?
+          if [ "$status" -gt 1 ]; then exit "$status"; fi
+        }
         for dir in . .trusted; do
           [ -e "$dir/.git" ] || continue
-          { git -C "$dir" config --local --get-regexp '^includeif\..*\.path$' || true; } | while read -r key file; do
+          lookup --get-regexp '^includeif\..*\.path$' | while read -r key file; do
             rm -f "$file"
             git -C "$dir" config --local --unset-all "$key"
           done
-          { git -C "$dir" config --local --name-only --get-regexp '^http\..*\.extraheader$' || true; } | while read -r key; do
+          lookup --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
             git -C "$dir" config --local --unset-all "$key"
           done
-          if git -C "$dir" config --local --get-regexp 'extraheader|includeif'; then
+          remaining="$(lookup --get-regexp 'extraheader|includeif')"
+          if [ -n "$remaining" ]; then
             echo "::error::checkout credentials are still configured in $dir"
             exit 1
           fi
