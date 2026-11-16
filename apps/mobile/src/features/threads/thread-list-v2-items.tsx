@@ -600,7 +600,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         enableTrackpadSwipe
         fullSwipeAction="primary"
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-        listAnimatesLayout={sidebarPane}
+        listAnimatesLayout
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
@@ -1592,7 +1592,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         enableTrackpadSwipe
         fullSwipeAction="primary"
         fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-        listAnimatesLayout={sidebarPane}
+        listAnimatesLayout
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
