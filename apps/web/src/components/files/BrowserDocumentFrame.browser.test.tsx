@@ -59,8 +59,11 @@ describe("HtmlRenderDocument", () => {
           document.getElementById("echo").textContent = note.value;
           extra().replaceWith(extra().cloneNode());
         });
+        // A real click fires change only on the radio it checks; restore must match.
+        var uncheckedPickChanges = 0;
         // Fills a later field without an input event, so its value only exists after this handler.
         document.addEventListener("change", function(event) {
+          if (event.target.name === "pick" && !event.target.checked) uncheckedPickChanges++;
           if (event.target.name === "pick") {
             document.querySelector('input[name="choice"]').value = event.target.value;
           }
@@ -78,6 +81,7 @@ describe("HtmlRenderDocument", () => {
             tags: Array.from(tags.selectedOptions, function(option) { return option.value; }),
             pick: document.querySelector('input[name="pick"]:checked').value,
             choice: document.querySelector('input[name="choice"]').value,
+            uncheckedPickChanges: uncheckedPickChanges,
             more: document.querySelector('input[name="more"]').checked,
             detail: detail() ? detail().value : null,
             echo: document.getElementById("echo").textContent
@@ -121,6 +125,7 @@ describe("HtmlRenderDocument", () => {
       tags: ["y", "z"],
       pick: "b",
       choice: "b",
+      uncheckedPickChanges: 0,
       more: true,
       detail: "shown",
       echo: "keep this",
@@ -138,6 +143,7 @@ describe("HtmlRenderDocument", () => {
           tags: [],
           pick: "a",
           choice: "a",
+          uncheckedPickChanges: 0,
           more: false,
           detail: null,
           echo: "",
