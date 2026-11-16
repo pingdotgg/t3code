@@ -467,9 +467,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.wallpaperDim !== DEFAULT_UNIFIED_SETTINGS.wallpaperDim
       ? ["Wallpaper dimming"]
       : []),
-    ...(settings.threadDetailsInSidebar !== DEFAULT_UNIFIED_SETTINGS.threadDetailsInSidebar
-      ? ["Thread details in sidebar"]
-      : []),
     ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
       ? ["Diff colors"]
       : []),
@@ -690,7 +687,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       wallpaper: DEFAULT_UNIFIED_SETTINGS.wallpaper,
       wallpaperBlur: DEFAULT_UNIFIED_SETTINGS.wallpaperBlur,
       wallpaperDim: DEFAULT_UNIFIED_SETTINGS.wallpaperDim,
-      threadDetailsInSidebar: DEFAULT_UNIFIED_SETTINGS.threadDetailsInSidebar,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,

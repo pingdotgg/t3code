@@ -6,7 +6,6 @@ import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
 import { observeResize } from "../../lib/observeResize";
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useThreadDetailsSidebarSlot } from "./threadDetailsSidebarSlot";
 
 function panelWidthTransitions(element: HTMLElement) {
   const panels = element
@@ -135,14 +134,11 @@ export function ChatCanvas({
       stopObserving();
     };
   }, [store, composerOverlayElement, timelineElement, detailsCardTopInset]);
-  const detailsSidebarSlot = useThreadDetailsSidebarSlot(threadRef);
-  // Details shown in the sidebar take no room in the canvas.
-  const detailsCardInlineOpen =
-    useRightPanelStore((state) =>
-      threadRef === null
-        ? false
-        : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
-    ) && detailsSidebarSlot === null;
+  const detailsCardInlineOpen = useRightPanelStore((state) =>
+    threadRef === null
+      ? false
+      : selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+  );
   const model = resolveChatCanvasModel({
     measurements,
     detailsCardMeasurement,

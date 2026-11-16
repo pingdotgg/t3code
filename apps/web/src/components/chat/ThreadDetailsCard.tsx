@@ -17,8 +17,6 @@ import {
   resolveThreadDetailsCardDensity,
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
-import { createPortal } from "react-dom";
-import { useThreadDetailsSidebarSlot } from "./threadDetailsSidebarSlot";
 import { requestWorkspaceFocus } from "../../lib/workspaceFocus";
 
 export function ThreadDetailsCard({
@@ -49,7 +47,6 @@ export function ThreadDetailsCard({
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),
   );
-  const sidebarSlot = useThreadDetailsSidebarSlot(threadRef);
   const measurementKey = `${threadRef.environmentId}:${threadRef.threadId}:${preferredPlacement?.width ?? "popup"}:${contentKey}`;
   const [measurements, setMeasurements] = useState({
     key: measurementKey,
@@ -134,7 +131,7 @@ export function ThreadDetailsCard({
   return (
     <Popover
       handle={handle}
-      open={mode === "popover" && popoverOpen && sidebarSlot === null}
+      open={mode === "popover" && popoverOpen}
       onOpenChange={(open, details) => {
         const target =
           details.reason === "focus-out"
@@ -149,21 +146,7 @@ export function ThreadDetailsCard({
         useRightPanelStore.getState().setThreadPanelOpen(threadRef, "popover", open);
       }}
     >
-      {sidebarSlot && inlineOpen
-        ? createPortal(
-            <div
-              {...detailsArea}
-              data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}
-              data-density="full"
-              data-thread-details-panel="sidebar"
-              onContextMenu={onContextMenu}
-            >
-              {children("full")}
-            </div>,
-            sidebarSlot,
-          )
-        : null}
-      {placement && inlineOpen && sidebarSlot === null ? (
+      {placement && inlineOpen ? (
         <aside
           {...detailsArea}
           data-workspace-focus-key={`details:${threadRef.environmentId}:${threadRef.threadId}`}

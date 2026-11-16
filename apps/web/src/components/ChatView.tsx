@@ -314,7 +314,6 @@ import {
 } from "./chat/PanelLayoutControls";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel } from "./chat/ThreadDetailsPanel";
-import { useThreadDetailsSidebarSlot } from "./chat/threadDetailsSidebarSlot";
 import {
   formatCommandProgress,
   truncateCommandLabel,
@@ -1982,10 +1981,9 @@ export default function ChatView(props: ChatViewProps) {
   const threadPanelInlineOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, activeThreadRef, "inline"),
   );
-  const threadDetailsSidebarSlot = useThreadDetailsSidebarSlot(activeThreadRef);
   // Selects only the mode, so canvas resizes rerender the chat view only when the
   // card switches presentation.
-  const threadPanelCanvasPresentation = useStore(
+  const threadPanelPresentation = useStore(
     chatCanvasStore,
     (state) =>
       resolveChatCanvasModel({
@@ -1993,12 +1991,9 @@ export default function ChatView(props: ChatViewProps) {
         detailsCardMeasurement: state.detailsCardMeasurement,
         threadRef: activeThreadRef,
         preview: canvasPreview,
-        detailsCardInlineOpen: threadPanelInlineOpen && threadDetailsSidebarSlot === null,
+        detailsCardInlineOpen: threadPanelInlineOpen,
       }).detailsCardMode,
   );
-  // Details in the sidebar open and close with the inline flag, whatever room the canvas has.
-  const threadPanelPresentation =
-    threadDetailsSidebarSlot === null ? threadPanelCanvasPresentation : "inline";
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,

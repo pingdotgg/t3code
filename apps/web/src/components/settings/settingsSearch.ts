@@ -379,12 +379,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
-    id: "thread-details-in-sidebar",
-    title: "Thread details in sidebar",
-    to: "/settings/appearance",
-    searchTerms: ["panel card sidebar under thread row placement location"],
-  },
-  {
     id: "effort-display",
     title: "Effort display",
     to: "/settings/appearance",
