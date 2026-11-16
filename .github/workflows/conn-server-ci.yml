@@ -44,8 +44,8 @@ defaults:
 jobs:
   rust:
     name: Format, Clippy, Tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 12
     env:
       # The test build of the whole workspace filled the runner's disk on 2026-11-14 ("No space
       # left on device" in the Tests step). Smaller debug info and no incremental data keep
@@ -122,8 +122,8 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 3
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -142,8 +142,8 @@ jobs:
 
   musl:
     name: Linux musl release build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

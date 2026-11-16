@@ -40,8 +40,8 @@ defaults:
 jobs:
   tarball:
     name: Release tarball (linux-x64)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
       release: ${{ steps.version.outputs.release }}
@@ -116,8 +116,8 @@ jobs:
     name: GitHub Release
     needs: tarball
     if: ${{ needs.tarball.outputs.release == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CONN_SERVER_RUNNER || 'ubuntu-24.04' }}
+    timeout-minutes: 3
     permissions:
       contents: write
     steps:
