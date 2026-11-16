@@ -24,6 +24,10 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// view's own during a fold; with no size change after that, nothing else would recheck.
   private weak var observedWindow: UIWindow?
   private var windowTraitRegistration: (any UITraitChangeRegistration)?
+  // DIAGNOSTIC BUILD ONLY: live overlay of the bleed decision.
+  private var layoutCount = 0
+  private let diagLabel = UILabel()
+  private var diagTimer: Timer?
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -37,13 +41,18 @@ final class T3ScrollEdgeBleedView: ExpoView {
   }
 
   deinit {
-    MainActor.assumeIsolated { detach() }
+    MainActor.assumeIsolated {
+      diagTimer?.invalidate()
+      diagLabel.removeFromSuperview()
+      detach()
+    }
   }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
     observeWindowTraits()
     if window == nil { detach() } else { setNeedsLayout() }
+    updateDiagTimer()
   }
 
   override func safeAreaInsetsDidChange() {
@@ -81,6 +90,7 @@ final class T3ScrollEdgeBleedView: ExpoView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
+    layoutCount += 1
     guard window != nil, let found = findScrollView(), let parent = found.superview else { return }
     if found !== scrollView {
       detach()
@@ -166,6 +176,81 @@ final class T3ScrollEdgeBleedView: ExpoView {
       container.layer.masksToBounds = false
     }
     applied = bleeding
+  }
+
+  private func updateDiagTimer() {
+    diagTimer?.invalidate()
+    diagTimer = nil
+    guard window != nil else {
+      diagLabel.removeFromSuperview()
+      return
+    }
+    diagLabel.numberOfLines = 0
+    diagLabel.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+    diagLabel.textColor = .white
+    diagLabel.backgroundColor = UIColor.black.withAlphaComponent(0.75)
+    diagLabel.isUserInteractionEnabled = false
+    diagTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.updateDiag() }
+    }
+    updateDiag()
+  }
+
+  private func updateDiag() {
+    guard let window else { return }
+    if diagLabel.superview !== window { window.addSubview(diagLabel) }
+    window.bringSubviewToFront(diagLabel)
+    diagLabel.text = diagnostics()
+    let frame = convert(bounds, to: window)
+    let size = diagLabel.sizeThatFits(CGSize(width: min(frame.width - 16, 380), height: 300))
+    diagLabel.frame = CGRect(x: frame.minX + 8, y: frame.midY - 60, width: size.width, height: size.height)
+  }
+
+  private func diagnostics() -> String {
+    func f(_ v: CGFloat) -> String { String(format: "%.1f", v) }
+    var lines: [String] = []
+    var edges = "edge api n/a"
+    #if canImport(UIKit, _version: 9127.0.85)
+    if #available(iOS 27.1, *) {
+      func d(_ t: UITraitCollection?) -> String {
+        guard let t else { return "nil" }
+        switch t.verticalBarEdge {
+        case .leading: return "L"
+        case .trailing: return "T"
+        default: return "-"
+        }
+      }
+      edges = "edge root \(d(window?.rootViewController?.traitCollection)) win \(d(window?.traitCollection)) own \(d(traitCollection))"
+    }
+    #endif
+    lines.append(edges)
+    if let window {
+      let s = window.safeAreaInsets
+      lines.append("window w\(f(window.bounds.width)) safe L\(f(s.left)) R\(f(s.right))")
+    }
+    var ancestor = superview
+    var depth = 1
+    var found = "no inset ancestor"
+    while let view = ancestor {
+      let insets = view.safeAreaInsets
+      if insets.left > 0 || insets.right > 0 {
+        let r = convert(bounds, to: view)
+        found = "d\(depth) \(type(of: view)) L\(f(insets.left)) R\(f(insets.right)) gapL \(f(r.minX - view.bounds.minX - insets.left)) gapR \(f(view.bounds.maxX - insets.right - r.maxX))"
+        break
+      }
+      ancestor = view.superview
+      depth += 1
+    }
+    lines.append(found)
+    let live = verticalBarBleed()
+    lines.append("bleed applied L\(f(bleed.left)) R\(f(bleed.right)) live L\(f(live.left)) R\(f(live.right))")
+    if let scrollView, let container {
+      lines.append("sv x\(f(scrollView.frame.minX)) w\(f(scrollView.frame.width)) cont w\(f(container.bounds.width)) clip \(container.layer.masksToBounds) content \(content != nil)")
+    } else {
+      lines.append("no scroll view")
+    }
+    lines.append("layouts \(layoutCount) self w\(f(bounds.width))")
+    return lines.joined(separator: "\n")
   }
 
   private func detach() {
