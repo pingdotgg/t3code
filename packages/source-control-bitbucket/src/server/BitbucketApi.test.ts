@@ -21,6 +21,7 @@ import type * as SourceControlHost from "@t3tools/source-control-core/server/Sou
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import { bitbucketProviderFailure } from "./BitbucketPullRequestProvider.ts";
 
 type HostGit = SourceControlHost.SourceControlHost["Service"]["git"];
 
@@ -1016,6 +1017,29 @@ it.effect("pauses background reads after a 429 until Bitbucket's retry-after pas
 
     yield* TestClock.adjust("1 second");
     yield* lookup;
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("reports a missing credential, not a rate limit, when anonymous reads get 429", () => {
+  const { layer } = makeLayer({
+    env: { T3CODE_BITBUCKET_API_BASE_URL: "https://api.test.local/2.0" },
+    response: () =>
+      new Response("Rate limit exceeded", { status: 429, headers: { "retry-after": "60" } }),
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    const read = bitbucket.getPullRequest({ cwd: "/repo", reference: "#42" });
+
+    // A missing credential is permanent: a watch that only ever sees "rate-limited" waits forever.
+    assert.strictEqual(
+      bitbucketProviderFailure(yield* Effect.flip(read)).reason,
+      "unauthenticated",
+    );
+    assert.strictEqual(
+      bitbucketProviderFailure(yield* Effect.flip(read)).reason,
+      "unauthenticated",
+    );
   }).pipe(Effect.provide(layer));
 });
 
