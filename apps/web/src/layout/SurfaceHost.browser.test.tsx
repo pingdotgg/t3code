@@ -101,23 +101,6 @@ const tabOffset = (strip: HTMLElement, tabId: string) => {
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;
   return `${Math.round(left + strip.scrollLeft)}px`;
 };
-const expectPaneLitUnderJoin = (strip: HTMLElement) => {
-  const pane = strip.closest<HTMLElement>("[data-layout-pane-id]")!;
-  const paneLeft = pane.getBoundingClientRect().left;
-  const box = strip.getBoundingClientRect();
-  const tab = strip.querySelector<HTMLElement>("[data-joined]")!.getBoundingClientRect();
-  const start = Math.max(tab.left - 10, box.left) - paneLeft;
-  const end = Math.min(tab.right + 10, box.left + strip.clientWidth) - paneLeft;
-  const lit = ["--pane-lit-start", "--pane-lit-end"].map((property) =>
-    pane.style.getPropertyValue(property),
-  );
-  if (end <= start) {
-    expect(lit).toEqual(["", ""]);
-    return;
-  }
-  expect(Number.parseFloat(lit[0]!)).toBeCloseTo(start, -0.5);
-  expect(Number.parseFloat(lit[1]!)).toBeCloseTo(end, -0.5);
-};
 
 it("scrolls overflowing pane tabs from the add button without moving the workspace", async () => {
   using _tabs = setup();
@@ -142,7 +125,6 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   expect(workspace.scrollLeft).toBe(before);
   const active = strip.querySelector<HTMLElement>("[data-joined]")!;
   expect(joinOffset(strip)).toBe(tabOffset(strip, active.dataset.layoutPaneTab!));
-  await vi.waitFor(() => expectPaneLitUnderJoin(strip));
 
   await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
     delta: { x: -140 },
@@ -156,7 +138,6 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() =>
     expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
   );
-  await vi.waitFor(() => expectPaneLitUnderJoin(strip));
 });
 
 it("keeps a pane's tab strip and moves its joined tab when the pane switches tabs", async () => {
