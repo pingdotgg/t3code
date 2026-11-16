@@ -4417,16 +4417,16 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  // Pi 1.5 emits compaction_start/end for every failed manual compact; older Pi fails before starting.
+  // A failed compact can respond before starting or after compaction_start/end.
   it.effect.each([
     {
-      name: "fails a compact after starting=false",
+      name: "fails a compact Pi rejects before starting",
       compactionEnd: null,
       error: "Nothing to compact (session too small)",
       status: "failed",
     },
     {
-      name: "fails a compact after starting=true",
+      name: "fails a compact after compaction starts",
       compactionEnd: { aborted: false, errorMessage: "Compaction failed: model request failed" },
       error: "model request failed",
       status: "failed",
