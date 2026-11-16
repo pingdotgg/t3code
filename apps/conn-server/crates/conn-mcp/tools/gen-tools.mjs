@@ -292,7 +292,7 @@ function inputRule(ast) {
     if (annotations.expected === "a non-blank string") return [{id:"nonBlank",expected:annotations.expected}];
     const r = annotations.representation;
     if (r === undefined) return [];
-    const supported = ["isMinLength","isMaxLength","isInt","isGreaterThanOrEqualTo","isLessThanOrEqualTo","isPattern"];
+    const supported = ["isTrimmed","isMinLength","isMaxLength","isInt","isGreaterThanOrEqualTo","isLessThanOrEqualTo","isPattern"];
     const id = r.id.replace("effect/schema/", "");
     if (!supported.includes(id)) throw new Error(`thread tool input needs check ${r.id}`);
     return [{id,expected:annotations.expected,...r.payload}];
@@ -300,10 +300,10 @@ function inputRule(ast) {
   return rule;
 }
 const threadInputs = {};
-for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"]]) {
+for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["credentials","CredentialsToolkit"],["panels","PanelsToolkit"]]) {
   const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
   for (const [name,tool] of Object.entries(toolkit.tools)) {
-    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list"].includes(name)) continue;
+    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","save_test_login","request_credentials","database_query"].includes(name)) continue;
     threadInputs[name] = inputRule(tool.parametersSchema.ast);
   }
 }

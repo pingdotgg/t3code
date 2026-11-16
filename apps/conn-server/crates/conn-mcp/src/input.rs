@@ -200,6 +200,7 @@ fn decode(
             .or_else(|| value.as_array().map(Vec::len));
         let valid = match check["id"].as_str().unwrap_or_default() {
             "nonBlank" => value.as_str().is_some_and(|s| !s.trim().is_empty()),
+            "isTrimmed" => value.as_str().is_some_and(|s| s == s.trim()),
             "isMinLength" => {
                 length.is_some_and(|n| n as u64 >= check["minLength"].as_u64().unwrap_or(0))
             }

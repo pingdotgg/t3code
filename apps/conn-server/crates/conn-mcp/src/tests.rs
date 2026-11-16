@@ -65,6 +65,7 @@ fn fixture_with(
             hub: conn_vcs::VcsHub::default(),
         }),
         panels: Some(conn_features::panels::PanelBroker::default()),
+        test_logins: Some(conn_features::test_logins::TestLogins::new(&dir)),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
             engine.clone(),
@@ -1697,7 +1698,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 13] = [
+const NAMED_NOT_SERVED: [&str; 12] = [
     "device_list",
     "device_open",
     "device_screenshot",
@@ -1706,7 +1707,6 @@ const NAMED_NOT_SERVED: [&str; 13] = [
     "html_render",
     "preview_open",
     "preview_status",
-    "request_credentials",
     "t3_environment_link",
     "t3_environment_links",
     "unwatch_pull_request",
@@ -1779,6 +1779,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
+        test_logins: base.service.config.test_logins.clone(),
         engine,
         environment_id: config.environment_id.clone(),
         label: config.label.clone(),
@@ -2723,5 +2724,158 @@ async fn saved_secret_refs_sign_webhooks_with_project_scope_one_use_and_safe_rep
             .unwrap()
             .contains("test-sign-key")
     );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_logins_save_find_and_hide_secrets() {
+    let f = fixture("test-logins");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    for tool in ["save_test_login", "request_credentials", "database_query"] {
+        not_offered(&mut swamp, tool, json!({})).await;
+    }
+    let thread = launch_as_swamp(&mut swamp, "Logins", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let saved = agent.ok("save_test_login", json!({"url":" https://www.example.test/login ","username":" admin ","password":" secret password ","label":" Admin ","otpSecret":" OTP "})).await;
+    assert_eq!(saved["createdBy"], "agent");
+    assert_eq!(saved["label"], "Admin");
+    assert_eq!(saved["hasOtp"], true);
+    assert!(saved.get("password").is_none());
+    assert!(saved.get("otpSecret").is_none());
+    let found = agent
+        .ok(
+            "request_credentials",
+            json!({"domain":"http://example.test:8080/sign-in"}),
+        )
+        .await;
+    assert_eq!(
+        found,
+        json!({"items":[{"id":saved["id"],"title":"Admin","urls":["https://www.example.test/login"],"username":" admin ","source":"test"}]})
+    );
+    for domain in ["sub.example.test", "not a host", "ftp://example.test"] {
+        assert_eq!(
+            agent
+                .ok("request_credentials", json!({"domain":domain}))
+                .await,
+            json!({"items":[]})
+        );
+    }
+    for (tool, args) in [
+        (
+            "save_test_login",
+            json!({"url":"x","username":"","password":"x"}),
+        ),
+        ("request_credentials", json!({"domain":" "})),
+    ] {
+        assert_eq!(rpc_error(&mut agent, tool, args).await.0, -32602);
+    }
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.clone().into())
+        .await
+        .unwrap();
+    assert!(!projection.to_string().contains("secret password"));
+    assert!(!projection.to_string().contains("OTP"));
+    dispatch(
+        &f,
+        json!({"type":"thread.stop","commandId":"stop-logins","threadId":thread}),
+    )
+    .await;
+    swamp
+        .ok(
+            "t3_thread_wait",
+            json!({"threadId":thread,"timeoutMs":1000}),
+        )
+        .await;
+    assert_eq!(
+        agent
+            .failure(
+                "save_test_login",
+                json!({"url":"x","username":"u","password":"p"})
+            )
+            .await
+            .0,
+        "parent_not_active"
+    );
+    assert_eq!(
+        agent
+            .ok("request_credentials", json!({"domain":"example.test"}))
+            .await,
+        found
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn database_query_forwards_to_the_desktop_and_returns_its_result() {
+    let f = fixture("database-query");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Database", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    assert!(
+        plain_failure(&mut agent, "database_query", json!({"sql":"select 1"}))
+            .await
+            .contains("No Conn desktop app")
+    );
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    let database = json!({"connection":"Development","columns":["id"],"rowCount":30.0,"rows":[{"id":1}],"truncated":true});
+    let (result, ()) = tokio::join!(
+        agent.ok(
+            "database_query",
+            json!({"sql":" select 1 ","connection":" Development ","focusWindow":false})
+        ),
+        async {
+            let request = desktop.recv().await.unwrap();
+            assert_eq!(request.thread_id, thread);
+            assert_eq!(request.sql.as_deref(), Some("select 1"));
+            assert_eq!(request.connection.as_deref(), Some("Development"));
+            assert_eq!(request.run, Some(true));
+            assert!(!request.focus_window);
+            broker.respond(from_json(json!({"requestId":request.request_id,"ok":true,"deviceName":"Mac","database":database})).unwrap());
+        }
+    );
+    let mut expected = database;
+    expected["shownOn"] = json!("Mac");
+    assert_eq!(result, expected);
+    for (response, message) in [
+        (
+            json!({"ok":true}),
+            "The Conn desktop showed the database panel but sent no result. It may run an older Conn.",
+        ),
+        (
+            json!({"ok":false,"error":"Only read-only queries are allowed."}),
+            "Only read-only queries are allowed.",
+        ),
+    ] {
+        let (failure, ()) = tokio::join!(
+            plain_failure(
+                &mut agent,
+                "database_query",
+                json!({"sql":"delete from users"})
+            ),
+            async {
+                let request = desktop.recv().await.unwrap();
+                let mut response = response;
+                response["requestId"] = json!(request.request_id);
+                broker.respond(from_json(response).unwrap());
+            }
+        );
+        assert_eq!(failure, message);
+    }
+    assert_eq!(
+        plain_failure(&mut agent, "database_query", json!({"sql":"select 1"})).await,
+        "No Conn desktop showed the database panel within 90 s."
+    );
+    for sql in [" ".to_owned(), "x".repeat(64_001)] {
+        assert_eq!(
+            rpc_error(&mut agent, "database_query", json!({"sql":sql}))
+                .await
+                .0,
+            -32602
+        );
+    }
     f.service.config.engine.shutdown().await;
 }

@@ -19,6 +19,7 @@ mod secrets;
 pub mod server;
 mod source_control;
 pub mod terminal;
+mod test_logins;
 mod text_generation;
 pub mod vcs;
 
@@ -45,6 +46,7 @@ pub struct Deps {
     pub panels: Option<conn_features::panels::PanelBroker>,
     /// Shared by secret card answers and the agent secret tool.
     pub secrets: Option<conn_features::secrets::SecretRequests>,
+    pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
     /// Text generators (`crate::text_generation`); without it `listTextGeneratorModels` is not
@@ -73,6 +75,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     terminal::register(table, deps);
     scheduled::register(table, deps);
     secrets::register(table, deps);
+    test_logins::register(table, deps);
     panels::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);

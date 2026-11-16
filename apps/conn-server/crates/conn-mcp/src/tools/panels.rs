@@ -71,3 +71,35 @@ pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .map_err(|e| ToolError::Message(e.message))?;
     Ok(json!({"panel":panel,"shownOn":shown.device_name.unwrap_or_else(|| "Conn desktop".into())}))
 }
+
+pub(super) async fn database_query(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let caller = cx.require_thread("This tool")?;
+    cx.writing_caller().await?;
+    let broker = cx
+        .config()
+        .panels
+        .as_ref()
+        .ok_or_else(|| fail("capability_denied", "Panel requests are not supported."))?;
+    let mut request = json!({"requestId":"pending","threadId":caller.thread_id,"panel":"database","sql":args.get("sql"),"run":true,"focusWindow":bool_arg(args,"focusWindow").unwrap_or(true)});
+    if let Some(connection) = args.get("connection")
+        && let Some(fields) = request.as_object_mut()
+    {
+        fields.insert("connection".into(), connection.clone());
+    }
+    let shown = broker
+        .show(
+            from_json(request).map_err(super::internal)?,
+            Duration::from_secs(90),
+        )
+        .await
+        .map_err(|e| ToolError::Message(e.message))?;
+    let database = shown.database.ok_or_else(||ToolError::Message("The Conn desktop showed the database panel but sent no result. It may run an older Conn.".into()))?;
+    let mut result = conn_contract::to_json(&database);
+    if let Some(fields) = result.as_object_mut() {
+        fields.insert(
+            "shownOn".into(),
+            json!(shown.device_name.unwrap_or_else(|| "Conn desktop".into())),
+        );
+    }
+    Ok(result)
+}

@@ -406,6 +406,10 @@ const modelManifestRs = rustfmt(
 const LIMITED_METHODS = [
   "assets.createUrl",
   "secrets.answerRequest",
+  "testLogins.save",
+  "testLogins.update",
+  "testLogins.remove",
+  "testLogins.reveal",
   "panels.respond",
   "server.listTextGeneratorModels",
   "terminal.attach",
@@ -441,7 +445,8 @@ function limitNode(ast) {
   if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) node.nonBlank = true;
   for (const r of representations(ast)) {
     const p = r.payload;
-    if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
+    else if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
     else if (r.id === "effect/schema/isPattern") {
       // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
       const flags = p.flags.replace("u", "");

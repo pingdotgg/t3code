@@ -556,6 +556,9 @@ const steps = [
   // send_to_user acts as the calling thread; its argument check runs first.
   ["panel_open", () => ({ panel: "files" })],
   ["panel_open", () => ({ panel: "browser", url: "https://example.com" })],
+  ["save_test_login", () => ({url:"http://example.test",username:"tester",password:"fixture-only"})],
+  ["request_credentials", () => ({domain:"example.test"})],
+  ["database_query", () => ({sql:"select 1"})],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check" })],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check", delivery: "file", value: "test-only" })],
   ["send_to_user", () => ({ message: "hi" })],
@@ -659,6 +662,14 @@ if (noModel) {
   await Promise.all(agents.map((agent) => agent.initialize()));
   const state = [{},{}];
   const agentSteps = [
+    ["save_test_login", () => ({url:" https://www.example.test/login ",username:" tester ",password:"fixture-only",label:" Tester ",otpSecret:" TEST "}), (v) => ({...v,id:"<id>",createdAt:"<time>"}), (c,v) => {c.loginId=v.id;}],
+    ["request_credentials", () => ({domain:"http://example.test:8080/login"}), (v) => ({items:v.items.map(item=>({...item,id:"<id>"}))})],
+    ["request_credentials", () => ({domain:"other.example.test"})],
+    ["request_credentials", () => ({domain:"not a host"})],
+    ["request_credentials", () => ({domain:" "})],
+    ["save_test_login", () => ({url:"example.test",username:"",password:"fixture-only"})],
+    ["database_query", () => ({sql:"select 1"})],
+    ["database_query", () => ({sql:" "})],
     ["t3_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status,createdBy:t.createdBy,creationSource:t.creationSource,providerInstanceId:t.providerInstanceId,model:t.model})), (c,v) => {c.targetThreadId=v.threads[0].threadId;}],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status}))],
@@ -711,6 +722,16 @@ if (noModel) {
     }));
     report(`calling thread ${tool}: ${canonical(values[0]) === canonical(values[1]) ? "same outcome" : JSON.stringify(values)}`, canonical(values[0]) === canonical(values[1]));
   }
+  report("calling thread test login saved on both servers",state.every((c) => typeof c.loginId === "string"));
+  const loginFiles = [NodePath.join(root,"ts","base","userdata","secrets","test-logins.bin"), NodePath.join(root,"rust","state","secrets","test-logins.bin")];
+  const storedLogins = loginFiles.map((file) => {
+    const value = JSON.parse(NodeFS.readFileSync(file,"utf8"));
+    return {...value,logins:value.logins.map((login) => ({...login,id:"<id>",createdAt:"<time>"}))};
+  });
+  report("test login disk format and exact secret bytes",canonical(storedLogins[0]) === canonical(storedLogins[1]) && storedLogins[0].logins[0].password === "fixture-only");
+  for (const file of loginFiles) NodeFS.writeFileSync(file,"invalid fixture store",{mode:0o600});
+  const corruptLoginResults = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"example.test"}).then(outcome)));
+  report("test login store failure text",corruptLoginResults.every((result) => result.kind === "failure") && canonical(corruptLoginResults[0]) === canonical(corruptLoginResults[1]));
   const setup = await Promise.all(state.map(async (c,i) => {
     const text = await fileText(NodePath.join(c.worktreePath,"handoff-setup.txt"));
     const lines = text.trimEnd().split("\n");

@@ -23,6 +23,7 @@ mod pull_requests;
 mod scheduled;
 mod secrets;
 mod tasks;
+mod test_logins;
 mod threads;
 mod worktree;
 
@@ -55,7 +56,7 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 43] = [
+pub(crate) const HANDLED: [&str; 46] = [
     "create_threads",
     "t3_attachment_prepare_upload",
     "t3_attachment_discard",
@@ -65,6 +66,9 @@ pub(crate) const HANDLED: [&str; 43] = [
     "t3_worktree_status",
     "panel_open",
     "request_secret",
+    "save_test_login",
+    "request_credentials",
+    "database_query",
     "t3_background_wait",
     "link_pull_request",
     "link_pull_requests",
@@ -148,6 +152,9 @@ pub(crate) async fn call(
         "t3_thread_organize" => manage::organize(&cx, &args).await,
         "panel_open" => panels::open(&cx, &args).await,
         "request_secret" => secrets::request(&cx, &args).await,
+        "save_test_login" => test_logins::save(&cx, &args).await,
+        "request_credentials" => test_logins::request(&cx, &args).await,
+        "database_query" => panels::database_query(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
         "t3_background_wait" => background::wait(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,

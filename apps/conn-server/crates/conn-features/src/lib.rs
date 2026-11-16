@@ -8,3 +8,4 @@ pub mod scheduled;
 
 pub mod panels;
 pub mod secrets;
+pub mod test_logins;

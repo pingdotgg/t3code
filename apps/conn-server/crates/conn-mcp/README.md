@@ -357,3 +357,15 @@ pinning. No browser capability is advertised and no hidden browser is started.
 one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
 the same hidden-tool result on both servers. The `url` dependency is already linked through
 source control; it validates the tool's http(s) URL input without a second parser.
+
+## Test logins and database panel
+
+`save_test_login` and `request_credentials` use the shared test-login store. They return
+metadata only. They are hidden from outside clients; saving requires a live calling
+thread, while listing also works after its run ends. `fill_credential` and the site
+credential RPCs remain unserved until the desktop preview relay exists.
+
+`database_query` sends the SQL and connection name to the existing desktop panel broker,
+waits up to 90 seconds, and returns the desktop's result with `shownOn`. The desktop owns
+read-only enforcement, query limits and the 20-row preview, as in T3. The Linux server
+opens no database connection and needs no database driver. No desktop means a clear error.
