@@ -23,6 +23,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { checkAcpRegistryProviderStatus } from "./driver.ts";
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
@@ -1546,6 +1547,51 @@ describe("AcpRegistrySupport", () => {
 
       expect(inspection).toMatchObject({ status: "ready", agentId: agent.id });
       expect(requests).toBe(0);
+
+      const emptyCache = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-empty-cache-",
+      });
+      const coldResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: emptyCache,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const instanceId = ProviderInstanceId.make("acpRegistry_restored");
+      const recovered = yield* checkAcpRegistryProviderStatus(
+        {
+          instanceId,
+          displayName: "Restored ACP",
+          accentColor: undefined,
+          continuationKey: "restored",
+          settings: settings({ commandPath: process.execPath }),
+          cwd: cacheDir,
+          environment: process.env,
+        },
+        () =>
+          Effect.succeed({
+            probe: {
+              instanceId,
+              ready: true,
+              icon: null,
+              authMethods: [],
+              models: [],
+              currentModelId: null,
+              configOptions: [],
+              sessionManagement: {
+                canList: false,
+                canLoad: false,
+                canResume: false,
+                canLogout: false,
+                canDelete: false,
+                canConfigureProviders: false,
+              },
+            },
+            slashCommands: [],
+            skills: [],
+          }),
+      ).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, coldResolver));
+      expect(recovered.installed).toBe(true);
+      expect(recovered.status).toBe("ready");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1553,6 +1599,81 @@ describe("AcpRegistrySupport", () => {
           requests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("inspects through a corrupt disk cache by fetching and rewriting it", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-corrupt-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, "{not json");
+      const options = { cacheDir, toolsDir: `${cacheDir}/tools`, registryUrl };
+
+      const recovered = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+      expect(yield* recovered.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(requests).toBe(1);
+
+      const restarted = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(requests).toBe(1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("recovers inspection once the registry is reachable after an offline check", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let online = false;
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-offline-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      const offline = yield* resolver.inspect(settings()).pipe(Effect.flip);
+      expect(offline.reason).toBe("registry_unavailable");
+
+      online = true;
+      const concurrent = yield* Effect.all(
+        [resolver.inspect(settings()), resolver.inspect(settings())],
+        { concurrency: "unbounded" },
+      );
+      expect(concurrent).toMatchObject([{ status: "ready" }, { status: "ready" }]);
+      expect(requests).toBe(2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              online
+                ? new Response(makeRegistry(agent))
+                : new Response("unavailable", { status: 503 }),
+            ),
           );
         }),
       ),
