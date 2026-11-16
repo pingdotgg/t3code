@@ -819,6 +819,34 @@ it.effect("moves past roll-ups that all contain one bad summary", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("keeps a skipped stretch skipped when an outage fills the failure ledger", () => {
+  let down = false;
+  const model = scripted((input) =>
+    down || input.messages[0]?.text === rawText(1)
+      ? Effect.fail(failingStretch("empty"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const skippedCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === rawText(1)).length;
+  return Effect.gen(function* () {
+    // Leaves over the even messages leave each odd message a stretch of its own.
+    const leaves = 70;
+    yield* seedThread(leaves * 2 + 6);
+    for (let index = 0; index < leaves; index++) yield* persistSummary(index, [index * 2]);
+    yield* summarize;
+    yield* summarize;
+    assert.include((yield* list).lastPass?.reason ?? "", "Skipped a stretch");
+
+    down = true;
+    for (let pass = 0; pass < 25; pass++) yield* summarize;
+    down = false;
+    for (let pass = 0; pass < 10; pass++) yield* summarize;
+    assert.equal(skippedCalls(), 2);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("summarizes the next stretch when the model cites none of the chunk", () => {
   const model = scripted((input) =>
     Effect.succeed({
