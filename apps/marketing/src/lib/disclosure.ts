@@ -6,6 +6,10 @@ export function animateDetails(details: HTMLDetailsElement) {
 
   let animation: Animation | undefined;
   let expanded = details.open;
+  // A native toggle, taken while reduced motion is on, bypasses the click handler below.
+  details.addEventListener("toggle", () => {
+    expanded = details.open;
+  });
 
   summary.addEventListener("click", (event) => {
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;

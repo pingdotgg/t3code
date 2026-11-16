@@ -222,15 +222,20 @@ const voices = [
     const commandText = document.querySelector("[data-command]");
     if (commandText) commandText.textContent = command;
 
+    const fallback = channel === "stable" ? RELEASES_URL : NIGHTLY_RELEASES_URL;
+    const rows = document.querySelectorAll<HTMLAnchorElement>("[data-download]");
+    // Until the release loads, a click must not download the other channel's build.
+    for (const row of rows) row.href = fallback;
+
     let assets: ReleaseAsset[] = [];
     try {
       assets = (await fetchLatestRelease(channel)).assets ?? [];
     } catch {}
     if (channel !== activeChannel) return;
 
-    for (const row of document.querySelectorAll<HTMLAnchorElement>("[data-download]")) {
+    for (const row of rows) {
       const asset = assets.find((entry) => entry.name.endsWith(ASSET_SUFFIX[row.dataset.download as Platform]));
-      row.href = asset?.browser_download_url ?? (channel === "stable" ? RELEASES_URL : NIGHTLY_RELEASES_URL);
+      row.href = asset?.browser_download_url ?? fallback;
     }
   }
 
