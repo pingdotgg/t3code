@@ -190,17 +190,15 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
       !suppressUnavailableBanner;
-    if (boatCloudSleep !== null && activeEnvironment !== null) {
+    // A wake lists its steps in the thread, so the banner only marks a VM that is asleep.
+    if (boatCloudSleep?.state === "sleeping" && activeEnvironment !== null) {
       items.push({
         id: `boat-cloud-sleep:${activeEnvironment.environmentId}`,
         variant: "info",
         group: "environment",
         icon: <MoonIcon />,
-        title:
-          boatCloudSleep.state === "waking"
-            ? `Waking ${activeEnvironment.label}`
-            : `${activeEnvironment.label} is sleeping`,
-        description: boatCloudSleep.state === "sleeping" ? "Send a message to wake it." : undefined,
+        title: `${activeEnvironment.label} is sleeping`,
+        description: "Send a message to wake it.",
       });
     }
     if (showUnavailableBanner) {

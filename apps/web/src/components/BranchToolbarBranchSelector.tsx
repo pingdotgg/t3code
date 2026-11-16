@@ -30,7 +30,11 @@ import {
   type Ref,
 } from "react";
 
-import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import {
+  isCloudEnvironmentSelection,
+  useComposerDraftStore,
+  type DraftId,
+} from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -333,7 +337,7 @@ export function BranchToolbarBranchSelector({
       envMode: nextDraftEnvMode,
       // Boat cloud takes the branch along to its VM, so a branch pick keeps it.
       environmentSelection:
-        automatic || draftThread?.environmentSelection === "cloud"
+        automatic || isCloudEnvironmentSelection(draftThread?.environmentSelection)
           ? (draftThread?.environmentSelection ?? "auto")
           : "manual",
       projectRef: scopeProjectRef(environmentId, activeProject.id),

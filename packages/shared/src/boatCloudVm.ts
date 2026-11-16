@@ -4,6 +4,7 @@
  */
 
 const VM_HOME = "/home/user";
+const USERDATA_DB = `${VM_HOME}/.t3/userdata/statev2.sqlite`;
 export const VM_T3_PORT = 3773;
 export const VM_SKILLS_ARCHIVE = "/tmp/t3-skills.tar.gz";
 export const VM_BACKUP_ARCHIVE = "/tmp/t3-boat-backup.tar.gz";
@@ -16,6 +17,18 @@ export const SETUP_LABEL_FILTER = "t3code=setup";
  * itself while any of its threads runs a turn, so a quiet VM stops with no holder online.
  */
 export const IDLE_TTL_SECONDS = 10 * 60;
+
+/** Every thread VM's name. Labels are fixed at create, so a spare is told apart by its name. */
+export const MACHINE_NAME = "Boat cloud";
+/**
+ * One running VM, the smallest size, kept ready from the snapshot with its server up so a
+ * start skips the boot. A start takes it by renaming it; it grows on its first resume.
+ */
+export const SPARE_NAME = "Boat cloud spare";
+/** Boat stops a spare no client has asked for in this long; its disk stays for the next resume. */
+export const SPARE_TTL_SECONDS = 30 * 60;
+/** Names the snapshot a VM started from, so a spare from an older one is replaced. */
+export const SNAPSHOT_LABEL = "t3code-snapshot";
 
 const q = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -81,7 +94,7 @@ tar -xzf ${VM_SKILLS_ARCHIVE} -C ${VM_HOME}
 rm -f ${VM_SKILLS_ARCHIVE}`;
 
 const ACTIVE_RUN_STATUSES = "'preparing','queued','starting','running','waiting'";
-const ACTIVE_RUNS_QUERY = `db=${VM_HOME}/.t3/userdata/statev2.sqlite
+const ACTIVE_RUNS_QUERY = `db=${USERDATA_DB}
 [ -f "$db" ] || { echo 0; exit 0; }
 sqlite3 -readonly "$db" "SELECT count(*) FROM orchestration_v2_projection_runs WHERE status IN (${ACTIVE_RUN_STATUSES})"`;
 
@@ -115,6 +128,31 @@ OnUnitActiveSec=1min
 [Install]
 WantedBy=timers.target`;
 
+/**
+ * Boat keeps a hosted port until the VM boots again, and routes it only once the server
+ * listens. The VM hosts its own port after every boot, so a holder never asks Boat to.
+ * The stamp names the VM and its boot, so one copied in from a snapshot does not count.
+ */
+const HOSTED_STAMP = `${VM_HOME}/.t3-boat-hosted`;
+const HOST_PATH = `${VM_HOME}/.t3-boat-host.sh`;
+const HOST_SCRIPT = `#!/bin/sh
+stamp="$BOAT_ID $(cat /proc/sys/kernel/random/boot_id)"
+[ "$(cat ${HOSTED_STAMP} 2>/dev/null)" = "$stamp" ] && exit 0
+for i in $(seq 1 600); do
+  curl -sf -o /dev/null --max-time 2 http://127.0.0.1:${VM_T3_PORT}/.well-known/t3/environment && break
+  sleep 0.1
+done
+boat host "$BOAT_ID" ${VM_T3_PORT} --public --localhost >/dev/null && printf '%s\\n' "$stamp" > ${HOSTED_STAMP}`;
+const HOST_SERVICE = `[Unit]
+Description=Serve T3 Code on this Boat VM's URL
+After=t3code.service
+[Service]
+Type=oneshot
+TimeoutStartSec=60
+ExecStart=/bin/bash -lc ${HOST_PATH}
+[Install]
+WantedBy=t3code.service`;
+
 const INSTRUCTIONS_MARKER = "t3-boat-cloud";
 const AGENT_INSTRUCTIONS = `This is a Boat cloud VM. When you finish a task, commit your changes with a clear message and push the branch to origin. Do not open a pull request unless the user asks for one.`;
 
@@ -130,12 +168,16 @@ put ${KEEPALIVE_PATH} ${q(KEEPALIVE_SCRIPT)}
 chmod +x ${KEEPALIVE_PATH}
 put ${UNIT_DIRECTORY}/t3-boat-keepalive.service ${q(KEEPALIVE_SERVICE)}
 put ${UNIT_DIRECTORY}/t3-boat-keepalive.timer ${q(KEEPALIVE_TIMER)}
+put ${HOST_PATH} ${q(HOST_SCRIPT)}
+chmod +x ${HOST_PATH}
+put ${UNIT_DIRECTORY}/t3-boat-host.service ${q(HOST_SERVICE)}
 mkdir -p ${UNIT_DIRECTORY}/t3code.service.d
 put ${UNIT_DIRECTORY}/t3code.service.d/boat-compile-cache.conf ${q(COMPILE_CACHE_DROP_IN)}
 if [ -n "$changed" ]; then
   systemctl --user daemon-reload
   systemctl --user enable t3-boat-keepalive.timer >/dev/null 2>&1 || true
   systemctl --user restart t3-boat-keepalive.timer >/dev/null 2>&1 || true
+  systemctl --user enable t3-boat-host.service >/dev/null 2>&1 || true
 fi
 for f in ${VM_HOME}/.claude/CLAUDE.md ${VM_HOME}/.codex/AGENTS.md; do
   mkdir -p "$(dirname "$f")"
@@ -150,7 +192,7 @@ export const prepareSnapshotScript = `set -e
 ${prepareVmScript}
 systemctl --user stop t3code.service
 find ${VM_HOME}/.t3/userdata -mindepth 1 -maxdepth 1 ! -name logs -exec rm -rf {} +
-rm -rf ${VM_HOME}/.t3/userdata/logs/* ${VM_HOME}/.t3/usage-host-id
+rm -rf ${VM_HOME}/.t3/userdata/logs/* ${VM_HOME}/.t3/usage-host-id ${HOSTED_STAMP}
 # Fills the compile cache, so the first server start on a new VM already uses it.
 ${T3}
 "$T3" --version >/dev/null
@@ -203,6 +245,7 @@ const CREDENTIALS_STAMP = '"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/t3-boat-crede
  * Boat sets its credentials only in the commands it runs, never in systemd services, so
  * the server gets them here. It restarts only when they changed and no turn would be cut.
  * The stamp lives in the runtime dir, which a reboot clears along with the imported values.
+ * Already a few milliseconds when nothing changed, so every start runs it.
  */
 const syncCredentialsScript = `names=${q(BOAT_CREDENTIALS)}
 set_names=""
@@ -223,13 +266,20 @@ for i in $(seq 1 600); do
 done
 [ -n "$up" ] || { echo "T3 Code did not start on this VM." >&2; exit 1; }`;
 
-/** Prepares the VM, starts the server and prints its descriptor once it answers. */
+/** Opens `startServerScript` output when the VM could not host its own port, so the holder does. */
+export const NOT_HOSTED_MARKER = "--- t3 not hosted ---";
+
+/**
+ * Prepares the VM, starts the server and prints its descriptor once it answers and its port
+ * is hosted. Hosting takes a few milliseconds once done since boot.
+ */
 const ensureServerScript = `( set -e
 ${prepareVmScript}
 ) >&2 || { echo "Could not prepare this VM." >&2; exit 1; }
 ${syncCredentialsScript}
 systemctl --user start t3code.service >/dev/null 2>&1 || true
 ${WAIT_SERVER_SCRIPT}
+systemctl --user start t3-boat-host.service >/dev/null 2>&1 || echo ${q(NOT_HOSTED_MARKER)}
 # A hand-out counts as activity, so every holder's idle sweep, not only this one's, leaves the VM on.
 date +%s > ${LAST_ACTIVE_PATH}
 printf '%s\\n' "$out"`;
@@ -237,31 +287,75 @@ printf '%s\\n' "$out"`;
 /** Separates the descriptor from the pairing code in `startServerScript` output. */
 export const PAIRING_MARKER = "--- t3 pairing ---";
 
-const pairCommand = (label: string) =>
-  `"$T3" auth pairing create --json --ttl 10m --label ${q(label)}`;
+const pairCommand = (label: string, ttl = "10m") =>
+  `"$T3" auth pairing create --json --ttl ${ttl} --label ${q(label)}`;
 
 /** Mints a pairing code on a running server. */
 export const pairScript = (label: string) => `${T3}
 ${pairCommand(label)}`;
 
 /**
- * `ensureServerScript`, then a pairing code after `PAIRING_MARKER` when a label
- * is given, so a start needs one command on the VM and one T3 CLI run.
+ * A single-use pairing code minted ahead on a spare, as `auth pairing create --json` output,
+ * so a start skips the T3 CLI. It lives on the VM since any holder may take the spare.
  */
-export const startServerScript = (pairingLabel: string | null) =>
+const PAIRING_STOCK = `${VM_HOME}/.t3-boat-pairing.json`;
+
+/**
+ * `stock_valid <file> <minutes>`: the server's own database still holds the file's code
+ * unused, unrevoked and valid that much longer. A reset or restored state fails it too.
+ */
+const STOCK_VALID_FUNCTION = `stock_valid() {
+  local id
+  id="$(grep -o '"id": *"[0-9A-Za-z-]*"' "$1" 2>/dev/null | head -n1 | cut -d'"' -f4)"
+  [ -n "$id" ] && [ "$(sqlite3 -readonly ${USERDATA_DB} "SELECT count(*) FROM auth_pairing_links WHERE id = '$id' AND consumed_at IS NULL AND revoked_at IS NULL AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+$2 minutes')" 2>/dev/null)" = 1 ]
+}`;
+
+/**
+ * Leaves a fresh code in `PAIRING_STOCK`, in the background so it returns at once. It
+ * outlives the spare's TTL, and is replaced once a client looking finds less than that left.
+ */
+export const stockPairingScript = (label: string) => `${T3}
+${STOCK_VALID_FUNCTION}
+(
+  exec 9>/tmp/t3-boat-pairing.lock
+  flock -n 9 || exit 0
+  stock_valid ${PAIRING_STOCK} ${SPARE_TTL_SECONDS / 60} && exit 0
+  umask 077
+  ${pairCommand(label, "60m")} > ${PAIRING_STOCK}.new && mv ${PAIRING_STOCK}.new ${PAIRING_STOCK}
+) </dev/null >/dev/null 2>&1 &`;
+
+/**
+ * `ensureServerScript`, then a pairing code after `PAIRING_MARKER` when a label is given,
+ * so a start needs one command on the VM. The code stays valid at least `minutes`. It takes
+ * the stocked code when that holds, moving it away first so no two starts get the same one.
+ */
+export const startServerScript = (pairingLabel: string | null, minutes = 10) =>
   pairingLabel === null
     ? ensureServerScript
     : `${ensureServerScript}
-${T3}
-echo ${q(PAIRING_MARKER)}
-${pairCommand(pairingLabel)}`;
+${STOCK_VALID_FUNCTION}
+taken=${PAIRING_STOCK}.$$
+if mv ${PAIRING_STOCK} "$taken" 2>/dev/null && stock_valid "$taken" ${minutes}; then
+  echo ${q(PAIRING_MARKER)}
+  cat "$taken"
+  rm -f "$taken"
+else
+  rm -f "$taken"
+  ${T3}
+  echo ${q(PAIRING_MARKER)}
+  ${pairCommand(pairingLabel, minutes > 10 ? "60m" : "10m")}
+fi`;
 
 /**
- * First line `load1 cpus memTotalKb memAvailableKb`, then the workspace root when
- * the VM has it checked out. Searching ~/projects instead took seconds on old layouts.
+ * First line `cpu memTotalKb memAvailableKb`, then the workspace root when the VM has it
+ * checked out. Searching ~/projects instead took seconds on old layouts. `cpu` is the share
+ * of the last 10 seconds that tasks waited for a CPU. The load average also counts tasks
+ * waiting on Boat's lazily fetched disk, so a just-resumed idle VM read as busy for a minute.
  */
 export const measureScript = (workspaceRoot: string) =>
-  `printf '%s %s %s %s\\n' "$(cut -d' ' -f1 /proc/loadavg)" "$(nproc)" "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
+  `cpu="$(awk '/^some /{sub("avg10=", "", $2); print $2 / 100}' /proc/pressure/cpu 2>/dev/null)"
+[ -n "$cpu" ] || cpu="$(awk -v cpus="$(nproc)" '{print $1 / cpus}' /proc/loadavg)"
+printf '%s %s %s\\n' "$cpu" "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)" "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
 [ ! -d ${q(`${workspaceRoot}/.git`)} ] || printf '%s\\n' ${q(workspaceRoot)}`;
 
 export const BASE_BRANCH_MISSING_EXIT = 3;
@@ -286,6 +380,8 @@ fi`;
 /**
  * Clones the repository once. An existing checkout is fetched only when it does
  * not know the base branch: a worktree thread fetches its base itself.
+ * A checkout from the snapshot sits on Boat's lazily fetched disk, so its packs are read
+ * ahead while the server starts: a worktree add that read them cold took 17 seconds.
  */
 export const syncCheckoutScript = (
   repository: ParsedRepository,
@@ -293,6 +389,7 @@ export const syncCheckoutScript = (
 ) => `set -e
 dir=${q(repository.workspaceRoot)}
 if [ -d "$dir/.git" ]; then
+  ( cat "$dir"/.git/objects/pack/*.pack "$dir/.git/index" ) </dev/null >/dev/null 2>&1 &
   ${baseBranch === null ? ":" : `${hasBaseBranch(baseBranch)} || git -C "$dir" fetch --prune --quiet origin`}
 else
   mkdir -p "$(dirname "$dir")"
@@ -300,12 +397,138 @@ else
 fi
 ${baseBranch === null ? "" : baseBranchCheckScript(baseBranch, repository.name)}`;
 
-/** Gets the checkout, then adds it as a project once the server answers. Runs while the server starts. */
-export const checkoutScript = (repository: ParsedRepository, baseBranch: string | null) =>
-  `${syncCheckoutScript(repository, baseBranch)}
-${WAIT_SERVER_SCRIPT}
+/** Seconds each snapshot clone may take; Boat ends a command after 300. */
+const SNAPSHOT_CLONE_SECONDS = 270;
+
+/**
+ * Clones the repositories at once, for the snapshot. A clone that fails or runs out of
+ * time leaves nothing behind, so a VM clones that repository on first use instead.
+ * Prints each workspace root it cloned.
+ */
+export const cloneRepositoriesScript = (repositories: ReadonlyArray<ParsedRepository>) =>
+  `clone() {
+  mkdir -p "$(dirname "$1")"
+  if GIT_TERMINAL_PROMPT=0 timeout ${SNAPSHOT_CLONE_SECONDS} git clone --quiet "$2" "$1.cloning" </dev/null >/dev/null 2>&1; then
+    mv "$1.cloning" "$1" && printf '%s\\n' "$1"
+  else
+    rm -rf "$1.cloning"
+  fi
+}
+${repositories.map((repository) => `clone ${q(repository.workspaceRoot)} ${q(repository.cloneUrl)} &`).join("\n")}
+wait`;
+
+/** A thread's worktree, made on the VM while its server starts. */
+export interface PreparedWorktree {
+  readonly path: string;
+  readonly branch: string;
+  readonly baseBranch: string;
+}
+
+/** Where a VM keeps a worktree for `branch`, under the T3 home the backup copies. */
+export const worktreePathOf = (repository: ParsedRepository, branch: string) =>
+  `${VM_HOME}/.t3/worktrees/${repository.key.split("/").at(-1)!.replace(SAFE_SEGMENT, "-")}/${branch.replaceAll("/", "-")}`;
+
+/**
+ * A worktree per checkout, kept on its default branch while the VM waits, so a thread moves
+ * one into place rather than checking out every file (1 to 5 seconds on Boat's lazy disk).
+ * It lives outside the T3 home and the projects, so backups leave it out.
+ */
+const PARKED_ROOT = `${VM_HOME}/.t3-boat-parked`;
+const PARKED_BRANCH = "t3code/boat-parked";
+/** Set once the parked checkout finishes, so a half-made one is never taken. */
+const PARKED_BASE_KEY = `branch.${PARKED_BRANCH}.t3-boat-parked-base`;
+
+const parkedPathOf = (workspaceRoot: string) =>
+  `${PARKED_ROOT}/${workspaceRoot.slice(`${VM_HOME}/projects/`.length)}`;
+
+/** `park_checkout <checkout> <parked path>`: parks a worktree on the default branch, or updates the parked one. */
+export const parkCheckoutFunction = `park_checkout() {
+  local dir="$1" parked="$2" base start
+  base="$(git -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD)" || return 0
+  base="\${base#origin/}"
+  git -C "$dir" fetch --quiet origin "$base" || true
+  start="refs/remotes/origin/$base"
+  if [ -e "$parked/.git" ] && [ "$(git -C "$dir" config --get ${PARKED_BASE_KEY})" = "$base" ]; then
+    [ "$(git -C "$parked" rev-parse HEAD)" != "$(git -C "$dir" rev-parse "$start")" ] || return 0
+    git -C "$dir" config --unset ${PARKED_BASE_KEY}
+    git -C "$parked" reset --quiet --keep "$start" && git -C "$dir" config ${PARKED_BASE_KEY} "$base"
+    return 0
+  fi
+  rm -rf "$parked"
+  git -C "$dir" worktree prune
+  git -C "$dir" branch --force --no-track ${PARKED_BRANCH} "$start" &&
+    mkdir -p "$(dirname "$parked")" &&
+    git -C "$dir" -c checkout.workers=0 worktree add --quiet "$parked" ${PARKED_BRANCH} &&
+    git -C "$dir" config ${PARKED_BASE_KEY} "$base"
+}`;
+
+/**
+ * Cuts the thread's branch from the remote base, the way T3 does for a worktree that
+ * starts from origin, recording the base as T3 does so diffs and pull requests use it.
+ * A worktree parked on that base is renamed into place and moved to the latest base.
+ */
+export const prepareWorktreeScript = (worktree: PreparedWorktree, parkedPath: string) => {
+  const branch = q(worktree.branch);
+  const path = q(worktree.path);
+  return `git -C "$dir" fetch --quiet origin ${q(worktree.baseBranch)} || true
+start=${q(`refs/remotes/origin/${worktree.baseBranch}`)}
+git -C "$dir" rev-parse --verify --quiet "$start^{commit}" >/dev/null || start=${q(`refs/remotes/${worktree.baseBranch}`)}
+mkdir -p "$(dirname ${path})"
+if [ -e ${q(`${parkedPath}/.git`)} ] && [ "$(git -C "$dir" config --get ${PARKED_BASE_KEY})" = ${q(worktree.baseBranch)} ] &&
+  git -C "$dir" worktree move ${q(parkedPath)} ${path} 2>/dev/null; then
+  git -C "$dir" branch -m ${PARKED_BRANCH} ${branch}
+  git -C "$dir" config --unset ${q(`branch.${worktree.branch}.t3-boat-parked-base`)} || true
+  [ "$(git -C ${path} rev-parse HEAD)" = "$(git -C "$dir" rev-parse "$start^{commit}")" ] ||
+    git -C ${path} reset --quiet --keep "$start"
+else
+  git -C "$dir" branch --no-track ${branch} "$start"
+  git -C "$dir" -c checkout.workers=0 worktree add --quiet ${path} ${branch}
+fi
+git -C "$dir" config ${q(`branch.${worktree.branch}.t3-merge-base`)} ${q(worktree.baseBranch)}
+git -C "$dir" config ${q(`branch.${worktree.branch}.t3-merge-base-ref`)} "$start"`;
+};
+
+/** Adds the checkout in `$dir` as a project unless it is one, which skips starting the CLI. */
+// A new VM has no database until its server starts, and the checkout runs under `set -e`.
+export const ADD_PROJECT_SCRIPT = `known="$(sqlite3 -readonly ${USERDATA_DB} "SELECT count(*) FROM projection_projects WHERE workspace_root = '$dir' AND deleted_at IS NULL AND archived_at IS NULL" 2>/dev/null || true)"
+if [ "\${known:-0}" = 0 ]; then
+  ${WAIT_SERVER_SCRIPT.replaceAll("\n", "\n  ")}
+  "$T3" project add "$dir" >/dev/null 2>&1 || true
+fi`;
+
+/**
+ * Gets the checkout and the thread's worktree, then adds the checkout as a project once the
+ * server answers. Runs while the server starts, or alone on a ready spare, so it marks the
+ * hand-out as activity too.
+ */
+export const checkoutScript = (
+  repository: ParsedRepository,
+  baseBranch: string | null,
+  worktree: PreparedWorktree | null = null,
+) =>
+  `date +%s > ${LAST_ACTIVE_PATH}
+${syncCheckoutScript(repository, baseBranch)}
+${worktree === null ? "" : prepareWorktreeScript(worktree, parkedPathOf(repository.workspaceRoot))}
 ${T3}
-"$T3" project add ${q(repository.workspaceRoot)} >/dev/null 2>&1 || true`;
+${ADD_PROJECT_SCRIPT}`;
+
+/**
+ * For the spare, in the background so it returns at once: fetches each checkout's default
+ * branch, parks a worktree on it, adds it as a project, and reads its packs so Boat's lazily
+ * fetched disk holds them. One run at a time; a run already going is enough.
+ */
+export const parkWorktreesScript = `${T3}
+${parkCheckoutFunction}
+(
+  exec 9>/tmp/t3-boat-park.lock
+  flock -n 9 || exit 0
+  find ${VM_HOME}/projects -maxdepth 6 -type d -name .git -prune 2>/dev/null | while read -r git; do
+    dir="\${git%/.git}"
+    park_checkout "$dir" "${PARKED_ROOT}/\${dir#${VM_HOME}/projects/}"
+    ${ADD_PROJECT_SCRIPT.replaceAll("\n", "\n    ")}
+    cat "$git"/objects/pack/*.pack "$git/index"
+  done
+) </dev/null >/dev/null 2>&1 &`;
 
 const BACKUP_PATHS = [
   ".t3/userdata",
@@ -347,7 +570,7 @@ export function subdomainOfHttpBaseUrl(httpBaseUrl: string): string | null {
   }
 }
 
-/** A VM above this share of CPU or memory gets no new sessions. */
+/** A VM above this share of CPU waiting or memory use gets no new sessions. */
 const MAX_SHARED_USAGE = 0.5;
 
 export interface ParsedRepository {
@@ -408,7 +631,7 @@ export function parseRepository(remoteUrl: string): ParsedRepository | null {
 }
 
 export interface MachineMeasure {
-  /** The larger of CPU and memory use, 0 to 1. */
+  /** The larger of CPU waiting and memory use, 0 to 1. */
   readonly usage: number;
   /** Checkout directories on the VM. */
   readonly workspaceRoots: ReadonlyArray<string>;
@@ -417,19 +640,18 @@ export interface MachineMeasure {
 /** Reads `measureScript` output. */
 export function parseMeasure(output: string): MachineMeasure | null {
   const [first = "", ...rest] = output.trim().split("\n");
-  const [load, cpus, memTotal, memAvailable] = first.trim().split(/\s+/u).map(Number);
+  const [cpu, memTotal, memAvailable] = first.trim().split(/\s+/u).map(Number);
   if (
-    load === undefined ||
-    cpus === undefined ||
+    cpu === undefined ||
     memTotal === undefined ||
     memAvailable === undefined ||
-    ![load, cpus, memTotal, memAvailable].every(Number.isFinite) ||
-    cpus <= 0 ||
+    ![cpu, memTotal, memAvailable].every(Number.isFinite) ||
+    cpu < 0 ||
     memTotal <= 0
   )
     return null;
   return {
-    usage: Math.max(load / cpus, 1 - memAvailable / memTotal),
+    usage: Math.max(cpu, 1 - memAvailable / memTotal),
     workspaceRoots: rest.map((line) => line.trim()).filter((line) => line.length > 0),
   };
 }
@@ -442,6 +664,8 @@ export interface MachineCandidate {
   readonly workspaceRoots: ReadonlyArray<string>;
   /** Null when the VM did not report its load; such a VM is treated as busy. */
   readonly usage: number | null;
+  /** The warm spare, taken only after the VMs that already serve threads. */
+  readonly spare?: boolean;
 }
 
 export type MachineChoice =
@@ -450,9 +674,9 @@ export type MachineChoice =
   | { readonly kind: "create" };
 
 /**
- * Among the VMs on the chosen environment (any, when none is chosen), prefers
- * one that already has the checkout, then a running VM over a stopped one, and
- * spends a new VM only when every running one is busy.
+ * Among the VMs on the chosen environment (any when none is chosen): a running VM
+ * before a stopped one (a checkout costs less than a resume), then one with the
+ * checkout, and a new VM only when none is free. A spare comes last of its kind.
  */
 export function pickMachine(
   allCandidates: ReadonlyArray<MachineCandidate>,
@@ -470,14 +694,17 @@ export function pickMachine(
         candidate.running && candidate.usage !== null && candidate.usage < MAX_SHARED_USAGE,
     )
     // filter returns a new array, and Hermes has no toSorted.
-    .sort((left, right) => left.usage! - right.usage!);
-  const stopped = candidates.filter((candidate) => !candidate.running);
-  const freeWithCheckout = free.find(hasCheckout);
-  if (freeWithCheckout) return { kind: "use", sandboxId: freeWithCheckout.sandboxId };
-  const stoppedWithCheckout = stopped.find(hasCheckout);
-  if (stoppedWithCheckout) return { kind: "resume", sandboxId: stoppedWithCheckout.sandboxId };
-  if (free[0]) return { kind: "use", sandboxId: free[0].sandboxId };
-  if (stopped[0]) return { kind: "resume", sandboxId: stopped[0].sandboxId };
+    .sort(
+      (left, right) =>
+        Number(left.spare === true) - Number(right.spare === true) || left.usage! - right.usage!,
+    );
+  const stopped = candidates
+    .filter((candidate) => !candidate.running)
+    .sort((left, right) => Number(left.spare === true) - Number(right.spare === true));
+  const running = free.find(hasCheckout) ?? free[0];
+  if (running) return { kind: "use", sandboxId: running.sandboxId };
+  const resumed = stopped.find(hasCheckout) ?? stopped[0];
+  if (resumed) return { kind: "resume", sandboxId: resumed.sandboxId };
   return { kind: "create" };
 }
 

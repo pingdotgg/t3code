@@ -8,18 +8,47 @@ import {
 export interface BoatCloudStartProgress {
   readonly steps: ReadonlyArray<BoatCloudStepProgress>;
   readonly error: string | null;
+  /** `owner/repo`, for the checkout step's label. */
+  readonly repository: string | null;
+  /** Set while a send waits on this start: when, and the steps that were already done by then. */
+  readonly sent: {
+    readonly at: string;
+    readonly doneBefore: ReadonlyArray<BoatCloudStartStep>;
+  } | null;
 }
 
 const HOLDER_STEPS: ReadonlySet<BoatCloudStartStep> = new Set(["machine", "server", "repository"]);
 
-export function startingProgress(repositoryName: string | null): BoatCloudStartProgress {
+/** A fresh start; one that replaces a failed start keeps its send, with every step left to show. */
+export function startingProgress(
+  repository: string | null,
+  previous: BoatCloudStartProgress | null = null,
+): BoatCloudStartProgress {
   return {
     steps: BOAT_CLOUD_START_STEPS.map((step) => ({
       step,
       state: step === "machine" ? "active" : "pending",
-      detail: step === "repository" ? repositoryName : null,
+      detail: step === "repository" ? repository : null,
     })),
     error: null,
+    repository,
+    sent: previous?.sent ? { at: previous.sent.at, doneBefore: [] } : null,
+  };
+}
+
+const WAKE_STEPS: ReadonlyArray<BoatCloudStartStep> = ["machine", "server", "connect"];
+
+/** Turning a stopped VM back on: its message is already in the thread, so every step shows. */
+export function wakingProgress(at: string): BoatCloudStartProgress {
+  return {
+    steps: WAKE_STEPS.map((step) => ({
+      step,
+      state: step === "machine" ? "active" : "pending",
+      detail: null,
+    })),
+    error: null,
+    repository: null,
+    sent: { at, doneBefore: [] },
   };
 }
 
@@ -94,6 +123,7 @@ export function failProgress(
   }
   if (progress.steps.some((entry) => entry.state === "failed")) {
     return {
+      ...progress,
       error,
       steps: progress.steps.map((entry) =>
         entry.state === "active" ? { ...entry, state: "pending" as const } : entry,
@@ -103,6 +133,7 @@ export function failProgress(
   const active = progress.steps.some((entry) => entry.state === "active");
   const firstPending = progress.steps.findIndex((entry) => entry.state === "pending");
   return {
+    ...progress,
     error,
     steps: progress.steps.map((entry, index) =>
       (active ? entry.state === "active" : index === firstPending)
@@ -110,4 +141,32 @@ export function failProgress(
         : entry,
     ),
   };
+}
+
+/** A send now waits on the start; what was done before it stays out of the thread. */
+export function markSent(progress: BoatCloudStartProgress, at: string): BoatCloudStartProgress {
+  return {
+    ...progress,
+    sent: {
+      at,
+      doneBefore: progress.steps
+        .filter((entry) => entry.state === "done")
+        .map((entry) => entry.step),
+    },
+  };
+}
+
+/**
+ * The steps a waiting send shows under its message, as they start: only the work left when it
+ * was sent. The thread step is the send itself, which the thread then shows on its own.
+ */
+export function stepsLeftAtSend(
+  progress: BoatCloudStartProgress | null,
+): ReadonlyArray<BoatCloudStepProgress> | null {
+  if (!progress?.sent || progress.error !== null) return null;
+  const { doneBefore } = progress.sent;
+  return progress.steps.filter(
+    (entry) =>
+      entry.step !== "thread" && entry.state !== "pending" && !doneBefore.includes(entry.step),
+  );
 }

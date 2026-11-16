@@ -398,8 +398,6 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
-  /** The thread already shows the message, which waits in the composer until it can be sent. */
-  editorHidden?: boolean;
   resumeCompactionTokens: number | null;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
@@ -3552,7 +3550,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <ComposerBanner.Dock>
         <ComposerBannerStack items={shelfItems} />
       </ComposerBanner.Dock>
-      <div className="relative" hidden={props.editorHidden}>
+      <div className="relative">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
           className={composerProviderState.composerFrameClassName}

@@ -40,6 +40,11 @@ export interface PairingConnectionInput {
   readonly host?: string;
   readonly pairingCode?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+  /**
+   * The code was minted on the expected machine for this client, as a Boat holder does,
+   * so it is redeemed while the descriptor is read instead of after.
+   */
+  readonly codeIsForExpectedEnvironment?: boolean;
 }
 
 export interface SshConnectionInput {
@@ -104,10 +109,20 @@ export const preparePairingRegistration = Effect.fn(
 )(function* (input: PairingConnectionInput) {
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+  const redeem = bootstrapRemoteBearerSession({
+    httpBaseUrl: target.httpBaseUrl,
+    credential: target.credential,
+    clientMetadata: presentation.metadata,
+  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const readDescriptor = fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: target.httpBaseUrl,
   }).pipe(Effect.mapError(mapRemoteEnvironmentError));
-  // Checked before redeeming the one-time code, so a wrong link is not spent.
+  const early =
+    input.codeIsForExpectedEnvironment === true && input.expectedEnvironmentId !== undefined
+      ? yield* Effect.all([readDescriptor, redeem], { concurrency: 2 })
+      : null;
+  const descriptor = early?.[0] ?? (yield* readDescriptor);
+  // Otherwise checked before redeeming the one-time code, so a wrong link is not spent.
   if (
     input.expectedEnvironmentId !== undefined &&
     descriptor.environmentId !== input.expectedEnvironmentId
@@ -139,11 +154,7 @@ export const preparePairingRegistration = Effect.fn(
   if (compatibilityError !== null && compatibilityError.serverUpdateRequired !== true) {
     return yield* compatibilityError;
   }
-  const access = yield* bootstrapRemoteBearerSession({
-    httpBaseUrl: target.httpBaseUrl,
-    credential: target.credential,
-    clientMetadata: presentation.metadata,
-  }).pipe(Effect.mapError(mapRemoteEnvironmentError));
+  const access = early?.[1] ?? (yield* redeem);
   // The connect that follows registration skips its own descriptor read.
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
   yield* remote.rememberCheckedDescriptor(

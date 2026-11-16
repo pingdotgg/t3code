@@ -1,15 +1,24 @@
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+import { mostWorkedRepositories } from "@t3tools/client-runtime/state/threads";
 import {
+  BOAT_CLOUD_SNAPSHOT_REPOSITORIES,
   type BoatCloudEnvironmentAccess,
   type BoatCloudSession,
   type BoatCloudStatus,
 } from "@t3tools/contracts";
-import { BoatApiError, cloudEnvironments, makeBoatApi } from "@t3tools/shared/boatCloudApi";
+import {
+  type BoatApi,
+  BoatApiError,
+  cloudEnvironments,
+  makeBoatApi,
+} from "@t3tools/shared/boatCloudApi";
 import {
   type PairedEnvironment,
   type ReportStep,
   buildSnapshot,
   findSandboxByHttpBaseUrl,
   latestCliRelease,
+  makeSpareKeeper,
   snapshotToBuild,
   startMachine,
   startingSnapshot,
@@ -17,6 +26,7 @@ import {
 } from "@t3tools/shared/boatCloudStart";
 import {
   MACHINE_LABEL_FILTER,
+  SPARE_NAME,
   VM_T3_PORT,
   machineLabelOf,
   machineStateOf,
@@ -30,7 +40,9 @@ import { Atom } from "effect/reactivity";
 
 import * as Runtime from "../../lib/runtime";
 import { MobileSecureStorage } from "../../persistence/mobile-secure-storage";
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { threadEnvironment } from "../../state/threads";
 
 /**
  * The phone as a Boat cloud holder: with the key in its own keychain it starts
@@ -109,6 +121,7 @@ export function refreshPhoneBoatCloud(): Promise<void> {
         { concurrency: "unbounded" },
       );
       if (stale()) return;
+      spares.reconcile(sandboxes);
       const listed = Result.isSuccess(environments)
         ? cloudEnvironments(environments.success, Option.getOrNull(profiles))
         : [];
@@ -135,24 +148,28 @@ export function refreshPhoneBoatCloud(): Promise<void> {
                 ? status.setup
                 : { status: "idle", step: null, error: null },
         snapshotReady: ready,
-        machines: sandboxes.map((sandbox) => ({
-          sandboxId: sandbox.id,
-          environmentId: null,
-          label: machineLabelOf(sandbox.id),
-          httpBaseUrl: sandbox.subdomain
-            ? `https://${sandbox.subdomain}-${VM_T3_PORT}.on.boat.dev`
-            : null,
-          state: machineStateOf(sandbox.state),
-          repositories: [],
-          backedUpAt: null,
-          environment: sandbox.environment ?? null,
-        })),
+        // The spare is no one's machine until a start takes it.
+        machines: sandboxes
+          .filter((sandbox) => sandbox.name !== SPARE_NAME)
+          .map((sandbox) => ({
+            sandboxId: sandbox.id,
+            environmentId: null,
+            label: machineLabelOf(sandbox.id),
+            httpBaseUrl: sandbox.subdomain
+              ? `https://${sandbox.subdomain}-${VM_T3_PORT}.on.boat.dev`
+              : null,
+            state: machineStateOf(sandbox.state),
+            repositories: [],
+            backedUpAt: null,
+            environment: sandbox.environment ?? null,
+          })),
         environment,
         environments: listed,
         environmentsError: Result.isFailure(environments) ? environments.failure.message : null,
       }));
       // Before the first setup, Settings offers it; a failed one waits for the button.
       if (!ready || appAtomRegistry.get(phoneBoatCloudAtom).setup.status !== "ready") return;
+      yield* keepSpare(api, environment).pipe(Effect.forkDetach);
       const version = yield* snapshotToBuild(api, yield* HttpClient.HttpClient, false).pipe(
         Effect.orElseSucceed(() => null),
       );
@@ -167,6 +184,13 @@ export function refreshPhoneBoatCloud(): Promise<void> {
     ),
   ).catch(() => undefined);
 }
+
+const spares = makeSpareKeeper();
+/** Keeps one spare VM ready for this phone's next start. */
+const keepSpare = (api: BoatApi, environment: string | null) =>
+  Effect.suspend(() =>
+    snapshotName === null ? Effect.void : spares.keep(api, snapshotName, environment),
+  );
 
 let loaded: Promise<void> | null = null;
 
@@ -239,6 +263,17 @@ export async function configurePhoneBoatCloudEnvironment(
   return null;
 }
 
+/** What the Boat cloud snapshot checks out: the most worked repositories on every machine. */
+export function boatCloudSnapshotRepositories(): Array<string> {
+  const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
+  return mostWorkedRepositories(
+    [...enabledEnvironmentIds(catalog)].map((environmentId) =>
+      appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId)),
+    ),
+    BOAT_CLOUD_SNAPSHOT_REPOSITORIES,
+  );
+}
+
 /**
  * Builds the snapshot from the phone, with the latest Boat cloud build of t3. The phone
  * has no skills; a machine holding the key saves the build again with its own.
@@ -254,6 +289,7 @@ export async function runPhoneBoatCloudSetup(knownVersion?: string): Promise<voi
         snapshotName = yield* buildSnapshot({
           api,
           version,
+          repositories: boatCloudSnapshotRepositories(),
           setStep: (step) =>
             Effect.sync(() =>
               setStatus((status) => ({
@@ -305,25 +341,28 @@ export function startOnPhone(input: {
           retryable: false,
         });
       }
+      const { environment } = appAtomRegistry.get(phoneBoatCloudAtom);
       const started = yield* startMachine({
         api,
         repository,
         baseBranch: input.baseBranch,
-        environment: appAtomRegistry.get(phoneBoatCloudAtom).environment,
+        environment,
         snapshot: snapshotName,
+        readySpare: yield* spares.take(snapshotName, environment),
         // The phone keeps no record of stopped VMs, so it resumes them only for load.
         knownWorkspaceRoots: () => [],
         paired: input.paired ?? [],
         report: input.report,
       });
-      // Its failure already reached the report, so the join only waits for it.
-      yield* started.checkout.pipe(Effect.ignore, Effect.forkDetach);
+      // The start may have taken the spare, so the next one is readied while this one checks out.
+      yield* keepSpare(api, environment).pipe(Effect.forkDetach);
       return {
         sandboxId: started.sandboxId,
         environmentId: started.environmentId,
         httpBaseUrl: started.httpBaseUrl,
         pairingCode: started.pairingCode,
         workspaceRoot: started.workspaceRoot,
+        worktree: started.worktree,
       };
     }),
   ).finally(() => void refreshPhoneBoatCloud());

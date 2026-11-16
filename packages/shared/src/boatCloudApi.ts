@@ -254,12 +254,19 @@ export function makeBoatApi(http: HttpClient.HttpClient, apiKey: string) {
       send(json("POST", "/sandboxes", body), SandboxResponse, Duration.minutes(5)).pipe(
         Effect.map((response) => response.sandbox),
       ),
-    resume: (id: string, ttlSeconds: number) =>
+    /** `type` resizes the VM as it starts; absent keeps its size. */
+    resume: (id: string, ttlSeconds: number, type?: BoatMachineType) =>
       send(
-        json("POST", `/sandboxes/${id}/resume`, { ttlSeconds }),
+        json(
+          "POST",
+          `/sandboxes/${id}/resume`,
+          type === undefined ? { ttlSeconds } : { ttlSeconds, type },
+        ),
         SandboxResponse,
         Duration.minutes(5),
       ),
+    rename: (id: string, name: string) =>
+      send(json("PATCH", `/sandboxes/${id}`, { name }), Schema.Unknown),
     /** Moves the auto-stop deadline to now plus `ttlSeconds`. */
     extend: (id: string, ttlSeconds: number) =>
       send(json("PATCH", `/sandboxes/${id}`, { ttlSeconds }), Schema.Unknown),

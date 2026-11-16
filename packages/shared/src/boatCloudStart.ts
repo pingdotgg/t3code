@@ -4,10 +4,12 @@ import {
   type BoatCloudStepProgress,
   EnvironmentId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { type HttpClient, HttpClientResponse } from "effect/http";
@@ -26,13 +28,20 @@ import {
   type MachineCandidate,
   MACHINE_LABEL_FILTER,
   MACHINE_LABELS,
+  MACHINE_NAME,
+  NOT_HOSTED_MARKER,
   PAIRING_MARKER,
   type ParsedRepository,
+  type PreparedWorktree,
+  SNAPSHOT_LABEL,
+  SPARE_NAME,
+  SPARE_TTL_SECONDS,
   SETUP_LABEL_FILTER,
   SETUP_LABELS,
   VM_T3_PORT,
   checkoutScript,
   cliVersionOfTag,
+  cloneRepositoriesScript,
   installCliScript,
   isBoatCloudSnapshot,
   machineLabelOf,
@@ -40,12 +49,17 @@ import {
   measureScript,
   parseMeasure,
   pairScript,
+  parkWorktreesScript,
+  parseRepository,
   pickMachine,
   prepareSnapshotScript,
   snapshotNameOf,
   startServerScript,
+  stockPairingScript,
   subdomainOfHttpBaseUrl,
+  worktreePathOf,
 } from "./boatCloudVm.ts";
+import { buildTemporaryWorktreeBranchName } from "./git.ts";
 
 /**
  * Getting a Boat cloud VM ready for a thread. Every holder of the Boat key runs
@@ -56,7 +70,7 @@ const decodeDescriptor = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Struct({ environmentId: EnvironmentId })),
 );
 const decodePairing = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ credential: Schema.String })),
+  Schema.fromJsonString(Schema.Struct({ credential: Schema.String, expiresAt: Schema.String })),
 );
 
 export const vmFailure = (message: string, code = "vm", cause?: unknown) =>
@@ -106,36 +120,39 @@ export const waitRunning = (api: BoatApi, sandboxId: string) =>
 
 const PAIRING_LABEL = "Boat cloud";
 
-const pairingOf = (output: string): Effect.Effect<string, BoatApiError> =>
+const pairingOf = (output: string) =>
   Option.match(decodePairing(output), {
     onNone: () => Effect.fail(vmFailure("T3 Code on the VM did not issue a pairing code.")),
-    onSome: (pairing) => Effect.succeed(pairing.credential),
+    onSome: (pairing) =>
+      Effect.succeed({ code: pairing.credential, expiresAt: Date.parse(pairing.expiresAt) }),
   });
 
-/** Starts the server and, when asked, mints a pairing code in the same command. */
+/**
+ * Starts the server and, when asked, mints a pairing code good for at least `minutes` in
+ * the same command. `hosted` is false when the VM could not serve its port by itself.
+ */
 const startServer = Effect.fn("BoatCloud.startServer")(function* (
   api: BoatApi,
   sandboxId: string,
   pair: boolean,
+  minutes?: number,
 ) {
   const output = yield* exec(
     api,
     sandboxId,
-    startServerScript(pair ? PAIRING_LABEL : null),
+    startServerScript(pair ? PAIRING_LABEL : null, minutes),
     90,
     "T3 Code did not start on the VM.",
   );
   const markerAt = output.indexOf(PAIRING_MARKER);
-  const descriptor = decodeDescriptor(
-    (markerAt === -1 ? output : output.slice(0, markerAt)).trim(),
-  );
+  const head = markerAt === -1 ? output : output.slice(0, markerAt);
+  const hosted = !head.includes(NOT_HOSTED_MARKER);
+  const descriptor = decodeDescriptor(head.replace(NOT_HOSTED_MARKER, "").trim());
   if (Option.isNone(descriptor)) {
     return yield* vmFailure("T3 Code on the VM did not describe itself.");
   }
-  const pairingCode = pair
-    ? yield* pairingOf(output.slice(markerAt + PAIRING_MARKER.length))
-    : null;
-  return { environmentId: descriptor.value.environmentId, pairingCode };
+  const pairing = pair ? yield* pairingOf(output.slice(markerAt + PAIRING_MARKER.length)) : null;
+  return { environmentId: descriptor.value.environmentId, pairing, hosted };
 });
 
 const ensureServer = (api: BoatApi, sandboxId: string) =>
@@ -157,11 +174,16 @@ const pair = (api: BoatApi, sandboxId: string) =>
     pairScript(PAIRING_LABEL),
     60,
     "T3 Code on the VM did not issue a pairing code.",
-  ).pipe(Effect.flatMap(pairingOf));
+  ).pipe(
+    Effect.flatMap(pairingOf),
+    Effect.map((pairing) => pairing.code),
+  );
 
-/** Boat serves the hosted port here once it is registered; the list carries the subdomain. */
-const hostedUrlOf = (sandbox: BoatSandbox) =>
-  sandbox.subdomain ? `https://${sandbox.subdomain}-${VM_T3_PORT}.on.boat.dev` : null;
+/** Where Boat serves the port the VM hosted, asking Boat to host it only when the VM could not. */
+const serverUrl = (api: BoatApi, sandbox: BoatSandbox, hosted: boolean) =>
+  hosted && sandbox.subdomain
+    ? Effect.succeed(`https://${sandbox.subdomain}-${VM_T3_PORT}.on.boat.dev`)
+    : hostServer(api, sandbox.id);
 
 const GIT_AUTH_FAILURE = /could not read Username|Authentication failed|Repository not found/u;
 
@@ -174,8 +196,9 @@ const checkout = (
   sandboxId: string,
   repository: ParsedRepository,
   baseBranch: string | null,
+  worktree: PreparedWorktree | null,
 ) =>
-  api.exec(sandboxId, checkoutScript(repository, baseBranch), 600).pipe(
+  api.exec(sandboxId, checkoutScript(repository, baseBranch, worktree), 600).pipe(
     Effect.flatMap((result) => {
       if (result.exitCode === 0) return Effect.void;
       if (baseBranch !== null && result.exitCode === BASE_BRANCH_MISSING_EXIT) {
@@ -225,8 +248,10 @@ export interface StartedMachine {
   /** Null when the client already paired with this VM and only reconnects. */
   readonly pairingCode: string | null;
   readonly workspaceRoot: string;
+  /** The thread's worktree, ready once `checkout` is; null without a base branch. */
+  readonly worktree: PreparedWorktree | null;
   readonly created: boolean;
-  /** The checkout and its project, still running: the client connects meanwhile. */
+  /** The checkout, the worktree and the project, still running: the client connects meanwhile. */
   readonly checkout: Effect.Effect<void, BoatApiError>;
 }
 
@@ -237,12 +262,23 @@ export interface PairedEnvironment {
 }
 
 /**
- * Picks a VM for the repository (a free running one, then a stopped one, then a
- * new one from the snapshot), then starts its server while it clones the
- * checkout. Returns once the server answers: a client already paired with the
- * VM reconnects, any other gets a pairing code, and the checkout carries on.
+ * A running spare with its server up, hosted, and a pairing code the holder took for it,
+ * so a start hands it out with no call to Boat.
  */
-export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input: {
+export interface ReadySpare {
+  readonly sandboxId: string;
+  readonly environmentId: EnvironmentId;
+  readonly httpBaseUrl: string;
+  readonly pairingCode: string;
+  readonly snapshot: string;
+  readonly environment: string | null;
+  /** Epoch milliseconds the pairing code expires at. */
+  readonly codeExpiresAt: number;
+  /** Epoch milliseconds Boat may stop the VM from. */
+  readonly stopsAt: number;
+}
+
+interface StartMachineInput {
   readonly api: BoatApi;
   readonly repository: ParsedRepository;
   /** The thread's base branch, which must be on the remote. */
@@ -251,16 +287,101 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
   readonly environment: string | null;
   /** The saved snapshot a new VM starts from, from `startingSnapshot`. */
   readonly snapshot: string;
+  /** The spare the holder took from its `makeSpareKeeper`; the start then asks Boat nothing first. */
+  readonly readySpare?: ReadySpare | null;
   /** Boat's list of VMs, when the caller just read it. */
   readonly sandboxes?: ReadonlyArray<BoatSandbox>;
   /** Checkouts the holder remembers on stopped VMs, which cannot be asked. */
   readonly knownWorkspaceRoots: (sandboxId: string) => ReadonlyArray<string>;
   readonly paired?: ReadonlyArray<PairedEnvironment>;
   readonly report: ReportStep;
-  readonly onCreated?: (sandbox: BoatSandbox) => Effect.Effect<void>;
+  /** Runs once a VM joins the holder's machines: one it created, or the spare it took. */
+  readonly onAdded?: (sandboxId: string) => Effect.Effect<void>;
   /** Runs before an existing VM is resumed or reused, so an idle sweep leaves it on. */
   readonly onReused?: (sandboxId: string) => Effect.Effect<void>;
-}) {
+}
+
+/**
+ * Cuts the thread's worktree name and starts the checkout, together with `alongside`.
+ * Its failure carries the reason, since the client learns it from the step alone.
+ */
+const startCheckout = Effect.fn("BoatCloud.startCheckout")(function* (
+  input: StartMachineInput,
+  sandboxId: string,
+  alongside: Effect.Effect<void> = Effect.void,
+) {
+  const { api, repository, report } = input;
+  // The same temporary name T3 gives a new worktree, so the server renames it after the first message.
+  const worktree: PreparedWorktree | null =
+    input.baseBranch === null
+      ? null
+      : yield* Effect.map(Random.next, (random) => {
+          const branch = buildTemporaryWorktreeBranchName(() =>
+            Math.floor(random * 0x1_0000_0000)
+              .toString(16)
+              .padStart(8, "0"),
+          );
+          return {
+            path: worktreePathOf(repository, branch),
+            branch,
+            baseBranch: input.baseBranch!,
+          };
+        });
+  const fiber = yield* report("repository", "active", repository.name).pipe(
+    Effect.andThen(checkout(api, sandboxId, repository, input.baseBranch, worktree)),
+    Effect.tap(() => report("repository", "done", repository.name)),
+    Effect.tapError((error) => report("repository", "failed", error.message)),
+    (effect) => Effect.all([effect, alongside], { concurrency: 2, discard: true }),
+    Effect.forkDetach,
+  );
+  return { worktree, fiber };
+});
+
+/**
+ * Hands out the spare the holder holds. The rename that tells other holders it is taken,
+ * and the thread's deadline, go to Boat alongside the checkout, after the client has
+ * what it needs to connect.
+ */
+const handOutSpare = Effect.fn("BoatCloud.handOutSpare")(function* (
+  input: StartMachineInput,
+  spare: ReadySpare,
+) {
+  const { api, report } = input;
+  const { sandboxId } = spare;
+  yield* report("machine", "done", "Using a ready VM");
+  if (input.onAdded) yield* input.onAdded(sandboxId);
+  if (input.onReused) yield* input.onReused(sandboxId);
+  const claim = Effect.all(
+    [api.rename(sandboxId, MACHINE_NAME), api.extend(sandboxId, IDLE_TTL_SECONDS)],
+    { concurrency: 2, discard: true },
+  ).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("boat cloud could not claim the spare it handed out", { sandboxId, cause }),
+    ),
+  );
+  const { worktree, fiber } = yield* startCheckout(input, sandboxId, claim);
+  yield* report("server", "done", null);
+  return {
+    sandboxId,
+    environmentId: spare.environmentId,
+    httpBaseUrl: spare.httpBaseUrl,
+    pairingCode: spare.pairingCode,
+    workspaceRoot: input.repository.workspaceRoot,
+    worktree,
+    created: false,
+    checkout: Fiber.join(fiber),
+  } satisfies StartedMachine;
+});
+
+/**
+ * Hands out the holder's ready spare, else picks a VM (a free running one or the spare, a
+ * stopped one, a new one) and starts its server while the checkout runs. Returns once the
+ * server answers: a paired client reconnects, any other gets a code, the checkout carries on.
+ */
+export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (
+  input: StartMachineInput,
+) {
+  if (input.readySpare) return yield* handOutSpare(input, input.readySpare);
   const { api, repository, report } = input;
   yield* report("machine", "active", "Looking for a VM");
   const { choice, sandboxes } = yield* Effect.gen(function* () {
@@ -270,6 +391,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
       (sandbox): Effect.Effect<MachineCandidate> => {
         const running = machineStateOf(sandbox.state) === "running";
         const environment = sandbox.environment ?? null;
+        const spare = sandbox.name === SPARE_NAME;
         if (!running) {
           return Effect.succeed({
             sandboxId: sandbox.id,
@@ -277,6 +399,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
             running,
             usage: null,
             workspaceRoots: input.knownWorkspaceRoots(sandbox.id),
+            spare,
           });
         }
         // The load decides between sharing this VM and starting another, even when it is the only one.
@@ -289,6 +412,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
             running,
             usage: measure?.usage ?? null,
             workspaceRoots: measure?.workspaceRoots ?? [],
+            spare,
           })),
         );
       },
@@ -300,12 +424,26 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
     };
   }).pipe(Effect.tapError(() => report("machine", "failed", "Looking for a VM")));
 
+  const spare =
+    choice.kind !== "create" &&
+    sandboxes.find((listed) => listed.id === choice.sandboxId)?.name === SPARE_NAME;
   const machineDetail =
     choice.kind === "create"
       ? "Creating a VM from the snapshot"
       : choice.kind === "resume"
         ? `Resuming ${machineLabelOf(choice.sandboxId)}`
-        : `Using ${machineLabelOf(choice.sandboxId)}`;
+        : spare
+          ? "Using a ready VM"
+          : `Using ${machineLabelOf(choice.sandboxId)}`;
+  const runningSpare = spare && choice.kind === "use";
+  const join = Effect.fn("BoatCloud.joinMachine")(function* (sandboxId: string) {
+    if (spare) {
+      // The name is all that marks a spare, so no other holder takes it from here on.
+      yield* api.rename(sandboxId, MACHINE_NAME);
+      if (input.onAdded) yield* input.onAdded(sandboxId);
+    }
+    if (input.onReused) yield* input.onReused(sandboxId);
+  });
   const sandbox = yield* runStep(
     report,
     "machine",
@@ -313,21 +451,23 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
     Effect.gen(function* () {
       if (choice.kind === "create") {
         const created = yield* api.createSandbox({
-          name: "Boat cloud",
+          name: MACHINE_NAME,
           // Several threads share a VM, so it gets the medium size.
           type: "default",
-          labels: MACHINE_LABELS,
+          labels: { ...MACHINE_LABELS, [SNAPSHOT_LABEL]: input.snapshot },
           from: input.snapshot,
           ttlSeconds: IDLE_TTL_SECONDS,
           ...(input.environment === null ? {} : { environment: input.environment }),
         });
-        if (input.onCreated) yield* input.onCreated(created);
+        if (input.onAdded) yield* input.onAdded(created.id);
         return yield* waitRunning(api, created.id);
       }
-      if (input.onReused) yield* input.onReused(choice.sandboxId);
+      // A running spare joins alongside its server start below.
+      if (!runningSpare) yield* join(choice.sandboxId);
       if (choice.kind === "resume") {
-        // No environment on resume: Boat keeps the VM on the one it started with.
-        yield* api.resume(choice.sandboxId, IDLE_TTL_SECONDS);
+        // No environment on resume: Boat keeps the VM on the one it started with. A small
+        // spare grows to the shared size here.
+        yield* api.resume(choice.sandboxId, IDLE_TTL_SECONDS, "default");
         return yield* waitRunning(api, choice.sandboxId);
       }
       // Listed running a moment ago, so it needs no wait. The new deadline is set
@@ -336,14 +476,7 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
     }),
   );
   const sandboxId = sandbox.id;
-
-  // Its failure carries the reason, since the client learns it from the step alone.
-  const checkoutFiber = yield* report("repository", "active", repository.name).pipe(
-    Effect.andThen(checkout(api, sandboxId, repository, input.baseBranch)),
-    Effect.tap(() => report("repository", "done", repository.name)),
-    Effect.tapError((error) => report("repository", "failed", error.message)),
-    Effect.forkDetach,
-  );
+  const { worktree, fiber: checkoutFiber } = yield* startCheckout(input, sandboxId);
 
   // A client paired with this VM reconnects with its saved credential, so it needs no new code.
   const expected = sandbox.subdomain
@@ -361,17 +494,16 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
         [
           startServer(api, sandboxId, expected === null),
           choice.kind === "use" ? api.extend(sandboxId, IDLE_TTL_SECONDS) : Effect.void,
+          runningSpare ? join(sandboxId) : Effect.void,
         ],
-        { concurrency: 2 },
+        { concurrency: "unbounded" },
       );
       // Its state was reset since the client paired, so the saved credential no longer works.
       const pairingCode =
         expected !== null && started.environmentId !== expected.environmentId
           ? yield* pair(api, sandboxId)
-          : started.pairingCode;
-      // Boat keeps a hosted port across server restarts but not across a stop.
-      const listedUrl = choice.kind === "use" ? hostedUrlOf(sandbox) : null;
-      const httpBaseUrl = listedUrl ?? (yield* hostServer(api, sandboxId));
+          : (started.pairing?.code ?? null);
+      const httpBaseUrl = yield* serverUrl(api, sandbox, started.hosted);
       return { environmentId: started.environmentId, pairingCode, httpBaseUrl };
     }),
   ).pipe(Effect.onError(() => Fiber.interrupt(checkoutFiber)));
@@ -381,10 +513,185 @@ export const startMachine = Effect.fn("BoatCloud.startMachine")(function* (input
     httpBaseUrl: server.httpBaseUrl,
     pairingCode: server.pairingCode,
     workspaceRoot: repository.workspaceRoot,
+    worktree,
     created: choice.kind === "create",
     checkout: Fiber.join(checkoutFiber),
   } satisfies StartedMachine;
 });
+
+/** Both return at once and carry on in the background on the VM. */
+const warmSpareScript = `${stockPairingScript(PAIRING_LABEL)}
+${parkWorktreesScript}`;
+
+/** A held spare is handed out only while its code and its deadline last this much longer. */
+const HAND_OUT_MARGIN_MS = 2 * 60 * 1000;
+/** The code a holder takes for its spare outlives the spare's deadline by this much. */
+const HOLD_MINUTES = SPARE_TTL_SECONDS / 60 + 5;
+
+/**
+ * Keeps one small spare from the current snapshot and environment ready: server up, hosted,
+ * a code taken for the holder, worktrees parked. A held spare whose code outlasts the new
+ * deadline only gets the deadline. Other spares are removed.
+ */
+const ensureSpare = Effect.fn("BoatCloud.ensureSpare")(function* (input: {
+  readonly api: BoatApi;
+  readonly snapshot: string;
+  readonly environment: string | null;
+  /** The spare this holder holds a code for. */
+  readonly held: ReadySpare | null;
+  /** Spares this holder handed out that Boat may still list under the spare's name. */
+  readonly taken: ReadonlySet<string>;
+}) {
+  const { api, held } = input;
+  const spares = (yield* api.listSandboxes(MACHINE_LABEL_FILTER)).filter(
+    (sandbox) => sandbox.name === SPARE_NAME && !input.taken.has(sandbox.id),
+  );
+  const fits = (sandbox: BoatSandbox) =>
+    sandbox.labels?.[SNAPSHOT_LABEL] === input.snapshot &&
+    (input.environment === null || sandbox.environment === input.environment);
+  const kept =
+    spares.find((sandbox) => sandbox.id === held?.sandboxId && fits(sandbox)) ??
+    spares.find(fits) ??
+    null;
+  yield* Effect.forEach(
+    spares.filter((sandbox) => sandbox !== kept),
+    (sandbox) => api.delete(sandbox.id),
+    { concurrency: "unbounded", discard: true },
+  );
+  const stopsAt = (yield* Clock.currentTimeMillis) + SPARE_TTL_SECONDS * 1000;
+  if (
+    kept !== null &&
+    held?.sandboxId === kept.id &&
+    machineStateOf(kept.state) === "running" &&
+    held.codeExpiresAt - stopsAt > HAND_OUT_MARGIN_MS
+  ) {
+    // A client just looked, so a start may follow: the parked worktrees catch up meanwhile.
+    yield* Effect.all(
+      [
+        api.extend(kept.id, SPARE_TTL_SECONDS),
+        exec(api, kept.id, warmSpareScript, 30).pipe(Effect.ignore),
+      ],
+      { concurrency: 2, discard: true },
+    );
+    return { ...held, stopsAt } satisfies ReadySpare;
+  }
+  let sandboxId: string;
+  if (kept === null) {
+    const created = yield* api.createSandbox({
+      name: SPARE_NAME,
+      type: "small",
+      labels: { ...MACHINE_LABELS, [SNAPSHOT_LABEL]: input.snapshot },
+      from: input.snapshot,
+      ttlSeconds: SPARE_TTL_SECONDS,
+      ...(input.environment === null ? {} : { environment: input.environment }),
+    });
+    sandboxId = created.id;
+  } else if (machineStateOf(kept.state) === "stopped") {
+    yield* api.resume(kept.id, SPARE_TTL_SECONDS);
+    sandboxId = kept.id;
+  } else {
+    // Running, or starting under the holder that made it.
+    yield* api.extend(kept.id, SPARE_TTL_SECONDS);
+    sandboxId = kept.id;
+  }
+  const sandbox = yield* waitRunning(api, sandboxId);
+  const started = yield* startServer(api, sandboxId, true, HOLD_MINUTES);
+  const pairing =
+    started.pairing ?? (yield* vmFailure("T3 Code on the VM did not issue a pairing code."));
+  const [httpBaseUrl] = yield* Effect.all(
+    [serverUrl(api, sandbox, started.hosted), exec(api, sandboxId, warmSpareScript, 30)],
+    { concurrency: 2 },
+  );
+  return {
+    sandboxId,
+    environmentId: started.environmentId,
+    httpBaseUrl,
+    pairingCode: pairing.code,
+    snapshot: input.snapshot,
+    environment: input.environment,
+    codeExpiresAt: pairing.expiresAt,
+    stopsAt,
+  } satisfies ReadySpare;
+});
+
+/**
+ * One holder's spare, kept ready in the background and remembered, so a start takes it
+ * without asking Boat what is free. Boat's list, whenever the holder reads it, drops a
+ * spare another holder took, or that stopped or went away.
+ */
+export const makeSpareKeeper = () => {
+  let ready: ReadySpare | null = null;
+  const taken = new Set<string>();
+  let keeping = false;
+  /** A keep asked for while one ran, run once that one ends since a start may have taken its spare. */
+  let queued: Effect.Effect<void> | null = null;
+
+  const keep = (api: BoatApi, snapshot: string, environment: string | null): Effect.Effect<void> =>
+    Effect.suspend(() => {
+      if (keeping) {
+        queued = keep(api, snapshot, environment);
+        return Effect.void;
+      }
+      keeping = true;
+      return ensureSpare({ api, snapshot, environment, held: ready, taken }).pipe(
+        Effect.tap((spare) =>
+          Effect.sync(() => {
+            ready = taken.has(spare.sandboxId) ? null : spare;
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("boat cloud could not keep a spare VM ready", { cause }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            keeping = false;
+          }),
+        ),
+        Effect.andThen(
+          Effect.suspend(() => {
+            const next = queued;
+            queued = null;
+            return next ?? Effect.void;
+          }),
+        ),
+      );
+    });
+
+  return {
+    keep,
+    /** The ready spare for this snapshot and environment, which no later start gets. */
+    take: (snapshot: string, environment: string | null) =>
+      Effect.map(Clock.currentTimeMillis, (now) => {
+        const spare = ready;
+        if (
+          spare === null ||
+          spare.snapshot !== snapshot ||
+          spare.environment !== environment ||
+          Math.min(spare.codeExpiresAt, spare.stopsAt) - now < HAND_OUT_MARGIN_MS
+        ) {
+          return null;
+        }
+        ready = null;
+        taken.add(spare.sandboxId);
+        return spare;
+      }),
+    /** Folds in Boat's list of the holder's VMs. */
+    reconcile: (sandboxes: ReadonlyArray<BoatSandbox>) => {
+      const byId = new Map(sandboxes.map((sandbox) => [sandbox.id, sandbox]));
+      const listed = ready === null ? undefined : byId.get(ready.sandboxId);
+      if (
+        listed === undefined ||
+        listed.name !== SPARE_NAME ||
+        machineStateOf(listed.state) !== "running"
+      ) {
+        ready = null;
+      }
+      for (const sandboxId of taken) {
+        if (byId.get(sandboxId)?.name !== SPARE_NAME) taken.delete(sandboxId);
+      }
+    },
+  };
+};
 
 /** The Boat VM a paired environment's URL points at, or null when Boat has no such VM. */
 export const findSandboxByHttpBaseUrl = Effect.fn("BoatCloud.findSandboxByHttpBaseUrl")(function* (
@@ -404,19 +711,37 @@ export const findSandboxByHttpBaseUrl = Effect.fn("BoatCloud.findSandboxByHttpBa
 export const wakeMachine = Effect.fn("BoatCloud.wakeMachine")(function* (
   api: BoatApi,
   sandboxId: string,
-  options?: { readonly pair: boolean },
+  options?: { readonly pair?: boolean; readonly report?: ReportStep },
 ) {
-  const sandbox = yield* api.getSandbox(sandboxId);
-  if (sandbox === null) return yield* vmFailure("Boat deleted this VM.", "gone");
-  if (machineStateOf(sandbox.state) === "stopped") {
-    yield* api.resume(sandboxId, IDLE_TTL_SECONDS);
-  } else {
-    yield* api.extend(sandboxId, IDLE_TTL_SECONDS);
-  }
-  yield* waitRunning(api, sandboxId);
-  const started = yield* startServer(api, sandboxId, options?.pair === true);
-  const httpBaseUrl = yield* hostServer(api, sandboxId);
-  return { ...started, httpBaseUrl };
+  const report = options?.report ?? (() => Effect.void);
+  const sandbox = yield* runStep(
+    report,
+    "machine",
+    null,
+    Effect.gen(function* () {
+      const listed = yield* api.getSandbox(sandboxId);
+      if (listed === null) return yield* vmFailure("Boat deleted this VM.", "gone");
+      if (machineStateOf(listed.state) === "stopped") {
+        yield* api.resume(sandboxId, IDLE_TTL_SECONDS, "default");
+      } else {
+        yield* api.extend(sandboxId, IDLE_TTL_SECONDS);
+      }
+      return yield* waitRunning(api, sandboxId);
+    }),
+  );
+  return yield* runStep(
+    report,
+    "server",
+    null,
+    Effect.gen(function* () {
+      const started = yield* startServer(api, sandboxId, options?.pair === true);
+      return {
+        environmentId: started.environmentId,
+        pairingCode: started.pairing?.code ?? null,
+        httpBaseUrl: yield* serverUrl(api, sandbox, started.hosted),
+      };
+    }),
+  );
 });
 
 const LatestRelease = Schema.Struct({ tag_name: Schema.String });
@@ -508,16 +833,43 @@ const waitSnapshot = (api: BoatApi, name: string, sourceSandboxId: string) =>
     }),
   );
 
+/** Clones what it can; a repository missing from the snapshot is cloned on first use instead. */
+const cloneRepositories = (api: BoatApi, sandboxId: string, remoteUrls: ReadonlyArray<string>) => {
+  const repositories = [
+    ...new Map(
+      remoteUrls.flatMap((remoteUrl) => {
+        const parsed = parseRepository(remoteUrl);
+        return parsed ? [[parsed.key, parsed] as const] : [];
+      }),
+    ).values(),
+  ];
+  if (repositories.length === 0) return Effect.void;
+  return exec(api, sandboxId, cloneRepositoriesScript(repositories), 300).pipe(
+    Effect.flatMap((stdout) =>
+      Effect.logInfo("boat cloud snapshot holds repositories", {
+        cloned: stdout.split("\n").filter(Boolean).length,
+        asked: repositories.length,
+      }),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("boat cloud could not clone repositories into the snapshot", { cause }),
+    ),
+  );
+};
+
 /**
  * Builds the snapshot every VM starts from: a VM with the given t3 build installed
- * as a service that starts at boot, the holder's skills, and no T3 state. Older
- * snapshots are deleted once it is saved. Returns its name.
+ * as a service that starts at boot, the holder's skills, the given repositories
+ * checked out, and no T3 state. Older snapshots are deleted once it is saved.
+ * Returns its name.
  */
 export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (input: {
   readonly api: BoatApi;
   readonly version: string;
   /** Absent on a holder with no skills, such as the phone. */
   readonly copySkills?: (sandboxId: string) => Effect.Effect<void, BoatApiError>;
+  /** Remote URLs to check out, so a VM made from the snapshot only fetches them. */
+  readonly repositories: ReadonlyArray<string>;
   readonly setStep: (step: BoatCloudSetupStep) => Effect.Effect<void>;
 }) {
   const { api } = input;
@@ -537,8 +889,15 @@ export const buildSnapshot = Effect.fn("BoatCloud.buildSnapshot")(function* (inp
   yield* Effect.gen(function* () {
     yield* waitRunning(api, created.id);
     yield* input.setStep("install-server");
-    yield* exec(api, created.id, installCliScript(input.version), 600);
-    yield* ensureServer(api, created.id);
+    yield* Effect.all(
+      [
+        exec(api, created.id, installCliScript(input.version), 600).pipe(
+          Effect.andThen(ensureServer(api, created.id)),
+        ),
+        cloneRepositories(api, created.id, input.repositories),
+      ],
+      { concurrency: 2 },
+    );
     yield* input.setStep("copy-skills");
     if (input.copySkills) yield* input.copySkills(created.id);
     yield* input.setStep("save-snapshot");

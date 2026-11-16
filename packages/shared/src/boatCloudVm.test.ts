@@ -7,12 +7,16 @@ import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  ADD_PROJECT_SCRIPT,
   baseBranchCheckScript,
   boatCloudProviderDrivers,
+  cloneRepositoriesScript,
   idleSecondsOf,
+  parkCheckoutFunction,
   parseMeasure,
   parseRepository,
   pickMachine,
+  prepareWorktreeScript,
   subdomainOfHttpBaseUrl,
   syncCheckoutScript,
 } from "./boatCloudVm.ts";
@@ -57,17 +61,17 @@ describe("parseRepository", () => {
 });
 
 describe("parseMeasure", () => {
-  it("takes the larger of CPU and memory use and lists the VM's checkouts", () => {
+  it("takes the larger of CPU waiting and memory use and lists the VM's checkouts", () => {
     assert.deepStrictEqual(
-      parseMeasure("1.00 4 1000 900\n/home/user/projects/acme/app\n/home/user/projects/a/b\n"),
+      parseMeasure("0.25 1000 900\n/home/user/projects/acme/app\n/home/user/projects/a/b\n"),
       {
         usage: 0.25,
         workspaceRoots: ["/home/user/projects/acme/app", "/home/user/projects/a/b"],
       },
     );
-    assert.strictEqual(parseMeasure("0.10 4 1000 300")?.usage, 0.7);
+    assert.strictEqual(parseMeasure("0.025 1000 300")?.usage, 0.7);
     assert.isNull(parseMeasure("garbage"));
-    assert.isNull(parseMeasure("1 0 1000 900"));
+    assert.isNull(parseMeasure("0.1 0 900"));
   });
 });
 
@@ -79,7 +83,8 @@ describe("pickMachine", () => {
     usage: number | null,
     workspaceRoots: ReadonlyArray<string> = [],
     environment: string | null = "base",
-  ) => ({ sandboxId, environment, running, usage, workspaceRoots });
+    spare = false,
+  ) => ({ sandboxId, environment, running, usage, workspaceRoots, spare });
 
   it("reuses a running VM under half load, preferring one that has the checkout", () => {
     assert.deepStrictEqual(
@@ -102,11 +107,42 @@ describe("pickMachine", () => {
       { kind: "resume", sandboxId: "off" },
     );
     assert.deepStrictEqual(
-      pickMachine([vm("free", true, 0.2), vm("off-with-repo", false, null, [root])], root, "base"),
+      pickMachine([vm("off-with-repo", false, null, [root]), vm("off", false, null)], root, "base"),
       { kind: "resume", sandboxId: "off-with-repo" },
     );
     assert.deepStrictEqual(pickMachine([vm("busy", true, 0.9)], root, "base"), {
       kind: "create",
+    });
+  });
+
+  it("uses a running VM before waking a stopped one that has the checkout", () => {
+    assert.deepStrictEqual(
+      pickMachine([vm("off-with-repo", false, null, [root]), vm("free", true, 0.2)], root, "base"),
+      { kind: "use", sandboxId: "free" },
+    );
+    const spare = vm("spare", true, 0, [], "base", true);
+    assert.deepStrictEqual(
+      pickMachine([vm("off-with-repo", false, null, [root]), spare], root, "base"),
+      {
+        kind: "use",
+        sandboxId: "spare",
+      },
+    );
+  });
+
+  it("takes the spare only after the VMs of its kind", () => {
+    const spare = vm("spare", true, 0, [root], "base", true);
+    assert.deepStrictEqual(pickMachine([spare, vm("free", true, 0.3, [root])], root, "base"), {
+      kind: "use",
+      sandboxId: "free",
+    });
+    assert.deepStrictEqual(pickMachine([spare, vm("off", false, null, [root])], root, "base"), {
+      kind: "use",
+      sandboxId: "spare",
+    });
+    assert.deepStrictEqual(pickMachine([spare, vm("free", true, 0.1)], root, "base"), {
+      kind: "use",
+      sandboxId: "spare",
     });
   });
 
@@ -230,5 +266,148 @@ describe("syncCheckoutScript", () => {
     assert.strictEqual(sync("feat/later").status, 0);
     assert.strictEqual(sync(null).status, 0);
     assert.notStrictEqual(sync("feat/never").status, 0);
+  });
+});
+
+describe("ADD_PROJECT_SCRIPT", () => {
+  it("adds the checkout once the server answers, on a VM with no database yet", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "boat-add-project-"));
+    using _cleanup = {
+      [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    };
+    const stub = (name: string, body: string) =>
+      NodeFS.writeFileSync(NodePath.join(root, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+    stub("sqlite3", "exit 1");
+    stub("curl", "echo '{}'");
+    stub("t3", `echo "$@" > ${NodePath.join(root, "added")}`);
+    const result = NodeChildProcess.spawnSync(
+      "bash",
+      ["-c", `set -e\ndir=/repo\nT3=${NodePath.join(root, "t3")}\n${ADD_PROJECT_SCRIPT}`],
+      { env: { ...process.env, PATH: `${root}:${process.env.PATH}` } },
+    );
+
+    assert.strictEqual(result.status, 0, result.stderr.toString());
+    assert.strictEqual(
+      NodeFS.readFileSync(NodePath.join(root, "added"), "utf8").trim(),
+      "project add /repo",
+    );
+  });
+});
+
+describe("prepareWorktreeScript", () => {
+  it("cuts the branch from the remote's latest base and records that base", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "boat-worktree-"));
+    using _cleanup = {
+      [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    };
+    const git = (...args: string[]) =>
+      NodeChildProcess.spawnSync(
+        "git",
+        ["-c", "init.defaultBranch=main", "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+        { cwd: root },
+      )
+        .stdout.toString()
+        .trim();
+    git("init", "--quiet", "source");
+    git("-C", "source", "commit", "--quiet", "--allow-empty", "-m", "base");
+    git("clone", "--quiet", "source", "clone");
+    // The snapshot's checkout is older than the remote.
+    git("-C", "source", "commit", "--quiet", "--allow-empty", "-m", "later");
+    const path = NodePath.join(root, "worktrees", "t3-0a1b2c3d");
+    const parked = NodePath.join(root, "parked", "repo");
+    const result = NodeChildProcess.spawnSync("bash", [
+      "-c",
+      `set -e\ndir=${NodePath.join(root, "clone")}\n${prepareWorktreeScript({ path, branch: "t3/0a1b2c3d", baseBranch: "main" }, parked)}`,
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr.toString());
+    assert.strictEqual(
+      git("-C", path, "rev-parse", "HEAD"),
+      git("-C", "source", "rev-parse", "main"),
+    );
+    assert.strictEqual(git("-C", path, "branch", "--show-current"), "t3/0a1b2c3d");
+    assert.strictEqual(git("-C", "clone", "config", "branch.t3/0a1b2c3d.t3-merge-base"), "main");
+  });
+
+  it("moves a worktree parked on the base into place and brings it to the latest base", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "boat-parked-"));
+    using _cleanup = {
+      [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    };
+    const git = (...args: string[]) =>
+      NodeChildProcess.spawnSync(
+        "git",
+        ["-c", "init.defaultBranch=main", "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+        { cwd: root },
+      )
+        .stdout.toString()
+        .trim();
+    git("init", "--quiet", "source");
+    NodeFS.writeFileSync(NodePath.join(root, "source", "file"), "base\n");
+    git("-C", "source", "add", "file");
+    git("-C", "source", "commit", "--quiet", "-m", "base");
+    git("clone", "--quiet", "source", "clone");
+    const dir = NodePath.join(root, "clone");
+    const parked = NodePath.join(root, "parked", "repo");
+    const bash = (script: string) => NodeChildProcess.spawnSync("bash", ["-c", script]);
+    const park = bash(`${parkCheckoutFunction}\npark_checkout ${dir} ${parked}`);
+    assert.strictEqual(park.status, 0, park.stderr.toString());
+    assert.isTrue(NodeFS.existsSync(NodePath.join(parked, "file")));
+
+    // The remote moved on after the VM parked its worktree.
+    NodeFS.writeFileSync(NodePath.join(root, "source", "file"), "later\n");
+    git("-C", "source", "commit", "--quiet", "-am", "later");
+    const path = NodePath.join(root, "worktrees", "t3-0a1b2c3d");
+    const result = bash(
+      `set -e\ndir=${dir}\n${prepareWorktreeScript({ path, branch: "t3/0a1b2c3d", baseBranch: "main" }, parked)}`,
+    );
+
+    assert.strictEqual(result.status, 0, result.stderr.toString());
+    assert.isFalse(NodeFS.existsSync(parked));
+    assert.strictEqual(NodeFS.readFileSync(NodePath.join(path, "file"), "utf8"), "later\n");
+    assert.strictEqual(git("-C", path, "branch", "--show-current"), "t3/0a1b2c3d");
+    assert.strictEqual(git("-C", "clone", "config", "branch.t3/0a1b2c3d.t3-merge-base"), "main");
+    assert.strictEqual(git("-C", "clone", "config", "branch.t3/0a1b2c3d.t3-boat-parked-base"), "");
+    // A second thread finds nothing parked and checks out its own worktree.
+    const second = NodePath.join(root, "worktrees", "t3-0b1b2c3d");
+    const next = bash(
+      `set -e\ndir=${dir}\n${prepareWorktreeScript({ path: second, branch: "t3/0b1b2c3d", baseBranch: "main" }, parked)}`,
+    );
+    assert.strictEqual(next.status, 0, next.stderr.toString());
+    assert.strictEqual(NodeFS.readFileSync(NodePath.join(second, "file"), "utf8"), "later\n");
+  });
+});
+
+describe("cloneRepositoriesScript", () => {
+  it("prints the clones that finished and leaves nothing of one that failed", () => {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "boat-snapshot-clone-"));
+    using _cleanup = {
+      [Symbol.dispose]: () => NodeFS.rmSync(root, { recursive: true, force: true }),
+    };
+    NodeChildProcess.spawnSync(
+      "git",
+      ["-c", "init.defaultBranch=main", "init", "--quiet", "source"],
+      {
+        cwd: root,
+      },
+    );
+    const repository = (name: string, source: string) => ({
+      key: `local/me/${name}`,
+      name: `me/${name}`,
+      cloneUrl: NodePath.join(root, source),
+      workspaceRoot: NodePath.join(root, "projects", "me", name),
+    });
+    const cloned = NodeChildProcess.spawnSync("bash", [
+      "-c",
+      cloneRepositoriesScript([repository("app", "source"), repository("gone", "missing")]),
+    ]);
+
+    assert.strictEqual(cloned.status, 0);
+    assert.strictEqual(
+      cloned.stdout.toString(),
+      `${NodePath.join(root, "projects", "me", "app")}\n`,
+    );
+    assert.isTrue(NodeFS.existsSync(NodePath.join(root, "projects", "me", "app", ".git")));
+    assert.deepStrictEqual(NodeFS.readdirSync(NodePath.join(root, "projects", "me")), ["app"]);
   });
 });

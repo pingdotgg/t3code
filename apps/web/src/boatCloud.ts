@@ -5,13 +5,16 @@ import {
   runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { mostWorkedRepositories } from "@t3tools/client-runtime/state/threads";
 import {
   connectionCatalogDisplayUrl,
   type EnvironmentConnectionPhase,
 } from "@t3tools/client-runtime/connection";
 import {
   AuthOrchestrationOperateScope,
+  BOAT_CLOUD_SNAPSHOT_REPOSITORIES,
   type BoatCloudAcquireInput,
   type BoatCloudSession,
   type BoatCloudStartStep,
@@ -27,17 +30,27 @@ import {
   completeStep,
   failProgress,
   markAcquired,
+  markSent,
   startingProgress,
+  stepsLeftAtSend,
+  wakingProgress,
   withHolderSteps,
 } from "./boatCloudStart.logic";
 import type { DraftId } from "./composerDraftStore";
+import type { BoatCloudStartRowsState } from "./components/chat/WorktreeSetupCard";
 import { stackedThreadToast, toastManager } from "./components/ui/toast";
 import { environmentCatalog } from "./connection/catalog";
 import { connectPairing } from "./connection/onboarding";
 import { randomUUID } from "./lib/utils";
 import { appAtomRegistry } from "./rpc/atomRegistry";
-import { useEnvironment, usePrimaryEnvironmentId } from "./state/environments";
+import {
+  readEnvironment,
+  readPrimaryEnvironmentId,
+  useEnvironment,
+  usePrimaryEnvironmentId,
+} from "./state/environments";
 import { environmentPresentations, environmentSummaries } from "./state/presentation";
+import { threadEnvironment } from "./state/threads";
 import { environmentSession, sessionHasScope } from "./state/session";
 import { environmentProjects } from "./state/projects";
 import { useEnvironmentQuery } from "./state/query";
@@ -50,6 +63,8 @@ import { waitForAtomValue } from "./state/waitForAtomValue";
  */
 
 const PROJECT_APPEAR_TIMEOUT_MS = 60_000;
+/** The checkout and worktree run in one VM command, which the holder gives ten minutes. */
+const CHECKOUT_TIMEOUT_MS = 10 * 60_000;
 const RECONNECT_TIMEOUT_MS = 15_000;
 
 /** An environment's Boat cloud status, while it is connected. */
@@ -129,12 +144,23 @@ export const boatCloudStartProgressAtom = Atom.family((_draftId: string) =>
 );
 
 function updateProgress(
-  draftId: DraftId,
+  draftId: DraftId | null,
   update: (progress: BoatCloudStartProgress) => BoatCloudStartProgress,
 ) {
+  if (draftId === null) return;
   const atom = boatCloudStartProgressAtom(draftId);
   const current = appAtomRegistry.get(atom);
   if (current) appAtomRegistry.set(atom, update(current));
+}
+
+/** The draft's send now waits on its start, so the thread shows the steps still left. */
+export function markBoatCloudStartSent(draftId: DraftId | null) {
+  updateProgress(draftId, (progress) => markSent(progress, new Date().toISOString()));
+}
+
+/** The send stopped waiting without going out; the steps leave the thread. */
+export function unmarkBoatCloudStartSent(draftId: DraftId | null) {
+  updateProgress(draftId, (progress) => ({ ...progress, sent: null }));
 }
 
 /** Ends the draft's start, once its thread is created or it leaves Boat cloud. */
@@ -184,6 +210,7 @@ async function attach(session: BoatCloudSession): Promise<string | null> {
       host: session.httpBaseUrl,
       pairingCode: session.pairingCode,
       expectedEnvironmentId: session.environmentId,
+      codeIsForExpectedEnvironment: true,
     },
     { label: connectPairing.label, reportFailure: false, reportDefect: true },
   );
@@ -198,6 +225,12 @@ interface BoatCloudPrepareInput {
   readonly baseBranch: string;
 }
 
+/** Where the draft moves: the VM's project, and the worktree the VM cut for it when it did. */
+export interface BoatCloudTarget {
+  readonly project: EnvironmentProject;
+  readonly worktree: BoatCloudSession["worktree"] | null;
+}
+
 /**
  * Gets a VM with the repository checked out and returns its project there,
  * so the draft can move onto it and send. Progress goes to the draft's
@@ -206,22 +239,46 @@ interface BoatCloudPrepareInput {
  */
 async function prepareBoatCloudProjectNow(
   input: BoatCloudPrepareInput,
-): Promise<EnvironmentProject | null> {
+): Promise<BoatCloudTarget | null> {
   const { draftId } = input;
+  const progressAtom = boatCloudStartProgressAtom(draftId);
   appAtomRegistry.set(
-    boatCloudStartProgressAtom(draftId),
-    startingProgress(parseRepository(input.repositoryUrl)?.name ?? null),
+    progressAtom,
+    startingProgress(
+      parseRepository(input.repositoryUrl)?.name ?? null,
+      appAtomRegistry.get(progressAtom),
+    ),
   );
+  // The holder logs its own steps as "boat cloud start timing"; this is the client's share.
+  const startedAt = performance.now();
+  const endedAtMs: Record<string, number> = {};
+  const markEnded = (step: string) => {
+    endedAtMs[step] = Math.round(performance.now() - startedAt);
+  };
+  const logTiming = (outcome: "ready" | "failed") =>
+    console.info("[boat-cloud] start timing", {
+      outcome,
+      totalMs: Math.round(performance.now() - startedAt),
+      endedAtMs,
+    });
   const fail = (error: string, step?: BoatCloudStartStep) => {
     updateProgress(draftId, (progress) => failProgress(progress, error, step));
+    logTiming("failed");
     return null;
   };
   let requestId = randomUUID();
   // The holder reports its steps under the request id, the checkout's after the acquire returns.
   let repositoryFailed: (error: string) => void = () => undefined;
-  const checkoutFailure = new Promise<string>((resolve) => {
-    repositoryFailed = resolve;
+  let repositoryDone: () => void = () => undefined;
+  const watchCheckout = () => ({
+    failure: new Promise<string>((resolve) => {
+      repositoryFailed = resolve;
+    }),
+    done: new Promise<true>((resolve) => {
+      repositoryDone = () => resolve(true);
+    }),
   });
+  let checkout = watchCheckout();
   const stopWatchingHolder = appAtomRegistry.subscribe(
     serverEnvironment.boatCloudStatus({ environmentId: input.holderEnvironmentId, input: {} }),
     (result) => {
@@ -234,6 +291,7 @@ async function prepareBoatCloudProjectNow(
       if (repository?.state === "failed") {
         repositoryFailed(repository.detail ?? "Could not get the repository on the VM.");
       }
+      if (repository?.state === "done") repositoryDone();
     },
   );
   try {
@@ -265,10 +323,13 @@ async function prepareBoatCloudProjectNow(
       return fail(failureMessage(acquired));
     }
     updateProgress(draftId, markAcquired);
+    markEnded("acquire");
     let attachFailure = await attach(acquired.value);
-    if (attachFailure !== null && acquired.value.pairingCode === null) {
-      // The saved credential no longer works, so pair as a new client.
+    if (attachFailure !== null) {
+      // The saved credential no longer works, or the VM did not answer, so start once more
+      // and pair as a new client. A VM that does not answer gets no new thread.
       requestId = randomUUID();
+      checkout = watchCheckout();
       acquired = await acquire([]);
       if (acquired._tag === "Failure") {
         if (isAtomCommandInterrupted(acquired)) {
@@ -281,10 +342,13 @@ async function prepareBoatCloudProjectNow(
     }
     if (attachFailure !== null) return fail(attachFailure, "connect");
     updateProgress(draftId, (progress) => completeStep(progress, "connect"));
+    markEnded("connect");
     const session = acquired.value;
 
     // Uploads need the VM's server config and the send needs its operate grant,
-    // so the draft moves once all three have arrived.
+    // so the draft moves once all three have arrived. A thread that takes the VM's worktree
+    // also waits for the holder to say it is cut.
+    const worktree = session.worktree ?? null;
     const findProject = (projects: ReadonlyArray<EnvironmentProject>) =>
       projects.find(
         (project) =>
@@ -311,8 +375,16 @@ async function prepareBoatCloudProjectNow(
           predicate: (result) => sessionHasScope(result, AuthOrchestrationOperateScope),
           timeoutMs: PROJECT_APPEAR_TIMEOUT_MS,
         }),
+        worktree === null
+          ? true
+          : Promise.race([
+              checkout.done,
+              new Promise<false>((resolve) =>
+                setTimeout(() => resolve(false), CHECKOUT_TIMEOUT_MS),
+              ),
+            ]),
       ]),
-      checkoutFailure,
+      checkout.failure,
     ]);
     if (typeof arrived === "string") return fail(arrived, "repository");
     const project = findProject(appAtomRegistry.get(environmentProjects.projectsAtom));
@@ -321,7 +393,9 @@ async function prepareBoatCloudProjectNow(
     updateProgress(draftId, (progress) =>
       completeStep(completeStep(progress, "repository"), "project"),
     );
-    return project;
+    markEnded("project");
+    logTiming("ready");
+    return { project, worktree };
   } finally {
     stopWatchingHolder();
   }
@@ -330,7 +404,7 @@ async function prepareBoatCloudProjectNow(
 /** The start each draft began when Boat cloud was picked, so its send can reuse it. */
 const prewarmed = new Map<
   DraftId,
-  { readonly repositoryUrl: string; readonly project: Promise<EnvironmentProject | null> }
+  { readonly repositoryUrl: string; readonly target: Promise<BoatCloudTarget | null> }
 >();
 
 /**
@@ -341,19 +415,19 @@ export function prewarmBoatCloudProject(input: BoatCloudPrepareInput) {
   if (prewarmed.get(input.draftId)?.repositoryUrl === input.repositoryUrl) return;
   prewarmed.set(input.draftId, {
     repositoryUrl: input.repositoryUrl,
-    project: prepareBoatCloudProjectNow(input),
+    target: prepareBoatCloudProjectNow(input),
   });
 }
 
 /** The draft's pre-warmed start when it is for this repository and did not fail, else a new one. */
 export async function prepareBoatCloudProject(
   input: BoatCloudPrepareInput,
-): Promise<EnvironmentProject | null> {
+): Promise<BoatCloudTarget | null> {
   const started = prewarmed.get(input.draftId);
   prewarmed.delete(input.draftId);
   if (started?.repositoryUrl === input.repositoryUrl) {
-    const project = await started.project;
-    if (project !== null) return project;
+    const target = await started.target;
+    if (target !== null) return target;
   }
   return prepareBoatCloudProjectNow(input);
 }
@@ -361,10 +435,30 @@ export async function prepareBoatCloudProject(
 const WAKE_CONNECT_TIMEOUT_MS = 90_000;
 const wakesInFlight = new Map<EnvironmentId, Promise<boolean>>();
 
-/** Whether this client is turning a VM back on, so its thread shows "Waking" rather than "Sleeping". */
-const boatCloudWakingAtom = Atom.family((_environmentId: EnvironmentId | null) =>
-  Atom.make(false).pipe(Atom.keepAlive),
+/** The wake this client runs for each VM, so its thread shows the steps rather than "Sleeping". */
+const boatCloudWakeProgressAtom = Atom.family((_environmentId: EnvironmentId | null) =>
+  Atom.make<BoatCloudStartProgress | null>(null).pipe(Atom.keepAlive),
 );
+
+function updateWake(
+  environmentId: EnvironmentId,
+  update: (progress: BoatCloudStartProgress) => BoatCloudStartProgress,
+) {
+  const atom = boatCloudWakeProgressAtom(environmentId);
+  const current = appAtomRegistry.get(atom);
+  if (current) appAtomRegistry.set(atom, update(current));
+}
+
+/** The steps of this client's wake of the VM, for its thread to show under the waiting message. */
+export function useBoatCloudWakeRows(environmentId: EnvironmentId | null): {
+  rows: BoatCloudStartRowsState | null;
+  startedAt: string | null;
+} {
+  const progress = useAtomValue(boatCloudWakeProgressAtom(environmentId));
+  const steps = stepsLeftAtSend(progress);
+  if (!steps || !progress?.sent) return { rows: null, startedAt: null };
+  return { rows: { steps, repository: null, waking: true }, startedAt: progress.sent.at };
+}
 
 /**
  * Turns a stopped or deleted VM back on, from this machine's copy, and resolves
@@ -377,8 +471,22 @@ function wakeBoatCloudMachine(input: {
 }): Promise<boolean> {
   const inFlight = wakesInFlight.get(input.environmentId);
   if (inFlight) return inFlight;
-  const waking = boatCloudWakingAtom(input.environmentId);
-  appAtomRegistry.set(waking, true);
+  const { environmentId } = input;
+  appAtomRegistry.set(
+    boatCloudWakeProgressAtom(environmentId),
+    wakingProgress(new Date().toISOString()),
+  );
+  // The holder reports the machine and server steps under the request id.
+  const requestId = randomUUID();
+  const stopWatchingHolder = appAtomRegistry.subscribe(
+    serverEnvironment.boatCloudStatus({ environmentId: input.holderEnvironmentId, input: {} }),
+    (result) => {
+      const start = AsyncResult.getOrElse(result, () => null)?.starts.find(
+        (candidate) => candidate.requestId === requestId,
+      );
+      if (start) updateWake(environmentId, (progress) => withHolderSteps(progress, start.steps));
+    },
+  );
   const wake = (async () => {
     const woken = await runAtomCommand(
       appAtomRegistry,
@@ -386,7 +494,8 @@ function wakeBoatCloudMachine(input: {
       {
         environmentId: input.holderEnvironmentId,
         input: {
-          environmentId: input.environmentId,
+          environmentId,
+          requestId,
           ...(input.httpBaseUrl ? { httpBaseUrl: input.httpBaseUrl } : {}),
         },
       },
@@ -396,6 +505,7 @@ function wakeBoatCloudMachine(input: {
       reportFailure("Could not wake the Boat cloud machine", woken);
       return false;
     }
+    updateWake(environmentId, markAcquired);
     // A restored VM has a new address, so the holder pairs again rather than wait for the old one.
     const attachFailure = await attach(woken.value);
     if (attachFailure !== null) {
@@ -422,6 +532,7 @@ function wakeBoatCloudMachine(input: {
         predicate: (result) => sessionHasScope(result, AuthOrchestrationOperateScope),
         timeoutMs: WAKE_CONNECT_TIMEOUT_MS,
       }));
+    if (connected) updateWake(environmentId, (progress) => completeStep(progress, "connect"));
     if (!connected) {
       toastManager.add(
         stackedThreadToast({
@@ -433,11 +544,34 @@ function wakeBoatCloudMachine(input: {
     }
     return connected;
   })().finally(() => {
-    wakesInFlight.delete(input.environmentId);
-    appAtomRegistry.set(waking, false);
+    stopWatchingHolder();
+    wakesInFlight.delete(environmentId);
+    appAtomRegistry.set(boatCloudWakeProgressAtom(environmentId), null);
   });
   wakesInFlight.set(input.environmentId, wake);
   return wake;
+}
+
+/**
+ * Wakes a Boat VM that is not connected before an action runs on it. False when it
+ * could not be woken; true when it is connected or is not a Boat VM at all.
+ */
+export function wakeBoatCloudIfAsleep(environmentId: EnvironmentId): Promise<boolean> {
+  if (isConnected(environmentId)) return Promise.resolve(true);
+  const environment = readEnvironment(environmentId);
+  const holderEnvironmentId = readPrimaryEnvironmentId();
+  if (
+    environment?.boatCloud !== true ||
+    holderEnvironmentId === null ||
+    holderEnvironmentId === environmentId
+  ) {
+    return Promise.resolve(true);
+  }
+  return wakeBoatCloudMachine({
+    holderEnvironmentId,
+    environmentId,
+    httpBaseUrl: environment.displayUrl ?? null,
+  });
 }
 
 export interface BoatCloudSleep {
@@ -457,7 +591,7 @@ export function useBoatCloudSleep(
 ): BoatCloudSleep | null {
   const holderEnvironmentId = usePrimaryEnvironmentId();
   const environment = useEnvironment(environmentId);
-  const waking = useAtomValue(boatCloudWakingAtom(environmentId));
+  const waking = useAtomValue(boatCloudWakeProgressAtom(environmentId)) !== null;
   const httpBaseUrl = environment?.displayUrl ?? null;
   if (
     environment?.boatCloud !== true ||
@@ -473,4 +607,15 @@ export function useBoatCloudSleep(
     state: waking ? "waking" : "sleeping",
     wake: () => wakeBoatCloudMachine({ holderEnvironmentId, environmentId, httpBaseUrl }),
   };
+}
+
+/** What the Boat cloud snapshot checks out: the most worked repositories on every machine. */
+export function boatCloudSnapshotRepositories(): Array<string> {
+  const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
+  return mostWorkedRepositories(
+    [...enabledEnvironmentIds(catalog)].map((environmentId) =>
+      appAtomRegistry.get(threadEnvironment.snapshotAtom(environmentId)),
+    ),
+    BOAT_CLOUD_SNAPSHOT_REPOSITORIES,
+  );
 }

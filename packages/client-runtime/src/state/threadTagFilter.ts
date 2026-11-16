@@ -18,6 +18,8 @@ export interface TagFilteredEnvironment {
   readonly threads: ReadonlyArray<FilterableThread>;
   /** Tags this environment hides, or null while its filter is off. */
   readonly hiddenTags: ReadonlyArray<string> | null;
+  /** The only top-level threads this environment lists, or null to list them all. */
+  readonly listedThreadIds?: ReadonlySet<ThreadId> | null;
 }
 
 export const NO_HIDDEN_THREADS: ReadonlySet<string> = new Set();
@@ -74,7 +76,13 @@ export function hiddenThreadKeys(
   loadedElsewhere: ReadonlySet<string> = NO_HIDDEN_THREADS,
   hidingAnywhere: boolean = environments.some((environment) => environment.hiddenTags !== null),
 ): ReadonlySet<string> {
-  if (alreadyHidden.size === 0 && !hidingAnywhere) return NO_HIDDEN_THREADS;
+  if (
+    alreadyHidden.size === 0 &&
+    !hidingAnywhere &&
+    !environments.some((environment) => environment.listedThreadIds != null)
+  ) {
+    return NO_HIDDEN_THREADS;
+  }
   const byKey = new Map<
     string,
     { thread: FilterableThread; environment: TagFilteredEnvironment }
@@ -107,7 +115,9 @@ export function hiddenThreadKeys(
       return true;
     }
     if (!followsParent) {
-      const hidden = hasHiddenTag(thread.tags, environment.hiddenTags);
+      const hidden =
+        hasHiddenTag(thread.tags, environment.hiddenTags) ||
+        environment.listedThreadIds?.has(thread.id) === false;
       hiddenByKey.set(key, hidden);
       return hidden;
     }

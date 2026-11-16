@@ -5,9 +5,11 @@ import {
   type BoatCloudConnectInput,
   type BoatCloudEnvironment,
   BoatCloudError,
+  type BoatCloudRunSetupInput,
   BoatCloudMachineState,
   type BoatCloudSession,
   type BoatCloudSetup,
+  type BoatCloudStartStep,
   type BoatCloudStepProgress,
   type BoatCloudStatus,
   type BoatCloudWakeInput,
@@ -25,7 +27,9 @@ import {
   buildSnapshot,
   exec,
   findSandboxByHttpBaseUrl,
+  type ReportStep,
   latestCliRelease,
+  makeSpareKeeper,
   snapshotToBuild,
   startMachine,
   startingSnapshot,
@@ -37,6 +41,7 @@ import {
   IDLE_TTL_SECONDS,
   MACHINE_LABEL_FILTER,
   MACHINE_LABELS,
+  SPARE_NAME,
   VM_BACKUP_ARCHIVE,
   VM_SKILLS_ARCHIVE,
   backupScript,
@@ -49,6 +54,7 @@ import {
   restoreScript,
 } from "@t3tools/shared/boatCloudVm";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -72,7 +78,7 @@ import { forkParked } from "../serverActivation.ts";
 const API_KEY_SECRET = "boat-cloud-api-key";
 const SKILL_DIRECTORIES = [".claude/skills", ".agents/skills", ".codex/skills"];
 const IDLE_SWEEP_INTERVAL = Duration.minutes(1);
-const FAILED_START_LINGER = Duration.minutes(2);
+const START_LINGER = Duration.minutes(2);
 /**
  * This machine backs a VM up and stops it a minute before the VM's own deadline
  * would stop it without a backup. Idle time counts from the last turn on any of
@@ -99,6 +105,10 @@ const StoredState = Schema.Struct({
   machines: Schema.Array(StoredMachine),
   /** The Boat environment new VMs start on, by name, as Boat's create and list name it. */
   environment: Schema.NullOr(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** Git remotes the snapshot checks out, from the client that last ran setup. */
+  snapshotRepositories: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 type StoredState = typeof StoredState.Type;
 const decodeStoredState = Schema.decodeUnknownOption(Schema.fromJsonString(StoredState));
@@ -130,7 +140,9 @@ export class BoatCloudService extends Context.Service<
       input: BoatCloudConnectInput,
     ) => Effect.Effect<BoatCloudStatus, BoatCloudError>;
     readonly disconnect: Effect.Effect<BoatCloudStatus, BoatCloudError>;
-    readonly runSetup: Effect.Effect<BoatCloudStatus, BoatCloudError>;
+    readonly runSetup: (
+      input: BoatCloudRunSetupInput,
+    ) => Effect.Effect<BoatCloudStatus, BoatCloudError>;
     readonly configureEnvironment: (
       input: BoatCloudConfigureEnvironmentInput,
     ) => Effect.Effect<BoatCloudStatus, BoatCloudError>;
@@ -163,7 +175,12 @@ const make = Effect.gen(function* () {
     Effect.map((text) => Option.getOrUndefined(decodeStoredState(text))),
     Effect.orElseSucceed(() => undefined),
   );
-  let state: StoredState = stored ?? { account: null, machines: [], environment: null };
+  let state: StoredState = stored ?? {
+    account: null,
+    machines: [],
+    environment: null,
+    snapshotRepositories: [],
+  };
   let setup: BoatCloudSetup = { status: "idle", step: null, error: null };
   /** The saved snapshot new VMs start from, or null before setup. */
   let snapshotName: string | null = null;
@@ -172,6 +189,7 @@ const make = Effect.gen(function* () {
   const starts = new Map<string, Array<BoatCloudStepProgress>>();
   const sweepLock = yield* Semaphore.make(1);
   const registryLock = yield* Semaphore.make(1);
+  const spares = makeSpareKeeper();
 
   const statusRef = yield* SubscriptionRef.make<BoatCloudStatus>({
     connected: false,
@@ -352,6 +370,7 @@ const make = Effect.gen(function* () {
     // A VM added after the list was read is missing from it only because it is new.
     const listedFrom = new Set(state.machines.map((machine) => machine.sandboxId));
     const sandboxes = yield* api.listSandboxes(MACHINE_LABEL_FILTER);
+    spares.reconcile(sandboxes);
     const byId = new Map(sandboxes.map((sandbox) => [sandbox.id, sandbox]));
     const backedUp = new Set<string>();
     for (const machine of state.machines) {
@@ -378,9 +397,10 @@ const make = Effect.gen(function* () {
         }
       }
       const known = new Set(current.machines.map((machine) => machine.sandboxId));
-      // VMs another holder made with the same key are shared, but only swept there.
+      // VMs another holder made with the same key are shared, but only swept there. The spare
+      // joins once a start takes it.
       for (const sandbox of byId.values()) {
-        if (known.has(sandbox.id)) continue;
+        if (known.has(sandbox.id) || sandbox.name === SPARE_NAME) continue;
         machines.push({
           sandboxId: sandbox.id,
           environmentId: null,
@@ -529,14 +549,22 @@ const make = Effect.gen(function* () {
     yield* exec(api, sandboxId, extractSkillsScript, 300);
   }, Effect.mapError(transferFailure));
 
-  const finishSetup = (saved: string | null, error: string | null) =>
+  /** Keeps the spare in step with the snapshot and the chosen environment. */
+  const keepSpare = (api: BoatApi) =>
+    Effect.suspend(() =>
+      snapshotName === null ? Effect.void : spares.keep(api, snapshotName, state.environment),
+    );
+
+  const finishSetup = (api: BoatApi, saved: string | null, error: string | null) =>
     Effect.suspend(() => {
       if (saved !== null) snapshotName = saved;
       setup =
         saved !== null
           ? { status: "idle", step: null, error: null }
           : { status: "failed", step: setup.step, error };
-      return publish;
+      return saved === null
+        ? publish
+        : Effect.andThen(publish, keepSpare(api).pipe(Effect.forkDetach, Effect.asVoid));
     });
 
   /** Setup outlives the request that starts it; the page follows it through the status stream. */
@@ -553,6 +581,7 @@ const make = Effect.gen(function* () {
       return yield* buildSnapshot({
         api,
         version,
+        repositories: state.snapshotRepositories,
         ...(present.length > 0
           ? { copySkills: (sandboxId: string) => copySkills(api, sandboxId, present) }
           : {}),
@@ -564,11 +593,12 @@ const make = Effect.gen(function* () {
       });
     }).pipe(
       Effect.matchCauseEffect({
-        onSuccess: (saved) => finishSetup(saved, null),
+        onSuccess: (saved) => finishSetup(api, saved, null),
         onFailure: (cause) =>
           Effect.logWarning("boat cloud setup failed", { cause }).pipe(
             Effect.andThen(
               finishSetup(
+                api,
                 null,
                 Option.match(Cause.findErrorOption(cause), {
                   onNone: () => "Setup stopped.",
@@ -582,8 +612,13 @@ const make = Effect.gen(function* () {
     );
   });
 
-  const runSetup = Effect.fn("BoatCloud.runSetup")(function* () {
-    yield* startSetup(yield* requireApi);
+  const runSetup = Effect.fn("BoatCloud.runSetup")(function* (input: BoatCloudRunSetupInput) {
+    const api = yield* requireApi;
+    const repositories = input.repositories;
+    if (repositories !== undefined) {
+      yield* commit((current) => ({ ...current, snapshotRepositories: repositories }));
+    }
+    yield* startSetup(api);
     return yield* SubscriptionRef.get(statusRef);
   });
 
@@ -618,6 +653,25 @@ const make = Effect.gen(function* () {
       return parsed ? [parsed.workspaceRoot] : [];
     });
 
+  /** Records a step of the start or wake listed under `requestId` and publishes it. */
+  const reportStep =
+    (
+      requestId: string,
+      onSettled: (step: BoatCloudStartStep) => Effect.Effect<void> = () => Effect.void,
+    ): ReportStep =>
+    (step, stepState, detail) =>
+      Effect.suspend(() => {
+        const steps = starts.get(requestId);
+        if (!steps) return Effect.void;
+        starts.set(
+          requestId,
+          steps.map((entry) => (entry.step === step ? { step, state: stepState, detail } : entry)),
+        );
+        return stepState === "done" || stepState === "failed"
+          ? Effect.andThen(onSettled(step), publish)
+          : publish;
+      });
+
   const acquire = Effect.fn("BoatCloud.acquire")(function* (input: BoatCloudAcquireInput) {
     const api = yield* requireApi;
     const repository = parseRepository(input.repositoryUrl);
@@ -633,41 +687,52 @@ const make = Effect.gen(function* () {
       return yield* new BoatCloudError({ message: "Finish Boat cloud setup in Settings, Cloud." });
     }
     starts.set(input.requestId, pendingSteps());
+    // When each step ended, in ms since the request, so a slow start shows where it waited.
+    const startedAt = yield* Clock.currentTimeMillis;
+    const endedAtMs: Partial<Record<BoatCloudStartStep | "reconcile" | "handedOut", number>> = {};
+    const markEnded = (step: keyof typeof endedAtMs) =>
+      Effect.map(Clock.currentTimeMillis, (at) => {
+        endedAtMs[step] = at - startedAt;
+      });
+    const logTiming = (outcome: "ready" | "failed", sandboxId: string | null) =>
+      Effect.flatMap(Clock.currentTimeMillis, (at) =>
+        Effect.logInfo("boat cloud start timing", {
+          outcome,
+          sandboxId,
+          repository: repository.key,
+          totalMs: at - startedAt,
+          endedAtMs,
+        }),
+      );
     const finish = Effect.suspend(() => {
       starts.delete(input.requestId);
       return publish;
     });
+    const readySpare = yield* spares.take(snapshot, state.environment);
     // Starts run side by side; only the idle sweep needs the registry to hold still.
     const started = yield* Effect.gen(function* () {
-      const sandboxes = yield* reconcile(api).pipe(sweepLock.withPermits(1));
+      // A held spare is handed out from what this machine knows, so Boat's list can wait.
+      const sandboxes =
+        readySpare === null ? yield* reconcile(api).pipe(sweepLock.withPermits(1)) : undefined;
+      yield* markEnded("reconcile");
       return yield* startMachine({
         api,
         repository,
         baseBranch: input.baseBranch ?? null,
         environment: state.environment,
         snapshot,
-        sandboxes,
+        readySpare,
+        ...(sandboxes === undefined ? {} : { sandboxes }),
         knownWorkspaceRoots,
         paired: input.paired ?? [],
-        report: (step, stepState, detail) =>
-          Effect.suspend(() => {
-            const steps = starts.get(input.requestId);
-            if (!steps) return Effect.void;
-            starts.set(
-              input.requestId,
-              steps.map((entry) =>
-                entry.step === step ? { step, state: stepState, detail } : entry,
-              ),
-            );
-            return publish;
-          }),
-        onCreated: (sandbox) => addMachine(sandbox.id),
+        report: reportStep(input.requestId, markEnded),
+        onAdded: addMachine,
         // Without this the sweep sees a resumed VM's old hand-out and stops it mid-start.
         onReused: (sandboxId) =>
           Effect.flatMap(now, (acquiredAt) => updateMachine(sandboxId, { acquiredAt })),
       });
     }).pipe(
-      Effect.onError(() => finish),
+      Effect.onError(() => Effect.andThen(logTiming("failed", null), finish)),
       // Clients title this failure "Could not start on Boat cloud", so the message is just the cause.
       Effect.mapError(
         (cause) =>
@@ -683,6 +748,9 @@ const make = Effect.gen(function* () {
       state: "running",
       acquiredAt: yield* now,
     });
+    yield* markEnded("handedOut");
+    // The start may have taken the spare, so the next one is readied while this one checks out.
+    yield* keepSpare(api).pipe(Effect.forkDetach);
     // The client connects while the checkout runs; its repository step tells it how that ended.
     yield* started.checkout.pipe(
       Effect.andThen(
@@ -696,9 +764,18 @@ const make = Effect.gen(function* () {
         }),
       ),
       Effect.matchEffect({
-        onSuccess: () => finish,
-        // The failed step stays listed long enough for the client to read it.
-        onFailure: () => finish.pipe(Effect.delay(FAILED_START_LINGER)),
+        // The last step stays listed long enough for the client to read it: a client that
+        // takes the worktree waits for it.
+        onSuccess: () =>
+          Effect.andThen(
+            logTiming("ready", started.sandboxId),
+            finish.pipe(Effect.delay(START_LINGER)),
+          ),
+        onFailure: () =>
+          Effect.andThen(
+            logTiming("failed", started.sandboxId),
+            finish.pipe(Effect.delay(START_LINGER)),
+          ),
       }),
       Effect.forkDetach,
     );
@@ -708,11 +785,18 @@ const make = Effect.gen(function* () {
       httpBaseUrl: started.httpBaseUrl,
       pairingCode: started.pairingCode,
       workspaceRoot: started.workspaceRoot,
+      worktree: started.worktree,
     } satisfies BoatCloudSession;
   });
 
   const wake = Effect.fn("BoatCloud.wake")(function* (input: BoatCloudWakeInput) {
     const api = yield* requireApi;
+    const { requestId } = input;
+    const report = requestId === undefined ? undefined : reportStep(requestId);
+    if (requestId !== undefined) {
+      starts.set(requestId, pendingSteps());
+      yield* reportStep(requestId)("machine", "active", null);
+    }
     return yield* Effect.gen(function* () {
       yield* reconcile(api);
       const machine = state.machines.find(
@@ -734,7 +818,10 @@ const make = Effect.gen(function* () {
         yield* addMachine(sandbox.id);
         sandboxId = sandbox.id;
       }
-      const woken = yield* wakeMachine(api, sandboxId, { pair: true });
+      const woken = yield* wakeMachine(api, sandboxId, {
+        pair: true,
+        ...(report === undefined ? {} : { report }),
+      });
       yield* updateMachine(sandboxId, {
         environmentId: woken.environmentId,
         httpBaseUrl: woken.httpBaseUrl,
@@ -750,6 +837,14 @@ const make = Effect.gen(function* () {
       } satisfies BoatCloudSession;
     }).pipe(
       sweepLock.withPermits(1),
+      // The client marks the steps done from the reply, so the listing can end with it.
+      Effect.ensuring(
+        Effect.suspend(() => {
+          if (requestId === undefined) return Effect.void;
+          starts.delete(requestId);
+          return publish;
+        }),
+      ),
       Effect.mapError(cloudError("Could not wake the Boat cloud machine.")),
     );
   });
@@ -821,6 +916,8 @@ const make = Effect.gen(function* () {
     yield* refreshEnvironments(api);
     yield* reconcile(api).pipe(sweepLock.withPermits(1), Effect.ignore);
     yield* publish;
+    // A client is here, so a start may follow.
+    yield* keepSpare(api);
   }).pipe(Effect.forkDetach);
 
   return BoatCloudService.of({
@@ -829,7 +926,7 @@ const make = Effect.gen(function* () {
     ),
     connect,
     disconnect,
-    runSetup: runSetup(),
+    runSetup,
     configureEnvironment,
     acquire,
     wake,

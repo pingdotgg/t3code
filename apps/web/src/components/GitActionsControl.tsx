@@ -113,7 +113,11 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { vcsActionManager, vcsEnvironment, vcsStatusRevalidation } from "~/state/vcs";
 import { randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
-import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import {
+  type DraftId,
+  isCloudEnvironmentSelection,
+  useComposerDraftStore,
+} from "~/composerDraftStore";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
@@ -489,7 +493,7 @@ export default function GitActionsControl({
       branch,
       worktreePath: activeDraftThread.worktreePath,
       environmentSelection:
-        manualSelection && activeDraftThread.environmentSelection !== "cloud"
+        manualSelection && !isCloudEnvironmentSelection(activeDraftThread.environmentSelection)
           ? "manual"
           : (activeDraftThread.environmentSelection ??
             (activeDraftThread.branch ? "manual" : "auto")),

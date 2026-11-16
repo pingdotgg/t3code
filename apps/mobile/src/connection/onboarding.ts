@@ -43,7 +43,9 @@ export const connectPairingCode = createRuntimeCommand(connectionAtomRuntime, {
     readonly expectedEnvironmentId: EnvironmentId;
   }) =>
     ConnectionOnboarding.ConnectionOnboarding.pipe(
-      Effect.flatMap((onboarding) => onboarding.registerPairing(input)),
+      Effect.flatMap((onboarding) =>
+        onboarding.registerPairing({ ...input, codeIsForExpectedEnvironment: true }),
+      ),
     ),
 });
 

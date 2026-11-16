@@ -142,7 +142,7 @@ import {
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
 import { TooltipScrollDismissArea } from "../ui/tooltip";
-import { WorktreeSetupRows } from "./WorktreeSetupCard";
+import { type BoatCloudStartRowsState, WorktreeSetupRows } from "./WorktreeSetupCard";
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
@@ -268,6 +268,7 @@ interface MessagesTimelineProps {
   /** Replaces "Thinking" while the active run's provider has not started a turn. */
   providerStartingLabel?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  boatCloudStart?: BoatCloudStartRowsState | null;
   onCancelWorktreeSetup?: () => void;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
@@ -397,6 +398,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   activeTurnStartedAt = null,
   providerStartingLabel = null,
   worktreeSetup = null,
+  boatCloudStart = null,
   footer = null,
   onCancelWorktreeSetup,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
@@ -1331,6 +1333,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     isRevertingCheckpoint,
     worktreeSetup:
       worktreeSetup?.phase === "running" || worktreeSetup?.phase === "done" ? worktreeSetup : null,
+    boatCloudStart,
     turnEnded: latestRun?.turnEnded === true,
     activeTurnStartedAt,
     awaitingUser: awaitingUser !== null,

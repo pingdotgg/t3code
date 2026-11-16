@@ -91,6 +91,26 @@ describe("hiddenThreadKeys", () => {
     expect(keys(null, null)).toEqual([]);
   });
 
+  it("lists only an environment's chosen threads, with their subagents and linked tasks", () => {
+    const hidden = hiddenThreadKeys([
+      {
+        environmentId: local,
+        threads: localThreads,
+        hiddenTags: null,
+        listedThreadIds: new Set([ThreadId.make("plain")]),
+      },
+      { environmentId: linked, threads: linkedThreads, hiddenTags: null },
+    ]);
+    expect([...hidden].toSorted()).toEqual(
+      [
+        key(local, "private"),
+        key(local, "private-subagent"),
+        key(local, "private-fork"),
+        key(linked, "delegated-from-private"),
+      ].toSorted(),
+    );
+  });
+
   it("applies each environment's own tags", () => {
     expect(hiddenIds(null, ["client", "private"])).toEqual([key(linked, "linked-client")]);
   });

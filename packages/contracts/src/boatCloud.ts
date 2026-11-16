@@ -162,6 +162,22 @@ export type BoatCloudConfigureEnvironmentInput = typeof BoatCloudConfigureEnviro
 export const BoatCloudEmptyInput = Schema.Struct({});
 export type BoatCloudEmptyInput = typeof BoatCloudEmptyInput.Type;
 
+/** How many repositories the snapshot checks out. */
+export const BOAT_CLOUD_SNAPSHOT_REPOSITORIES = 10;
+
+export const BoatCloudRunSetupInput = Schema.Struct({
+  /**
+   * Git remotes the snapshot checks out, most worked first. The holder keeps them for later
+   * rebuilds; absent keeps the ones it has.
+   */
+  repositories: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))).check(
+      Schema.isMaxLength(BOAT_CLOUD_SNAPSHOT_REPOSITORIES),
+    ),
+  ),
+});
+export type BoatCloudRunSetupInput = typeof BoatCloudRunSetupInput.Type;
+
 export const BoatCloudAcquireInput = Schema.Struct({
   /** The project's git remote; the VM clones it when it does not have it yet. */
   repositoryUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
@@ -185,6 +201,8 @@ export const BoatCloudWakeInput = Schema.Struct({
   environmentId: EnvironmentId,
   /** Finds a VM this holder did not start, such as one another holder made with the same key. */
   httpBaseUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+  /** The holder reports the wake's machine and server steps under this id in its status. */
+  requestId: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
 });
 export type BoatCloudWakeInput = typeof BoatCloudWakeInput.Type;
 
@@ -197,6 +215,19 @@ export const BoatCloudSession = Schema.Struct({
   pairingCode: Schema.NullOr(TrimmedNonEmptyString),
   /** Repository checkout on the VM; null for a wake. */
   workspaceRoot: Schema.NullOr(TrimmedNonEmptyString),
+  /**
+   * The thread's worktree, which the VM cuts while its server starts. Ready once the start's
+   * `repository` step is done. Absent from older holders and for a start with no base branch.
+   */
+  worktree: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        path: TrimmedNonEmptyString,
+        branch: TrimmedNonEmptyString,
+        baseBranch: TrimmedNonEmptyString,
+      }),
+    ),
+  ),
 });
 export type BoatCloudSession = typeof BoatCloudSession.Type;
 
