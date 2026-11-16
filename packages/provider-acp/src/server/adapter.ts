@@ -2061,6 +2061,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        // session/load and session/resume deliver a session's history before activeSessionId names it.
+        const activatingSessionId = yield* Ref.make<string | null>(null);
+        const whileActivating = <A, E, R>(sessionId: string, activation: Effect.Effect<A, E, R>) =>
+          Ref.set(activatingSessionId, sessionId).pipe(
+            Effect.andThen(activation),
+            Effect.ensuring(Ref.set(activatingSessionId, null)),
+          );
+        // Child sessions and a replaced root share the runtime; only the root's history is the snapshot.
+        const ownsSnapshotHistory = (sessionId: string) =>
+          Effect.map(
+            Effect.all([Ref.get(activeSessionId), Ref.get(activatingSessionId)]),
+            ([active, activating]) => sessionId === active || sessionId === activating,
+          );
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
         );
@@ -4790,6 +4803,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             replace = false,
           ) {
             if (text.length === 0 && !replace) return;
+            if (!(yield* ownsSnapshotHistory(notification.sessionId))) return;
             const now = yield* DateTime.now;
             yield* Ref.update(snapshot, (current) => {
               const update = notification.update;
@@ -5573,11 +5587,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 true,
               );
             } else if (
-              update.sessionUpdate === "tool_call" ||
-              update.sessionUpdate === "tool_call_update" ||
-              update.sessionUpdate === "plan" ||
-              update.sessionUpdate === "plan_update" ||
-              update.sessionUpdate === "plan_removed"
+              (update.sessionUpdate === "tool_call" ||
+                update.sessionUpdate === "tool_call_update" ||
+                update.sessionUpdate === "plan" ||
+                update.sessionUpdate === "plan_update" ||
+                update.sessionUpdate === "plan_removed") &&
+              (yield* ownsSnapshotHistory(notification.sessionId))
             ) {
               yield* Ref.update(snapshot, (current) => ({
                 ...current,
@@ -7293,7 +7308,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const startup = Effect.gen(function* () {
             yield* spawnAcpRuntime(threadId, resumeSessionId);
             yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
-            return yield* runtime.start();
+            return yield* resumeSessionId === undefined
+              ? runtime.start()
+              : whileActivating(resumeSessionId, runtime.start());
           });
           return yield* flavor.withRuntimeStartup?.(startup) ?? startup;
         });
@@ -7569,14 +7586,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpContext = yield* readMcpContext(threadId);
           const activationOptions = acpMcpActivation(mcpContext);
           prepareTerminalEnvironment(mcpContext, sessionId);
-          const activated = canLoadSession
-            ? yield* runtime.loadSession(sessionId, activationOptions)
-            : canResumeSession
-              ? yield* runtime.resumeSession(sessionId, activationOptions)
-              : yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                  driver,
-                  detail: `ACP driver cannot load or resume session ${sessionId}`,
-                });
+          if (!canLoadSession && !canResumeSession) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: `ACP driver cannot load or resume session ${sessionId}`,
+            });
+          }
+          const activated = yield* whileActivating(
+            sessionId,
+            canLoadSession
+              ? runtime.loadSession(sessionId, activationOptions)
+              : runtime.resumeSession(sessionId, activationOptions),
+          );
           rememberTerminalEnvironment(activated.sessionId, yield* readMcpContext(threadId));
           return activated;
         });
@@ -9746,9 +9767,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       snapshotInput.providerThread.appThreadId,
                     );
                     prepareTerminalEnvironment(mcpContext, sessionId);
-                    const activated = yield* runtime.loadSession(
+                    const activated = yield* whileActivating(
                       sessionId,
-                      acpMcpActivation(mcpContext),
+                      runtime.loadSession(sessionId, acpMcpActivation(mcpContext)),
                     );
                     rememberTerminalEnvironment(
                       activated.sessionId,

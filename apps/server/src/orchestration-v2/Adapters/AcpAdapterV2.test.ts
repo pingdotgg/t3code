@@ -3272,7 +3272,18 @@ describe("AcpAdapterV2", () => {
         sessionId: "mock-session-1",
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "before plan" },
+          content: { type: "text", text: "before " },
+        },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "child-session",
+        update: { sessionUpdate: "tool_call", toolCallId: "child-tool", title: "Child tool" },
+      });
+      yield* sessionUpdateHandler!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "plan" },
         },
       });
       yield* sessionUpdateHandler!({
@@ -3346,6 +3357,14 @@ describe("AcpAdapterV2", () => {
                 Effect.sync(() => {
                   sessionUpdateHandler = handler;
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              loadSession: (sessionId, activationOptions) =>
+                sessionUpdateHandler!({
+                  sessionId: "child-session",
+                  update: {
+                    sessionUpdate: "agent_message_chunk",
+                    content: { type: "text", text: "child during load" },
+                  },
+                }).pipe(Effect.andThen(runtime.loadSession(sessionId, activationOptions))),
             }),
           }),
         },
@@ -3389,11 +3408,43 @@ describe("AcpAdapterV2", () => {
       yield* replay("agent_message_chunk", "a3", "\t");
       yield* replay("agent_message_chunk", "a3", "code");
       yield* replay("agent_message_chunk", "a4", "\n\n");
+      // Child sessions share the runtime but not the root's history.
+      for (const sessionUpdate of [
+        "user_message_chunk",
+        "agent_message_chunk",
+        "agent_thought_chunk",
+      ] as const) {
+        yield* sessionUpdateHandler!({
+          sessionId: "child-session",
+          update: { sessionUpdate, messageId: sessionUpdate, content: { type: "text", text: "c" } },
+        });
+      }
+      yield* sessionUpdateHandler!({
+        sessionId: "child-session",
+        update: {
+          sessionUpdate: "agent_message",
+          messageId: "child-whole",
+          content: [{ type: "text", text: "child whole" }],
+        },
+      });
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");
       yield* replay("user_message_chunk", "u2", "\tone");
       const second = yield* runtime.readThreadSnapshot({ providerThread });
+      // The mock replays "replay" while session/load runs, before the loaded session is active.
+      const threadOnSession = (nativeId: string) => ({
+        ...providerThread,
+        nativeThreadRef: { ...providerThread.nativeThreadRef!, nativeId },
+      });
+      const loaded = yield* runtime.readThreadSnapshot({
+        providerThread: threadOnSession("loaded-session"),
+      });
+      yield* runtime.resumeThread({ providerThread: threadOnSession("resumed-session") });
+      yield* replay("agent_message_chunk", "a3", "replaced root");
+      const resumed = yield* runtime.readThreadSnapshot({
+        providerThread: threadOnSession("resumed-session"),
+      });
 
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
@@ -3410,6 +3461,8 @@ describe("AcpAdapterV2", () => {
         "assistant:\tcode",
         "assistant:done",
       ]);
+      assert.deepEqual(texts(loaded), ["user:replay"]);
+      assert.deepEqual(texts(resumed), ["user:replay"]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -4682,6 +4735,11 @@ describe("AcpAdapterV2", () => {
         const startupMethods = yield* pollProtocolMethods(protocolEvents);
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
+        const startupSnapshot = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(
+          startupSnapshot.messages.map((message) => message.text),
+          ["replay"],
+        );
 
         yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
