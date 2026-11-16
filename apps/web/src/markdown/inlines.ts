@@ -63,6 +63,8 @@ export interface InlineOptions {
   readonly directives: boolean;
   /** Table cells: math may not span lines. */
   readonly mathSingleLine?: boolean;
+  /** remark-gfm's `singleTilde: false`: one `~` is text, only `~~` strikes. */
+  readonly singleTilde?: boolean;
 }
 
 export interface PointFactory {
@@ -492,7 +494,7 @@ export class InlineParser {
     let at = start;
     while (s.charCodeAt(at) === char) at++;
     const count = at - start;
-    if (char === TILDE && count > 2) {
+    if (char === TILDE && (count > 2 || (count === 1 && this.options.singleTilde === false))) {
       this.pos = at;
       this.appendText(s.slice(start, at), this.src(start), this.srcEnd(at));
       return true;
@@ -502,11 +504,7 @@ export class InlineParser {
     let canOpen: boolean;
     let canClose: boolean;
     if (char === TILDE) {
-      canOpen = after !== 1 && !(after === 2 && before === 0);
-      canClose = before !== 1 && !(before === 2 && after === 0);
-      canOpen = after !== 1;
-      canClose = before !== 1;
-      // micromark-extension-gfm-strikethrough: open = !after-whitespace-or-punct-unless...
+      // micromark-extension-gfm-strikethrough's flanking rules.
       canOpen = !after || (after === 2 && !!before);
       canClose = !before || (before === 2 && !!after);
     } else {

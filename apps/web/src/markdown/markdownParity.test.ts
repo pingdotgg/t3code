@@ -1,6 +1,7 @@
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
 } from "@t3tools/shared/markdownPipeline";
 import spec from "commonmark-spec";
 import * as NodeUtil from "node:util";
@@ -107,6 +108,21 @@ describe("parseMarkdown", () => {
 
   it.each(CHAT_MARKDOWN_CASES)("builds remark-parse's tree for %j", (markdown) => {
     expect(parseMarkdown(markdown)).toEqual(remark.parse(markdown));
+  });
+
+  it("keeps a single tilde as text when the plugins turn singleTilde off, as user messages do", () => {
+    const markdown = "Install as ~/a/x, then (~/b.md). ~one~ ~~two~~";
+    const userPlugins = [...CHAT_MARKDOWN_REMARK_PLUGINS, ...CHAT_USER_MARKDOWN_REMARK_PLUGINS];
+    const userRemark = unified()
+      .use(remarkParse)
+      .use(remarkParseWithoutUnusedSyntax)
+      .use(userPlugins);
+    const fastUserRemark = unified()
+      .use(remarkParse)
+      .use(remarkParseWithoutUnusedSyntax)
+      .use(remarkFastParse)
+      .use(userPlugins);
+    expect(fastUserRemark.parse(markdown)).toEqual(userRemark.parse(markdown));
   });
 });
 

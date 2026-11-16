@@ -20,7 +20,17 @@ function usesMath(extensions: ReadonlyArray<unknown>): boolean {
  */
 function attachFastParse(this: Processor) {
   this.parser = (document) =>
-    parseMarkdown(document, { math: usesMath(this.data().micromarkExtensions ?? []) }) as Root;
+    parseMarkdown(document, {
+      math: usesMath(this.data().micromarkExtensions ?? []),
+      singleTilde: !disablesSingleTilde(this),
+    }) as Root;
+}
+
+// A later `.use(remarkGfm, { singleTilde: false })` reconfigures the attacher in place.
+function disablesSingleTilde(processor: Processor): boolean {
+  return processor.attachers.some(
+    ([, options]) => (options as { singleTilde?: unknown } | undefined)?.singleTilde === false,
+  );
 }
 
 export const remarkFastParse = attachFastParse;

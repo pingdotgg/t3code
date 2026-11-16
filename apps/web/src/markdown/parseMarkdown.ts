@@ -42,6 +42,7 @@ import {
 import {
   type Content,
   type Definitions,
+  type InlineOptions,
   InlineParser,
   isWindowsAbsolutePath,
   normalizeIdentifier,
@@ -51,6 +52,7 @@ import {
 
 export interface ParseOptions {
   readonly math?: boolean;
+  readonly singleTilde?: boolean;
 }
 
 interface Point {
@@ -78,7 +80,7 @@ type DirectiveBlock = Block & {
 
 export function parseMarkdown(document: string, options: ParseOptions = {}): Root {
   const source = document.charCodeAt(0) === 0xfeff ? document.slice(1) : document;
-  return new DocumentParser(source, options.math ?? false).parse();
+  return new DocumentParser(source, options.math ?? false, options.singleTilde ?? true).parse();
 }
 
 class DocumentParser {
@@ -86,10 +88,12 @@ class DocumentParser {
   readonly blocks: BlockParser;
   readonly definitions: Definitions = { links: new Map(), footnotes: new Set() };
   readonly math: boolean;
+  readonly inlineOptions: InlineOptions;
 
-  constructor(source: string, math: boolean) {
+  constructor(source: string, math: boolean, singleTilde: boolean) {
     this.source = source;
     this.math = math;
+    this.inlineOptions = { math, directives: true, singleTilde };
     this.blocks = new BlockParser(source, { math, directives: true });
     this.blocks.onFinalize = (block) => this.onFinalize(block);
     this.blocks.onSetext = (paragraph) => this.onSetext(paragraph);
@@ -427,7 +431,7 @@ class DocumentParser {
       this.source,
       content,
       this.definitions,
-      { math: this.math, directives: true },
+      this.inlineOptions,
       this,
     ).parse();
     // mdast-util-gfm-table: escaped pipes in table code spans lose their backslash.
