@@ -5,13 +5,12 @@ import {
   useRef,
   useState,
   type FocusEvent,
-  type MouseEvent,
   type PointerEvent,
   type ReactElement,
   type ReactNode,
 } from "react";
 
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, useTooltipScrollTracker } from "./tooltip";
 
 // Base UI's tooltip timing: open after a rest, reopen at once right after another closed.
 const OPEN_DELAY_MS = 600;
@@ -117,8 +116,8 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
 }
 
 export interface SharedTooltipTriggerProps {
-  onMouseEnter: (event: MouseEvent<HTMLElement>) => void;
-  onMouseLeave: (event: MouseEvent<HTMLElement>) => void;
+  onPointerEnter: (event: PointerEvent<HTMLElement>) => void;
+  onPointerLeave: (event: PointerEvent<HTMLElement>) => void;
   onFocus: (event: FocusEvent<HTMLElement>) => void;
   onBlur: (event: FocusEvent<HTMLElement>) => void;
   onPointerDown: (event: PointerEvent<HTMLElement>) => void;
@@ -127,10 +126,18 @@ export interface SharedTooltipTriggerProps {
 /** Props that show `content` on the shared tooltip, or null outside a SharedTooltipProvider. */
 export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTriggerProps | null {
   const api = use(SharedTooltipContext);
+  const scrollTracker = useTooltipScrollTracker();
   if (!api) return null;
   return {
-    onMouseEnter: (event) => api.show(event.currentTarget, content, false),
-    onMouseLeave: (event) => api.hide(event.currentTarget),
+    // Touch never opens it, as Base UI's mouseOnly trigger; taps also send compatibility mouse events.
+    onPointerEnter: (event) => {
+      if (event.pointerType === "touch") return;
+      const trigger = event.currentTarget;
+      api.show(trigger, content, false);
+      // Scrolling the timeline closes it, as it does a TooltipTrigger's.
+      scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
+    },
+    onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
       if (event.currentTarget.matches(":focus-visible"))
