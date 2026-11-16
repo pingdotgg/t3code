@@ -41,6 +41,7 @@ import { announce } from "../lib/announce";
 import { readLocalApi } from "../localApi";
 import { randomUUID } from "../lib/utils";
 import {
+  readDelegatedUnderParent,
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
   readEnvironmentThreadRefs,
@@ -615,6 +616,7 @@ export function useThreadActions() {
       deletedThreadIds,
       sortOrder: sidebarThreadSortOrder,
       now: new Date().toISOString(),
+      delegatedUnderParent: readDelegatedUnderParent(),
     });
     let navigatedDuringDelete = false;
     // The missing-thread redirect and the index draft replace this entry; any other history
