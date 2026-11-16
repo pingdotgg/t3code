@@ -95,6 +95,10 @@ describe("composer rich text markdown", () => {
         { text: second, marks: [mark] },
       ]);
     }
+    expect(parseInlineMarkdown("edit _файл_один.py then _word_")).toEqual([
+      { text: "edit _файл_один.py then ", marks: [] },
+      { text: "word", marks: ["italic"] },
+    ]);
     expect(parseInlineMarkdown("and/_or_")).toEqual([
       { text: "and/", marks: [] },
       { text: "or", marks: ["italic"] },
