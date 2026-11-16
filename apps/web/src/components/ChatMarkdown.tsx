@@ -2014,7 +2014,7 @@ const MarkdownSource = memo(function MarkdownSource({
   useEffect(() => {
     if (shared && cache) render.remember(text, entry);
   }, [render, text, entry, shared, cache]);
-  const islandState = FAST_MARKDOWN ? use(ChatMarkdownRendererContext) : null;
+  const islandState = use(ChatMarkdownRendererContext);
   return (
     <ChatMarkdownTextContext value={text}>
       {islandState
