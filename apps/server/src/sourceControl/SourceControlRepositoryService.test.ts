@@ -911,117 +911,91 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
 });
 
 // regression: #37540 retrying Publish after a failed first push failed on "name already exists"
-it.effect("finishes a retried publish when the repository already exists as the remote", () => {
-  let pushAttempts = 0;
-  return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-    const result = yield* service.publishRepository({
-      cwd: "/workspace",
-      provider: SourceControlProviderKind.make("github"),
-      repository: "octocat/t3code",
-      visibility: "private",
-      remoteName: "origin",
-    });
-
-    assert.strictEqual(result.status, "pushed");
-    assert.strictEqual(result.remoteName, "origin");
-    assert.strictEqual(pushAttempts, 1);
-  }).pipe(
-    Effect.provide(
-      layer({
-        provider: makeProvider({
-          createRepository: (input) =>
-            Effect.fail(
-              new SourceControlProviderError({
-                provider: SourceControlProviderKind.make("github"),
-                operation: "createRepository",
-                cwd: input.cwd,
-                repository: input.repository,
-                detail:
-                  "GitHub API request failed (422): Repository creation failed.; name already exists on this account",
-              }),
-            ),
-        }),
-        git: {
-          execute: (input) =>
-            Effect.succeed(
-              input.args[0] === "remote"
-                ? { ...processOutput(), stdout: `${CLONE_URLS.url}\n` }
-                : processOutput(),
-            ),
-          pushCurrentBranch: () =>
-            Effect.sync(() => {
-              pushAttempts += 1;
-              return {
+function retriedPublishLayer(pushAttempts: { count: number }) {
+  let created = false;
+  return layer({
+    provider: makeProvider({
+      createRepository: (input) => {
+        if (!created) {
+          created = true;
+          return Effect.succeed(CLONE_URLS);
+        }
+        return Effect.fail(
+          new SourceControlProviderError({
+            provider: SourceControlProviderKind.make("github"),
+            operation: "createRepository",
+            cwd: input.cwd,
+            repository: input.repository,
+            detail:
+              "GitHub API request failed (422): Repository creation failed.; name already exists on this account",
+          }),
+        );
+      },
+    }),
+    git: {
+      execute: (input) =>
+        Effect.succeed(
+          input.args[0] === "remote"
+            ? { ...processOutput(), stdout: `${CLONE_URLS.url}\n` }
+            : processOutput(),
+        ),
+      pushCurrentBranch: (cwd) =>
+        Effect.suspend(() => {
+          pushAttempts.count += 1;
+          return pushAttempts.count === 1
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "pushCurrentBranch",
+                  command: "git push",
+                  cwd,
+                  detail: "push failed",
+                }),
+              )
+            : Effect.succeed({
                 status: "pushed" as const,
                 branch: "main",
                 upstreamBranch: "origin/main",
                 setUpstream: true,
-              };
-            }),
-        },
-      }),
-    ),
-  );
+              });
+        }),
+    },
+  });
+}
+
+const publishAs = (visibility: "private" | "public") =>
+  Effect.gen(function* () {
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+    return yield* service.publishRepository({
+      cwd: "/workspace",
+      provider: SourceControlProviderKind.make("github"),
+      repository: "octocat/t3code",
+      visibility,
+      remoteName: "origin",
+    });
+  });
+
+it.effect("finishes a retried publish when the repository already exists as the remote", () => {
+  const pushAttempts = { count: 0 };
+  return Effect.gen(function* () {
+    yield* Effect.flip(publishAs("private"));
+    const result = yield* publishAs("private");
+
+    assert.strictEqual(result.status, "pushed");
+    assert.strictEqual(result.remoteName, "origin");
+    assert.strictEqual(pushAttempts.count, 2);
+  }).pipe(Effect.provide(retriedPublishLayer(pushAttempts)));
 });
 
 it.effect(
-  "does not publish into an existing repository the remote has already fetched from",
+  "does not resume a retried publish into a repository created with another visibility",
   () => {
-    let pushAttempts = 0;
+    const pushAttempts = { count: 0 };
     return Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
-      const error = yield* service
-        .publishRepository({
-          cwd: "/workspace",
-          provider: SourceControlProviderKind.make("github"),
-          repository: "octocat/t3code",
-          visibility: "private",
-          remoteName: "origin",
-        })
-        .pipe(Effect.flip);
+      yield* Effect.flip(publishAs("public"));
+      const error = yield* Effect.flip(publishAs("private"));
 
       assert.strictEqual(error.operation, "publishRepository");
-      assert.strictEqual(pushAttempts, 0);
-    }).pipe(
-      Effect.provide(
-        layer({
-          provider: makeProvider({
-            createRepository: (input) =>
-              Effect.fail(
-                new SourceControlProviderError({
-                  provider: SourceControlProviderKind.make("github"),
-                  operation: "createRepository",
-                  cwd: input.cwd,
-                  repository: input.repository,
-                  detail: "GitHub API request failed (422): name already exists on this account",
-                }),
-              ),
-          }),
-          git: {
-            execute: (input) =>
-              Effect.succeed({
-                ...processOutput(),
-                stdout:
-                  input.args[0] === "remote"
-                    ? `${CLONE_URLS.url}\n`
-                    : input.args[0] === "for-each-ref"
-                      ? "refs/remotes/origin/main\n"
-                      : "",
-              }),
-            pushCurrentBranch: () =>
-              Effect.sync(() => {
-                pushAttempts += 1;
-                return {
-                  status: "pushed" as const,
-                  branch: "main",
-                  upstreamBranch: "origin/main",
-                  setUpstream: true,
-                };
-              }),
-          },
-        }),
-      ),
-    );
+      assert.strictEqual(pushAttempts.count, 1);
+    }).pipe(Effect.provide(retriedPublishLayer(pushAttempts)));
   },
 );

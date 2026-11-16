@@ -483,6 +483,15 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Repositories publish created whose push has not succeeded yet, so a retry can finish it.
+  const createdRepositories = new Map<
+    string,
+    {
+      readonly visibility: SourceControlPublishRepositoryInput["visibility"];
+      readonly urls: SourceControlRepositoryCloneUrls;
+    }
+  >();
+
   const publishRepository = Effect.fn("SourceControlRepositoryService.publishRepository")(
     function* (input: SourceControlPublishRepositoryInput) {
       const providerKind = yield* ensureConcreteProvider({
@@ -492,41 +501,40 @@ export const make = Effect.gen(function* () {
       const provider = yield* providers.get(providerKind);
       const repository = input.repository.trim();
       const preferredRemoteName = input.remoteName?.trim() || "origin";
-      // A retry after a failed first push finds the repository created and added as the remote.
-      const useExistingRemote = Effect.fn(
-        "SourceControlRepositoryService.publishRepository.useExistingRemote",
+      const createdKey = `${providerKind}\0${input.cwd}\0${repository}`;
+      // A retry after a failed first push resumes only into a repository this server created for
+      // the same request and visibility, and only while the remote still points at it.
+      const useCreatedRepository = Effect.fn(
+        "SourceControlRepositoryService.publishRepository.useCreatedRepository",
       )(
         function* (createError: SourceControlProviderError) {
+          const created = createdRepositories.get(createdKey);
+          if (created === undefined || created.visibility !== input.visibility) {
+            return yield* createError;
+          }
           const remote = yield* git.execute({
             operation: "SourceControlRepositoryService.publishRepository.existingRemote",
             cwd: input.cwd,
             args: ["remote", "get-url", "--", preferredRemoteName],
           });
-          // Only a never-fetched remote is a half-finished publish; an established one may have
-          // another visibility than the one requested.
-          const trackingRefs = yield* git.execute({
-            operation: "SourceControlRepositoryService.publishRepository.existingRemoteRefs",
-            cwd: input.cwd,
-            args: [
-              "for-each-ref",
-              "--count=1",
-              "--format=%(refname)",
-              `refs/remotes/${preferredRemoteName}/`,
-            ],
-          });
-          if (trackingRefs.stdout.trim().length > 0) return yield* createError;
-          const urls = yield* provider.getRepositoryCloneUrls({ cwd: input.cwd, repository });
           const remoteKey = sourceControlDefinitions.repositoryKeyFromRemote(remote.stdout.trim());
-          if (remoteKey !== sourceControlDefinitions.repositoryKeyFromRemote(urls.url)) {
+          if (remoteKey !== sourceControlDefinitions.repositoryKeyFromRemote(created.urls.url)) {
             return yield* createError;
           }
-          return urls;
+          return created.urls;
         },
         (effect, createError) => Effect.mapError(effect, () => createError),
       );
       const urls = yield* provider
         .createRepository({ cwd: input.cwd, repository, visibility: input.visibility })
-        .pipe(Effect.catch(useExistingRemote));
+        .pipe(
+          Effect.tap((urls) =>
+            Effect.sync(() =>
+              createdRepositories.set(createdKey, { visibility: input.visibility, urls }),
+            ),
+          ),
+          Effect.catch(useCreatedRepository),
+        );
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
@@ -594,6 +602,7 @@ export const make = Effect.gen(function* () {
               ),
         ),
       );
+      createdRepositories.delete(createdKey);
 
       return {
         repository: toRepositoryInfo(providerKind, urls),
