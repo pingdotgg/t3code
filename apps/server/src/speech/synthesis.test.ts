@@ -64,11 +64,18 @@ it.each([
     error: "not available",
   },
   {
+    platform: "freebsd",
+    architecture: "x64",
+    libc: undefined,
+    glibc: undefined,
+    error: "not available",
+  },
+  {
     platform: "win32",
     architecture: "arm64",
     libc: undefined,
     glibc: undefined,
-    error: "not available",
+    backend: "vulkan",
   },
 ] as const)(
   "installs the speech build that loads on $platform-$architecture with glibc $glibc",

@@ -210,7 +210,7 @@ voice, then use the preview to try it.
 so the text never leaves it. Download it once from the same settings page (330–360 MB).
 It uses the GPU through Metal on Apple silicon Macs and Vulkan on Windows and Linux. Intel Macs and
 machines without a GPU run it on the CPU, which takes a few seconds longer to start speaking. Local
-models run on macOS, Windows x64, and Linux x64 or arm64 with glibc 2.28 or newer.
+models run on macOS, Windows, and Linux with glibc 2.28 or newer.
 
 On mobile, **Background playback** allows speech to continue while the app is in the background.
 

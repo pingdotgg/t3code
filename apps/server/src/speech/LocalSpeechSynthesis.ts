@@ -24,7 +24,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
-import { isSpeechPlatformSupported } from "./platform.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
 
@@ -104,9 +103,11 @@ export function localSynthesisRuntime(host: {
   readonly libc: "gnu" | "musl" | undefined;
   readonly glibc: string | undefined;
 }): { readonly runtime?: AudioCppRuntime; readonly error?: string } {
-  const runtime = isSpeechPlatformSupported(host.platform, host.architecture, host.libc)
-    ? audioCppRuntime(host.platform, host.architecture)
-    : undefined;
+  // Independent of dictation's platform list: the speech builds cover hosts transcribe-cpp does not.
+  const runtime =
+    host.platform !== "linux" || host.libc === "gnu"
+      ? audioCppRuntime(host.platform, host.architecture)
+      : undefined;
   if (!runtime)
     return {
       error: `Local speech models are not available on ${host.platform}-${host.architecture}.`,

@@ -1,5 +1,5 @@
 /** A release of github.com/pingdotgg/audio.cpp, whose `T3 release` workflow builds these libraries. */
-export const AUDIO_CPP_VERSION = "t3-2026.11.15";
+export const AUDIO_CPP_VERSION = "t3-2026.11.16";
 
 export type AudioCppRuntime = {
   readonly filename: string;
@@ -39,38 +39,45 @@ const runtime = (
 const RUNTIMES: Readonly<Record<string, AudioCppRuntime>> = {
   "darwin-arm64": runtime(
     "macos-arm64-metal.tar.gz",
-    15_050_502,
-    "d310a03ec334c9eca108afddc155285d415c4a9de7de6f1f11852792dea4ef40",
+    15_050_495,
+    "81ee4b878e26c8c7b3eb12f6c50c94e2db3e77916e2eadb180957e97838271e2",
     "libs/libaudiocpp.0.1.0.dylib",
     "metal",
   ),
   "darwin-x64": runtime(
     "macos-x64-cpu.tar.gz",
-    16_205_264,
-    "e28f38d904ca2f62582e30b66daf223a102c49d72dfc4de6652ebc49d560b497",
+    16_205_261,
+    "94465d3a325d776198821f7216a52caa6db1f4f11fb20b5490f2789f7e7e54a6",
     "libs/libaudiocpp.0.1.0.dylib",
     "cpu",
   ),
   "linux-x64": runtime(
     "linux-x64-vulkan.tar.gz",
-    46_480_833,
-    "bfb156d9803a9d72321edf2618132f5c253d62774d87b8a84404c908bcb14c8d",
+    46_480_819,
+    "d6774bc02102fa554db246e2dbf30c452cbec7dfe7d33844b89c399d758d8d01",
     "libs/libaudiocpp.so.0.1.0",
     "vulkan",
     "2.28",
   ),
   "linux-arm64": runtime(
     "linux-arm64-vulkan.tar.gz",
-    40_185_095,
-    "5dcf0ca69930cb326228379d21c357a9474e5fb414b7fbbdbad8d59dc6be9eb8",
+    40_185_132,
+    "6b03aebe87eb85f433faf3a0cd4e54ed7d45dde2654cf98ae8ac0eebfa2163a3",
     "libs/libaudiocpp.so.0.1.0",
     "vulkan",
     "2.28",
   ),
+  "win32-arm64": runtime(
+    "windows-arm64-vulkan.zip",
+    34_518_475,
+    "576729077a80984c24a5b54c5ca237b388e5d0d8b90b394f8463314fd38b1bfc",
+    "libs/audiocpp.dll",
+    "vulkan",
+  ),
   "win32-x64": runtime(
     "windows-x64-vulkan.zip",
-    34_389_751,
-    "80c98ef7ccb2ebdb343838727cfce20cceefbf35eeeda6a0ffae4a344f06a613",
+    34_389_747,
+    "91780513f8c374e4736c27850a988f4205526488388698e24eaa322682c16471",
     "libs/audiocpp.dll",
     "vulkan",
   ),
