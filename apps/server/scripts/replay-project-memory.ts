@@ -13,6 +13,7 @@ import {
   type ApplicationProjectEvent,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import * as DateTime from "effect/DateTime";
@@ -101,14 +102,46 @@ interface Distribution {
   readonly max: number | null;
 }
 
+const directoryIdentity = (file: string) => {
+  try {
+    const stat = NodeFS.statSync(file);
+    return { dev: stat.dev, ino: stat.ino };
+  } catch {
+    return null;
+  }
+};
+
+const nearestExisting = (path: Path.Path, file: string) => {
+  let current = path.resolve(file);
+  while (directoryIdentity(current) === null) {
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return NodeFS.realpathSync(current);
+};
+
+const resolvesInside = (path: Path.Path, file: string, root: string) => {
+  const rootIdentity = directoryIdentity(root);
+  if (rootIdentity === null) return false;
+  let current = nearestExisting(path, file);
+  while (true) {
+    const identity = directoryIdentity(current);
+    if (identity !== null && identity.dev === rootIdentity.dev && identity.ino === rootIdentity.ino)
+      return true;
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+};
+
 const assertReplayPath = (path: Path.Path, file: string) => {
-  const resolved = path.resolve(file);
   const roots = [path.join(NodeOS.homedir(), ".t3", "userdata")];
   if (process.env.T3CODE_HOME)
     roots.push(path.join(path.resolve(process.env.T3CODE_HOME), "userdata"));
   for (const root of roots) {
-    if (resolved === root || resolved.startsWith(`${root}${path.sep}`))
-      throw new Error(`Refusing to touch live T3 data at ${resolved}`);
+    if (resolvesInside(path, file, root))
+      throw new Error(`Refusing to touch live T3 data at ${path.resolve(file)}`);
   }
 };
 

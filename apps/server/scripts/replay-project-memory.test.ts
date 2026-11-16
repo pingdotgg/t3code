@@ -1,13 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { replayProjectMemory, type ReplayRow } from "./replay-project-memory.ts";
@@ -149,11 +149,19 @@ it.effect("refuses a case-variant path and a symlink into the stand-in state dir
     assert.isFalse(yield* fs.exists(path.join(linkedOut, "results.ndjson")));
 
     const foldedOut = path.join(home, ".T3", "UserData", "out");
-    const foldedParent = yield* fs.realpath(path.dirname(foldedOut)).pipe(Effect.option);
-    const stateReal = yield* fs.realpath(state);
-    if (Option.isSome(foldedParent) && foldedParent.value === stateReal) {
+    const identity = (file: string) => {
+      try {
+        const stat = NodeFS.statSync(file);
+        return `${stat.dev}:${stat.ino}`;
+      } catch {
+        return null;
+      }
+    };
+    const stateId = identity(state);
+    const foldedId = identity(path.dirname(foldedOut));
+    if (stateId !== null && foldedId === stateId) {
       assert.include(yield* refusal(foldedOut), "Refusing to touch live T3 data");
-      assert.isFalse(yield* fs.exists(path.join(stateReal, "out", "results.ndjson")));
+      assert.isFalse(yield* fs.exists(path.join(state, "out", "results.ndjson")));
     } else {
       const distinct = yield* replayProjectMemory({
         facts: factsPath,
