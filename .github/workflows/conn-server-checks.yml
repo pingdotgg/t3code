@@ -4,9 +4,9 @@ name: Conn Server checks
 # contract, the web client and apps/server of this same tree. Generated files that drift from
 # the tree fail here. Runs on changes to the Conn Server or to the contract.
 #
-# The nightly upstream sync never runs this job (FORK.md, "Conn Server"): ForkBot's sync/*
-# branches are not watched, and the job skips a push to main or a pull request that carries a
-# ForkBot commit or comes from a sync/* branch.
+# The nightly upstream sync runs this job on its sync/* branch and waits for it before it merges
+# (FORK.md, "Upstream scope" and "Conn Server"). A push also runs it when apps/server or a
+# package changes, since the checks compare against them.
 
 on:
   pull_request:
@@ -17,9 +17,12 @@ on:
   push:
     branches:
       - main
+      - "sync/**"
     paths:
       - apps/conn-server/**
-      - packages/contracts/**
+      - apps/server/**
+      - apps/web/**
+      - packages/**
       - .github/workflows/conn-server-checks.yml
   workflow_dispatch:
 
@@ -38,10 +41,6 @@ env:
 jobs:
   checks:
     name: Conn Server checks
-    if: >-
-      !startsWith(github.head_ref, 'sync/') &&
-      github.event.head_commit.author.email != 'forkbot@nckrtl.local' &&
-      !contains(github.event.commits.*.author.email, 'forkbot@nckrtl.local')
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
