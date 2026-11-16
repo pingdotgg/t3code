@@ -290,6 +290,7 @@ function LinkRequestSheet(props: {
       dismissDisabled={busy}
     >
       <ScrollView
+        nestedScrollEnabled
         className="flex-1 bg-sheet-solid"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerClassName="gap-5 p-5"
@@ -298,8 +299,8 @@ function LinkRequestSheet(props: {
       >
         <View className="gap-1">
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
-            Agents here can then launch, message and wait on threads there. It appears in that
-            machine's Connections, where it can be revoked.
+            Agents here can then launch, message and wait on threads there. It appears under
+            Authorized clients in that machine's Sharing & access, where it can be revoked.
           </Text>
           {item.url !== undefined && target.kind === "machine" ? (
             <Text className="font-sans text-xs text-foreground-muted" numberOfLines={1}>
@@ -374,7 +375,7 @@ function LinkRequestSheet(props: {
         {useExisting ? (
           <Text className="font-sans text-sm leading-5 text-foreground-muted">
             This environment is already linked to {targetName}. The agent can use that link as it
-            is; change its access in Settings → Connections.
+            is; change its access in Settings → Environments.
           </Text>
         ) : target.kind === "none" ? null : (
           <>
@@ -393,8 +394,8 @@ function LinkRequestSheet(props: {
                   spellCheck={false}
                 />
                 <Text className="font-sans text-xs text-foreground-muted">
-                  Create a link on {targetName}: Settings → Connections → Create link, then paste
-                  its code here.
+                  Create a link on {targetName}: Settings → Sharing & access → Authorized clients →
+                  Create link, then paste its code here.
                 </Text>
               </View>
             )}
