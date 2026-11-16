@@ -8,6 +8,7 @@ import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -138,6 +139,32 @@ const EnvServerConfig = Config.all({
   port: Config.Port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.String("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.String("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  mcpClientSessionTtl: Config.schema(
+    Schema.Int.check(Schema.isGreaterThan(0)),
+    "T3CODE_MCP_CLIENT_SESSION_TTL_DAYS",
+  ).pipe(
+    Config.mapEffect((days) =>
+      Effect.gen(function* () {
+        const ttl = Duration.days(days);
+        const now = yield* DateTime.now;
+        if (Option.isNone(DateTime.make(now.epochMilliseconds + Duration.toMillis(ttl)))) {
+          return yield* Effect.fail(
+            new Config.ConfigError(
+              new Schema.SchemaError(
+                new SchemaIssue.InvalidValue({
+                  message:
+                    "T3CODE_MCP_CLIENT_SESSION_TTL_DAYS is too large to produce a valid expiration date.",
+                }),
+              ),
+            ),
+          );
+        }
+        return ttl;
+      }),
+    ),
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   devAllowedOrigins: Config.String("T3CODE_DEV_ALLOWED_ORIGINS").pipe(
     Config.withDefault(""),
@@ -515,6 +542,9 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     staticDir,
     devUrl,
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
+    ...(env.mcpClientSessionTtl === undefined
+      ? {}
+      : { mcpClientSessionTtl: env.mcpClientSessionTtl }),
     devAllowedOrigins: env.devAllowedOrigins,
     noBrowser,
     startupPresentation,
