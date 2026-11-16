@@ -105,9 +105,24 @@ jobs:
           echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
           exit 1
 
-      # The steps below run dependency and build scripts; they get no token.
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
       - name: Drop checkout credentials
-        uses: ./.github/actions/drop-checkout-credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
+            exit 1
+          fi
 
       - name: Prepare build directories
         run: |
@@ -239,9 +254,24 @@ jobs:
           echo "::error::$sha is not the head of a branch in $GITHUB_REPOSITORY and not on main; build it locally."
           exit 1
 
-      # The steps below run dependency and build scripts; they get no token.
+      # The build runs dependency scripts; it gets no token. checkout keeps the token in a
+      # file under RUNNER_TEMP that .git/config includes, so both go. `persist-credentials:
+      # false` fails here: its cleanup runs `git submodule foreach`, which stops at the
+      # vendored gitlinks under .repos (no .gitmodules entry).
       - name: Drop checkout credentials
-        uses: ./.github/actions/drop-checkout-credentials
+        run: |
+          git config --local --get-regexp '^includeif\..*\.path$' | while read -r key file; do
+            rm -f "$file"
+            git config --local --unset-all "$key"
+          done
+          git config --local --name-only --get-regexp '^http\..*\.extraheader$' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+          if git config --local --get-regexp 'extraheader|includeif' || ls "$RUNNER_TEMP"/git-credentials-*.config 2>/dev/null; then
+            echo "::error::checkout credentials are still present"
+            exit 1
+          fi
 
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
