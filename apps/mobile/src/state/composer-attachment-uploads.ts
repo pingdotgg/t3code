@@ -140,18 +140,26 @@ async function recordQueuedAttachmentUpload(
   environmentId: EnvironmentId,
   uploaded: DraftComposerAttachment,
 ): Promise<boolean> {
-  const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
-  const queued = flattenQueuedThreadMessages(
-    appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-  );
+  const awaiting = () => {
+    const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
+    return flattenQueuedThreadMessages(
+      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+    ).flatMap((message) => {
+      if (message.environmentId !== environmentId || editing[message.messageId]) return [];
+      const updated = withUploadedAttachment(message, uploaded);
+      return updated === null
+        ? []
+        : [{ updated, revision: threadOutboxRevision(message.messageId) }];
+    });
+  };
   let recorded = false;
-  for (const message of queued) {
-    if (message.environmentId !== environmentId || editing[message.messageId]) continue;
-    const updated = withUploadedAttachment(message, uploaded);
-    if (updated === null) continue;
-    recorded =
-      (await updateThreadOutboxMessage(updated, threadOutboxRevision(message.messageId))) ||
-      recorded;
+  // A sibling attachment finishing at the same time bumps the revision; reread and retry.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const pending = awaiting();
+    if (pending.length === 0) break;
+    for (const { updated, revision } of pending) {
+      recorded = (await updateThreadOutboxMessage(updated, revision)) || recorded;
+    }
   }
   return recorded;
 }

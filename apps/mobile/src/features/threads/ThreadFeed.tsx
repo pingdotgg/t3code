@@ -185,6 +185,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import {
   attachmentVideoPreviewSource,
+  mediaVideoThumbnailKey,
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
@@ -1070,7 +1071,7 @@ function UserMessageVideo(props: {
 }) {
   const sourceIdentifier = useId();
   const preview = useLocalAttachmentPreview(props.local);
-  const source: MediaVideoPreviewSource | null =
+  const current: MediaVideoPreviewSource | null =
     props.local !== null && preview.uri !== null
       ? {
           type: "media",
@@ -1081,6 +1082,15 @@ function UserMessageVideo(props: {
       : props.uploaded !== null
         ? attachmentVideoPreviewSource(props.environmentId, props.uploaded, sourceIdentifier)
         : null;
+  // Each copy of a message reopens its local file; keep the last source while the next one loads.
+  const [shown, setShown] = useState(current);
+  if (
+    current !== null &&
+    (shown === null || mediaVideoThumbnailKey(current) !== mediaVideoThumbnailKey(shown))
+  ) {
+    setShown(current);
+  }
+  const source = current ?? shown;
   if (source === null) {
     return (
       <View className="aspect-video items-center justify-center bg-black">
