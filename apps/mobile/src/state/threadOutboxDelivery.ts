@@ -700,6 +700,13 @@ interface ThreadOutboxRetry {
   readonly notBefore: number;
 }
 
+/** A thread's delivery fiber; `retiring` once interrupted, until the fiber has exited. */
+interface ThreadFiber {
+  readonly wake: Latch.Latch;
+  fiber: Fiber.Fiber<never> | undefined;
+  retiring: boolean;
+}
+
 /** What a thread's delivery fiber does next with the head of its queue. */
 type ThreadDeliveryStep =
   /** Nothing to send until an input changes, or until `until` when a backoff is running. */
@@ -1374,10 +1381,8 @@ export function createThreadOutboxDelivery(): {
 
   // One fiber per thread with queued messages. Opening a thread's latch wakes its fiber to
   // reconsider its head; the fiber closes it before reading the inputs, so no wake is lost.
-  const threadFibers = new Map<
-    string,
-    { readonly wake: Latch.Latch; readonly fiber: Fiber.Fiber<never> }
-  >();
+  // An entry outlives its interrupted fiber until that fiber exits, so a thread never has two.
+  const threadFibers = new Map<string, ThreadFiber>();
 
   const deliverThread = (threadKey: string, wake: Latch.Latch) =>
     Effect.forever(
@@ -1467,14 +1472,28 @@ export function createThreadOutboxDelivery(): {
     }
 
     for (const [threadKey, entry] of threadFibers) {
-      if ((queuedMessagesByThreadKey[threadKey]?.length ?? 0) > 0) continue;
-      threadFibers.delete(threadKey);
-      Effect.runFork(Fiber.interrupt(entry.fiber));
+      if ((queuedMessagesByThreadKey[threadKey]?.length ?? 0) > 0 || entry.retiring) continue;
+      entry.retiring = true;
+      if (entry.fiber !== undefined) Effect.runFork(Fiber.interrupt(entry.fiber));
     }
     for (const [threadKey, messages] of Object.entries(queuedMessagesByThreadKey)) {
       if (messages.length === 0 || threadFibers.has(threadKey)) continue;
-      const wake = Latch.makeUnsafe(true);
-      threadFibers.set(threadKey, { wake, fiber: Effect.runFork(deliverThread(threadKey, wake)) });
+      // Registered before the fiber starts: its first step runs synchronously and can re-enter here.
+      const entry: ThreadFiber = {
+        wake: Latch.makeUnsafe(true),
+        fiber: undefined,
+        retiring: false,
+      };
+      threadFibers.set(threadKey, entry);
+      const fiber = Effect.runFork(deliverThread(threadKey, entry.wake));
+      entry.fiber = fiber;
+      fiber.addObserver(() => {
+        if (threadFibers.get(threadKey) !== entry) return;
+        threadFibers.delete(threadKey);
+        // A message queued while this fiber finished its send starts the next fiber now.
+        if (!disposed) onInputs();
+      });
+      if (entry.retiring) Effect.runFork(Fiber.interrupt(fiber));
     }
     wakeThreads();
   }
@@ -1496,7 +1515,9 @@ export function createThreadOutboxDelivery(): {
       disposed = true;
       stopDelivering();
       stopCollectingOutcomes();
-      for (const { fiber } of threadFibers.values()) Effect.runFork(Fiber.interrupt(fiber));
+      for (const { fiber } of threadFibers.values()) {
+        if (fiber !== undefined) Effect.runFork(Fiber.interrupt(fiber));
+      }
       threadFibers.clear();
       retries.clear();
       appAtomRegistry.set(retryingQueuedMessageIdsAtom, {});

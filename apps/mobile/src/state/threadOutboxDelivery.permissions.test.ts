@@ -390,6 +390,8 @@ describe("queued task operation access", () => {
     appAtomRegistry.set(editingQueuedMessageIdsAtom, {});
     await delivered.promise.finally(release);
     expect(state.familyMount).toHaveBeenCalledOnce();
+    // One fiber took the message: a second would have prepared it again.
+    expect(state.prepare).toHaveBeenCalledOnce();
     expect(state.start).toHaveBeenCalledOnce();
     expect(remaining()).toEqual([]);
   });
@@ -676,6 +678,35 @@ describe("queued delivery timing", () => {
     await started.promise;
     await settled.promise.finally(release);
   }
+
+  it("starts a thread's next message only after its interrupted send has finished", async () => {
+    setOperateGrant("secondary", true);
+    const firstStarted = Promise.withResolvers<void>();
+    const finishFirst = Promise.withResolvers<AsyncResult.AsyncResult<object, never>>();
+    state.start.mockImplementationOnce(async () => {
+      firstStarted.resolve();
+      return finishFirst.promise;
+    });
+    const first = message();
+    await state.manager.enqueue(first);
+    startDelivery();
+    await firstStarted.promise;
+    // The queue empties under the running send, then the thread gets its next message.
+    await state.manager.remove(first);
+    const allDelivered = Promise.withResolvers<void>();
+    const release = appAtomRegistry.subscribe(state.manager.queuedMessagesByThreadKeyAtom, () => {
+      if (remaining().length === 0) allDelivered.resolve();
+    });
+    await state.manager.enqueue(
+      message({ messageId: MessageId.make("next"), commandId: CommandId.make("next-command") }),
+    );
+    // The next message waits; only the interrupted send is still marked as sending.
+    expect(sendingMessageIds()).toEqual(["message"]);
+    expect(state.start).toHaveBeenCalledOnce();
+    finishFirst.resolve(AsyncResult.success({}));
+    await allDelivered.promise.finally(release);
+    expect(state.start).toHaveBeenCalledTimes(2);
+  });
 
   it("sends another thread's message while one thread's send is still running", async () => {
     setOperateGrant("secondary", true);
