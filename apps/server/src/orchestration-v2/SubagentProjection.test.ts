@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import { expect } from "vite-plus/test";
 import {
   CommandId,
   EnvironmentId,
@@ -403,7 +404,7 @@ it("exposes the provider failure rather than a progress message from the failed 
   assert.isNull(result.messageId);
 });
 
-it("reports a provider's stop reason for a completed run without an assistant result", () => {
+it("reports a provider's stop reason with and without assistant progress", () => {
   const { projection, run } = taskFixture();
   const notice = {
     id: IdAllocator.derive.runSignalTurnItem({
@@ -425,12 +426,35 @@ it("reports a provider's stop reason for a completed run without an assistant re
     updatedAt: childCreatedAt,
     type: "system_notice",
     level: "warning",
-    message: "sessionStart hook (user): Plugin guard blocked this session.",
+    message: "preCompact hook (project): Save a current task checkpoint before compaction.",
   } satisfies OrchestrationV2TurnItem;
   assert.equal(
     subagentResultForRun({ ...projection, turnItems: [notice] }, run).text,
     `Child task completed without an assistant result.\n\n${notice.message}`,
   );
+  const progress = makeSubagentConversationArtifacts({
+    messageId: MessageId.make("before-hook-stop"),
+    turnItemId: TurnItemId.make("before-hook-stop"),
+    threadId: parentThreadId,
+    rootNodeId: NodeId.make("root"),
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    role: "assistant",
+    text: "I am checking the remaining files.",
+    ordinal: 1,
+    now: childCreatedAt,
+  });
+  const result = subagentResultForRun(
+    {
+      ...projection,
+      messages: [{ ...progress.message, runId: run.id }],
+      turnItems: [{ ...progress.turnItem, runId: run.id }, notice],
+    },
+    run,
+  );
+  expect(result.text).toContain(progress.message.text);
+  expect(result.text).toContain(notice.message);
 });
 
 it("keeps the final report of a run that failed after its turn ended", () => {
