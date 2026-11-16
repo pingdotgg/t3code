@@ -855,25 +855,31 @@ function useChatMarkdownState({
     }
     return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
-  const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
-    if (!threadRef) return;
+  const resolvePanelPath = (
+    fileLinkMeta: MarkdownFileLinkMeta,
+    panelPath: string,
+  ): string | Promise<string | null> => {
     // Every open supersedes pending lookups, including synchronous opens.
     const isLatestLookup = claimWorkspaceBasenameLookup();
-    const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
       workspaceLinkLookupQuery(panelPath, cwd) === null
     ) {
-      openAt(panelPath);
-      return;
+      return panelPath;
     }
-    void (async () => {
-      const match = await findWorkspaceFileMatch(fileLinkMeta);
-      if (!isLatestLookup()) return;
-      openAt(match ?? panelPath);
-    })();
+    return findWorkspaceFileMatch(fileLinkMeta).then((match) =>
+      isLatestLookup() ? (match ?? panelPath) : null,
+    );
+  };
+  const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
+    if (!threadRef) return;
+    const openAt = (path: string | null) => {
+      if (path !== null) useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+    };
+    const path = resolvePanelPath(fileLinkMeta, panelPath);
+    if (typeof path === "string") openAt(path);
+    else void path.then(openAt);
   };
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
@@ -915,10 +921,6 @@ function useChatMarkdownState({
         isAppBundle={isAppBundle}
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={isAppBundle ? null : panelPath}
-        searchesWorkspace={
-          fileLinkMeta.workspaceLookupPath !== null &&
-          needsWorkspaceBasenameLookup(fileLinkMeta.workspaceLookupPath)
-        }
         line={fileLinkMeta.line}
         label={fileLinkLabel(
           {
@@ -950,6 +952,7 @@ function useChatMarkdownState({
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        resolvePanelPath={(path) => resolvePanelPath(fileLinkMeta, path)}
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

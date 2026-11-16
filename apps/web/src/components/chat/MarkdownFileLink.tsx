@@ -37,7 +37,6 @@ interface MarkdownFileLinkProps {
   isAppBundle?: boolean;
   workspaceRelativePath: string | null;
   panelPath: string | null;
-  searchesWorkspace: boolean;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
@@ -45,6 +44,7 @@ interface MarkdownFileLinkProps {
   threadRef?: ScopedThreadRef | undefined;
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
+  resolvePanelPath: (panelPath: string) => string | Promise<string | null>;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
@@ -63,7 +63,6 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   isAppBundle = false,
   workspaceRelativePath,
   panelPath,
-  searchesWorkspace,
   line,
   label,
   copyMarkdown,
@@ -71,6 +70,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   threadRef,
   onOpen,
   onOpenInPanel,
+  resolvePanelPath,
   openInEditorMenuLabel,
   onOpenInBrowser,
   onOpenMedia,
@@ -325,8 +325,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     canOpenInPanel,
   });
   const chipKind = documentChipKindForFileName(iconPath) ?? "mention";
-  const layoutDragThreadRef =
-    threadRef && panelPath && !searchesWorkspace && !useBrowserPrimaryAction ? threadRef : null;
+  const layoutDragThreadRef = threadRef && panelPath && !useBrowserPrimaryAction ? threadRef : null;
 
   return (
     <Tooltip>
@@ -359,6 +358,10 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                   kind: "surface",
                   threadRef: layoutDragThreadRef,
                   surface: fileSurface(panelPath, line ?? null, 0),
+                  resolve: async () => {
+                    const path = await resolvePanelPath(panelPath);
+                    return path === null ? null : fileSurface(path, line ?? null, 0);
+                  },
                 });
               }}
             >
@@ -419,7 +422,6 @@ function areMarkdownFileLinkPropsEqual(
     previous.environmentId === next.environmentId &&
     previous.workspaceRelativePath === next.workspaceRelativePath &&
     previous.panelPath === next.panelPath &&
-    previous.searchesWorkspace === next.searchesWorkspace &&
     previous.line === next.line &&
     previous.label === next.label &&
     previous.copyMarkdown === next.copyMarkdown &&
@@ -428,6 +430,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.isAppBundle === next.isAppBundle &&
     previous.onOpen === next.onOpen &&
     previous.onOpenInPanel === next.onOpenInPanel &&
+    previous.resolvePanelPath === next.resolvePanelPath &&
     previous.openInEditorMenuLabel === next.openInEditorMenuLabel &&
     previous.onOpenInBrowser === next.onOpenInBrowser &&
     previous.onOpenMedia === next.onOpenMedia &&

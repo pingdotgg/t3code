@@ -50,7 +50,12 @@ export type LayoutDragSource =
   | { kind: "tab"; tabId: string }
   | { kind: "thread"; threadRef: ScopedThreadRef }
   | { kind: "pull-requests" }
-  | { kind: "surface"; threadRef: ScopedThreadRef; surface: LayoutDragSurface }
+  | {
+      kind: "surface";
+      threadRef: ScopedThreadRef;
+      surface: LayoutDragSurface;
+      resolve?: () => Promise<LayoutDragSurface | null>;
+    }
   | { kind: "new-tab"; content: LayoutLauncherContent };
 
 export type LayoutDragContentSource = Exclude<LayoutDragSource, { kind: "tab" }>;
@@ -412,9 +417,13 @@ export function dropLayoutDrag(): boolean {
   const current = dragState;
   setDragState(null);
   if (!current?.target) return false;
+  return commitLayoutDropWithMotion(current.source, current.target);
+}
+
+function commitLayoutDropWithMotion(source: LayoutDragSource, target: LayoutDropTarget): boolean {
   const before = useLayoutStore.getState().layout;
   notePaneDrop(true);
-  const committed = commitLayoutDrop(current.source, current.target);
+  const committed = commitLayoutDrop(source, target);
   if (!committed || useLayoutStore.getState().layout === before) notePaneDrop(false);
   return committed;
 }
@@ -431,6 +440,13 @@ export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTar
   const store = useLayoutStore.getState();
   const destination = layoutDropDestination(store.layout, target);
   if (!destination || !isLayoutDropUseful(store.layout, source, target)) return false;
+  if (source.kind === "surface" && source.resolve) {
+    const { resolve, ...resolving } = source;
+    void resolve().then((surface) => {
+      if (surface) commitLayoutDropWithMotion({ ...resolving, surface }, target);
+    });
+    return true;
+  }
   if (source.kind === "tab") {
     store.moveTab(source.tabId, destination);
   } else if (

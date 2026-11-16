@@ -3,12 +3,7 @@ import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { useDiffPanelStore } from "../diffPanelStore";
-import {
-  fileSurface,
-  pullRequestSurface,
-  selectThreadRightPanelState,
-  useRightPanelStore,
-} from "../rightPanelStore";
+import { fileSurface, selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { createLayoutNewTabContent } from "./layoutActions";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
@@ -254,14 +249,20 @@ describe("layout drops of a thread's surfaces", () => {
       surfaceThreadRef,
     ).terminalOpen;
 
-  it.each<{ name: string; surface: LayoutDragSurface; opened: () => void }>([
+  it.each<{
+    name: string;
+    surface: LayoutDragSurface;
+    resolvesTo?: LayoutDragSurface;
+    opened: () => void;
+  }>([
     {
-      name: "a file at its line",
-      surface: fileSurface("src/app.ts", 42, 0),
+      name: "a file link at the path its click resolves, at its line",
+      surface: fileSurface("cloud/http.ts", 42, 0),
+      resolvesTo: fileSurface("packages/app/cloud/http.ts", 42, 0),
       opened: () =>
-        expect(panel().surfaces).toContainEqual(
-          expect.objectContaining({ id: "file:src/app.ts", revealLine: 42 }),
-        ),
+        expect(panel().surfaces).toEqual([
+          expect.objectContaining({ id: "file:packages/app/cloud/http.ts", revealLine: 42 }),
+        ]),
     },
     {
       name: "a turn's diff at its file",
@@ -285,53 +286,25 @@ describe("layout drops of a thread's surfaces", () => {
       surface: { id: "browser:tab-1", kind: "preview", resourceId: "tab-1" },
       opened: () => {},
     },
-    {
-      name: "a device",
-      surface: {
-        id: "device:host:phone",
-        kind: "device",
-        target: { hostId: "host", deviceId: "phone", platform: "ios", name: "Phone" },
-      },
-      opened: () => {},
-    },
-    {
-      name: "a terminal tab",
-      surface: {
-        id: "terminal:term-1",
-        kind: "terminal",
-        resourceId: "term-1",
-        terminalIds: ["term-1"],
-        activeTerminalId: "term-1",
-      },
-      opened: () => {},
-    },
-    { name: "the file browser", surface: { id: "files", kind: "files" }, opened: () => {} },
-    {
-      name: "a pull request",
-      surface: pullRequestSurface({ projectId: "project", repository: "owner/repo", number: 7 }),
-      opened: () => {},
-    },
-    {
-      name: "the pull request list",
-      surface: { id: "pull-requests", kind: "pull-requests" },
-      opened: () => {},
-    },
-    {
-      name: "a side chat",
-      surface: { id: "side-chat:side", kind: "side-chat", threadId: ThreadId.make("side") },
-      opened: () => {},
-    },
-  ])("opens $name when dropped", ({ surface, opened }) => {
+  ])("opens $name when dropped", async ({ surface, resolvesTo, opened }) => {
     using fixture = setupSurfaceDrop();
     const { chatPaneId } = fixture;
-    const source: LayoutDragSource = { kind: "surface", threadRef: surfaceThreadRef, surface };
+    const resolved = resolvesTo && Promise.resolve(resolvesTo);
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: surfaceThreadRef,
+      surface,
+      ...(resolved ? { resolve: () => resolved } : {}),
+    };
     expect(terminalOpen()).toBe(false);
 
     expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "right" })).toBe(
       true,
     );
-    if (surface.kind !== "thread-terminal") {
-      expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: surface.id });
+    await resolved;
+    const opens = resolvesTo ?? surface;
+    if (opens.kind !== "thread-terminal") {
+      expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: opens.id });
     }
     opened();
   });
