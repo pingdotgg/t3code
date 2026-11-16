@@ -43,6 +43,7 @@ import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
@@ -196,6 +197,7 @@ const isRollup = (call: Parameters<Generate>[0]) =>
   call.messages.some((message) => message.role === "summary");
 
 // An update returns once the service has pulled the next change, so its reaction has finished.
+// With no subscriber pulling, an update waits forever.
 const settingsLayer = (overrides: Parameters<typeof ServerSettings.layerTest>[0]) =>
   Layer.effect(
     ServerSettings.ServerSettingsService,
@@ -709,19 +711,29 @@ it.effect("records an unavailable model as a failed pass without publishing a su
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-const failingStretch = (kind: "empty" | "invalid-output") =>
-  new TextGenerationError({
-    operation: "generateConversationSummary",
-    detail:
-      kind === "empty"
-        ? "Router returned no text."
-        : "Router returned a reply T3 Code couldn't read.",
-    kind,
-  });
+const failingStretch = (kind: "empty" | "invalid-output" | "unlabelled") =>
+  kind === "unlabelled"
+    ? new TextGenerationError({
+        operation: "generateConversationSummary",
+        detail: "Router rejected the request: the prompt is too long.",
+      })
+    : new TextGenerationError({
+        operation: "generateConversationSummary",
+        detail:
+          kind === "empty"
+            ? "Router returned no text."
+            : "Router returned a reply T3 Code couldn't read.",
+        kind,
+      });
 
-it.effect.each(["empty", "invalid-output"] as const)(
-  "skips a stretch whose summary is always %s while other stretches summarize, and rolls up past it",
-  (kind) => {
+// An unlabelled failure fails the pass before any success, so it takes two more passes to skip.
+it.effect.each([
+  { kind: "empty", results: ["ran", "ran"] },
+  { kind: "invalid-output", results: ["ran", "ran"] },
+  { kind: "unlabelled", results: ["failed", "ran", "failed", "ran"] },
+] as const)(
+  "skips a stretch whose summary is always $kind while other stretches summarize, and rolls up past it",
+  ({ kind, results }) => {
     const model = scripted((input) =>
       input.messages[0]?.text === rawText(0)
         ? Effect.fail(failingStretch(kind))
@@ -734,16 +746,20 @@ it.effect.each(["empty", "invalid-output"] as const)(
     return Effect.gen(function* () {
       // Five full leaves of 24 settled messages.
       yield* seedThread(5 * 24 + 6);
-      yield* summarize;
-      yield* summarize;
-      assert.equal(firstStretchCalls(), 2);
+      const passes: Array<string | undefined> = [];
+      for (let pass = 0; pass < results.length; pass++) {
+        yield* Effect.exit(summarize);
+        passes.push((yield* list).lastPass?.result);
+      }
+      assert.deepEqual(passes, [...results]);
+      assert.equal(firstStretchCalls(), results.length);
       const skipped = (yield* list).lastPass;
       assert.include(skipped?.reason ?? "", "Skipped a stretch");
       assert.equal(skipped?.waitingMessages, 0);
       assert.notProperty(skipped, "chunkFailures");
 
       yield* summarize;
-      assert.equal(firstStretchCalls(), 2);
+      assert.equal(firstStretchCalls(), results.length);
       assert.isTrue(isRollup(model.calls.at(-1)!));
       const service = yield* ConversationSummaries.ConversationSummaries;
       const offered = yield* service.forHandoff({
@@ -761,14 +777,14 @@ it.effect.each(["empty", "invalid-output"] as const)(
       });
       yield* summarize;
       yield* settings.updateSettings(optedIn);
-      yield* summarize;
-      assert.equal(firstStretchCalls(), 3);
+      yield* Effect.exit(summarize);
+      assert.equal(firstStretchCalls(), results.length + 1);
 
       yield* settings.updateSettings({
         textGenerationModelSelection: { instanceId, model: "gpt-5-mini" },
       });
-      yield* summarize;
-      assert.equal(firstStretchCalls(), 4);
+      yield* Effect.exit(summarize);
+      assert.equal(firstStretchCalls(), results.length + 2);
     }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
   },
 );
@@ -1006,9 +1022,10 @@ it.effect("summarizes the next stretch when the model cites none of the chunk", 
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-it.effect("works around a chunk that always times out, without skipping it", () => {
+it.effect("retries every pass and skips nothing while every summary times out", () => {
+  let down = true;
   const model = scripted((input) =>
-    input.messages[0]?.text === rawText(0)
+    down
       ? Effect.fail(
           new TextGenerationError({
             operation: "generateConversationSummary",
@@ -1016,30 +1033,56 @@ it.effect("works around a chunk that always times out, without skipping it", () 
           }),
         )
       : Effect.succeed({
-          statements: [{ text: "The later stretch.", citations: [input.messages[0]!.ref] }],
+          statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
         }),
   );
-  const firstChunkCalls = () =>
-    model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
   return Effect.gen(function* () {
-    yield* seedThread(38);
-    assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
-    assert.equal(model.calls.length, 1);
+    yield* seedThread(5 * 24 + 6);
+    for (let pass = 0; pass < 4; pass++)
+      assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
     assert.deepEqual((yield* list).summaries, []);
 
-    for (let pass = 0; pass < 3; pass++)
-      assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
-    assert.equal(firstChunkCalls(), 4);
-    assert.include(
-      (yield* list).summaries.flatMap((read) =>
-        read.state === "available"
-          ? read.summary.sources.flatMap((source) =>
-              source.kind === "message" ? [source.messageId] : [],
-            )
-          : [],
-      ),
-      messageId(24),
-    );
+    down = false;
+    for (let pass = 0; pass < 3; pass++) yield* summarize;
+    assert.equal((yield* list).lastPass?.waitingMessages, 0);
+    assert.notInclude((yield* list).lastPass?.reason ?? "", "Skipped");
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("turning summaries back on during a pass still retries skipped stretches", () => {
+  let gate: { entered: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
+  const model = scripted((input) =>
+    Effect.gen(function* () {
+      if (gate !== undefined) {
+        yield* Deferred.succeed(gate.entered, undefined);
+        yield* Deferred.await(gate.release);
+      }
+      if (input.messages[0]?.text === rawText(0)) return yield* failingStretch("empty");
+      return { statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }] };
+    }),
+  );
+  const firstStretchCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
+  return Effect.gen(function* () {
+    yield* seedThread(5 * 24 + 6);
+    yield* summarize;
+    yield* summarize;
+    assert.include((yield* list).lastPass?.reason ?? "", "Skipped a stretch");
+
+    gate = { entered: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+    const pass = yield* summarize.pipe(Effect.forkChild);
+    yield* Deferred.await(gate.entered);
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [projectId]: { enableConversationSummaries: false } },
+    });
+    yield* settings.updateSettings(optedIn);
+    yield* Deferred.succeed(gate.release, undefined);
+    yield* Fiber.join(pass);
+    gate = undefined;
+
+    yield* summarize;
+    assert.equal(firstStretchCalls(), 3);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
