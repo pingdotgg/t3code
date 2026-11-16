@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HttpClient from "effect/http/HttpClient";
+import { ChildProcessSpawner } from "effect/process";
 import * as NetService from "@t3tools/shared/Net";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -60,6 +61,7 @@ import * as DesktopConnectionCatalogStore from "./DesktopConnectionCatalogStore.
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopManagedPolicy from "./DesktopManagedPolicy.ts";
+import * as DesktopPrimaryPaste from "./DesktopPrimaryPaste.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "../ssh/DesktopSshPasswordPrompts.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -81,6 +83,7 @@ interface StubbedDesktop {
   readonly registerLinuxUrlHandler: Effect.Effect<void>;
   readonly backends?: ReadonlyArray<{ readonly stop: () => Effect.Effect<void> }>;
   readonly flushRendererHistory?: Effect.Effect<void>;
+  readonly tokenRequested?: Deferred.Deferred<void>;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
@@ -104,6 +107,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           platform: "linux",
           isDevelopment: false,
           isPackaged: true,
+          stateDir: "/isolated/userdata",
           configuredBackendPort: Option.some(3773),
           defaultDesktopSettings: { serverExposureMode: "local-only" },
           ...stub.environment,
@@ -139,7 +143,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           configure: Effect.void,
         } as PreviewPasskeys.PreviewPasskeys["Service"]),
         Effect.provideService(DesktopApplicationMenu.DesktopApplicationMenu, {
-          configure: Effect.void,
+          configure: stub.record("menu"),
         }),
         Effect.provideService(DesktopUpdates.DesktopUpdates, {
           configure: Effect.void,
@@ -194,13 +198,26 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(BrowserImport.BrowserImport, {}),
+          Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {}),
           Layer.mock(DesktopBackendConfiguration.DesktopBackendConfiguration, {}),
           Layer.mock(DesktopCliCommand.DesktopCliCommand, {}),
           Layer.mock(DesktopClientSettings.DesktopClientSettings, {}),
           Layer.mock(DesktopConnectionCatalogStore.DesktopConnectionCatalogStore, {}),
           Layer.mock(DesktopIpc.DesktopIpc, {}),
-          Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {}),
+          Layer.mock(DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth, {
+            getBearerToken: stub
+              .record("token")
+              .pipe(
+                Effect.andThen(
+                  stub.tokenRequested
+                    ? Deferred.succeed(stub.tokenRequested, undefined)
+                    : Effect.void,
+                ),
+                Effect.as("token"),
+              ),
+          }),
           Layer.mock(DesktopManagedPolicy.DesktopManagedPolicy, {}),
+          Layer.succeed(DesktopPrimaryPaste.DesktopPrimaryPaste, { enabled: true }),
           Layer.mock(DesktopSshEnvironment.DesktopSshEnvironment, {}),
           Layer.mock(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {}),
           Layer.mock(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {}),
@@ -242,6 +259,7 @@ it.effect.each([false, true])(
       const releaseStops = yield* Deferred.make<void>();
       const historyStarted = yield* Deferred.make<void>();
       const releaseHistory = yield* Deferred.make<void>();
+      const tokenRequested = yield* Deferred.make<void>();
       const events: string[] = [];
       const app = yield* runStubbedDesktop({
         localEnvironmentEnabled: true,
@@ -252,6 +270,7 @@ it.effect.each([false, true])(
             events.push(event);
           }),
         windowStarted,
+        tokenRequested,
         registerLinuxUrlHandler: Deferred.succeed(registrationStarted, undefined).pipe(
           Effect.andThen(Deferred.await(releaseRegistration)),
           Effect.ensuring(Deferred.succeed(registrationStopped, undefined)),
@@ -278,7 +297,13 @@ it.effect.each([false, true])(
       });
       yield* Deferred.await(registrationStarted);
       yield* Deferred.await(windowStarted);
-      assert.deepEqual(events, ["identity", "ready", "identity", "backend", "window"]);
+      yield* Deferred.await(tokenRequested);
+      // The backend spawns before menus, and its token is minted without waiting for the renderer.
+      assert.deepEqual(
+        events.filter((event) => event !== "token"),
+        ["identity", "ready", "identity", "backend", "menu", "window"],
+      );
+      assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       const shutdown = yield* DesktopShutdown.DesktopShutdown;
       yield* shutdown.request;
