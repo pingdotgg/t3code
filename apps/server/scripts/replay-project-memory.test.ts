@@ -107,6 +107,17 @@ it.effect("replays invented facts through recall and names the gate", () =>
       .split("\n")
       .map((line) => JSON.parse(line) as ReplayRow);
     assert.equal(lines.length, 4);
+    yield* fs.writeFileString(factsPath, "[]");
+    const failure = yield* replayProjectMemory({
+      facts: factsPath,
+      messages: messagesPath,
+      out,
+      factCount: 1,
+    }).pipe(
+      Effect.as("unexpected success"),
+      Effect.catchCause((cause) => Effect.succeed(Cause.pretty(cause))),
+    );
+    assert.include(failure, "Cannot scale an empty fact corpus");
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

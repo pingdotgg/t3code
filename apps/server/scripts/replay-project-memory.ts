@@ -278,6 +278,7 @@ const scaleFacts = (
     left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
   );
   if (count <= sorted.length) return sorted.slice(0, count);
+  if (sorted.length === 0) throw new Error("Cannot scale an empty fact corpus");
   const scaled = [...sorted];
   let copy = 1;
   while (scaled.length < count) {
