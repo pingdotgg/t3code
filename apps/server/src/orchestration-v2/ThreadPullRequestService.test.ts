@@ -707,6 +707,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             checkedOutPullRequest: () => Effect.succeed(checkedOut),
           }),
           Layer.mock(PullRequestService.PullRequestService)({
+            batchesReads: () => Effect.succeed(true),
             summary: () =>
               Effect.succeed({
                 ...detected,
@@ -846,6 +847,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             branchPullRequest: () => Effect.succeed(null),
           }),
           Layer.mock(PullRequestService.PullRequestService)({
+            batchesReads: () => Effect.succeed(true),
             summary: () =>
               Effect.succeed({
                 ...savedReference,
@@ -911,126 +913,136 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       }),
   );
 
-  it.effect("a saved merged branch PR rereads no git state on each sweep", () =>
-    Effect.gen(function* () {
-      const savedReference = {
-        projectId: ProjectId.make("project-1"),
-        repository: "acme/project",
-        number: 42,
-        url: "https://github.com/acme/project/pull/42",
-      };
-      const thread = {
-        ...threadShell("merged-branch-thread"),
-        branch: "feature/merged",
-        branchPullRequest: savedReference,
-      };
-      const project: OrchestrationProjectShell = {
-        id: thread.projectId,
-        title: "Project",
-        workspaceRoot: "/workspace/project",
-        defaultModelSelection: null,
-        scripts: [],
-        createdAt: "2026-08-01T00:00:00.000Z",
-        updatedAt: "2026-08-01T00:00:00.000Z",
-      };
-      const activation = yield* Deferred.make<void>();
-      const sweeps = yield* Queue.unbounded<void>();
-      const commands: Array<OrchestrationV2ServerCommand> = [];
-      const lookups: Array<Parameters<GitManager.GitManager["Service"]["branchPullRequest"]>[1]> =
-        [];
-      const dependencies = Layer.mergeAll(
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          streamDomainEvents: Stream.never,
-          getPullRequestSnapshot: () =>
-            Queue.offer(sweeps, undefined).pipe(
-              Effect.as({
-                schemaVersion: 2,
-                snapshotSequence: 1,
-                threads: [thread],
-                archivedThreads: [],
+  it.effect.each([
+    { host: "a batched", batchesReads: true, sweepLookups: [2, 3, 4, 5, 6] },
+    // Each unbatched lookup is a CLI process (`az` on Azure DevOps).
+    { host: "an unbatched", batchesReads: false, sweepLookups: [1, 1, 1, 1, 2] },
+  ])(
+    "a saved merged branch PR on $host host rereads no git state on each sweep",
+    ({ batchesReads, sweepLookups }) =>
+      Effect.gen(function* () {
+        const savedReference = {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/project",
+          number: 42,
+          url: "https://github.com/acme/project/pull/42",
+        };
+        const thread = {
+          ...threadShell("merged-branch-thread"),
+          branch: "feature/merged",
+          branchPullRequest: savedReference,
+        };
+        const project: OrchestrationProjectShell = {
+          id: thread.projectId,
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const sweeps = yield* Queue.unbounded<void>();
+        const commands: Array<OrchestrationV2ServerCommand> = [];
+        const lookups: Array<Parameters<GitManager.GitManager["Service"]["branchPullRequest"]>[1]> =
+          [];
+        const dependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.never,
+            getPullRequestSnapshot: () =>
+              Queue.offer(sweeps, undefined).pipe(
+                Effect.as({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [thread],
+                  archivedThreads: [],
+                }),
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return { sequence: 2, storedEvents: [] };
               }),
-            ),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              commands.push(command);
-              return { sequence: 2, storedEvents: [] };
-            }),
-        }),
-        Layer.mock(ProjectStore.ProjectStoreV2)({
-          listShells: () => Effect.succeed([project]),
-          getShell: () => Effect.succeedSome(project),
-        }),
-        Layer.mock(GitManager.GitManager)({
-          branchPullRequest: (_input, options) =>
-            Effect.sync(() => {
-              lookups.push(options);
-              return {
-                number: 42,
-                title: "Merged work",
-                url: savedReference.url,
-                baseRef: "main",
-                headRef: thread.branch,
-                state: "merged" as const,
-                repositoryKey: "github.com/acme/project",
-                updatedAt: "2026-09-19T00:00:00.000Z",
-                closedAt: null,
-                mergedAt: "2026-09-19T00:00:00.000Z",
-              };
-            }),
-        }),
-        Layer.mock(PullRequestService.PullRequestService)({
-          notifyLinkedThreadsChanged: Effect.void,
-        }),
-        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-          resolve: () =>
-            Effect.succeed({
-              canonicalKey: "github.com/acme/project",
-              locator: {
-                source: "git-remote" as const,
-                remoteName: "origin",
-                remoteUrl: "git@github.com:acme/project.git",
-              },
-              provider: SourceControlProviderKind.make("github"),
-              owner: "acme",
-              name: "project",
-            }),
-        }),
-        // A connected client keeps the periodic sweep running.
-        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-          shouldRunOpportunisticWork: Effect.succeed(true),
-        }),
-        Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
-        Layer.succeed(
-          SecureRandom.SecureRandom,
-          SecureRandom.make((size) => new Uint8Array(size).fill(1)),
-        ),
-        FileSystem.layerNoop({}),
-        Path.layer,
-      );
-      yield* Effect.gen(function* () {
-        const service = yield* ThreadPullRequestService.make;
-        yield* service.start();
-        yield* Deferred.succeed(activation, undefined);
-        yield* Queue.take(sweeps);
-        yield* service.drain;
-        yield* TestClock.adjust("1 minute");
-        yield* Queue.take(sweeps);
-        yield* service.drain;
-      }).pipe(Effect.provide(dependencies));
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+            getShell: () => Effect.succeedSome(project),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: (_input, options) =>
+              Effect.sync(() => {
+                lookups.push(options);
+                return {
+                  number: 42,
+                  title: "Merged work",
+                  url: savedReference.url,
+                  baseRef: "main",
+                  headRef: thread.branch,
+                  state: "merged" as const,
+                  repositoryKey: "github.com/acme/project",
+                  updatedAt: "2026-09-19T00:00:00.000Z",
+                  closedAt: null,
+                  mergedAt: "2026-09-19T00:00:00.000Z",
+                };
+              }),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+            batchesReads: () => Effect.succeed(batchesReads),
+          }),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/acme/project",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:acme/project.git",
+                },
+                provider: SourceControlProviderKind.make("github"),
+                owner: "acme",
+                name: "project",
+              }),
+          }),
+          // A connected client keeps the periodic sweep running.
+          Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+            shouldRunOpportunisticWork: Effect.succeed(true),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            SecureRandom.SecureRandom,
+            SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+          ),
+          FileSystem.layerNoop({}),
+          Path.layer,
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Queue.take(sweeps);
+          yield* service.drain;
+          expect(lookups).toHaveLength(1);
+          for (const expected of sweepLookups) {
+            yield* TestClock.adjust("1 minute");
+            yield* Queue.take(sweeps);
+            yield* service.drain;
+            expect(lookups).toHaveLength(expected);
+          }
+        }).pipe(Effect.provide(dependencies));
 
-      expect(commands).toEqual([]);
-      expect(lookups).toHaveLength(2);
-      // GitManager rereads git state on request, and by default whenever its
-      // remembered answer is merged or closed.
-      expect(
-        lookups.filter(
-          (options) =>
-            options?.refresh === true ||
-            options?.freshGitState === true ||
-            options?.confirmTerminal !== false,
-        ),
-      ).toEqual([]);
-    }),
+        expect(commands).toEqual([]);
+        // GitManager rereads git state on request, and by default whenever its
+        // remembered answer is merged or closed.
+        expect(
+          lookups.filter(
+            (options) =>
+              options?.refresh === true ||
+              options?.freshGitState === true ||
+              options?.confirmTerminal !== false,
+          ),
+        ).toEqual([]);
+      }),
   );
 
   const mergedPullRequest43 = {
@@ -1104,6 +1116,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         }),
         Layer.mock(PullRequestService.PullRequestService)({
           notifyLinkedThreadsChanged: Effect.void,
+          batchesReads: () => Effect.succeed(true),
         }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>

@@ -32,6 +32,7 @@ import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { QUIET_SYNC_INTERVAL_MS } from "./PullRequestSyncReactor.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -125,6 +126,9 @@ export const make = Effect.gen(function* () {
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
   const noPullRequestRechecks = makeNoPullRequestRechecks();
+  // Unbatched hosts spend a CLI process per lookup (`az` on Azure DevOps), so the sweep rereads a
+  // branch whose pull request it already found on the quiet cadence; thread events still read at once.
+  const unbatchedSweepLookupAt = new Map<string, number>();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -216,6 +220,16 @@ export const make = Effect.gen(function* () {
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
           if (scheduled.has(key) && !scheduledLookups.has(key)) return;
+          const saved = group.find((thread) => thread.branchPullRequest != null)?.branchPullRequest;
+          if (
+            request.threadId === null &&
+            saved != null &&
+            !group.some((thread) => pendingBackfill.has(thread.id))
+          ) {
+            const lastAtMs = unbatchedSweepLookupAt.get(key);
+            if (lastAtMs !== undefined && nowMs - lastAtMs < QUIET_SYNC_INTERVAL_MS) return;
+            if (!(yield* pullRequests.batchesReads(saved))) unbatchedSweepLookupAt.set(key, nowMs);
+          }
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
@@ -400,7 +414,12 @@ export const make = Effect.gen(function* () {
       // Batch concurrent branch lookups into one GitHub GraphQL document.
       { concurrency: 32, discard: true },
     );
-    if (request.threadId === null) noPullRequestRechecks.retain(groups);
+    if (request.threadId === null) {
+      noPullRequestRechecks.retain(groups);
+      for (const key of unbatchedSweepLookupAt.keys()) {
+        if (!groups.has(key)) unbatchedSweepLookupAt.delete(key);
+      }
+    }
   });
 
   // At most one queued request per thread, so a turn end's events share one lookup.

@@ -581,6 +581,7 @@ interface HarnessOptions {
   readonly settings?: ContractServerSettings;
   readonly branchPullRequest?: GitManager.GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService.PullRequestService["Service"]["summary"];
+  readonly batchesReads?: boolean;
   readonly existingWorktreePaths?: ReadonlyArray<string>;
   readonly unreadablePaths?: ReadonlyArray<string>;
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
@@ -735,6 +736,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     }),
     Layer.mock(PullRequestService.PullRequestService)({
       summary: pullRequestSummary,
+      batchesReads: () => Effect.succeed(options.batchesReads ?? true),
       subscribeMerges: PubSub.subscribe(mergedPullRequests).pipe(
         Effect.map((subscription) => Stream.fromSubscription(subscription)),
       ),
@@ -1752,7 +1754,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
       }),
   );
 
-  it.effect("reads a quiet open branch pull request every 5 minutes", () =>
+  it.effect.each([
+    { kind: "a quiet", batchesReads: true, updatedAgoMs: 2 * DAY_MS },
+    // Each unbatched read is a CLI process (`az` on Azure DevOps), so recent activity does not
+    // put it back on the minute cadence.
+    { kind: "an unbatched host's active", batchesReads: false, updatedAgoMs: 0 },
+  ])("reads $kind open branch pull request every 5 minutes", ({ batchesReads, updatedAgoMs }) =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
       const fixture = yield* makeHarness({
@@ -1768,12 +1775,13 @@ describe("ThreadSettlementServiceV2 worker", () => {
             },
           }),
         ]),
+        batchesReads,
         pullRequestSummary: (input) =>
           Effect.succeed(
             makePullRequestSummary({
               ...input,
               state: "open",
-              updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - 2 * DAY_MS)),
+              updatedAt: DateTime.formatIso(DateTime.makeUnsafe(Date.parse(NOW) - updatedAgoMs)),
             }),
           ),
       });

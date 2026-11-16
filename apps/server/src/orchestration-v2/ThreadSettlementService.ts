@@ -322,7 +322,8 @@ export const make = Effect.gen(function* () {
   // a minute, so these threads' next lookup reads the host fresh.
   const shellClosedThreads = new Set<ThreadId>();
   // Each summary read can be a host CLI process (one `az` per read on Azure DevOps), so a quiet
-  // open pull request is read on the sync reactor's quiet cadence rather than every sweep.
+  // open pull request, or any open one on an unbatched host, is read on the sync reactor's quiet
+  // cadence rather than every sweep.
   const quietOpenReadAt = new Map<string, number>();
   const quietReadKey = (reference: {
     readonly projectId: string;
@@ -556,7 +557,8 @@ export const make = Effect.gen(function* () {
           "updatedAt" in summary &&
           summary.state === "open" &&
           nowMs - quietPausedAtMs >= QUIET_SYNC_INTERVAL_MS &&
-          nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS
+          (nowMs - Date.parse(summary.updatedAt) >= QUIET_AFTER_MS ||
+            !(yield* pullRequests.batchesReads(reference)))
         ) {
           quietOpenReadAt.set(readKey, nowMs);
         }
