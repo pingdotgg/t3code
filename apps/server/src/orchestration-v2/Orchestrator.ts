@@ -1582,6 +1582,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
@@ -15702,10 +15703,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (message?.type === "message.dispatch")
       return yield* messageIntake.withLock(
         message.threadId,
-        mayStartSubagentFollowup(message)
-          ? withSubagentParentLock(message.threadId, dispatch)
-          : dispatch,
+        // Outside the thread lock: the held text commits through the run's provider ingestion.
+        runExecution
+          .flushHeldAssistantText(message.threadId)
+          .pipe(
+            Effect.andThen(
+              mayStartSubagentFollowup(message)
+                ? withSubagentParentLock(message.threadId, dispatch)
+                : dispatch,
+            ),
+          ),
       );
+    if (command.type === "queued-message.promote-to-steer")
+      yield* runExecution.flushHeldAssistantText(command.threadId);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
@@ -16439,6 +16449,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
+  | RunExecutionService.RunExecutionServiceV2
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
   Layer.provide(ThreadCommandExecutor.layer),

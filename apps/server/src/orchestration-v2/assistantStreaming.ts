@@ -217,14 +217,17 @@ export function makeAssistantStreamingFilter(
       return withText(event, ready);
     },
     nextIdleFlushAt: (): number | null => nextDueAt,
-    /** Returns the held snapshots due by `now` and counts them as delivered. */
-    takeIdleFlushes(now: number): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
+    /** Returns the held snapshots due by `now`, or all of them, and counts them as delivered. */
+    takeIdleFlushes(
+      now: number,
+      all = false,
+    ): ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> {
       const due: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       nextDueAt = null;
       for (const [key, current] of tracks) {
         const event = current.held;
         if (event === null) continue;
-        if (current.dueAt > now) {
+        if (!all && current.dueAt > now) {
           if (nextDueAt === null || current.dueAt < nextDueAt) nextDueAt = current.dueAt;
           continue;
         }

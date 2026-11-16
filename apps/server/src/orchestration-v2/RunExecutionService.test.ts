@@ -4565,6 +4565,10 @@ function runBackgroundItemScenario(
     readonly onFinalized?: (
       events: ReadonlyArray<OrchestrationV2DomainEvent>,
     ) => Effect.Effect<void>;
+    // Runs once the turn has started, while ingestion continues.
+    readonly onStarted?: (
+      runExecution: RunExecutionService.RunExecutionServiceV2Shape,
+    ) => Effect.Effect<void>;
   },
 ) {
   return Effect.gen(function* () {
@@ -4733,6 +4737,7 @@ function runBackgroundItemScenario(
           },
         },
       });
+      yield* options?.onStarted?.(runExecution) ?? Effect.void;
     }).pipe(Effect.provide(layerTest));
 
     // No timeout: tests advance the TestClock, which would fire it early.
@@ -4932,6 +4937,61 @@ it.effect.each([
       `message.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
       `turn_item.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
     ]);
+  }),
+);
+
+it.effect("delivers held text when a message to the thread asks for it", () =>
+  Effect.gen(function* () {
+    const key = "held-text-before-steer";
+    const ids = backgroundScenarioIds(key);
+    const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
+    const markerIngested = yield* Deferred.make<void>();
+    const marker = streamedMessageEvent({
+      id: `message:${key}:marker`,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      role: "assistant",
+      text: "Marker",
+      streaming: false,
+    });
+    const scenario = yield* runBackgroundItemScenario(key, () => Stream.fromQueue(providerEvents), {
+      batched: true,
+      onIngest: (event) => {
+        if (event === marker) return Deferred.succeed(markerIngested, undefined);
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "assistant_message")
+          return Effect.void;
+        const { text } = event.turnItem;
+        return Ref.update(delivered, (current) => [...current, text]);
+      },
+      onStarted: (runExecution) =>
+        Effect.gen(function* () {
+          yield* Queue.offerAll(providerEvents, [
+            {
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                ...makeLinkedChildTurnItemFixture({ ids, driver, type: "assistant_message" }),
+                id: ids.itemId,
+                threadId: ids.threadId,
+                runId: ids.runId,
+                nodeId: ids.rootNodeId,
+                providerTurnId: ids.rootProviderTurnId,
+                text: "Bicycles began as",
+                streaming: true,
+              },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            marker,
+          ]);
+          yield* Deferred.await(markerIngested);
+          // Held without a paragraph break, and the idle clock has not moved.
+          assert.deepEqual(yield* Ref.get(delivered), []);
+          yield* runExecution.flushHeldAssistantText(ids.threadId);
+          assert.deepEqual(yield* Ref.get(delivered), ["Bicycles began as"]);
+          yield* Queue.offer(providerEvents, rootTerminalEvent(ids, "completed"));
+        }),
+    }).pipe(Effect.forkChild);
+    yield* Fiber.join(scenario);
   }),
 );
 
