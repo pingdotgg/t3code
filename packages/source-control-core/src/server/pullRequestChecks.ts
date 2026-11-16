@@ -118,7 +118,7 @@ export const CHECK_LOG_EXCERPT_BUDGET = {
 type Line = { index: number; text: string };
 
 const isLogNoise = (text: string) =>
-  (text.trimStart().startsWith("❯") && text.includes("node_modules")) ||
+  (/^\s*(?:❯|at)\s/.test(text) && /node_modules[\\/]/.test(text)) ||
   /^(?:##\[(?:start|end)-action |Post job cleanup\.|Cleaning up orphan processes)/.test(text);
 
 export class CheckLogExcerpt {
