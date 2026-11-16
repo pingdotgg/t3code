@@ -643,6 +643,30 @@ it.layer(
     });
   });
 
+  it("offers installer-backed updates without describing them as manual", () => {
+    expect(
+      createProviderVersionAdvisory({
+        driver: driver("antigravity"),
+        currentVersion: "1.4.5",
+        latestVersion: "1.5.9",
+        maintenanceCapabilities: makeProviderMaintenanceCapabilities({
+          provider: driver("antigravity"),
+          packageName: null,
+          updateExecutable: null,
+          updateArgs: [],
+          updateLockKey: null,
+          installerUpdate: { lockKey: "antigravity-managed-runtime" },
+        }),
+      }),
+    ).toMatchObject({
+      status: "behind_latest",
+      canUpdate: true,
+      canInstallVersion: false,
+      updateCommand: null,
+      message: "Install the update now or review provider settings.",
+    });
+  });
+
   it("shows the Chocolatey upgrade command without offering to run it", () => {
     expect(
       createProviderVersionAdvisory({

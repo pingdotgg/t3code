@@ -3,10 +3,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
   type AntigravitySettings,
+  type ProviderInstallState,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
@@ -15,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
@@ -27,6 +30,7 @@ import {
   resolveAntigravityInstanceDirectories,
 } from "../antigravityAuthSupport.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -128,7 +132,15 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     selected: AntigravityInstallation.AntigravityExecutable;
     failResolution: boolean;
     beforeAcquire: Effect.Effect<void>;
-  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+    installedVersion: string | null;
+    latestVersion: string | null;
+  } = {
+    selected: first,
+    failResolution: false,
+    beforeAcquire: Effect.void,
+    installedVersion: null,
+    latestVersion: null,
+  };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -147,6 +159,20 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    state: Effect.sync(
+      () =>
+        ({
+          driver: ProviderDriverKind.make("antigravity"),
+          operationId: null,
+          phase: "idle",
+          downloadedBytes: 0,
+          totalBytes: null,
+          version: controls.latestVersion,
+          installedVersion: controls.installedVersion,
+          canRemove: controls.installedVersion !== null,
+          message: null,
+        }) satisfies ProviderInstallState,
+    ),
     resolve: () =>
       Effect.gen(function* () {
         if (controls.failResolution) {
@@ -175,6 +201,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         );
         return selected;
       }),
+    checkForUpdate: Effect.void,
   });
   const observedSpawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -287,6 +314,7 @@ const layerDeps = ServerConfig.layerTest(process.cwd(), {
     ),
   ),
   Layer.provideMerge(ModelManifest.layerTest),
+  Layer.provideMerge(ProviderLatestVersions.layer),
   Layer.provideMerge(IdAllocator.layer),
   Layer.provideMerge(McpProviderSessions.layer),
 );
@@ -296,11 +324,30 @@ const layerTest = ProviderHostLive.layer.pipe(
 );
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
+  it.effect("offers installer updates only for an installed managed runtime", () =>
+    Effect.gen(function* () {
+      const managed = yield* makeHarness();
+      managed.controls.installedVersion = "1.4.5";
+      expect((yield* managed.instance.snapshot.resolveMaintenance()).installerUpdate).toEqual({
+        lockKey: "antigravity-managed-runtime",
+      });
+
+      const external = yield* makeHarness({ config: { binaryPath: "C:\\external\\agy.exe" } });
+      external.controls.installedVersion = "1.4.5";
+      const externalCapabilities = yield* external.instance.snapshot.resolveMaintenance();
+      expect(externalCapabilities.installerUpdate).toBeUndefined();
+      expect(externalCapabilities.update).toBeNull();
+    }),
+  );
+
   it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
+        expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).toBeUndefined();
+        h.controls.installedVersion = h.first.version;
+        expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).not.toBeNull();
         yield* h.refresh();
         const snapshot = yield* h.instance.snapshot.getSnapshot;
         expect(snapshot.status).toBe("ready");
@@ -447,6 +494,44 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }),
   );
 
+  it.effect.skipIf(windowsHost)("loads models from an explicitly selected agy CLI", () =>
+    Effect.gen(function* () {
+      const binaryPath = "/opt/google/agy";
+      const h = yield* makeHarness({ config: { binaryPath } });
+      h.controls.selected = {
+        ...h.first,
+        executablePath: binaryPath,
+        harnessPath: null,
+        source: "override",
+        version: null,
+        managedVersionDirectory: null,
+      };
+
+      yield* h.refresh();
+
+      const snapshot = yield* h.instance.snapshot.getSnapshot;
+      expect(snapshot.status).toBe("ready");
+      expect(snapshot.auth.status).toBe("authenticated");
+      expect(snapshot.models.map((model) => model.slug)).toEqual([
+        "gemini-test-low",
+        "gemini-test-high",
+      ]);
+      expect(h.acquisitions).toEqual([{ binaryPath, path: h.instancePath }]);
+      expect(h.launches.map((launch) => launch.command)).toEqual([binaryPath]);
+      expect(h.launches[0]?.args).toEqual([
+        "acp",
+        "--gemini-dir",
+        h.profileDirectory,
+        "--app-data-dir",
+        "antigravity-acp",
+      ]);
+      expect(h.launches[0]?.harnessPath).toBeUndefined();
+      h.controls.installedVersion = h.first.version;
+      expect((yield* h.instance.snapshot.resolveMaintenance()).installerUpdate).toBeUndefined();
+      yield* h.assertClosed;
+    }),
+  );
+
   it.effect.skipIf(windowsHost)(
     "closes refresh processes and clears account metadata when Google sign-in is required",
     () =>
@@ -465,6 +550,35 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
         yield* h.assertClosed;
       }),
+  );
+
+  it.effect("flags older and legacy managed runtimes as behind latest", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      h.controls.latestVersion = "1.5.9";
+      for (const version of ["1.3.0", "agy_acp_server_1.1.1", "agy_acp_server_20260818_01_RC01"]) {
+        h.controls.installedVersion = version;
+        h.controls.selected = { ...h.first, version };
+        const nextAdvisory = yield* Stream.toPull(
+          h.instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) =>
+                snapshot.versionAdvisory?.currentVersion === version &&
+                snapshot.versionAdvisory.latestVersion === "1.5.9",
+            ),
+          ),
+        );
+        yield* h.instance.snapshot.refresh;
+        const snapshots = yield* nextAdvisory;
+        expect(snapshots[0]?.versionAdvisory).toMatchObject({
+          status: "behind_latest",
+          currentVersion: version,
+          latestVersion: "1.5.9",
+          canUpdate: true,
+        });
+      }
+      yield* h.assertClosed;
+    }).pipe(Effect.scoped),
   );
 
   it.effect.skipIf(windowsHost)("keeps the previous catalog when executable resolution fails", () =>

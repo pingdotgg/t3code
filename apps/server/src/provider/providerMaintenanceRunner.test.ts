@@ -3,6 +3,7 @@ import { describe, it, assert } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderInstallState,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
@@ -30,6 +31,7 @@ import * as SourceControlProviderRegistry from "../sourceControl/SourceControlPr
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as TextGenerators from "../textGeneration/TextGenerators.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
+import * as ProviderInstallation from "./providerInstallation.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -48,6 +50,8 @@ const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
 const NATIVE_CLI_INSTANCE_ID = ProviderInstanceId.make("nativeCli");
 const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+const ANTIGRAVITY_DRIVER = ProviderDriverKind.make("antigravity");
+const ANTIGRAVITY_INSTANCE_ID = ProviderInstanceId.make("antigravity_managed");
 const encoder = new TextEncoder();
 
 // Pin Linux so raw command/args assertions bypass Windows shim resolution.
@@ -100,6 +104,58 @@ const baseOpenCodeProvider: ServerProvider = {
   instanceId: OPENCODE_INSTANCE_ID,
   driver: OPENCODE_DRIVER,
 };
+
+const baseAntigravityProvider: ServerProvider = {
+  ...baseProvider,
+  instanceId: ANTIGRAVITY_INSTANCE_ID,
+  driver: ANTIGRAVITY_DRIVER,
+  version: "1.4.5",
+};
+
+const makeManagedAntigravityCapabilities = (latestVersion = "1.5.9") =>
+  makeProviderMaintenanceCapabilities({
+    provider: ANTIGRAVITY_DRIVER,
+    packageName: null,
+    updateExecutable: null,
+    updateArgs: [],
+    updateLockKey: null,
+    lookupLatestVersion: Effect.succeed(latestVersion),
+    installerUpdate: { lockKey: "antigravity-managed-runtime" },
+  });
+
+function antigravityInstallState(
+  phase: ProviderInstallState["phase"],
+  message: string | null = null,
+): ProviderInstallState {
+  return {
+    driver: ANTIGRAVITY_DRIVER,
+    operationId: "antigravity-install-operation",
+    phase,
+    downloadedBytes: phase === "succeeded" ? 100 : 0,
+    totalBytes: 100,
+    version: "1.5.9",
+    installedVersion: phase === "succeeded" ? "1.5.9" : "1.4.5",
+    canRemove: true,
+    message,
+  };
+}
+
+function layerAntigravityInstallation(
+  started: ProviderInstallState,
+  states: ReadonlyArray<ProviderInstallState>,
+  onStart: (instanceId: ProviderInstanceId) => void = () => {},
+) {
+  return Layer.succeed(ProviderInstallation.ProviderInstallation, {
+    start: ({ instanceId }) =>
+      Effect.sync(() => {
+        onStart(instanceId);
+        return started;
+      }),
+    cancel: () => Effect.die("ProviderInstallation.cancel was not expected in this test."),
+    subscribe: () => Stream.fromIterable(states),
+    remove: () => Effect.die("ProviderInstallation.remove was not expected in this test."),
+  });
+}
 
 const layerLatestVersionHttpClient = (version: string) =>
   Layer.succeed(
@@ -237,6 +293,16 @@ function makeRegistry(
   });
 }
 
+const layerUnavailableProviderInstallation = Layer.succeed(
+  ProviderInstallation.ProviderInstallation,
+  {
+    start: () => Effect.die("ProviderInstallation.start was not expected in this test."),
+    cancel: () => Effect.die("ProviderInstallation.cancel was not expected in this test."),
+    subscribe: () => Stream.empty,
+    remove: () => Effect.die("ProviderInstallation.remove was not expected in this test."),
+  },
+);
+
 const makeTestRunner = (
   registry: ProviderRegistry.ProviderRegistry["Service"],
   manifest: ModelManifest.ModelManifestData = {
@@ -249,6 +315,7 @@ const makeTestRunner = (
     })),
   },
   latestVersions: Layer.Layer<ProviderLatestVersions.ProviderLatestVersions> = ProviderLatestVersions.layer,
+  providerInstallation: Layer.Layer<ProviderInstallation.ProviderInstallation> = layerUnavailableProviderInstallation,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
@@ -266,6 +333,7 @@ const makeTestRunner = (
             latestVersions,
             // Layers memoize by reference, so a test that provides the gate shares it.
             ProviderInstallationGate.layer,
+            providerInstallation,
           ),
         ),
       ),
@@ -323,6 +391,136 @@ describe("providerMaintenanceRunner", () => {
             calls.push({ command, args });
             return { stdout: "updated" };
           }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("updates managed Antigravity through its installer", () => {
+    const startState = antigravityInstallState("downloading", "Downloading Antigravity.");
+    const startInputs: Array<ProviderInstanceId> = [];
+    const states = [
+      startState,
+      antigravityInstallState("extracting", "Extracting Antigravity."),
+      antigravityInstallState("verifying", "Verifying Antigravity."),
+      antigravityInstallState("succeeded", "Antigravity installed."),
+    ];
+    const spawnedCommands: Array<string> = [];
+    return Effect.gen(function* () {
+      const { registry, updateStatesRef } = yield* makeRegistry(baseAntigravityProvider, {
+        installedVersionAfterUpdate: "1.5.9",
+      });
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(makeManagedAntigravityCapabilities()),
+        },
+        undefined,
+        undefined,
+        layerAntigravityInstallation(startState, states, (instanceId) =>
+          startInputs.push(instanceId),
+        ),
+      );
+
+      const result = yield* updater.updateProvider({
+        provider: ANTIGRAVITY_DRIVER,
+        instanceId: ANTIGRAVITY_INSTANCE_ID,
+      });
+
+      assert.deepStrictEqual(startInputs, [ANTIGRAVITY_INSTANCE_ID]);
+      assert.deepStrictEqual(spawnedCommands, []);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.ok(
+        (yield* Ref.get(updateStatesRef)).some(
+          (state) => state.message === "Extracting Antigravity.",
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.5.9"),
+          layerMockSpawner((command) => {
+            spawnedCommands.push(command);
+            return { stdout: "unexpected shell update" };
+          }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("records a managed Antigravity installer failure", () => {
+    const startState = antigravityInstallState("downloading", "Downloading Antigravity.");
+    const failedState = antigravityInstallState("failed", "Antigravity installer failed.");
+    const startInputs: Array<ProviderInstanceId> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseAntigravityProvider);
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: () =>
+            Effect.succeed(makeManagedAntigravityCapabilities()),
+        },
+        undefined,
+        undefined,
+        layerAntigravityInstallation(startState, [startState, failedState], (instanceId) =>
+          startInputs.push(instanceId),
+        ),
+      );
+
+      const result = yield* updater.updateProvider({
+        provider: ANTIGRAVITY_DRIVER,
+        instanceId: ANTIGRAVITY_INSTANCE_ID,
+      });
+
+      assert.deepStrictEqual(startInputs, [ANTIGRAVITY_INSTANCE_ID]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Antigravity installer failed.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.5.9"),
+          layerMockSpawner(() => ({ stdout: "unexpected shell update" })),
+        ),
+      ),
+    );
+  });
+
+  it.effect("does not start the Antigravity installer after managed eligibility changes", () => {
+    const freshLookups: Array<boolean> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseAntigravityProvider);
+      const managed = makeManagedAntigravityCapabilities();
+      const updater = yield* makeTestRunner({
+        ...registry,
+        getProviderMaintenanceCapabilitiesForInstance: (_instanceId, _provider, options) => {
+          freshLookups.push(options?.fresh === true);
+          return Effect.succeed(options?.fresh ? { ...managed, installerUpdate: null } : managed);
+        },
+      });
+
+      const result = yield* updater.updateProvider({
+        provider: ANTIGRAVITY_DRIVER,
+        instanceId: ANTIGRAVITY_INSTANCE_ID,
+      });
+
+      assert.deepStrictEqual(freshLookups, [false, true]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+      assert.strictEqual(
+        result.providers[0]?.updateState?.message,
+        "Provider installation changed. Refresh and try again.",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          layerNonWindowsPlatform,
+          layerLatestVersionHttpClient("1.5.9"),
+          layerMockSpawner(() => ({ stdout: "unexpected shell update" })),
         ),
       ),
     );

@@ -137,6 +137,7 @@ export function makeProviderMaintenanceCapabilities(input: {
   readonly env?: NodeJS.ProcessEnv;
   readonly latestVersion?: string | null;
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
+  readonly installerUpdate?: { readonly lockKey: string } | null;
 }): ProviderMaintenanceCapabilities {
   const platform = input.platform ?? HostProcess.Platform.defaultValue();
   const update =
@@ -158,6 +159,7 @@ export function makeProviderMaintenanceCapabilities(input: {
     provider: input.provider,
     packageName: input.packageName,
     update,
+    ...(input.installerUpdate === undefined ? {} : { installerUpdate: input.installerUpdate }),
     ...("latestVersion" in input ? { latestVersion: input.latestVersion } : {}),
     ...(input.lookupLatestVersion ? { lookupLatestVersion: input.lookupLatestVersion } : {}),
   };
@@ -1314,7 +1316,7 @@ function deriveVersionAdvisory(input: {
     return {
       status: "behind_latest",
       message:
-        input.capabilities.update === null
+        input.capabilities.update === null && input.capabilities.installerUpdate == null
           ? manualUpdateMessage(input.latestVersion, input.capabilities.installPath)
           : PROVIDER_UPDATE_ACTION_TOAST_MESSAGE,
     };
@@ -1346,7 +1348,7 @@ export function createProviderVersionAdvisory(input: {
       resolveLatestProviderUpdateAction(capabilities, latestVersion)?.command ??
       capabilities.manualCommand ??
       null,
-    canUpdate: capabilities.update !== null,
+    canUpdate: capabilities.update !== null || capabilities.installerUpdate != null,
     canInstallVersion: makeTargetedProviderUpdateAction(capabilities, "0.0.0") !== null,
     checkedAt: input.checkedAt ?? null,
     message: advisory.message,
@@ -1377,6 +1379,7 @@ function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities
   if (capabilities.latestVersionCacheKey) return capabilities.latestVersionCacheKey;
   const update = capabilities.update;
   if (update) return [update.lockKey, update.executable, ...update.args].join("\0");
+  if (capabilities.installerUpdate) return capabilities.installerUpdate.lockKey;
   return capabilities.installPath
     ? ["manual", capabilities.installPath].join("\0")
     : capabilities.packageName && `npm-registry\0${capabilities.packageName}`;

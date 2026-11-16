@@ -812,7 +812,7 @@ export function EnvironmentProviderSettings({
   };
 
   const updateInstance = useStableCallback(
-    (
+    async (
       instanceId: ProviderInstanceId,
       previous: ProviderInstanceConfig,
       next: ProviderInstanceConfig,
@@ -822,11 +822,37 @@ export function EnvironmentProviderSettings({
         isDisabling &&
         resolveAppModelSelectionState(settings, serverProviders).instanceId === instanceId &&
         readEnvironmentScope(environmentId, AuthSettingsWriteScope);
-      return persistInstance(
+      const didPersist = await persistInstance(
         instanceId,
         next,
         shouldClearTextGen ? DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection : undefined,
       );
+      if (
+        !didPersist ||
+        previous.driver !== ProviderDriverKind.make("antigravity") ||
+        providerConfigString(previous.config, "binaryPath") ===
+          providerConfigString(next.config, "binaryPath") ||
+        !canRefreshProviders
+      ) {
+        return didPersist;
+      }
+
+      const refreshResult = await refreshServerProviders({
+        environmentId,
+        input: { instanceId, refreshModels: true },
+      });
+      if (refreshResult._tag === "Failure" && !isAtomCommandInterrupted(refreshResult)) {
+        const error = squashAtomCommandFailure(refreshResult);
+        toastManager.add({
+          type: "error",
+          title: "Could not refresh Antigravity models",
+          description:
+            error instanceof Error
+              ? error.message
+              : "Confirm the selected executable supports agy acp.",
+        });
+      }
+      return didPersist;
     },
   );
 

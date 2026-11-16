@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -24,6 +25,8 @@ import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderHostLive from "./ProviderHostLive.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import type { ProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenance";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProvider } from "@t3tools/contracts";
 import {
@@ -46,7 +49,7 @@ const initializeResult = {
   agentInfo: {
     name: "antigravity-acp",
     title: "Google Antigravity",
-    version: "agy_acp_server_20260818_01_RC01",
+    version: "1.4.5",
   },
 } satisfies EffectAcpSchema.InitializeResponse;
 
@@ -113,6 +116,13 @@ const expectedCommands = [
 ];
 
 const layerTest = ProviderHostLive.layer.pipe(
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Unexpected Antigravity update request")),
+    ),
+  ),
   Layer.provideMerge(
     Layer.mock(BackgroundPolicy.BackgroundPolicy)({
       shouldRunScopeWork: () => Effect.succeed(false),
@@ -135,6 +145,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly maintenanceCapabilities?: Effect.Effect<ProviderMaintenanceCapabilities>;
   } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
@@ -150,6 +161,9 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
+      ...(options.maintenanceCapabilities
+        ? { maintenanceCapabilities: options.maintenanceCapabilities }
+        : {}),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -331,7 +345,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot).toMatchObject({
           installed: true,
           status: "warning",
-          version: "agy_acp_server_20260818_01_RC01",
+          version: "1.4.5",
           auth: { status: "unknown", ...(auth ? { type: auth.type } : {}) },
           message:
             auth?.type === "gemini-api-key" || auth?.type === "agent-platform"
@@ -383,6 +397,34 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expectedCommands,
       );
       expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("publishes an installer-backed advisory for an outdated managed runtime", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        maintenanceCapabilities: Effect.succeed({
+          provider: driver,
+          packageName: null,
+          update: null,
+          installerUpdate: { lockKey: "antigravity-managed-runtime" },
+          latestVersion: "1.5.9",
+        }),
+      });
+      const updatedAdvisory = yield* harness.nextPublish(
+        (snapshot) => snapshot.versionAdvisory?.latestVersion === "1.5.9",
+      );
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started);
+
+      const snapshot = yield* updatedAdvisory;
+      expect(snapshot?.versionAdvisory).toMatchObject({
+        status: "behind_latest",
+        currentVersion: "1.4.5",
+        latestVersion: "1.5.9",
+        canUpdate: true,
+        updateCommand: null,
+      });
     }),
   );
 

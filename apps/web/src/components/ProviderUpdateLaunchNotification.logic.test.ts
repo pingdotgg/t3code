@@ -130,6 +130,34 @@ describe("provider update launch notification logic", () => {
     ).toBe(true);
   });
 
+  it("allows installer-backed updates only when every outdated sibling uses that action", () => {
+    const candidate = updateCandidate({
+      driver: driver("antigravity"),
+      instanceId: instanceId("antigravity_managed"),
+      canUpdate: true,
+      updateCommand: null,
+    });
+    const managedSibling = provider({
+      driver: driver("antigravity"),
+      instanceId: instanceId("antigravity_managed_alt"),
+      canUpdate: true,
+      updateCommand: null,
+    });
+
+    expect(canOneClickUpdateProviderCandidate(candidate, [candidate, managedSibling])).toBe(true);
+    expect(
+      canOneClickUpdateProviderCandidate(candidate, [
+        candidate,
+        provider({
+          driver: driver("antigravity"),
+          instanceId: instanceId("antigravity_external"),
+          canUpdate: false,
+          updateCommand: null,
+        }),
+      ]),
+    ).toBe(false);
+  });
+
   it("keeps the inline update action available while a provider update is already running", () => {
     const candidate = updateCandidate({
       driver: driver("codex"),
@@ -293,6 +321,22 @@ it("does not offer incompatible latest versions and restores suggestions after p
     expect(isProviderUpdateCandidate(snapshot)).toBe(expected);
     expect(isProviderSettingsUpdateCandidate(snapshot)).toBe(expected);
   }
+});
+
+it("offers installer-backed settings updates without exposing manual-only providers", () => {
+  const managed = provider({
+    driver: driver("antigravity"),
+    canUpdate: true,
+    updateCommand: null,
+  });
+  const external = provider({
+    driver: driver("antigravity"),
+    canUpdate: false,
+    updateCommand: null,
+  });
+
+  expect(isProviderSettingsUpdateCandidate(managed)).toBe(true);
+  expect(isProviderSettingsUpdateCandidate(external)).toBe(false);
 });
 
 describe("getProviderUpdateRunToastView", () => {

@@ -53,6 +53,10 @@ import {
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  makeManualOnlyProviderMaintenanceCapabilities,
+  makeProviderMaintenanceCapabilities,
+} from "@t3tools/provider-core/server/maintenanceResolver";
+import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
@@ -65,6 +69,7 @@ import { makeAntigravityProvider } from "../AntigravityProvider.ts";
 import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -104,6 +109,7 @@ export type AntigravityDriverEnv =
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ModelCatalog.ModelCatalog
+  | ProviderLatestVersions.ProviderLatestVersions
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
@@ -140,6 +146,30 @@ export const AntigravityDriver: ProviderDriver<
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
     const settings = { ...config, enabled } satisfies AntigravitySettings;
+    const maintenanceCapabilities = Effect.map(installation.state, (installationState) =>
+      settings.binaryPath.trim() === "" && installationState.installedVersion !== null
+        ? {
+            ...makeProviderMaintenanceCapabilities({
+              provider: DRIVER,
+              packageName: null,
+              updateExecutable: null,
+              updateArgs: [],
+              updateLockKey: null,
+              latestVersion: null,
+              lookupLatestVersion: installation.checkForUpdate.pipe(
+                Effect.andThen(installation.state),
+                Effect.map((state) => state.version),
+              ),
+              installerUpdate: { lockKey: "antigravity-managed-runtime" },
+            }),
+            compareVersions: (current: string, latest: string) => (current === latest ? 0 : -1),
+            latestVersionCacheKey: "antigravity-managed-runtime",
+          }
+        : makeManualOnlyProviderMaintenanceCapabilities({
+            provider: DRIVER,
+            packageName: null,
+          }),
+    );
     const auth: AntigravityAuthConfig = {
       authMethod: settings.authMethod,
       // The instance registry has already read a referenced key from its secret provider.
@@ -439,6 +469,7 @@ export const AntigravityDriver: ProviderDriver<
       probe,
       probeUsage: usage.probe,
       clearUsage: usage.clear,
+      maintenanceCapabilities,
       auth: { type: auth.authMethod, label: antigravityAuthLabel(auth.authMethod) },
       supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),

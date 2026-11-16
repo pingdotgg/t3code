@@ -58,16 +58,21 @@ space for downloading and staging an update.
 ### Use a manual installation
 
 Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on the environment.
-Set **Binary path** to its `agy` executable and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
-`PATH` if no managed runtime is installed.
+In **Settings > Providers**, set **Binary path** to its `agy` executable to use
+the external CLI instead of T3's managed runtime. The executable must support
+`agy acp`; T3 verifies it through ACP initialization before loading models. Leave
+the field blank to use the managed runtime, or a compatible `agy` on `PATH` if no
+managed runtime is installed. T3 Code verifies the executable and reloads account
+models when you save a changed path. The external CLI uses the same Google
+sign-in and usage reporting as the managed runtime.
 
 ## Update the managed runtime
 
 In web or desktop provider settings, choose **Update Antigravity** when an update
-is available. T3 checks Google's CLI release channel while provider update checks
-are enabled. Installing or reinstalling also checks that channel. Updates keep
-your profile and existing runtime available if the new release fails validation.
+is available, or use **Update all** to install it with other eligible provider
+updates. T3 checks Google's CLI release channel while provider update checks are
+enabled. Installing or reinstalling also checks that channel. Updates keep your
+profile and existing runtime available if the new release fails validation.
 
 Updating an older 1.4.5 installation migrates it to the native CLI. You may need to
 sign in again after migration. Threads already running finish with their original

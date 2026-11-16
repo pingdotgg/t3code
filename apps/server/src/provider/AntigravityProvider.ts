@@ -20,16 +20,23 @@ import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { HttpClient } from "effect/http";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
+  enrichProviderSnapshotWithVersionAdvisory,
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+} from "@t3tools/provider-core/server/snapshotSettings";
 import {
   buildServerProvider,
   isCommandMissingCause,
@@ -165,7 +172,7 @@ interface AntigravityProviderOptions {
   readonly supportsTextGeneration: Effect.Effect<boolean>;
   readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
   readonly clearUsage?: Effect.Effect<void>;
-  readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
+  readonly maintenanceCapabilities?: Effect.Effect<ProviderMaintenanceCapabilities>;
   readonly auth?: { readonly type: string; readonly label: string };
 }
 
@@ -173,6 +180,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   settings: AntigravitySettings,
   options: AntigravityProviderOptions,
 ) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const usesCredentials =
     options.auth?.type === "gemini-api-key" || options.auth?.type === "agent-platform";
   const signInMessage = usesCredentials
@@ -343,23 +352,51 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   const maintenanceCapabilities =
     options.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({
-      provider: ProviderDriverKind.make("antigravity"),
-      packageName: null,
-    });
+    Effect.succeed(
+      makeManualOnlyProviderMaintenanceCapabilities({
+        provider: ProviderDriverKind.make("antigravity"),
+        packageName: null,
+      }),
+    );
+  const snapshotSettings = yield* makeProviderSnapshotSettingsSource(settings);
+  const enrichSnapshot = Effect.fn("AntigravityProvider.enrichSnapshot")(function* ({
+    settings: versionSettings,
+    snapshot,
+    publishSnapshot,
+  }: {
+    readonly settings: { readonly enableProviderUpdateChecks: boolean };
+    readonly snapshot: ServerProvider;
+    readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+  }) {
+    const enrich = (candidate: ServerProvider) =>
+      maintenanceCapabilities.pipe(
+        Effect.flatMap((capabilities) =>
+          enrichProviderSnapshotWithVersionAdvisory(candidate, capabilities, {
+            enableProviderUpdateChecks: versionSettings.enableProviderUpdateChecks,
+          }),
+        ),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+      );
+    const changes = yield* Stream.toPull(SubscriptionRef.changes(metadata));
+    yield* enrich(snapshot).pipe(Effect.flatMap(publishSnapshot));
+    yield* Stream.fromPull(Effect.succeed(changes)).pipe(
+      Stream.runForEach((state) =>
+        options
+          .stampIdentity(state.draft)
+          .pipe(Effect.flatMap(enrich), Effect.flatMap(publishSnapshot)),
+      ),
+    );
+  }, Effect.scoped);
   const managed = yield* makeManagedServerProvider({
-    resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
-    getSettings: Effect.succeed(settings),
-    streamSettings: Stream.empty,
-    haveSettingsChanged: () => false,
+    resolveMaintenance: () => maintenanceCapabilities,
+    getSettings: snapshotSettings.getSettings,
+    streamSettings: snapshotSettings.streamSettings,
+    haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+    checkProviderOnSettingsChange: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
-      SubscriptionRef.changes(metadata).pipe(
-        Stream.runForEach((state) =>
-          options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
-        ),
-      ),
+    enrichSnapshot,
   });
   yield* Deferred.succeed(republish, managed.refresh);
 

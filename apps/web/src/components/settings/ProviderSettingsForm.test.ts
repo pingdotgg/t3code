@@ -52,6 +52,28 @@ describe("ProviderSettingsForm helpers", () => {
     expect(next).toEqual({ forkOwned: 1 });
   });
 
+  it("exposes Antigravity's managed or external runtime selection", () => {
+    const antigravity = providerClients.get(ProviderDriverKind.make("antigravity"));
+    expect(antigravity).toBeDefined();
+
+    const binaryPath = deriveProviderSettingsFields(antigravity!).find(
+      (field) => field.key === "binaryPath",
+    );
+    expect(binaryPath).toMatchObject({
+      label: "Binary path",
+      placeholder: "Managed runtime",
+      clearWhenEmpty: "persist",
+    });
+    expect(binaryPath?.description).toContain("agy acp");
+
+    expect(nextProviderConfigWithFieldValue({}, binaryPath!, "/opt/google/agy")).toEqual({
+      binaryPath: "/opt/google/agy",
+    });
+    expect(
+      nextProviderConfigWithFieldValue({ binaryPath: "/opt/google/agy" }, binaryPath!, ""),
+    ).toEqual({ binaryPath: "" });
+  });
+
   it("does not store a text value its field's schema rejects", () => {
     const claude = providerClients.get(ProviderDriverKind.make("claudeAgent"));
     expect(claude).toBeDefined();

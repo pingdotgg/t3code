@@ -13,6 +13,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -131,6 +132,7 @@ interface HarnessOptions {
   readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
   readonly native?: boolean;
   readonly nativeVersion?: string;
+  readonly previousVersion?: string;
   readonly nativeManifest?: (manifest: { version: string; url: string; sha512: string }) => unknown;
   readonly beforeManifest?: Effect.Effect<void>;
   readonly updateChecksEnabled?: Effect.Effect<boolean>;
@@ -154,7 +156,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     yield* writeRelease(managedDirectory, {
       ...(yield* releaseAsset(archive, platform)),
       sha256: previousReleaseId,
-      version: previousVersion,
+      version: options.previousVersion ?? previousVersion,
     });
   }
   const stagingReleased = yield* Deferred.make<void>();
@@ -386,6 +388,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         yield* installation.start;
         expect((yield* terminalState(installation)).phase).toBe("succeeded");
       }),
+  );
+
+  it.effect("retries a release check interrupted by a provider refresh", () =>
+    Effect.gen(function* () {
+      const manifestEntered = yield* Deferred.make<void>();
+      const releaseManifest = yield* Deferred.make<void>();
+      const manifestRequests = yield* Ref.make(0);
+      const beforeManifest = Ref.updateAndGet(manifestRequests, (count) => count + 1).pipe(
+        Effect.flatMap((count) =>
+          count === 1
+            ? Deferred.succeed(manifestEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseManifest)),
+              )
+            : Effect.void,
+        ),
+      );
+      const { installation, requests } = yield* makeHarness({
+        native: true,
+        archive: Buffer.from(serverContents),
+        platform: "win32",
+        previous: true,
+        previousVersion: "1.5.6",
+        beforeManifest,
+      });
+      const firstCheck = yield* installation.checkForUpdate.pipe(Effect.forkScoped);
+      yield* Deferred.await(manifestEntered);
+      yield* Fiber.interrupt(firstCheck);
+
+      yield* installation.checkForUpdate;
+
+      expect(requests.filter((url) => url.includes("/manifests/"))).toHaveLength(2);
+      expect(yield* installation.state).toMatchObject({
+        version: "1.5.7",
+        installedVersion: "1.5.6",
+      });
+    }),
   );
 
   it.effect("keeps withdrawn native releases from activating or launching", () =>

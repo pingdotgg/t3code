@@ -919,16 +919,21 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     ),
   );
 
-  let lastUpdateCheck: number | undefined;
+  let lastUpdateCheck: { readonly checkedAt: number } | undefined;
   const refreshRelease = Effect.fn("AntigravityInstallation.refreshRelease")(function* (
     explicit = false,
   ) {
     if (options.releaseAsset !== undefined || !supported) return;
     if (!explicit && !(yield* options.updateChecksEnabled ?? Effect.succeed(true))) return;
     const now = yield* Clock.currentTimeMillis;
-    if (!explicit && lastUpdateCheck !== undefined && now - lastUpdateCheck < UPDATE_CHECK_INTERVAL)
+    if (
+      !explicit &&
+      lastUpdateCheck !== undefined &&
+      now - lastUpdateCheck.checkedAt < UPDATE_CHECK_INTERVAL
+    )
       return;
-    lastUpdateCheck = now;
+    const updateCheck = { checkedAt: now };
+    lastUpdateCheck = updateCheck;
     const musl =
       platform === "linux" &&
       (yield* fs.exists(
@@ -941,6 +946,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.map((json) => parseAntigravityCliRelease(json, platform, arch, musl)),
       Effect.timeout("10 seconds"),
       Effect.orElseSucceed(() => null),
+      Effect.onInterrupt(() =>
+        Effect.sync(() => {
+          if (lastUpdateCheck === updateCheck) lastUpdateCheck = undefined;
+        }),
+      ),
     );
     if (latest === null) return;
     if (yield* isWithdrawn(latest.version)) {
