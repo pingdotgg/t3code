@@ -207,6 +207,17 @@ const message = (
 const attachedComposer = (outcome: ProjectKnowledge.RecallOutcome) =>
   outcome._tag === "Attached" ? outcome.composer : null;
 
+const attachedFactIds = (outcome: ProjectKnowledge.RecallOutcome) => {
+  const composer = attachedComposer(outcome);
+  return (composer?.records ?? []).flatMap((record) =>
+    record.kind === "project-knowledge" && "knowledge" in record
+      ? record.knowledge.selections.flatMap((selection) =>
+          selection.kind === "fact" ? [selection.factId] : [],
+        )
+      : [],
+  );
+};
+
 const createFact = (projectId: ProjectId, id = "fact-one") =>
   ({
     action: "create",
@@ -2213,6 +2224,120 @@ it.effect("recalls unseen facts beyond a full page of facts the thread has read"
       { kind: "fact", factId: ProjectFactId.make("fact-9"), revision: 1 },
     ]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("recall attaches two unseen facts when the thread was shown the best matches", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projectId = ProjectId.make("recall-beyond-shown");
+    const threadId = ThreadId.make("recall-beyond-shown");
+    yield* createProject(projectId);
+    const ids = Array.from({ length: 45 }, (_, index) =>
+      ProjectFactId.make(`crowd-${index.toString().padStart(2, "0")}`),
+    );
+    for (const factId of ids)
+      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
+    const shown = ids.slice(0, 40);
+    const unseen = ids.slice(40);
+    yield* knowledge.recordViews(projectId, threadId, shown);
+    const query = "Change cache keys to include tenant IDs.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId,
+      requestId: CommandId.make("recall-beyond-shown"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.deepEqual(attachedFactIds(outcome), unseen.slice(0, 2));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "recall attaches an older fact when closer matches were shown or came from this thread",
+  () =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const query = "Change cache keys to include tenant IDs.";
+      const longer = "Cache keys include tenant IDs. " + "background note ".repeat(40);
+      const recallTarget = (projectId: ProjectId, threadId: ThreadId, requestId: string) =>
+        knowledge.recall({
+          projectId,
+          threadId,
+          requestId: CommandId.make(requestId),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        });
+      const saveOlderTarget = (projectId: ProjectId) =>
+        Effect.gen(function* () {
+          yield* createProject(projectId);
+          yield* knowledge.mutate(
+            { ...createFact(projectId, "target"), content: longer },
+            { kind: "user" },
+          );
+          yield* TestClock.adjust("1 minute");
+        });
+
+      const shownProject = ProjectId.make("recall-older-shown");
+      const shownThread = ThreadId.make("recall-older-shown");
+      yield* saveOlderTarget(shownProject);
+      const shownIds = Array.from({ length: 45 }, (_, index) =>
+        ProjectFactId.make(`shown-${index.toString().padStart(2, "0")}`),
+      );
+      for (const factId of shownIds)
+        yield* knowledge.mutate(createFact(shownProject, factId), { kind: "user" });
+      yield* knowledge.recordViews(shownProject, shownThread, shownIds);
+      assert.deepEqual(
+        attachedFactIds(yield* recallTarget(shownProject, shownThread, "recall-older-shown")),
+        [ProjectFactId.make("target")],
+      );
+
+      const citedProject = ProjectId.make("recall-older-cited");
+      const citedThread = ThreadId.make("recall-older-cited");
+      yield* saveOlderTarget(citedProject);
+      yield* projections.apply(thread(citedThread, citedProject));
+      yield* projections.apply(
+        message(citedThread, "recall-older-cited-message", "user", "tenant IDs in keys"),
+      );
+      const source = yield* knowledge.readSource({
+        projectId: citedProject,
+        threadId: citedThread,
+        messageId: MessageId.make("recall-older-cited-message"),
+      });
+      if (source.state !== "available") return yield* Effect.die("source unavailable");
+      for (let index = 0; index < 45; index++)
+        yield* knowledge.mutate(
+          {
+            ...createFact(citedProject, `cited-${index.toString().padStart(2, "0")}`),
+            sources: [source.source],
+          },
+          { kind: "user" },
+        );
+      assert.deepEqual(
+        attachedFactIds(yield* recallTarget(citedProject, citedThread, "recall-older-cited")),
+        [ProjectFactId.make("target")],
+      );
+
+      const originProject = ProjectId.make("recall-older-origin");
+      const originThread = ThreadId.make("recall-older-origin");
+      yield* saveOlderTarget(originProject);
+      const origin = {
+        kind: "agent-thread" as const,
+        threadId: originThread,
+        providerInstanceId,
+      };
+      for (let index = 0; index < 45; index++)
+        yield* knowledge.mutate(
+          createFact(originProject, `origin-${index.toString().padStart(2, "0")}`),
+          origin,
+        );
+      assert.deepEqual(
+        attachedFactIds(yield* recallTarget(originProject, originThread, "recall-older-origin")),
+        [ProjectFactId.make("target")],
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("checks citations for one page of recall, not for every ranked fact", () =>
