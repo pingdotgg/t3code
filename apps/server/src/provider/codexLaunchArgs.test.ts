@@ -28,6 +28,19 @@ describe("codexAppServerArgs", () => {
       ...row.expected,
     ]);
   });
+
+  it("turns off the Codex desktop app's codex_app tools, which only that app can host", () => {
+    const args = codexAppServerArgs();
+    const overrides = args.filter((_, index) => args[index - 1] === "-c");
+    NodeAssert.ok(
+      overrides.some(
+        (value) =>
+          value.startsWith("plugins.codex-app-tools@openai-bundled.") &&
+          value.endsWith("enabled=false"),
+      ),
+      `expected a -c override disabling codex-app-tools@openai-bundled in ${JSON.stringify(args)}`,
+    );
+  });
 });
 
 describe("codexExecLaunchArgs", () => {
