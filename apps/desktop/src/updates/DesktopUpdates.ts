@@ -558,7 +558,9 @@ export const make = Effect.gen(function* () {
   });
 
   // The flag is shared updater state, so callers flip it only while holding a reservation.
-  const runUpdaterCheck = Effect.fnUntraced(function* (allowDowngrade: boolean) {
+  const runUpdaterCheck = Effect.fn("desktop.updates.runUpdaterCheck")(function* (
+    allowDowngrade: boolean,
+  ) {
     const restoreDowngrade = yield* electronUpdater.allowDowngrade;
     if (allowDowngrade) yield* electronUpdater.setAllowDowngrade(true);
     return yield* electronUpdater.checkForUpdates.pipe(
