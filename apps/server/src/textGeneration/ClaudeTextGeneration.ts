@@ -58,12 +58,18 @@ const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
 
+const ClaudeResultStatus = {
+  subtype: Schema.optionalKey(Schema.String),
+  is_error: Schema.optionalKey(Schema.Boolean),
+};
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
+  ...ClaudeResultStatus,
 });
 const ClaudeOutputMessage = Schema.Struct({
   type: Schema.String,
   structured_output: Schema.optionalKey(Schema.Unknown),
+  ...ClaudeResultStatus,
 });
 const isClaudeOutputEnvelope = Schema.is(ClaudeOutputEnvelope);
 
@@ -362,6 +368,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     const envelope = isClaudeOutputEnvelope(output)
       ? output
       : output.findLast((message) => message.type === "result");
+    // Only a reply the model gave is unreadable. Other error results stopped the run before one.
+    const modelAnswered =
+      envelope?.subtype === "error_max_structured_output_retries" ||
+      (envelope !== undefined &&
+        envelope.is_error !== true &&
+        (envelope.subtype ?? "success") === "success");
 
     const decodeOutput = Schema.decodeEffect(
       outputSchemaJson,
@@ -374,7 +386,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             new TextGenerationError({
               operation,
               detail: "Claude returned invalid structured output.",
-              kind: "invalid-output",
+              ...(modelAnswered ? { kind: "invalid-output" as const } : {}),
               cause,
             }),
           ),
