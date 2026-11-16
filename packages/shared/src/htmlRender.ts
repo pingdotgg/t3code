@@ -171,6 +171,21 @@ const FIXED_COLORS = {
   },
 } as const;
 
+/** Diagram tone N is chart color N as an opaque tint to fill with, the color to stroke with, and a shade that reads on the tint. */
+function toneVariables(appearance: ThemeAppearance, count: number) {
+  const textMix = appearance === "light" ? "black" : "white";
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, index) => {
+      const chart = `var(--chart-${index + 1})`;
+      return [
+        [`--tone-${index + 1}-fill`, `color-mix(in srgb, ${chart} 14%, var(--background))`],
+        [`--tone-${index + 1}-stroke`, chart],
+        [`--tone-${index + 1}-text`, `color-mix(in srgb, ${chart} 55%, ${textMix})`],
+      ] as const;
+    }).flat(),
+  );
+}
+
 /** Uses app tokens, except --accent is the brand color rather than a neutral hover surface. */
 export function htmlRenderTheme(
   colors: ThemeColors,
@@ -214,6 +229,7 @@ export function htmlRenderTheme(
       "--code-foreground": colors.codeForeground,
       "--chart-1": colors.accent,
       ...Object.fromEntries(fixed.chart.map((color, index) => [`--chart-${index + 2}`, color])),
+      ...toneVariables(appearance, fixed.chart.length + 1),
       "--radius": "0.625rem",
       "--font-sans": fonts.sans,
       "--font-mono": fonts.mono,
@@ -225,7 +241,7 @@ export const HTML_RENDER_THEME_GUIDE = [
   "Use theme CSS variables on :root, not fixed colors:",
   "--background, --foreground, --muted, --card, --popover, --secondary, --border, --ring, --primary, --accent, --destructive, --warning, --success, --info, --code-background",
   "(most have a matching -foreground; accent, destructive, and warning also have -surface),",
-  "--chart-1 to --chart-6, --radius, --font-sans, --font-mono.",
+  "--chart-1 to --chart-6, --tone-1 to --tone-6 (each with -fill, -stroke, and -text), --radius, --font-sans, --font-mono.",
   "The base sheet sets background, text, and font.",
 ].join(" ");
 
@@ -235,6 +251,14 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   "T3 adds an overridable 8px html gutter for selection rings and shadows. Use fluid widths within it.",
   "A box that needs its own background gets 16px padding and var(--radius) corners. Give charts fixed pixel heights.",
   "Let content set the height. Do not use vh units or height:100% on html or body. Both are rejected or loop.",
+].join(" ");
+
+export const HTML_RENDER_DIAGRAM_GUIDE = [
+  'Diagrams: draw one inline <svg viewBox="0 0 680 H" width="100%"> and plan every box and line route as coordinates before you write it.',
+  "One idea per diagram, 3 or 4 boxes per row, a short caption under each panel. SVG text does not wrap: break long labels with <tspan> and size the box to its longest line.",
+  "Box: rect rx=8 with --tone-N-fill, --tone-N-stroke, and --tone-N-text for its label (14px title, 12px caption). One tone per role; a neutral box uses --card and --border.",
+  "Lines: 1.5px --muted-foreground with an arrowhead <marker>, never through a box. No gradients or shadows.",
+  "Check overlaps and clipped text in html_preview before html_render.",
 ].join(" ");
 
 const HOST_CONTEXT_CHANGED_METHOD = "ui/notifications/host-context-changed";

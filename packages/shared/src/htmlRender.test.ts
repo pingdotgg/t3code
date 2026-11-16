@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_THEME_GUIDE,
+  htmlRenderTheme,
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
+import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
@@ -155,6 +158,24 @@ describe("readHtmlRenderImageRequest", () => {
     // An index that does not point at the clicked image falls back to that image alone.
     expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
     expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
+  });
+});
+
+describe("htmlRenderTheme", () => {
+  it.each([
+    ["light", T3_CODE_LIGHT_THEME_COLORS],
+    ["dark", T3_CODE_DARK_THEME_COLORS],
+  ] as const)("gives every chart color a diagram tone in %s", (appearance, colors) => {
+    const { variables } = htmlRenderTheme(colors, appearance);
+    const charts = Object.keys(variables).filter((name) => /^--chart-\d+$/.test(name));
+    expect(charts).toHaveLength(6);
+    for (const chart of charts) {
+      const tone = chart.replace("--chart-", "--tone-");
+      expect(variables[`${tone}-stroke`]).toBe(`var(${chart})`);
+      expect(variables[`${tone}-fill`]).toContain(`var(${chart})`);
+      expect(variables[`${tone}-text`]).toContain(`var(${chart})`);
+    }
+    expect(HTML_RENDER_THEME_GUIDE).toContain("--tone-1 to --tone-6");
   });
 });
 
