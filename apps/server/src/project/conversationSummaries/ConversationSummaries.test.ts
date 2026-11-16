@@ -763,6 +763,62 @@ it.effect("skips nothing while every summary comes back empty", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("moves past three bad leaf stretches at the front and skips them", () => {
+  const bad = new Set([rawText(0), rawText(24), rawText(48)]);
+  const model = scripted((input) =>
+    bad.has(input.messages[0]!.text)
+      ? Effect.fail(failingStretch("invalid-output"))
+      : Effect.succeed({
+          statements: [{ text: "A later stretch.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const badCalls = () => model.calls.filter((call) => bad.has(call.messages[0]?.text ?? "")).length;
+  return Effect.gen(function* () {
+    yield* seedThread(7 * 24 + 6);
+    yield* summarize;
+    yield* summarize;
+    assert.isNotEmpty((yield* list).summaries);
+
+    for (let pass = 0; pass < 3; pass++) yield* summarize;
+    assert.include((yield* list).lastPass?.reason ?? "", "Skipped 3 stretches");
+    const settled = badCalls();
+    yield* summarize;
+    assert.equal(badCalls(), settled);
+    assert.isTrue(model.calls.some(isRollup));
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
+it.effect("moves past roll-ups that all contain one bad summary", () => {
+  const model = scripted((input) =>
+    isRollup(input) && input.messages.some((message) => message.text === "- Summary 2")
+      ? Effect.fail(failingStretch("invalid-output"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const badCalls = () =>
+    model.calls.filter((call) => call.messages.some((message) => message.text === "- Summary 2"))
+      .length;
+  return Effect.gen(function* () {
+    yield* seedThread(6 * 2 + 6 * 24 + 6);
+    for (let index = 0; index < 6; index++)
+      yield* persistSummary(index, [index * 2, index * 2 + 1]);
+    yield* summarize;
+    assert.equal(badCalls(), 3);
+    yield* summarize;
+    const sources = (yield* list).summaries.flatMap((read) =>
+      read.state === "available" ? read.summary.sources : [],
+    );
+    assert.isTrue(
+      sources.some((source) => source.kind === "message" && source.messageId === messageId(12)),
+    );
+
+    for (let pass = 0; pass < 3; pass++) yield* summarize;
+    assert.equal((yield* list).lastPass?.waitingMessages, 0);
+    assert.equal(badCalls(), 3);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("summarizes the next stretch when the model cites none of the chunk", () => {
   const model = scripted((input) =>
     Effect.succeed({
