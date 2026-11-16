@@ -109,6 +109,14 @@ continue a large batch, open the Welcome page again and pick the project in
 **Review all**. Completed conversations are not imported again. You can continue
 without the remaining history.
 
+Agents can import history after setup through `t3_agent_sessions_scan` and
+`t3_agent_sessions_import`. Scan the environment that holds the provider history,
+register a missing project with `t3_project_create`, then import using its project
+ID and the scanned path as `expectedWorkspaceRoot`. Import requires full access
+and follows the same limits above. Repeat for another batch, then use
+`t3_thread_list` to find the imported conversations. Both tools accept
+`environmentId` for a connected environment.
+
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the
 projects you started stay checked.

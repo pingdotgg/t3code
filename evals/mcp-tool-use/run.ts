@@ -53,6 +53,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { AgentSessionsToolkit } from "../../apps/server/src/mcp/toolkits/agentSessions/tools.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -452,6 +453,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   ThreadToolkit,
   AttachmentToolkit,
   ProjectToolkit,
+  AgentSessionsToolkit,
   EnvironmentToolkit,
   ThemeToolkit,
   PreviewControlsToolkit,

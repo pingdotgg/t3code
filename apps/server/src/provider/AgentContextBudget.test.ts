@@ -32,6 +32,8 @@ import { PreviewManager } from "../preview/Manager.ts";
 import { PreviewBrowser } from "../preview/PreviewBrowser.ts";
 import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import { ProjectCloneTracker } from "../project/ProjectCloneTracker.ts";
+import { AgentSessionImporter } from "../project/AgentSessionImporter.ts";
+import { AgentSessionScanner } from "../project/AgentSessionScanner.ts";
 import { ProjectService } from "../project/ProjectService.ts";
 import { ProjectSetupScriptRunner } from "../project/ProjectSetupScriptRunner.ts";
 import { PullRequestReviewGuideService } from "../pullRequest/PullRequestReviewGuideService.ts";
@@ -50,6 +52,8 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 
 // Registration only stores tool definitions, so the handlers' services are never called.
 const toolHandlerServices = Layer.mergeAll(
+  Layer.mock(AgentSessionImporter)({}),
+  Layer.mock(AgentSessionScanner)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
