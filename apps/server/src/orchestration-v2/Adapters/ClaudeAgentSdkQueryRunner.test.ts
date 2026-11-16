@@ -710,6 +710,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
 
       const unknown = yield* startupFailureMessage("token=sk-private-123");
       assert.notInclude(unknown, "sk-private-123");
+
+      const missingConversation = yield* startupFailureMessage(
+        "No conversation found with session ID: sk-private-123",
+      );
+      assert.include(missingConversation, "could not find this conversation");
+      assert.notInclude(missingConversation, "sk-private-123");
     }).pipe(Effect.provide(realQueryRunner)),
   );
 
