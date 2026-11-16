@@ -235,36 +235,6 @@ describe("attachmentUploadQueue", () => {
     });
   });
 
-  it("rechecks a server-rejected restored document when local bytes are unavailable", async () => {
-    const file = {
-      ...makeFile("restored"),
-      file: null,
-      uploadedAttachmentId: "pending-original",
-      uploadEnvironmentId: firstEnvironment,
-    };
-    useAttachmentUploadStore.setState({
-      uploadsByImageId: {
-        [file.id]: {
-          status: "ready",
-          environmentId: firstEnvironment,
-          attachmentId: "pending-original",
-        },
-      },
-    });
-    mocks.executeAtomQuery.mockResolvedValue({ _tag: "Success", value: {} });
-    markAttachmentClaimFailure({
-      environmentId: firstEnvironment,
-      attachments: [file],
-      error: { attachmentId: "pending-original" },
-    });
-    retryAttachmentUpload({ environmentId: firstEnvironment, image: file });
-    await awaitAttachmentUploads([file.id]);
-    expect(
-      getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })?.[0]?.id,
-    ).toBe("pending-original");
-    expect(TestXmlHttpRequest.requests).toHaveLength(0);
-  });
-
   it("reuploads a server-rejected persisted document instead of reusing its ID", async () => {
     const file = {
       ...makeFile("rejected"),

@@ -41,8 +41,7 @@ import {
   createContextPresentationRegistry,
   type ContextPresentationCapability,
 } from "./contextPresentationRegistry";
-import { ContextChipAction, type ContextChipKind } from "./ContextChip";
-import { RefreshIcon } from "./ui/refresh-icon";
+import type { ContextChipKind } from "./ContextChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   ContextChipPopover,
@@ -221,8 +220,7 @@ function FileContextChip(props: {
   const suffix = needsReattach ? "attach again" : uploadSuffix;
   const size = formatAttachmentSize(props.record.sizeBytes);
   const isVideo = videoMimeType(props.record) !== null;
-  const failed = props.upload?.status === "failed" && !needsReattach && !isVideo;
-  const chip = (
+  return (
     <FileChip
       name={props.record.name}
       svgPreview={
@@ -253,31 +251,6 @@ function FileContextChip(props: {
           : attachmentTooltip(props.record, props.upload)
       }
     />
-  );
-  if (!failed) return chip;
-  return (
-    <span className="composer-failed-file" contentEditable={false}>
-      {chip}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <ContextChipAction
-              aria-label={`Retry upload for ${props.record.name}`}
-              disabled={!actions.canRetryFileUpload}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                actions.retryFileUpload(props.record.id);
-              }}
-            />
-          }
-        >
-          <RefreshIcon />
-          <span>Retry</span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">Retry upload</TooltipPopup>
-      </Tooltip>
-    </span>
   );
 }
 
