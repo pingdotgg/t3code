@@ -233,6 +233,8 @@ export function TerminalFontPreview({
       theme: terminalThemeFromApp(mount),
       font: initialFont,
       onData: echo,
+      onBinary: noop,
+      onReply: noop,
       onResize: noop,
       onSelectionChange: noop,
       beforeKey: (event) => event.key !== "Tab",

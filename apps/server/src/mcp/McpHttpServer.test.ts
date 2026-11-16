@@ -51,6 +51,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
 import * as CredentialAutofill from "../credentials/CredentialAutofill.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
+import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -616,13 +617,11 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
     const click = yield* server
       .callTool({ name: "preview_act", arguments: { action: "click", locator: "text=Send" } })
       .pipe(
+        Effect.flip,
         Effect.provideService(McpInvocationContext.McpInvocationContext, readOnly),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(click.isError).toBe(true);
-    expect(click.content).toEqual([
-      { type: "text", text: expect.stringContaining("needs an agent running inside T3 Code") },
-    ]);
+    expect(click.message).toContain("Tool 'preview_act' not found");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1396,6 +1395,12 @@ it.effect("admits provider and OAuth client credentials and points only clients 
               ),
           }),
         ),
+        Layer.provide(ServerHttp.layerBrowserApiCors),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-origin-test-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
       );
       const traced = recordSpans();
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
@@ -1478,6 +1483,30 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           (span) => span.name.startsWith("mcp.tool.") || span.name.startsWith("McpServer."),
         ),
       ).toEqual([]);
+
+      // A present, disallowed Origin is refused with 403 before credentials or CORS answer.
+      const foreignOrigin = (method: "POST" | "OPTIONS", token: string | undefined) =>
+        httpClient.execute(
+          HttpClientRequest.make(method)("/mcp", {
+            headers: {
+              origin: "https://untrusted.invalid",
+              accept: "application/json, text/event-stream",
+              "access-control-request-method": "POST",
+              ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+            },
+            ...(method === "POST"
+              ? {
+                  body: HttpBody.text(
+                    `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+                    "application/json",
+                  ),
+                }
+              : {}),
+          }),
+        );
+      expect((yield* foreignOrigin("POST", providerToken)).status).toBe(403);
+      expect((yield* foreignOrigin("POST", undefined)).status).toBe(403);
+      expect((yield* foreignOrigin("OPTIONS", undefined)).status).toBe(403);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

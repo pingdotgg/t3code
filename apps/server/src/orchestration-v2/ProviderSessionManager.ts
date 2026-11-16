@@ -469,13 +469,16 @@ export const layerWithOptions = (
               if (Option.isNone(project))
                 return {
                   browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
-                  device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
+                  device:
+                    settings.enableDeviceSupport &&
+                    !deviceOverridden &&
+                    settings.enableAgentDeviceAccess,
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
-              device: effective.enableAgentDeviceAccess,
+              device: settings.enableDeviceSupport && effective.enableAgentDeviceAccess,
             };
           }).pipe(
             Effect.catch((cause) =>
@@ -664,6 +667,7 @@ export const layerWithOptions = (
         const error = new ProviderAdapter.ProviderAdapterEventStreamError({
           driver: entry.runtime.driver,
           providerSessionId: entry.runtime.providerSessionId,
+          raisedByT3: true,
           ...(detachedThreadId === undefined ? {} : { detachedThreadId }),
           cause: detail,
         });
@@ -2707,6 +2711,9 @@ export const layerWithOptions = (
               retry: stalled.retry,
               ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
               threadDisposition: event.threadDisposition,
+              ...(event.retainedRuntimeRequestIds === undefined
+                ? {}
+                : { retainedRuntimeRequestIds: event.retainedRuntimeRequestIds }),
             },
           };
         };
@@ -2851,6 +2858,7 @@ export const layerWithOptions = (
                               new ProviderAdapter.ProviderAdapterEventStreamError({
                                 driver: entry.runtime.driver,
                                 providerSessionId: entry.runtime.providerSessionId,
+                                raisedByT3: true,
                                 cause,
                               }),
                           ),
@@ -2891,6 +2899,7 @@ export const layerWithOptions = (
                       new ProviderAdapter.ProviderAdapterEventStreamError({
                         driver: entry.runtime.driver,
                         providerSessionId: entry.runtime.providerSessionId,
+                        raisedByT3: true,
                         cause: "Provider event stream ended unexpectedly.",
                       }),
                     );

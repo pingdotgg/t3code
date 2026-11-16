@@ -32,7 +32,6 @@ import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-e
 import {
   childThreadInputsTitle,
   type CodexFeedbackSubmission,
-  type EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
 import { useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
@@ -278,8 +277,6 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly connectionAwaitingApproval?: boolean;
-  /** Message sync status for the selected thread (drives the composer status pill). */
-  readonly threadSyncStatus?: EnvironmentThreadStatus;
   /** Progressive history controls for oversized mobile thread opens. */
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
@@ -584,25 +581,6 @@ function ThreadDetailBody(
   );
   const composerKeyboardOffset = composerBottomInset;
   const contentPresentationKind = props.contentPresentation.kind;
-  // The raw sync status enters "synchronizing" on every full fetch, cached or
-  // not. Whether messages are already on screen decides the pill label: no
-  // data yet → "Loading messages", cached data reconciling → "Syncing".
-  const realThreadSyncLabel = (() => {
-    switch (props.threadSyncStatus) {
-      case "empty":
-      case "cached":
-      case "synchronizing":
-        if (contentPresentationKind === "ready") {
-          return "Syncing messages...";
-        }
-        return contentPresentationKind === "loading" ? "Loading messages..." : null;
-      default:
-        return null;
-    }
-  })();
-  // Opening a running thread resyncs for a few frames. The pill shows the
-  // sync label only when the sync lasts, so it does not flash before the timer.
-  const threadSyncLabel = useDelayedStatus(selectedThreadKey, realThreadSyncLabel);
   const connectionRetrying =
     props.connectionStateLabel === "connecting" || props.connectionStateLabel === "reconnecting";
   const retryError = connectionRetrying ? props.connectionError : null;
@@ -829,18 +807,12 @@ function ThreadDetailBody(
       return null;
     }
     if (props.creationState?.kind === "preparing") {
-      // The setup header already reports progress in the feed.
-      if (props.worktreeSetup) return null;
-      return {
-        kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
-      };
+      // The feed shows worktree setup in place, so only a plain start needs the pill.
+      if (props.worktreeSetup || props.creationState.preparingWorktree) return null;
+      return { kind: "preparing", label: "Starting…" };
     }
     if (props.creationState?.kind === "failed") {
       return null;
-    }
-    if (threadSyncLabel !== null) {
-      return { kind: "syncing", label: threadSyncLabel };
     }
     const childInput = childThreadInputs[0];
     if (childInput && contentPresentationKind === "ready") {
@@ -936,6 +908,11 @@ function ThreadDetailBody(
     (props.connectionStateLabel === "connecting" ||
       props.connectionStateLabel === "reconnecting") &&
     floatingStatus?.kind === "connection";
+  // A pending message holds the pill's row for its Starting/Working pill. Worktree setup reports
+  // progress in the feed instead, so holding the row there only leaves a gap that later closes.
+  const worktreeSetupInFeed =
+    props.worktreeSetup?.snapshot.phase === "running" ||
+    (props.creationState?.kind === "preparing" && props.creationState.preparingWorktree);
   // Connection and working status occupy the same space. Keep the feed inset
   // stable when an outage hands off to syncing and then to a running turn.
   const showFloatingStatus =
@@ -945,10 +922,11 @@ function ThreadDetailBody(
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
     (props.connectionStateLabel !== "connected" && !connectionCheckOnly) ||
-    props.queuedMessages.length > 0 ||
-    props.selectedThreadFeed.some(
-      (entry) => "acknowledged" in entry && entry.acknowledged === true,
-    );
+    (!worktreeSetupInFeed &&
+      (props.queuedMessages.length > 0 ||
+        props.selectedThreadFeed.some(
+          (entry) => "acknowledged" in entry && entry.acknowledged === true,
+        )));
   const selectedThreadFeed = props.selectedThreadFeed;
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
@@ -1541,6 +1519,11 @@ function ThreadDetailBody(
                     pendingHandoff={props.pendingHandoff}
                     worktreeSetup={props.worktreeSetup}
                     setupWorkingStartedAt={props.setupWorkingStartedAt}
+                    preparingWorktree={
+                      props.creationState?.kind === "preparing" &&
+                      props.creationState.preparingWorktree &&
+                      !props.worktreeSetup
+                    }
                     queuedMessages={props.queuedMessages}
                     dispatchingMessageId={props.dispatchingMessageId}
                     // A native subagent has no composer to edit a pending message in;

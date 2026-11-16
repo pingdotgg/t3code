@@ -1,6 +1,12 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { buildHomeListFilterMenu, buildHomeListFilterMenuItems } from "./home-list-filter-menu";
+import type { WorkspaceEnvironment } from "../../state/workspaceModel";
+import {
+  buildHomeListFilterMenu,
+  buildHomeListFilterMenuItems,
+  homeListFilterEnvironments,
+} from "./home-list-filter-menu";
 
 describe("buildHomeListFilterMenu", () => {
   it("adds a project scope submenu that selects and clears the same scope as the chips", () => {
@@ -104,4 +110,34 @@ it("selects and clears a workspace through the native list header menu", () => {
     if ("onPress" in item) item.onPress?.();
   }
   expect(onWorkspaceChange.mock.calls).toEqual([[null], ["apps"]]);
+});
+
+function environment(
+  environmentId: string,
+  environmentLabel: string,
+  isEnabled: boolean,
+): WorkspaceEnvironment {
+  return {
+    environmentId: environmentId as EnvironmentId,
+    environmentLabel,
+    displayUrl: "",
+    isRelayManaged: false,
+    isEnabled,
+    connectionState: isEnabled ? "connected" : "available",
+    connectionError: null,
+    connectionErrorTraceId: null,
+  };
+}
+
+it("offers only switched-on environments, sorted by label", () => {
+  expect(
+    homeListFilterEnvironments([
+      environment("env-studio", "Studio", true),
+      environment("env-laptop", "Laptop", false),
+      environment("env-desk", "Desk", true),
+    ]),
+  ).toEqual([
+    { environmentId: "env-desk", label: "Desk", connectionState: "connected" },
+    { environmentId: "env-studio", label: "Studio", connectionState: "connected" },
+  ]);
 });

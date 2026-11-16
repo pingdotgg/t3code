@@ -164,3 +164,5 @@ export const PREVIEW_TAB_EXECUTE_CHANNEL = "desktop:preview-tab-execute";
 export const PREVIEW_TAB_HOST_DISCONNECT_CHANNEL = "desktop:preview-tab-host-disconnect";
 
 export const PREVIEW_HOST_DEVICE_NAME_CHANNEL = "desktop:preview-host-device-name";
+
+export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
