@@ -10,10 +10,18 @@ vi.mock("~/state/pullRequests", () => ({ pullRequestEnvironment: { setReaction: 
 
 import { PullRequestReactionBar } from "./PullRequestReactions";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 it("keeps the latest reaction choice when an older toggle fails", async () => {
   state.send.mockReset();
-  const first = Promise.withResolvers<{ _tag: "Failure" }>();
-  const later = Promise.withResolvers<{ _tag: "Success"; value: undefined }>();
+  const first = deferred<{ _tag: "Failure" }>();
+  const later = deferred<{ _tag: "Success"; value: undefined }>();
   state.send.mockReturnValueOnce(first.promise).mockReturnValue(later.promise);
   await using screen = await render(
     <PullRequestReactionBar
