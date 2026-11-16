@@ -352,71 +352,82 @@ it.effect(
   },
 );
 
-it.effect.each(["provider-error", "unsupported-citation", "abstention", "missing-reply"] as const)(
-  "keeps %s separate from a low task score",
-  (kind) =>
-    Effect.gen(function* () {
-      yield* seed({ missingReply: kind === "missing-reply" });
-      const service = yield* ModelEvaluations.ModelEvaluations;
-      yield* service.evaluateRun(input);
-      const report = yield* service.list(scope);
-      const record = report.records[0]!;
-      assert.equal(
-        record.status,
-        kind === "missing-reply"
-          ? "skipped"
-          : kind === "abstention"
-            ? "insufficient_evidence"
-            : "failed",
-      );
-      assert.equal(
-        report.guidance.reduce((sum, group) => sum + group.sampleCount, 0),
-        0,
-      );
-      if (kind !== "abstention") assert.isNull(record.verdict);
-      if (kind === "provider-error") {
-        assert.include(record.reason ?? "", "TextGenerationError");
-        assert.include(record.reason ?? "", "Codex CLI request timed out.");
-        assert.notInclude(record.reason ?? "", "TAIL_SECRET");
-        assert.notInclude(record.reason ?? "", "FULL_MODEL_RESPONSE");
-        assert.notInclude(record.reason ?? "", "x".repeat(200));
-      }
-    }).pipe(
-      Effect.provide(
-        makeLayer((request) => {
-          if (kind === "provider-error")
-            return Effect.fail(
-              new TextGenerationError({
-                operation: "generateModelEvaluation",
-                detail: `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
-                cause: "FULL_MODEL_RESPONSE",
-              }),
-            );
-          const output = verdict(request.packet);
-          if (kind === "unsupported-citation")
-            return Effect.succeed({
-              ...output,
-              rationale: { text: "Unfounded claim", citations: ["E999"] },
-            });
-          if (kind === "abstention")
-            return Effect.succeed({
-              ...output,
-              outcome: "insufficient_evidence",
-              confidence: "low",
-              scores: {
-                taskCompletion: null,
-                correctness: null,
-                instructionFollowing: null,
-                verification: null,
-              },
-              strengths: [],
-              weaknesses: [],
-              promptAdvice: [],
-            });
-          return Effect.succeed(output);
-        }),
-      ),
+it.effect.each([
+  "provider-error",
+  "provider-stderr",
+  "unsupported-citation",
+  "abstention",
+  "missing-reply",
+] as const)("keeps %s separate from a low task score", (kind) =>
+  Effect.gen(function* () {
+    yield* seed({ missingReply: kind === "missing-reply" });
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    const report = yield* service.list(scope);
+    const record = report.records[0]!;
+    assert.equal(
+      record.status,
+      kind === "missing-reply"
+        ? "skipped"
+        : kind === "abstention"
+          ? "insufficient_evidence"
+          : "failed",
+    );
+    assert.equal(
+      report.guidance.reduce((sum, group) => sum + group.sampleCount, 0),
+      0,
+    );
+    if (kind !== "abstention") assert.isNull(record.verdict);
+    if (kind === "provider-error" || kind === "provider-stderr") {
+      assert.include(record.reason ?? "", "TextGenerationError");
+      assert.notInclude(record.reason ?? "", "Codex CLI request timed out");
+      assert.notInclude(record.reason ?? "", "Claude CLI command failed");
+      assert.notInclude(record.reason ?? "", "TAIL_SECRET");
+      assert.notInclude(record.reason ?? "", "sk-live-SECRET");
+      assert.notInclude(record.reason ?? "", "FULL_MODEL_RESPONSE");
+      assert.notInclude(record.reason ?? "", "x".repeat(200));
+    }
+    if (kind === "provider-error") assert.match(record.reason ?? "", /timed out/);
+    if (kind === "provider-stderr") assert.match(record.reason ?? "", /provider command failed/);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        if (kind === "provider-error" || kind === "provider-stderr")
+          return Effect.fail(
+            new TextGenerationError({
+              operation: "generateModelEvaluation",
+              detail:
+                kind === "provider-stderr"
+                  ? "Claude CLI command failed: Error: leaked sk-live-SECRET from provider stderr"
+                  : `Codex CLI request timed out.${"x".repeat(500)}TAIL_SECRET`,
+              cause: "FULL_MODEL_RESPONSE",
+            }),
+          );
+        const output = verdict(request.packet);
+        if (kind === "unsupported-citation")
+          return Effect.succeed({
+            ...output,
+            rationale: { text: "Unfounded claim", citations: ["E999"] },
+          });
+        if (kind === "abstention")
+          return Effect.succeed({
+            ...output,
+            outcome: "insufficient_evidence",
+            confidence: "low",
+            scores: {
+              taskCompletion: null,
+              correctness: null,
+              instructionFollowing: null,
+              verification: null,
+            },
+            strengths: [],
+            weaknesses: [],
+            promptAdvice: [],
+          });
+        return Effect.succeed(output);
+      }),
     ),
+  ),
 );
 
 it.effect.each(["clear", "disable", "edit", "move"] as const)(
