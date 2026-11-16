@@ -122,7 +122,7 @@ import {
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   isPreviewableComposerVideo,
-  shouldHandleComposerAttachmentPaste,
+  claimsAttachmentPaste,
 } from "./composerAttachmentFiles";
 import {
   releaseAttachmentUpload,
@@ -277,6 +277,7 @@ import {
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
+import { useSendAfterPreparingImages } from "./useSendAfterPreparingImages";
 import { useFreshSessionArmed } from "./freshSessionArms";
 
 export type { ChatComposerHandle } from "./chatComposerHandle";
@@ -2055,6 +2056,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return composerSendState.hasSendableContent;
   };
 
+  const sendAfterPreparingImages = useSendAfterPreparingImages(attachmentTargetKey);
   const submitComposerRef = useRef<
     (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
   >(() => {});
@@ -2077,11 +2079,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // draft instead.
     if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
       event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: "Still compressing a pasted image.",
-        description: "Send again once its thumbnail appears.",
-      });
+      sendAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent));
       return false;
     }
     if (pendingDraftWork.has(attachmentTargetKey)) {
@@ -2697,22 +2695,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Takes the files already read: a dictation tool may replace the clipboard after the first read.
   const pasteComposerAttachments = (
     clipboardData: DataTransfer,
-    { files, folders }: TransferredFiles,
+    transferred: TransferredFiles,
     bypassAutoAttachment: boolean,
   ): boolean => {
-    if (
-      folders.length === 0 &&
-      !(
-        activeThreadId &&
-        files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({
-          files,
-          plainText: clipboardData.getData("text/plain"),
-        })
-      )
-    ) {
-      return false;
-    }
+    if (!claimsAttachmentPaste(clipboardData, transferred, Boolean(activeThreadId))) return false;
+    const { files, folders } = transferred;
     if (folders.length > 0) addComposerFoldersStable(folders);
     if (files.length > 0) {
       void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });

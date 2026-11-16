@@ -13,6 +13,7 @@ import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
+import type { TransferredFiles } from "./workspaceFileDrop";
 
 type ComposerAttachmentFileKind = "image" | "file" | "unsupported-image";
 
@@ -257,4 +258,18 @@ export function shouldHandleComposerAttachmentPaste(input: {
   }
 
   return input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
+}
+
+/** Whether a paste goes to the composer as attachments; otherwise it stays text. */
+export function claimsAttachmentPaste(
+  clipboardData: Pick<DataTransfer, "getData">,
+  { files, folders }: TransferredFiles,
+  hasActiveThread: boolean,
+): boolean {
+  if (folders.length > 0) return true;
+  if (!hasActiveThread || files.length === 0) return false;
+  return shouldHandleComposerAttachmentPaste({
+    files,
+    plainText: clipboardData.getData("text/plain"),
+  });
 }
