@@ -11,6 +11,52 @@ type PreparedBrowserTranscription = PreparedVoiceTranscription & {
   readonly streaming?: VoiceStreamingSession & { readonly feed: (pcm: Float32Array) => void };
 };
 
+type OpenedCapture = { readonly stream: MediaStream; readonly context: AudioContext };
+
+// lib.dom does not type AudioContext sink selection yet. Browsers without it ignore the option.
+const withoutOutputDevice: AudioContextOptions & { readonly sinkId: { readonly type: "none" } } = {
+  sinkId: { type: "none" },
+};
+
+/** Opens the microphone and its context; both are released on abort until the recorder claims them. */
+function openCapture(getMicrophoneId: () => string | Promise<string>, signal: AbortSignal) {
+  const owner = new AbortController();
+  const follow = () => owner.abort(signal.reason);
+  if (signal.aborted) follow();
+  else signal.addEventListener("abort", follow, { once: true });
+  const captureSignal = owner.signal;
+  // Capture plays nothing. On devices that share input and output, an output device or a
+  // context created just after the microphone opens can each stall startup by ~450 ms.
+  const context = new AudioContext(withoutOutputDevice);
+  // Insecure origins have no audioWorklet; the rejection must reach release below.
+  const loadingWorklet = Promise.resolve().then(() => context.audioWorklet.addModule(workletUrl));
+  loadingWorklet.catch(() => undefined);
+  let stream: MediaStream | undefined;
+  let released = false;
+  const release = () => {
+    stream?.getTracks().forEach((track) => track.stop());
+    if (released) return;
+    released = true;
+    void context.close();
+  };
+  captureSignal.addEventListener("abort", release, { once: true });
+  const opened = (async (): Promise<OpenedCapture> => {
+    const microphoneId = await getMicrophoneId();
+    captureSignal.throwIfAborted();
+    stream = await requestMicrophone(microphoneId, captureSignal);
+    captureSignal.throwIfAborted();
+    await loadingWorklet;
+    captureSignal.throwIfAborted();
+    return { stream, context };
+  })();
+  opened.catch(release);
+  return {
+    opened,
+    claim: () => captureSignal.removeEventListener("abort", release),
+    abandon: () => owner.abort(),
+  };
+}
+
 export function createBrowserPcmCapture(
   input: {
     readonly getMicrophoneId: () => string | Promise<string>;
@@ -28,6 +74,7 @@ export function createBrowserPcmCapture(
   let durationTimer: ReturnType<typeof setTimeout> | undefined;
   let signal: AbortSignal | undefined;
   let feed: ((pcm: Float32Array) => void) | undefined;
+  let opening: ReturnType<typeof openCapture> | undefined;
   let stopped:
     | { readonly resolve: () => void; readonly reject: (error: Error) => void }
     | undefined;
@@ -55,22 +102,22 @@ export function createBrowserPcmCapture(
     },
     prepareToRecordAsync: async () => {
       const captureSignal = signal;
-      if (!captureSignal) throw new Error("Voice transcription is not prepared.");
+      const capture = opening;
+      opening = undefined;
+      if (!captureSignal || !capture) throw new Error("Voice transcription is not prepared.");
       captureSignal.throwIfAborted();
       if (recordingUri) URL.revokeObjectURL(recordingUri);
       recordingUri = null;
       chunks = [];
-      const microphoneId = await input.getMicrophoneId();
-      captureSignal.throwIfAborted();
-      const captured = await new Promise<MediaStream>((resolve, reject) => {
+      const { stream: captured, context } = await new Promise<OpenedCapture>((resolve, reject) => {
         const onAbort = () => reject(captureSignal.reason);
-        const permission = requestMicrophone(microphoneId, captureSignal);
         captureSignal.addEventListener("abort", onAbort, { once: true });
-        void permission.then(
-          (media) => {
+        void capture.opened.then(
+          (opened) => {
             captureSignal.removeEventListener("abort", onAbort);
-            if (captureSignal.aborted) media.getTracks().forEach((track) => track.stop());
-            else resolve(media);
+            if (captureSignal.aborted) return;
+            capture.claim();
+            resolve(opened);
           },
           (error: unknown) => {
             captureSignal.removeEventListener("abort", onAbort);
@@ -78,15 +125,9 @@ export function createBrowserPcmCapture(
           },
         );
       });
-      if (captureSignal.aborted) {
-        captured.getTracks().forEach((track) => track.stop());
-        captureSignal.throwIfAborted();
-      }
       stream = captured;
+      audioContext = context;
       try {
-        const context = new AudioContext();
-        audioContext = context;
-        await context.audioWorklet.addModule(workletUrl);
         captureSignal.throwIfAborted();
         const node = new AudioWorkletNode(context, "t3-pcm-capture", { channelCount: 1 });
         worklet = node;
@@ -169,11 +210,18 @@ export function createBrowserPcmCapture(
     },
     transcriber: {
       prepare: async (options: VoiceTranscriptionOptions) => {
-        const prepared = await prepare(options);
-        options.signal.throwIfAborted();
-        signal = options.signal;
-        feed = prepared.streaming?.feed;
-        return prepared;
+        const capture = openCapture(input.getMicrophoneId, options.signal);
+        try {
+          const prepared = await prepare(options);
+          options.signal.throwIfAborted();
+          signal = options.signal;
+          opening = capture;
+          feed = prepared.streaming?.feed;
+          return prepared;
+        } catch (error) {
+          capture.abandon();
+          throw error;
+        }
       },
     },
   };
