@@ -65,22 +65,25 @@ const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
-const layerWslTest = GitVcsDriver.layer.pipe(
-  Layer.provideMerge(layerServerConfig),
-  Layer.provideMerge(
-    Layer.effect(
-      FileSystem.FileSystem,
-      Effect.map(FileSystem.FileSystem, (fileSystem) => ({
-        ...fileSystem,
-        readFileString: (path: string, encoding?: string) =>
-          path === "/proc/sys/kernel/osrelease"
-            ? Effect.succeed("6.6.87.2-microsoft-standard-WSL2\n")
-            : fileSystem.readFileString(path, encoding),
-      })),
+// Status relaxes its stat check only on WSL, so these pin the platform and kernel release.
+const layerLinuxKernelTest = (kernelRelease: string) =>
+  GitVcsDriver.layer.pipe(
+    Layer.provideMerge(layerServerConfig),
+    Layer.provideMerge(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+          ...fileSystem,
+          readFileString: (path: string, encoding?: string) =>
+            path === "/proc/sys/kernel/osrelease"
+              ? Effect.succeed(`${kernelRelease}\n`)
+              : fileSystem.readFileString(path, encoding),
+        })),
+      ),
     ),
-  ),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-);
+    Layer.provideMerge(Layer.succeed(HostProcess.Platform, "linux")),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
 
 const makeNonRepositoryHandle = () =>
   ChildProcessSpawner.makeHandle({
@@ -485,54 +488,58 @@ const replaceKeepingStat = (filePath: string, contents: string) => {
   NodeFS.renameSync(`${filePath}.copy`, filePath);
 };
 
-it.effect("does not re-read a file that only differs from the index by inode under WSL", () =>
-  Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.GitVcsDriver;
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const cwd = yield* makeTmpDir();
-    yield* initRepoWithCommit(cwd);
-    yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
-    yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
-    yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
-    yield* writeTextFile(cwd, "asset.bin", "original\n");
-    const assetPath = path.join(cwd, "asset.bin");
-    // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
-    NodeFS.utimesSync(assetPath, 1, 1);
-    yield* git(cwd, ["add", "."]);
-    yield* git(cwd, ["commit", "-m", "filtered asset"]);
-    replaceKeepingStat(assetPath, "original\n");
-    const runsPath = path.join(cwd, ".filter-runs");
-    yield* fs.remove(runsPath, { force: true });
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "does not re-read a file that only differs from the index by inode under WSL",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["config", "filter.probe.clean", "echo clean >> .filter-runs; cat"]);
+      yield* writeTextFile(cwd, ".gitattributes", "asset.bin filter=probe\n");
+      yield* writeTextFile(cwd, ".gitignore", ".filter-runs\n");
+      yield* writeTextFile(cwd, "asset.bin", "original\n");
+      const assetPath = path.join(cwd, "asset.bin");
+      // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
+      NodeFS.utimesSync(assetPath, 1, 1);
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "filtered asset"]);
+      replaceKeepingStat(assetPath, "original\n");
+      const runsPath = path.join(cwd, ".filter-runs");
+      yield* fs.remove(runsPath, { force: true });
 
-    const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+      const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
 
-    assert.isFalse(status.hasWorkingTreeChanges);
-    assert.isFalse(yield* fs.exists(runsPath));
-  }).pipe(Effect.provide(layerWslTest)),
+      assert.isFalse(status.hasWorkingTreeChanges);
+      assert.isFalse(yield* fs.exists(runsPath));
+    }).pipe(Effect.provide(layerLinuxKernelTest("6.6.87.2-microsoft-standard-WSL2"))),
 );
 
-it.effect("reports a same-size replacement that kept its mtime outside WSL", () =>
-  Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.GitVcsDriver;
-    const path = yield* Path.Path;
-    const cwd = yield* makeTmpDir();
-    yield* initRepoWithCommit(cwd);
-    yield* writeTextFile(cwd, "asset.txt", "original\n");
-    const assetPath = path.join(cwd, "asset.txt");
-    NodeFS.utimesSync(assetPath, 1, 1);
-    yield* git(cwd, ["add", "."]);
-    yield* git(cwd, ["commit", "-m", "asset"]);
-    replaceKeepingStat(assetPath, "modified\n");
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "reports a same-size replacement that kept its mtime outside WSL",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const path = yield* Path.Path;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* writeTextFile(cwd, "asset.txt", "original\n");
+      const assetPath = path.join(cwd, "asset.txt");
+      NodeFS.utimesSync(assetPath, 1, 1);
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "-m", "asset"]);
+      replaceKeepingStat(assetPath, "modified\n");
 
-    const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+      const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
 
-    assert.isTrue(status.hasWorkingTreeChanges);
-    assert.deepStrictEqual(
-      status.workingTree.files.map((file) => file.path),
-      ["asset.txt"],
-    );
-  }).pipe(Effect.provide(layerTest)),
+      assert.isTrue(status.hasWorkingTreeChanges);
+      assert.deepStrictEqual(
+        status.workingTree.files.map((file) => file.path),
+        ["asset.txt"],
+      );
+    }).pipe(Effect.provide(layerLinuxKernelTest("6.8.0-45-generic"))),
 );
 
 it.effect.each(["origin", "github"] as const)(
