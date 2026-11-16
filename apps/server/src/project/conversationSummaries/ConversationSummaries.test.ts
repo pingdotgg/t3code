@@ -802,7 +802,7 @@ it.effect("moves past three bad leaf stretches at the front and skips them", () 
   );
   const badCalls = () => model.calls.filter((call) => bad.has(call.messages[0]?.text ?? "")).length;
   return Effect.gen(function* () {
-    yield* seedThread(7 * 24 + 6);
+    yield* seedThread(8 * 24 + 6);
     yield* summarize;
     yield* summarize;
     assert.isNotEmpty((yield* list).summaries);
@@ -843,7 +843,9 @@ it.effect("moves past roll-ups that all contain one bad summary", () => {
 
     for (let pass = 0; pass < 3; pass++) yield* summarize;
     assert.equal((yield* list).lastPass?.waitingMessages, 0);
-    assert.equal(badCalls(), 3);
+    const settled = badCalls();
+    yield* summarize;
+    assert.equal(badCalls(), settled);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 

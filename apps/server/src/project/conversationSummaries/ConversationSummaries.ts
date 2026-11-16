@@ -136,7 +136,7 @@ const ChunkFailure = Schema.Struct({
   key: Schema.String,
   failures: Schema.Int,
   skipped: Schema.optionalKey(Schema.Boolean),
-  // Failed in a pass where nothing succeeded, so not counted until a later pass succeeds.
+  // Last failed in a pass where nothing succeeded, so that failure was not counted.
   suspect: Schema.optionalKey(Schema.Boolean),
   reason: Schema.String,
 });
@@ -1219,10 +1219,12 @@ const make = Effect.gen(function* () {
           ? null
           : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
       };
-      // Suspects go last, so work that failed together cannot hold the front of every pass.
+      // Until a summary succeeds, suspects go last, so work that failed together cannot hold the
+      // front of every pass.
       const selectWork = (blocked: ReadonlySet<string>) =>
-        selectFrom((raw) => blocked.has(raw) || failureOf(raw)?.suspect === true) ??
-        selectFrom((raw) => blocked.has(raw));
+        (generated === 0
+          ? selectFrom((raw) => blocked.has(raw) || failureOf(raw)?.suspect === true)
+          : null) ?? selectFrom((raw) => blocked.has(raw));
       const blocked = new Set<string>();
       const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
       let attempts = 0;
@@ -1244,9 +1246,8 @@ const make = Effect.gen(function* () {
         rebuild();
         generated += 1;
       }
-      // With nothing else succeeding, the model may be down or unable to answer at all. Blaming
-      // the chunk would skip the thread's whole history, so a failure stays a suspect until a
-      // later pass succeeds elsewhere.
+      // With nothing succeeding, the model may be down or unable to answer at all. Blaming the
+      // chunk would skip the thread's whole history, so that failure is not counted.
       const charge = (key: string, reason: string, suspect: boolean) => {
         const failures = (chunkFailures.get(key)?.failures ?? 0) + (suspect ? 0 : 1);
         chunkFailures.delete(key);
@@ -1258,9 +1259,6 @@ const make = Effect.gen(function* () {
           reason: reason.slice(0, 300),
         });
       };
-      if (generated > 0)
-        for (const failure of chunkFailures.values())
-          if (failure.suspect === true) charge(failure.key, failure.reason, false);
       for (const { raw, reason } of failed) charge(yield* keyOf(raw), reason, generated === 0);
       if (generated === 0 && failed.length > 0)
         return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
