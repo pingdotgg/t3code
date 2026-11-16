@@ -235,6 +235,7 @@ describe("installRelayTelemetryEnabled", () => {
   const relayTelemetryEnabled = (
     env: NodeJS.ProcessEnv,
     policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+    afterInstall: (env: NodeJS.ProcessEnv) => void = () => undefined,
   ) =>
     Effect.gen(function* () {
       const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
@@ -250,6 +251,7 @@ describe("installRelayTelemetryEnabled", () => {
           Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
       );
+      afterInstall(env);
       const event = { returnValue: undefined as unknown };
       listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
       return event.returnValue;
@@ -259,6 +261,12 @@ describe("installRelayTelemetryEnabled", () => {
     Effect.gen(function* () {
       assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
       assert.isTrue(yield* relayTelemetryEnabled({}));
+      // The login shell's environment lands in process.env after the handlers are installed.
+      assert.isFalse(
+        yield* relayTelemetryEnabled({}, undefined, (env) => {
+          env.T3CODE_TELEMETRY_ENABLED = "false";
+        }),
+      );
     }),
   );
 
