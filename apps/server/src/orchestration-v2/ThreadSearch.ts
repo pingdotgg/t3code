@@ -181,9 +181,9 @@ function buildMessageSearch(
       : null;
   return {
     match: !indexed ? null : near === null ? phrases : `NEAR(${phrases}, ${near})`,
-    // The matcher drops most hits that hold a phrase's words close but not together, so
-    // a phrase reads every candidate: the newest ones would otherwise hide an older match.
-    hitLimit: near === null ? MESSAGE_HIT_LIMIT : MESSAGE_CANDIDATE_LIMIT,
+    // The matcher drops most hits that hold a phrase's words but not together, so a
+    // phrase reads every candidate: the newest ones would otherwise hide an older match.
+    hitLimit: exact && words.length > 1 ? MESSAGE_CANDIDATE_LIMIT : MESSAGE_HIT_LIMIT,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({
       token,
       accentInsensitive: accentInsensitiveGlob(token),

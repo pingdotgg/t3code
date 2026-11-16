@@ -588,21 +588,20 @@ export function messageSearchTokens(query: string): {
  */
 export const EXACT_PHRASE_GAP = 16;
 
+// An exact pattern is global and leaves word boundaries to `findExactPhrase`.
 function wordsTogether(words: ReadonlyArray<string>, exact: boolean): RegExp | null {
-  return words.length > 1
-    ? new RegExp(
-        `(?<![\\p{L}\\p{N}])${words
-          .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          .join(exact ? `\\s{1,${EXACT_PHRASE_GAP}}` : "\\s+")}(?![\\p{L}\\p{N}])`,
-        "iu",
-      )
-    : null;
+  if (words.length < 2) return null;
+  const escaped = words.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return exact
+    ? new RegExp(escaped.join(`\\s{1,${EXACT_PHRASE_GAP}}`), "giu")
+    : new RegExp(`(?<![\\p{L}\\p{N}])${escaped.join("\\s+")}(?![\\p{L}\\p{N}])`, "iu");
 }
 
 /**
  * Matches the query's words side by side as whole words, as typed, whatever
  * whitespace is between them and ignoring case; null for a single word.
- * An exact query allows EXACT_PHRASE_GAP of whitespace between two words.
+ * An exact query allows EXACT_PHRASE_GAP of whitespace between two words, and
+ * its pattern also matches inside longer words.
  */
 export function messagePhrase(query: string): RegExp | null {
   const { words, exact } = messageSearchTokens(query);
@@ -636,6 +635,25 @@ function startsWordAt(text: string, index: number): boolean {
 // Whether a word ends right before `end` in `text`.
 function endsWordAt(text: string, end: number): boolean {
   return end >= text.length || !ALPHANUMERIC.test(text[end]!) || startsWordAt(text, end);
+}
+
+// Where an exact phrase sits in `text` at or after `from` as whole words, by the rule single
+// words follow: "JSON" is a word in "JSONSchema". `searched` is `text` folded in place.
+function findExactPhrase(
+  text: string,
+  searched: string,
+  pattern: RegExp,
+  from = 0,
+): SearchRange | null {
+  pattern.lastIndex = from;
+  for (let match = pattern.exec(searched); match !== null; match = pattern.exec(searched)) {
+    const end = match.index + match[0].length;
+    if (startsWordAt(text, match.index) && endsWordAt(text, end)) {
+      return { start: match.index, end };
+    }
+    pattern.lastIndex = match.index + 1;
+  }
+  return null;
 }
 
 // A commit SHA or UUID part: seven or more hex characters with a digit.
@@ -746,12 +764,18 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
     // Written together as typed: the snippet starts there. Apostrophes are
     // straight in the query, and straightening keeps offsets.
     const straight = (value: string) => value.replace(CURLY_APOSTROPHES, "'");
+    const phraseAt = (pattern: RegExp | null, searched: string) =>
+      pattern === null
+        ? null
+        : exact
+          ? (findExactPhrase(text, searched, pattern)?.start ?? null)
+          : (pattern.exec(searched)?.index ?? null);
     const together =
-      phrase?.exec(straight(plain)) ??
+      phraseAt(phrase, straight(plain)) ??
       (queryNonAscii || NON_ASCII.test(text)
-        ? foldedPhrase?.exec(straight((folded ??= foldInPlace(text))))
+        ? phraseAt(foldedPhrase, straight((folded ??= foldInPlace(text))))
         : null);
-    if (together) return { quality: quality + MESSAGE_PHRASE_BONUS, offset: together.index };
+    if (together !== null) return { quality: quality + MESSAGE_PHRASE_BONUS, offset: together };
     // An exact query matches only written together; a single word must be whole.
     if (exact && (words.length > 1 || quality < 1)) return null;
     // Else the shortest stretch that holds every word: the snippet starts
@@ -813,10 +837,16 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
       )
     : null;
   if (phrase) {
-    return Array.from(foldInPlace(text).matchAll(new RegExp(phrase, "giu")), (match) => ({
-      start: match.index,
-      end: match.index + match[0].length,
-    }));
+    const searched = foldInPlace(text);
+    const ranges: SearchRange[] = [];
+    for (
+      let found = findExactPhrase(text, searched, phrase);
+      found !== null;
+      found = findExactPhrase(text, searched, phrase, found.end)
+    ) {
+      ranges.push(found);
+    }
+    return ranges;
   }
   const tokens = new Map(
     long

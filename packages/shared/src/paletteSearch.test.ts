@@ -780,6 +780,8 @@ describe("scoreMessageMatch", () => {
       ["osprey files missing", '"missing osprey files"', null],
       // No further apart than the server's index reads.
       [`missing${" ".repeat(17)}osprey files`, '"missing osprey files"', null],
+      // Whole words by the rule single words follow.
+      ["quickFix JSONSchema", '"fix JSON"', { quality: 1.25, offset: 5 }],
       ["changed file", '"file"', { quality: 1, offset: 8 }],
       ["changed files", '"file"', null],
     ] as const) {

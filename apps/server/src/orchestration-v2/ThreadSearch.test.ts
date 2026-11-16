@@ -715,6 +715,7 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
         [
           thread(together, project),
           message(together, "exact-together", "user", "the Missing osprey files turned up"),
+          message(together, "exact-short-word", "user", "an osprey is back"),
           thread(wrapped, project),
           message(wrapped, "exact-wrapped", "assistant", wrappedText),
           thread(apart, project),
@@ -737,8 +738,10 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
           ${DateTime.formatIso(at(5))}, ${DateTime.formatIso(at(5))}, json_object('text', ${text})
         FROM n
       `;
-      yield* addNewer("exact-apart:", apartText, 10_000);
       yield* addNewer("exact-close:", "missing the osprey files", 2000);
+      // Nor when the index can read only one of the phrase's words.
+      assert.sameMembers(yield* threadIds('"osprey is"'), [together]);
+      yield* addNewer("exact-apart:", apartText, 10_000);
       assert.sameMembers(yield* threadIds('"missing osprey files"'), [together, wrapped]);
     }),
   );
