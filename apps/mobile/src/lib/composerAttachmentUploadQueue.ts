@@ -289,12 +289,12 @@ export function createComposerAttachmentUploadQueue(options: {
   return {
     sync,
     /** Uploads the attachment, joining its running upload when there is one. */
-    upload(request: ComposerAttachmentUploadRequest, signal?: AbortSignal): Promise<string> {
-      if (disposed) return Promise.reject(new Error("Upload cancelled."));
-      return Effect.runPromise(
-        RcMap.get(uploads, UploadKey.of(request)).pipe(Effect.flatMap(Fiber.join), Effect.scoped),
-        signal ? { signal } : undefined,
-      );
+    upload(
+      request: ComposerAttachmentUploadRequest,
+    ): Effect.Effect<string, ComposerAttachmentUploadError> {
+      return disposed
+        ? Effect.fail(uploadError(new Error("Upload cancelled.")))
+        : RcMap.get(uploads, UploadKey.of(request)).pipe(Effect.flatMap(Fiber.join), Effect.scoped);
     },
     retry(environmentId: EnvironmentId, attachmentId: string) {
       const id = composerAttachmentUploadKey(environmentId, attachmentId);
@@ -318,14 +318,17 @@ export function createComposerAttachmentUploadQueue(options: {
   };
 }
 
-function uploadError(cause: unknown): ComposerAttachmentUploadError {
+export function uploadError(cause: unknown): ComposerAttachmentUploadError {
+  if (isComposerAttachmentUploadError(cause)) return cause;
   return new ComposerAttachmentUploadError({
     message: cause instanceof Error ? cause.message : "Upload failed. Tap to retry.",
     cause,
   });
 }
 
-class ComposerAttachmentUploadError extends Schema.TaggedError<ComposerAttachmentUploadError>()(
+export class ComposerAttachmentUploadError extends Schema.TaggedError<ComposerAttachmentUploadError>()(
   "ComposerAttachmentUploadError",
   { message: Schema.String, cause: Schema.Defect() },
 ) {}
+
+const isComposerAttachmentUploadError = Schema.is(ComposerAttachmentUploadError);

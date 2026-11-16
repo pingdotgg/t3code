@@ -15,6 +15,7 @@ import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { appAtomRegistry } from "../state/atom-registry";
@@ -31,6 +32,7 @@ import {
 } from "./composerImages";
 import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
+import { type ComposerAttachmentUploadError, uploadError } from "./composerAttachmentUploadQueue";
 
 export type UploadedMobileAttachment =
   | UploadChatImageAttachment
@@ -323,65 +325,55 @@ export async function uploadComposerAttachment(
 
 /**
  * Turns a message's attachments into wire references. `uploadAttachment` is the shared upload
- * registry, so a send joins an upload the composer already started. persistUploadedReferences
- * runs only for new uploaded ids; save them to their owner so crash retries reuse bytes.
+ * registry, so a send joins an upload the composer already started; interrupting this stops
+ * waiting without cancelling that shared upload. persistUploadedReferences runs only for new
+ * uploaded ids; save them to their owner so crash retries reuse bytes.
  */
-export async function prepareTurnAttachments(input: {
+export const prepareTurnAttachments = Effect.fn("prepareTurnAttachments")(function* (input: {
   readonly environmentId: EnvironmentId;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly supportsImageUploads?: boolean;
-  readonly signal?: AbortSignal;
-  readonly uploadAttachment: (attachment: DraftComposerAttachment) => Promise<string>;
+  readonly uploadAttachment: (
+    attachment: DraftComposerAttachment,
+  ) => Effect.Effect<string, ComposerAttachmentUploadError>;
   readonly persistUploadedReferences?: (
     draftAttachments: ReadonlyArray<DraftComposerAttachment>,
-  ) => Promise<"persisted" | "abandon">;
-}): Promise<PrepareTurnAttachmentsResult> {
+  ) => Effect.Effect<"persisted" | "abandon">;
+}) {
   const { environmentId } = input;
-  if (input.signal?.aborted) return { status: "abandoned" };
+  const inlineImages = (attachments: ReadonlyArray<DraftComposerAttachment>) =>
+    Effect.tryPromise({
+      try: () =>
+        toUploadChatImageAttachments(
+          attachments.filter(
+            (attachment): attachment is DraftComposerImageAttachment => attachment.type === "image",
+          ),
+        ),
+      catch: uploadError,
+    });
   const files = input.attachments.filter((attachment) => attachment.type === "file");
-  const ready = (
-    attachments: ReadonlyArray<UploadedMobileAttachment>,
-    pendingAttachmentIds: ReadonlyArray<string>,
-    draftAttachments: ReadonlyArray<DraftComposerAttachment>,
-  ): PreparedTurnAttachments => ({
-    status: "ready",
-    attachments,
-    draftAttachments,
-    pendingAttachmentIds,
-  });
-
   if (input.attachments.length === 0 || (files.length === 0 && !input.supportsImageUploads)) {
-    try {
-      const imageAttachments = await toUploadChatImageAttachments(
-        input.attachments.filter((attachment) => attachment.type === "image"),
-      );
-      if (input.signal?.aborted) return { status: "abandoned" };
-      return ready(imageAttachments, [], input.attachments);
-    } catch (error) {
-      if (input.signal?.aborted) return { status: "abandoned" };
-      throw error;
-    }
+    const imageAttachments = yield* inlineImages(input.attachments);
+    return {
+      status: "ready",
+      attachments: imageAttachments,
+      draftAttachments: input.attachments,
+      pendingAttachmentIds: [],
+    } satisfies PreparedTurnAttachments as PrepareTurnAttachmentsResult;
   }
 
-  requireUploadAccess(environmentId);
+  yield* Effect.try({ try: () => requireUploadAccess(environmentId), catch: uploadError });
   const uploadedAttachments: UploadedMobileAttachment[] = [];
   const pendingAttachmentIds: string[] = [];
-  try {
-    for (const attachment of input.attachments) {
-      if (input.signal?.aborted) return { status: "abandoned" };
-      if (attachment.type === "image" && !input.supportsImageUploads) {
-        uploadedAttachments.push(...(await toUploadChatImageAttachments([attachment])));
-        continue;
-      }
-      const uploadedId = await input.uploadAttachment(attachment);
-      pendingAttachmentIds.push(uploadedId);
-      uploadedAttachments.push(uploadedReference(attachment, uploadedId));
+  for (const attachment of input.attachments) {
+    if (attachment.type === "image" && !input.supportsImageUploads) {
+      uploadedAttachments.push(...(yield* inlineImages([attachment])));
+      continue;
     }
-  } catch (error) {
-    if (input.signal?.aborted) return { status: "abandoned" };
-    throw error;
+    const uploadedId = yield* input.uploadAttachment(attachment);
+    pendingAttachmentIds.push(uploadedId);
+    uploadedAttachments.push(uploadedReference(attachment, uploadedId));
   }
-  if (input.signal?.aborted) return { status: "abandoned" };
 
   const draftAttachments = withUploadedMobileAttachmentReferences({
     environmentId,
@@ -394,9 +386,14 @@ export async function prepareTurnAttachments(input: {
   if (
     referencesChanged &&
     input.persistUploadedReferences &&
-    (await input.persistUploadedReferences(draftAttachments)) === "abandon"
+    (yield* input.persistUploadedReferences(draftAttachments)) === "abandon"
   ) {
-    return { status: "abandoned" };
+    return { status: "abandoned" } as PrepareTurnAttachmentsResult;
   }
-  return ready(uploadedAttachments, pendingAttachmentIds, draftAttachments);
-}
+  return {
+    status: "ready",
+    attachments: uploadedAttachments,
+    draftAttachments,
+    pendingAttachmentIds,
+  } satisfies PreparedTurnAttachments as PrepareTurnAttachmentsResult;
+});

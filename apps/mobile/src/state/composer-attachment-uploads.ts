@@ -243,9 +243,8 @@ function composerAttachmentUploads() {
 export function uploadComposerAttachmentShared(
   environmentId: EnvironmentId,
   attachment: DraftComposerAttachment,
-  signal?: AbortSignal,
-): Promise<string> {
-  return composerAttachmentUploads().upload({ environmentId, attachment }, signal);
+) {
+  return composerAttachmentUploads().upload({ environmentId, attachment });
 }
 
 /**

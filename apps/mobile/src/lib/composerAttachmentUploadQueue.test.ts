@@ -1,5 +1,8 @@
 import { ApprovalRequestId, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import {
   questionAttachmentDraftKey,
   questionAttachmentDraftPrefix,
@@ -239,36 +242,38 @@ describe("composer attachment upload queue", () => {
     queue.dispose();
   });
 
-  it("joins a send to the running upload instead of uploading again", async () => {
-    const gate = Promise.withResolvers<string>();
-    const started = Promise.withResolvers<void>();
-    const uploaded = vi.fn();
-    const upload = vi.fn(async () => {
-      started.resolve();
-      return gate.promise;
-    });
-    let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
-    const queue = createComposerAttachmentUploadQueue({
-      upload,
-      onUploaded: uploaded,
-      onChange: (next) => {
-        states = next;
-      },
-    });
-    const local = request("video");
-    queue.sync([local]);
-    await started.promise;
-    // Sending hands the attachment from the draft to the outbox, which uploads it too.
-    const sent = queue.upload(local);
-    queue.sync([]);
-    gate.resolve("uploaded-1");
-    await expect(sent).resolves.toBe("uploaded-1");
-    expect(upload).toHaveBeenCalledOnce();
-    expect(uploaded).toHaveBeenCalledExactlyOnceWith(local, "uploaded-1");
-    await queue.settled();
-    expect(states).toEqual({});
-    queue.dispose();
-  });
+  it.effect("joins a send to the running upload instead of uploading again", () =>
+    Effect.gen(function* () {
+      const gate = Promise.withResolvers<string>();
+      const started = Promise.withResolvers<void>();
+      const uploaded = vi.fn();
+      const upload = vi.fn(async () => {
+        started.resolve();
+        return gate.promise;
+      });
+      let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+      const queue = createComposerAttachmentUploadQueue({
+        upload,
+        onUploaded: uploaded,
+        onChange: (next) => {
+          states = next;
+        },
+      });
+      const local = request("video");
+      queue.sync([local]);
+      yield* Effect.promise(() => started.promise);
+      // Sending hands the attachment from the draft to the outbox, which uploads it too.
+      const sent = yield* Effect.forkChild(queue.upload(local), { startImmediately: true });
+      queue.sync([]);
+      gate.resolve("uploaded-1");
+      expect(yield* Fiber.join(sent)).toBe("uploaded-1");
+      expect(upload).toHaveBeenCalledOnce();
+      expect(uploaded).toHaveBeenCalledExactlyOnceWith(local, "uploaded-1");
+      yield* Effect.promise(() => queue.settled());
+      expect(states).toEqual({});
+      queue.dispose();
+    }),
+  );
 });
 
 describe("draft upload scope and offline submission", () => {
