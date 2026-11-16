@@ -143,83 +143,90 @@ it.effect(
     ),
 );
 
-it.effect("never fetches into a checkout whose remotes belong to another repository", () =>
-  Effect.gen(function* () {
-    const runs: Array<ReadonlyArray<string>> = [];
-    const provider = yield* ForgejoPullRequestProvider.make.pipe(
-      Effect.provide(
-        Layer.merge(
-          TestSourceControlHost.layer({
-            process: {
-              run: (input) => {
-                runs.push(input.args);
-                // The commits are missing, as they would be from an unrelated checkout.
-                return Effect.succeed(
-                  TestSourceControlHost.processOutput("", {
-                    exitCode: ChildProcessSpawner.ExitCode(128),
-                  }),
-                );
+it.effect.each([
+  ["another repository", "https://forgejo.test/maria/other.git", "forgejo.test", false],
+  ["another port", "https://forgejo.test:3001/maria/project.git", "forgejo.test:3000", false],
+  ["the same port", "https://forgejo.test:3000/maria/project.git", "forgejo.test:3000", true],
+  ["SSH on the same host", "git@forgejo.test:maria/project.git", "forgejo.test:3000", true],
+] as const)(
+  "fetches missing commits only from a remote of the same repository: %s",
+  ([, remoteUrl, host, fetches]) =>
+    Effect.gen(function* () {
+      const runs: Array<ReadonlyArray<string>> = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.merge(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) => {
+                  runs.push(input.args);
+                  // The commits are missing and any fetch fails.
+                  return Effect.succeed(
+                    TestSourceControlHost.processOutput("", {
+                      exitCode: ChildProcessSpawner.ExitCode(128),
+                    }),
+                  );
+                },
               },
-            },
-            git: {
-              remotes: () =>
-                Effect.succeed(
-                  Effect.succeed({
-                    remotes: [
-                      {
-                        name: "origin",
-                        url: "https://forgejo.test/maria/other.git",
-                        pushUrl: Option.none(),
-                        isPrimary: true,
+              git: {
+                remotes: () =>
+                  Effect.succeed(
+                    Effect.succeed({
+                      remotes: [
+                        {
+                          name: "origin",
+                          url: remoteUrl,
+                          pushUrl: Option.none(),
+                          isPrimary: true,
+                        },
+                      ],
+                      freshness: {
+                        source: "live-local" as const,
+                        observedAt: DateTime.makeUnsafe("2026-11-16T00:00:00.000Z"),
+                        expiresAt: Option.none(),
                       },
-                    ],
-                    freshness: {
-                      source: "live-local" as const,
-                      observedAt: DateTime.makeUnsafe("2026-11-16T00:00:00.000Z"),
-                      expiresAt: Option.none(),
-                    },
-                  }),
+                    }),
+                  ),
+              },
+            }),
+            Layer.mock(ForgejoCli.ForgejoCli)({
+              api: () =>
+                Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    encodeJson({
+                      number: 7,
+                      title: "Pull request 7",
+                      body: "",
+                      html_url: "https://forgejo.test/maria/project/pulls/7",
+                      user: { login: "maria" },
+                      state: "open",
+                      draft: false,
+                      mergeable: false,
+                      merged: false,
+                      head: { ref: "refs/pull/7/head", sha: "b".repeat(40), repo: null },
+                      base: { ref: "main", sha: "a".repeat(40), repo: null },
+                      created_at: "2026-11-16T00:00:00Z",
+                      updated_at: "2026-11-16T00:00:00Z",
+                      closed_at: null,
+                      merged_at: null,
+                      labels: [],
+                    }),
+                  ),
                 ),
-            },
-          }),
-          Layer.mock(ForgejoCli.ForgejoCli)({
-            api: () =>
-              Effect.succeed(
-                TestSourceControlHost.processOutput(
-                  encodeJson({
-                    number: 7,
-                    title: "Pull request 7",
-                    body: "",
-                    html_url: "https://forgejo.test/maria/project/pulls/7",
-                    user: { login: "maria" },
-                    state: "open",
-                    draft: false,
-                    mergeable: false,
-                    merged: false,
-                    head: { ref: "refs/pull/7/head", sha: "b".repeat(40), repo: null },
-                    base: { ref: "main", sha: "a".repeat(40), repo: null },
-                    created_at: "2026-11-16T00:00:00Z",
-                    updated_at: "2026-11-16T00:00:00Z",
-                    closed_at: null,
-                    merged_at: null,
-                    labels: [],
-                  }),
-                ),
-              ),
-          }),
+            }),
+          ),
         ),
-      ),
-    );
-    const summary = yield* provider.getChangeRequestSummary!({
-      cwd: "/elsewhere",
-      repository: "maria/project",
-      host: "forgejo.test",
-      number: 7,
-    });
-    assert.strictEqual(summary.mergeability, "unknown");
-    assert.deepStrictEqual(
-      runs.map((args) => args[0]),
-      ["cat-file"],
-    );
-  }),
+      );
+      const summary = yield* provider.getChangeRequestSummary!({
+        cwd: "/elsewhere",
+        repository: "maria/project",
+        host,
+        number: 7,
+      });
+      assert.strictEqual(summary.mergeability, "unknown");
+      assert.deepStrictEqual(
+        runs.map((args) => args[0]),
+        fetches ? ["cat-file", "fetch"] : ["cat-file"],
+      );
+    }),
 );

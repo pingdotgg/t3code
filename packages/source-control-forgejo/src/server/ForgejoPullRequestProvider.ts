@@ -94,10 +94,9 @@ function isRepositoryRemote(url: string, input: ProviderRepositoryRef): boolean 
   const host = input.host.toLowerCase();
   const path = remote.path.toLowerCase();
   const repository = input.repository.toLowerCase();
-  return (
-    (remote.host === host || remote.hostname === host.split(":")[0]) &&
-    (path === repository || path.endsWith(`/${repository}`))
-  );
+  // An SSH port says nothing about the web port; an HTTP port tells instances on one host apart.
+  const sameHost = remote.ssh ? remote.hostname === host.split(":")[0] : remote.host === host;
+  return sameHost && (path === repository || path.endsWith(`/${repository}`));
 }
 
 /** Only the PATCH reply carries the pull request; merge and update reply with an empty body. */

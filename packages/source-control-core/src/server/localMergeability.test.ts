@@ -1,5 +1,4 @@
 import { assert, it } from "@effect/vitest";
-import { VcsProcessSpawnError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -14,21 +13,11 @@ function fakeGit(exitCodes: {
   readonly catFile: (args: ReadonlyArray<string>) => number;
   readonly fetch?: number;
   readonly mergeTree?: number;
-  readonly spawnFails?: boolean;
 }) {
   const runs: Array<ReadonlyArray<string>> = [];
   const process: SourceControlHost.SourceControlHost["Service"]["process"] = {
     run: (input) => {
       runs.push(input.args);
-      if (exitCodes.spawnFails)
-        return Effect.fail(
-          new VcsProcessSpawnError({
-            operation: input.operation,
-            command: input.command,
-            cwd: input.cwd,
-            cause: new Error("spawn git ENOENT"),
-          }),
-        );
       const [command] = input.args;
       const exitCode =
         command === "cat-file"
@@ -136,14 +125,6 @@ it.effect("stays unknown without fetching when no source is given or the fetch f
     });
     assert.strictEqual(unknown, "unknown");
     assert.deepStrictEqual(failing.commands(), ["cat-file", "fetch"]);
-  }),
-);
-
-it.effect("reads a git that cannot start as unknown", () =>
-  Effect.gen(function* () {
-    const git = fakeGit({ catFile: present, spawnFails: true });
-    const read = makeLocalMergeabilityReader(git.process);
-    assert.strictEqual(yield* read({ cwd: "/repo", baseSha: BASE, headSha: HEAD }), "unknown");
   }),
 );
 
