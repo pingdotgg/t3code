@@ -3,7 +3,7 @@ import * as NodePerfHooks from "node:perf_hooks";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { proxyConfig } from "../shared/proxy.ts";
+import { morphConfig, proxyConfig } from "../shared/proxy.ts";
 
 export interface ApiTool {
   readonly name: string;
@@ -61,6 +61,8 @@ const decodePreserved = Schema.decodeUnknownSync(
   }),
 );
 
+const MAX_ATTEMPTS = 3;
+
 export function makeClient(options: { readonly proxy: boolean; readonly effort: string }) {
   const attempts: Array<{ model: string; purpose: string; completed: boolean }> = [];
   const ledger: Array<{
@@ -73,11 +75,21 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
     request: unknown;
     response: unknown;
   }> = [];
+  // Read once per run: each read spawns python, and a mid-run config edit must not split the run.
+  let morph: ReturnType<typeof morphConfig> | undefined;
   const unavailable = (model: string) => {
     if (model.startsWith("claude-"))
       return process.env.ANTHROPIC_API_KEY
         ? null
         : "ANTHROPIC_API_KEY missing from repo-root .env and process environment.";
+    if (model.startsWith("morph-")) {
+      try {
+        morph ??= morphConfig();
+        return null;
+      } catch {
+        return "Morph unavailable; set MORPH_API_KEY or add a morph provider to ~/.config/opencode/opencode.json. No substitution.";
+      }
+    }
     if (!model.startsWith("gpt-")) return `Unsupported model family for ${model}. No substitution.`;
     if (!options.proxy)
       return process.env.OPENAI_API_KEY
@@ -101,7 +113,9 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
     const missing = unavailable(model);
     if (missing) throw new Error(missing);
     const claude = model.startsWith("claude-");
-    const proxy = !claude && options.proxy ? proxyConfig() : undefined;
+    const isMorph = model.startsWith("morph-");
+    const proxy = isMorph ? undefined : !claude && options.proxy ? proxyConfig() : undefined;
+    const responsesEndpoint = isMorph ? morph : proxy;
     const request = claude
       ? {
           model,
@@ -182,26 +196,36 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
     attempts.push(attempt);
     const headers = claude
       ? { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }
-      : (proxy?.headers ?? { Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` });
+      : (responsesEndpoint?.headers ?? { Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` });
     const body = await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
-        const response = yield* HttpClientRequest.post(
-          claude
-            ? "https://api.anthropic.com/v1/messages"
-            : `${proxy?.url ?? "https://api.openai.com/v1"}/responses`,
-        ).pipe(
-          HttpClientRequest.setHeaders(headers),
-          HttpClientRequest.bodyJson(request),
-          Effect.flatMap(client.execute),
-        );
-        if (response.status !== 200)
-          return yield* Effect.die(
-            new Error(
-              `Model API HTTP ${response.status}. Response body omitted to avoid leaking credentials.`,
-            ),
+        for (let attempt = 1; ; attempt++) {
+          const response = yield* HttpClientRequest.post(
+            claude
+              ? "https://api.anthropic.com/v1/messages"
+              : `${responsesEndpoint?.url ?? "https://api.openai.com/v1"}/responses`,
+          ).pipe(
+            HttpClientRequest.setHeaders(headers),
+            HttpClientRequest.bodyJson(request),
+            Effect.flatMap(client.execute),
           );
-        return yield* response.text;
+          // Rate limits and server errors are transport, not model behaviour, so they get retries.
+          if ((response.status === 429 || response.status >= 500) && attempt < MAX_ATTEMPTS) {
+            const retryAfter = Number(response.headers["retry-after"]);
+            yield* Effect.sleep(
+              `${retryAfter > 0 ? Math.min(retryAfter, 60) : 2 ** attempt} seconds`,
+            );
+            continue;
+          }
+          if (response.status !== 200)
+            return yield* Effect.die(
+              new Error(
+                `Model API HTTP ${response.status}. Response body omitted to avoid leaking credentials.`,
+              ),
+            );
+          return yield* response.text;
+        }
       }).pipe(Effect.timeout("120 seconds"), Effect.provide(FetchHttpClient.layer)),
     );
     const raw: unknown = proxy
