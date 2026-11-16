@@ -17,11 +17,12 @@ import {
   resetCreditChoices,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
+import { useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ChevronRightIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
-  Fragment,
   type ReactNode,
   type RefObject,
   use,
@@ -44,7 +45,7 @@ import { OpenAI } from "../Icons";
 import { Alert, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { PaceIcon, ResetCreditDialog, barColor, usePaceMark, useResetCredit } from "./UsageLimits";
-import { UsageLimitLayoutControls } from "./UsageLimitLayoutControls";
+import { UsageLimitLayoutControls, UsageLimitSortableList } from "./UsageLimitLayoutControls";
 import {
   DEFAULT_LIMIT_LAYOUT,
   limitWindowKey,
@@ -481,28 +482,46 @@ function PoolBar({
 }
 
 function PoolWindowCard({
+  id,
   pool,
   color,
   now,
   label,
   description,
-  controls,
-  hidden = false,
+  controlLabel,
+  onToggleVisibility,
+  hidden,
 }: {
   readonly pool: LimitPoolWindow;
   readonly color: string;
   readonly now: number;
   readonly label?: string | null | undefined;
   readonly description?: string | undefined;
-  readonly controls?: ReactNode;
-  readonly hidden?: boolean;
+  readonly id: string;
+  readonly controlLabel: string;
+  readonly onToggleVisibility: () => void;
+  readonly hidden: boolean;
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id });
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   return (
     <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition: transition,
+      }}
       className={cn(
-        "group/limit-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3 rounded-lg border border-border/60 p-4 @xl/limits:grid-cols-[9rem_minmax(0,1fr)] @xl/limits:items-center",
-        controls && "@xl/limits:grid-cols-[9rem_minmax(0,1fr)_auto]",
+        "group/limit-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3 rounded-lg border border-border/60 bg-background p-4 @xl/limits:grid-cols-[9rem_minmax(0,1fr)_auto] @xl/limits:items-center",
+        isDragging && "relative z-10 shadow-md",
       )}
     >
       <div className="flex min-w-0 flex-col gap-1">
@@ -536,9 +555,17 @@ function PoolWindowCard({
           </>
         ) : null}
       </div>
-      {controls ? (
-        <div className="col-start-2 row-start-1 @xl/limits:col-start-3">{controls}</div>
-      ) : null}
+      <div className="col-start-2 row-start-1 @xl/limits:col-start-3">
+        <UsageLimitLayoutControls
+          label={controlLabel}
+          attributes={attributes}
+          listeners={listeners}
+          handleRef={setActivatorNodeRef}
+          isDragging={isDragging}
+          hidden={hidden}
+          onToggleVisibility={onToggleVisibility}
+        />
+      </div>
       {!hidden ? (
         <>
           <div className="col-span-2 min-w-0 @xl/limits:col-span-1 @xl/limits:col-start-2 @xl/limits:row-start-1">
@@ -557,17 +584,24 @@ function PoolSection({
   pool,
   windows,
   now,
-  providerKeys,
   layout,
   onChange,
 }: {
   readonly pool: LimitPool;
   readonly windows: readonly LimitPoolWindow[];
   readonly now: number;
-  readonly providerKeys: readonly string[];
   readonly layout: UsageLimitLayout;
   readonly onChange: (update: (current: UsageLimitLayout) => UsageLimitLayout) => void;
 }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: pool.driver });
   const color = barColor(pool.driver);
   const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const hidden = layout.hiddenProviders.includes(pool.driver);
@@ -583,7 +617,19 @@ function PoolSection({
             : [...current.collapsedProviders, pool.driver],
         }))
       }
-      render={<section className="@container/limits flex flex-col gap-3" />}
+      render={
+        <section
+          ref={setNodeRef}
+          style={{
+            transform: CSS.Translate.toString(transform),
+            transition: transition,
+          }}
+          className={cn(
+            "@container/limits flex flex-col gap-3",
+            isDragging && "relative z-10 rounded-lg bg-background shadow-md",
+          )}
+        />
+      }
     >
       <div className="group/limit-row flex items-center gap-2">
         <h2 className="flex min-w-0 flex-1 items-center gap-2 text-sm font-medium text-foreground">
@@ -601,20 +647,11 @@ function PoolSection({
         </h2>
         <UsageLimitLayoutControls
           label={label}
-          index={providerKeys.indexOf(pool.driver)}
-          count={providerKeys.length}
+          attributes={attributes}
+          listeners={listeners}
+          handleRef={setActivatorNodeRef}
+          isDragging={isDragging}
           hidden={hidden}
-          onMove={(direction) =>
-            onChange((current) => ({
-              ...current,
-              providerOrder: moveLimitItem(
-                current.providerOrder,
-                providerKeys,
-                pool.driver,
-                direction,
-              ),
-            }))
-          }
           onToggleVisibility={() =>
             onChange((current) => ({
               ...current,
@@ -641,53 +678,50 @@ function PoolSection({
         </CollapsibleTrigger>
       </div>
       <CollapsiblePanel animate={false}>
-        <div className="flex flex-col gap-3">
-          {windows.map((window, index) => {
-            const details =
-              pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
-            const key = limitWindowKey(pool.driver, window);
-            const windowHidden = layout.hiddenWindows.includes(key);
-            const controls = (
-              <UsageLimitLayoutControls
-                label={`${label} ${details?.label ?? window.label}`}
-                index={index}
-                count={windows.length}
-                hidden={windowHidden}
-                onMove={(direction) =>
-                  onChange((current) => ({
-                    ...current,
-                    windowOrder: moveLimitItem(
-                      current.windowOrder,
-                      windows.map((item) => limitWindowKey(pool.driver, item)),
-                      key,
-                      direction,
-                    ),
-                  }))
-                }
-                onToggleVisibility={() =>
-                  onChange((current) => ({
-                    ...current,
-                    hiddenWindows: windowHidden
-                      ? current.hiddenWindows.filter((id) => id !== key)
-                      : [...current.hiddenWindows, key],
-                  }))
-                }
-              />
-            );
-            return (
-              <PoolWindowCard
-                key={key}
-                pool={window}
-                color={color}
-                now={now}
-                label={details?.label}
-                description={details?.description}
-                controls={controls}
-                hidden={windowHidden}
-              />
-            );
-          })}
-        </div>
+        <UsageLimitSortableList
+          items={windows.map((window) => limitWindowKey(pool.driver, window))}
+          onReorder={(active, over) =>
+            onChange((current) => ({
+              ...current,
+              windowOrder: moveLimitItem(
+                current.windowOrder,
+                windows.map((window) => limitWindowKey(pool.driver, window)),
+                active,
+                over,
+              ),
+            }))
+          }
+        >
+          <div className="flex flex-col gap-3">
+            {windows.map((window) => {
+              const details =
+                pool.driver === "cursor" ? cursorUsageWindowDetails(window.id, pool) : undefined;
+              const key = limitWindowKey(pool.driver, window);
+              const windowHidden = layout.hiddenWindows.includes(key);
+              return (
+                <PoolWindowCard
+                  key={key}
+                  id={key}
+                  pool={window}
+                  color={color}
+                  now={now}
+                  label={details?.label}
+                  description={details?.description}
+                  controlLabel={`${label} ${details?.label ?? window.label}`}
+                  hidden={windowHidden}
+                  onToggleVisibility={() =>
+                    onChange((current) => ({
+                      ...current,
+                      hiddenWindows: windowHidden
+                        ? current.hiddenWindows.filter((id) => id !== key)
+                        : [...current.hiddenWindows, key],
+                    }))
+                  }
+                />
+              );
+            })}
+          </div>
+        </UsageLimitSortableList>
       </CollapsiblePanel>
     </Collapsible>
   );
@@ -759,21 +793,36 @@ export function UsageLimitsPooled({
         </p>
       ) : null}
       <SegmentPopoverContext value={segmentPopover}>
-        {shownPools.map(({ pool, windows }) => (
-          <Fragment key={pool.driver}>
-            <PoolSection
-              pool={pool}
-              windows={windows}
-              now={now}
-              providerKeys={pools.map((item) => item.driver)}
-              layout={layout}
-              onChange={(update) => {
-                focusedBeforeChange.current = document.activeElement;
-                setLayout(update);
-              }}
-            />
-          </Fragment>
-        ))}
+        <UsageLimitSortableList
+          items={shownPools.map(({ pool }) => pool.driver)}
+          onReorder={(active, over) =>
+            setLayout((current) => ({
+              ...current,
+              providerOrder: moveLimitItem(
+                current.providerOrder,
+                pools.map((pool) => pool.driver),
+                active,
+                over,
+              ),
+            }))
+          }
+        >
+          <div className="flex flex-col gap-8 empty:hidden">
+            {shownPools.map(({ pool, windows }) => (
+              <PoolSection
+                key={pool.driver}
+                pool={pool}
+                windows={windows}
+                now={now}
+                layout={layout}
+                onChange={(update) => {
+                  focusedBeforeChange.current = document.activeElement;
+                  setLayout(update);
+                }}
+              />
+            ))}
+          </div>
+        </UsageLimitSortableList>
       </SegmentPopoverContext>
       {hasLayout || showHidden ? (
         <div className="flex flex-wrap items-center gap-2">

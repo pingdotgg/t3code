@@ -122,14 +122,15 @@ part of a segment is what that reset restores. Tap a segment or account row for 
 where it is signed in, and its reset time. On web, you can hover too. Codex and Claude accounts
 with banked reset credits show a ticket count and the **Use reset** action in the account details.
 Claude resets are not available when the server runs on macOS, where Claude keeps its login in the
-Keychain. On narrow screens, numbered rows below
-the bar show each account's quota, countdown, and credits. Tap a row to open its details.
+Keychain. Account details remain inside the bar at narrow widths too.
 
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 On web and desktop, use the arrow beside a provider heading to collapse or expand its limits.
 Hover over a provider or window, or focus it with the keyboard, to reveal hide and reorder
-controls. Touch devices always show these controls. Choose **Show hidden limits** below the
+controls. Drag the handle to reorder providers or windows. With the handle focused, press
+Space to pick it up, use the arrow keys to move, and press Space to drop or Escape to cancel.
+Touch devices always show these controls. Choose **Show hidden limits** below the
 list to restore hidden items, or **Reset layout** to restore defaults. These preferences are
 saved on this device.
 

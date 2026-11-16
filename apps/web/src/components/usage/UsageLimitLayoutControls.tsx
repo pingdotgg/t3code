@@ -1,51 +1,110 @@
-import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  pointerWithin,
+  type CollisionDetection,
+  type KeyboardCoordinateGetter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { SortableContext, type useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { GripVerticalIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+
+const limitCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+  return collisions.length > 0 ? collisions : closestCenter(args);
+};
+
+export function UsageLimitSortableList({
+  items,
+  onReorder,
+  children,
+}: {
+  readonly items: string[];
+  readonly onReorder: (active: string, over: string) => void;
+  readonly children: ReactNode;
+}) {
+  const keyboardCoordinates: KeyboardCoordinateGetter = (
+    event,
+    { context, currentCoordinates },
+  ) => {
+    if (event.code !== "ArrowUp" && event.code !== "ArrowDown") return;
+    event.preventDefault();
+    const index = items.indexOf(String(context.over?.id ?? context.active?.id));
+    const target = items[index + (event.code === "ArrowDown" ? 1 : -1)];
+    const rect = target === undefined ? undefined : context.droppableRects.get(target);
+    if (!rect || !context.collisionRect) return;
+    return {
+      ...currentCoordinates,
+      y:
+        currentCoordinates.y +
+        rect.top +
+        rect.height / 2 -
+        (context.collisionRect.top + context.collisionRect.height / 2),
+    };
+  };
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: keyboardCoordinates }),
+  );
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={limitCollisionDetection}
+      modifiers={[restrictToVerticalAxis]}
+      onDragEnd={({ active, over }) => {
+        if (over && active.id !== over.id) onReorder(String(active.id), String(over.id));
+      }}
+    >
+      <SortableContext items={items} strategy={verticalListSortingStrategy}>
+        {children}
+      </SortableContext>
+    </DndContext>
+  );
+}
 
 export function UsageLimitLayoutControls({
   label,
-  index,
-  count,
   hidden,
-  onMove,
+  attributes,
+  listeners,
+  handleRef,
+  isDragging,
   onToggleVisibility,
 }: {
   readonly label: string;
-  readonly index: number;
-  readonly count: number;
   readonly hidden: boolean;
-  readonly onMove: (direction: -1 | 1) => void;
+  readonly attributes: ReturnType<typeof useSortable>["attributes"];
+  readonly listeners: ReturnType<typeof useSortable>["listeners"];
+  readonly handleRef: ReturnType<typeof useSortable>["setActivatorNodeRef"];
+  readonly isDragging: boolean;
   readonly onToggleVisibility: () => void;
 }) {
   const visibilityLabel = `${hidden ? "Show" : "Hide"} ${label}`;
   return (
-    <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100">
-      <div className="flex items-center gap-0.5">
-        <Button
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label={`Move ${label} up`}
-          title={`Move ${label} up`}
-          aria-disabled={index === 0}
-          onClick={() => {
-            if (index > 0) onMove(-1);
-          }}
-        >
-          <ArrowUpIcon />
-        </Button>
-        <Button
-          variant="ghost-muted"
-          size="icon-xs"
-          aria-label={`Move ${label} down`}
-          title={`Move ${label} down`}
-          aria-disabled={index === count - 1}
-          onClick={() => {
-            if (index < count - 1) onMove(1);
-          }}
-        >
-          <ArrowDownIcon />
-        </Button>
-      </div>
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-0.5 opacity-0 group-focus-within/limit-row:opacity-100 group-hover/limit-row:opacity-100 pointer-coarse:opacity-100 [@media(hover:none)]:opacity-100",
+        isDragging && "opacity-100",
+      )}
+    >
+      <button
+        type="button"
+        ref={handleRef}
+        {...attributes}
+        {...listeners}
+        aria-label={`Reorder ${label}`}
+        className="flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+      >
+        <GripVerticalIcon className="size-4" aria-hidden />
+      </button>
       <Button
         variant="ghost-muted"
         size="xs"

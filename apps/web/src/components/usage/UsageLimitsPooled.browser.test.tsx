@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { CHATGPT_USAGE_URL } from "@t3tools/shared/usageLimits";
 import { describe, expect, it } from "vite-plus/test";
-import { commands, userEvent } from "vite-plus/test/browser";
+import { cdp, commands, page, userEvent } from "vite-plus/test/browser";
 
 import "../../index.css";
 
@@ -52,9 +52,49 @@ function isolatedLayoutStorage() {
   };
 }
 
+async function dragHandle(source: HTMLElement | SVGElement, target: HTMLElement | SVGElement) {
+  await userEvent.hover(source);
+  const from = source.getBoundingClientRect();
+  const to = target.getBoundingClientRect();
+  const frame = window.frameElement?.getBoundingClientRect();
+  const x = from.x + from.width / 2 + (frame?.x ?? 0);
+  const y = from.y + from.height / 2 + (frame?.y ?? 0);
+  const endY = to.y + to.height / 2 + (frame?.y ?? 0);
+  await cdp().send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x,
+    y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  try {
+    await cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y: y + 8, buttons: 1 });
+    await expect.element(source).toHaveAttribute("aria-pressed", "true");
+    for (let step = 1; step <= 8; step++) {
+      await cdp().send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x,
+        y: y + ((endY - y) * step) / 8,
+        buttons: 1,
+      });
+    }
+  } finally {
+    await cdp().send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y: endY,
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+    });
+  }
+}
+
 describe("UsageLimitsPooled", () => {
   it("arranges limits inline and restores hidden providers without losing collapsed state", async () => {
     using _storage = isolatedLayoutStorage();
+    await page.viewport(1000, 1000);
     const weekly: ServerProviderUsageWindow = {
       id: "weekly",
       kind: "weekly",
@@ -125,11 +165,11 @@ describe("UsageLimitsPooled", () => {
     await commands.resetPointer();
     expect(screen.getByRole("dialog").elements()).toHaveLength(0);
     const providerReorder = screen
-      .getByRole("button", { name: "Move Codex down", exact: true })
-      .element().parentElement!.parentElement!;
+      .getByRole("button", { name: "Reorder Codex", exact: true })
+      .element().parentElement!;
     const windowReorder = screen
-      .getByRole("button", { name: "Move Codex Weekly up", exact: true })
-      .element().parentElement!.parentElement!;
+      .getByRole("button", { name: "Reorder Codex Weekly", exact: true })
+      .element().parentElement!;
     await expect.element(providerReorder).toHaveStyle({ opacity: "0" });
     await expect.element(windowReorder).toHaveStyle({ opacity: "0" });
     await screen.getByRole("heading", { name: /Codex/ }).hover();
@@ -150,22 +190,35 @@ describe("UsageLimitsPooled", () => {
     await expect
       .element(screen.getByRole("button", { name: "Collapse Codex limits" }))
       .toHaveFocus();
-    const moveProviderDown = screen.getByRole("button", { name: "Move Codex down", exact: true });
-    moveProviderDown.element().focus();
+    await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
+    const providerHandle = screen.getByRole("button", { name: "Reorder Codex", exact: true });
+    providerHandle.element().focus();
     await expect.element(providerReorder).toHaveStyle({ opacity: "1" });
-    await userEvent.keyboard("{Enter}");
-    await expect.element(moveProviderDown).toHaveFocus();
-    await expect.element(moveProviderDown).toHaveAttribute("aria-disabled", "true");
-    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard("[Space]");
+    await expect.element(providerHandle).toHaveAttribute("aria-pressed", "true");
+    await userEvent.keyboard("[ArrowDown]");
+    await userEvent.keyboard("[Space]");
+    await expect.element(providerHandle).toHaveFocus();
+    await expect.element(providerHandle).not.toHaveAttribute("aria-pressed", "true");
     await expect
       .element(screen.getByRole("heading", { level: 2 }).first())
       .toHaveTextContent("Antigravity");
-    const moveWeeklyUp = screen.getByRole("button", { name: "Move Codex Weekly up", exact: true });
-    moveWeeklyUp.element().focus();
-    await userEvent.keyboard("{Enter}");
-    await expect.element(moveWeeklyUp).toHaveFocus();
-    await expect.element(moveWeeklyUp).toHaveAttribute("aria-disabled", "true");
-    await userEvent.keyboard("{Enter}");
+    const weeklyHandle = screen.getByRole("button", { name: "Reorder Codex Weekly", exact: true });
+    weeklyHandle.element().focus();
+    await userEvent.keyboard("[Space]");
+    await userEvent.keyboard("[ArrowUp]");
+    await userEvent.keyboard("[Space]");
+    await expect.element(weeklyHandle).toHaveFocus();
+    const saved = JSON.parse(window.localStorage.getItem(USAGE_LIMIT_LAYOUT_KEY)!);
+    expect(saved.providerOrder).toEqual(["antigravity", "codex"]);
+    expect(saved.windowOrder).toEqual([
+      JSON.stringify(["codex", "weekly", "weekly"]),
+      JSON.stringify(["codex", "session", "session"]),
+    ]);
+    await userEvent.keyboard("[Space]");
+    await userEvent.keyboard("[ArrowDown]");
+    await userEvent.keyboard("[Escape]");
+    expect(JSON.parse(window.localStorage.getItem(USAGE_LIMIT_LAYOUT_KEY)!)).toEqual(saved);
     await screen.getByRole("button", { name: "Collapse Codex limits" }).click();
     await screen.getByRole("button", { name: "Hide Codex", exact: true }).click();
     await expect.element(screen.getByRole("heading", { name: /Codex/ })).not.toBeInTheDocument();
@@ -196,6 +249,25 @@ describe("UsageLimitsPooled", () => {
     await expect
       .element(screen.getByRole("heading", { level: 2 }).first())
       .toHaveTextContent("Codex");
+    await screen.getByRole("button", { name: "Collapse Antigravity limits" }).click();
+    await dragHandle(
+      screen.getByRole("button", { name: "Reorder Codex", exact: true }).element(),
+      screen.getByRole("button", { name: "Reorder Antigravity", exact: true }).element(),
+    );
+    await expect
+      .element(screen.getByRole("heading", { level: 2 }).first())
+      .toHaveTextContent("Antigravity");
+    await dragHandle(
+      screen.getByRole("button", { name: "Reorder Codex Session", exact: true }).element(),
+      screen.getByRole("button", { name: "Reorder Codex Weekly", exact: true }).element(),
+    );
+    expect(JSON.parse(window.localStorage.getItem(USAGE_LIMIT_LAYOUT_KEY)!)).toMatchObject({
+      providerOrder: ["antigravity", "codex"],
+      windowOrder: [
+        JSON.stringify(["codex", "weekly", "weekly"]),
+        JSON.stringify(["codex", "session", "session"]),
+      ],
+    });
   });
 
   it("names the managed connections it covers", async () => {

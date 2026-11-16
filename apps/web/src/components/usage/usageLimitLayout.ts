@@ -40,13 +40,14 @@ export function moveLimitItem(
   savedOrder: readonly string[],
   currentKeys: readonly string[],
   key: string,
-  direction: -1 | 1,
+  over: string,
 ) {
   const keys = [...currentKeys];
   const index = keys.indexOf(key);
-  const destination = index + direction;
-  if (index < 0 || destination < 0 || destination >= keys.length) return savedOrder;
-  [keys[index], keys[destination]] = [keys[destination]!, keys[index]!];
+  const destination = keys.indexOf(over);
+  if (index < 0 || destination < 0 || index === destination) return savedOrder;
+  keys.splice(index, 1);
+  keys.splice(destination, 0, key);
   const available = new Set(keys);
   return [...keys, ...savedOrder.filter((id) => !available.has(id))];
 }
