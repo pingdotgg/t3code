@@ -338,7 +338,7 @@ export const makeStore = Effect.gen(function* () {
           WHERE json_extract(source.value, '$.kind') = 'message'
             AND json_extract(source.value, '$.threadId') = ${threadId}
         )
-      ORDER BY rank ASC, f.updated_at DESC, f.id ASC LIMIT 40`;
+      ORDER BY rank ASC, f.trust DESC, f.updated_at DESC, f.id ASC LIMIT 40`;
     return {
       facts: yield* findMany(
         projectId,
