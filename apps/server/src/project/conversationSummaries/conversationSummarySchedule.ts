@@ -19,6 +19,7 @@ import type { PendingOrchestrationEffectV2 } from "../../orchestration-v2/Effect
 /**
  * The summary pass after one completed run, or nothing when the project has not opted in. The
  * effect id is derived from the run, so a replayed finalization coalesces into the queued pass.
+ * The outbox keeps one pending pass per thread, so a later run does not start another chain.
  */
 export function conversationSummaryEffects(input: {
   readonly settings: ServerSettings;
