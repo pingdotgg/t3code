@@ -518,13 +518,20 @@ describe("AcpRegistrySupport", () => {
       yield* fileSystem.writeFileString(`${userBin}/example-agent`, "#!/bin/sh\n");
       yield* fileSystem.chmod(`${userBin}/example-agent`, 0o755);
       yield* fileSystem.remove(toolchain.executablePath);
-      const repaired = yield* resolver.resolve(settings(), "/workspace", {
+      const userEnvironment = {
         ...toolchain.environment,
         PATH: `${userBin}:${toolchain.environment.PATH}`,
-      });
+      };
+      const repaired = yield* resolver.resolve(settings(), "/workspace", userEnvironment);
       expect(repaired.spawn.command).toBe(toolchain.executablePath);
       const repairCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(repairCommands.match(/^install --global /gmu)).toHaveLength(2);
+
+      yield* fileSystem.remove(toolchain.executablePath);
+      const failedRepair = yield* resolver
+        .resolve(settings(), "/workspace", { ...userEnvironment, npm_config_bin_links: "false" })
+        .pipe(Effect.flip);
+      expect(failedRepair.reason).toBe("install_failed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -565,45 +572,6 @@ describe("AcpRegistrySupport", () => {
         command: path.join(userGlobalBin, "example-agent"),
         env: { PATH: expect.stringMatching(new RegExp(`^${userGlobalBin}:`, "u")) },
       });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerResolver((request) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
-        ),
-      ),
-    );
-  });
-
-  it.effect("rejects an npm install without bin links over a PATH command of the same name", () => {
-    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-npm-no-bin-links-",
-      });
-      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
-      const userBin = path.join(cacheDir, "user-bin");
-      yield* fileSystem.makeDirectory(userBin);
-      yield* fileSystem.writeFileString(path.join(userBin, "example-agent"), "#!/bin/sh\n");
-      yield* fileSystem.chmod(path.join(userBin, "example-agent"), 0o755);
-      const environment = {
-        ...toolchain.environment,
-        PATH: `${userBin}:${toolchain.environment.PATH}`,
-        npm_config_bin_links: "false",
-      };
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      }).pipe(Effect.provideService(HostProcess.Environment, environment));
-
-      const error = yield* resolver
-        .resolve(settings(), "/workspace", environment)
-        .pipe(Effect.flip);
-
-      expect(error.reason).toBe("install_failed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
