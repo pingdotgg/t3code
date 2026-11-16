@@ -239,6 +239,24 @@ const AfterCommit = Context.Reference<
   Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>> | undefined
 >("t3/orchestration-v2/ProviderEventIngestor/AfterCommit", { defaultValue: () => undefined });
 
+/** Runs `ingest` through `commit`, then the work it left for after the commit, none if it fails. */
+// Runs for each adapter emission; the provider batch owns the span.
+export const commitThenAfterCommit = Effect.fnUntraced(function* <A, E, R, E2, R2>(
+  commit: (ingest: Effect.Effect<A, E, R>) => Effect.Effect<A, E2, R2>,
+  ingest: Effect.Effect<A, E, R>,
+) {
+  const queue: Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>> = [];
+  const result = yield* commit(Effect.provideService(ingest, AfterCommit, queue));
+  for (const work of queue) yield* work;
+  return result;
+});
+
+/** Runs `work` after the commit of the enclosing `ingestTogether`, or now outside one. */
+export const afterCommit = (work: Effect.Effect<void, ProviderEventIngestorV2Error>) =>
+  Effect.flatMap(AfterCommit, (queue) =>
+    queue === undefined ? work : Effect.sync(() => void queue.push(work)),
+  );
+
 export class ProviderEventIngestorV2 extends Context.Service<
   ProviderEventIngestorV2,
   ProviderEventIngestorV2Shape
@@ -758,12 +776,10 @@ export const layer: Layer.Layer<
       normalize,
       // Runs for each adapter emission; the provider batch owns the span.
       ingestTogether: Effect.fnUntraced(function* <A, E, R>(ingest: Effect.Effect<A, E, R>) {
-        const afterCommit: Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>> = [];
-        const result = yield* eventSink.withProviderBatch(
-          Effect.provideService(ingest, AfterCommit, afterCommit),
+        return yield* commitThenAfterCommit(
+          (work: Effect.Effect<A, E, R>) => eventSink.withProviderBatch(work),
+          ingest,
         );
-        for (const work of afterCommit) yield* work;
-        return result;
       }),
       ingestNormalized:
         /* This helper runs for individual orchestration events; the enclosing operation owns the span. */

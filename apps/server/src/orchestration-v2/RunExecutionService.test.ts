@@ -3444,6 +3444,50 @@ it.effect.each(["failure", "defect", "interrupt-failure", "ownership-lost"] as c
     }),
 );
 
+it.effect("ends a subagent whose terminal record was rolled back with its paired item", () =>
+  Effect.gen(function* () {
+    const key = "paired-terminal-rollback";
+    const ids = backgroundScenarioIds(key);
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const fixture = (status: "running" | "interrupted") =>
+      ({ ids, providerInstanceId, childThreadId: ids.childThreadId, driver, status }) as const;
+    const pair = (status: "running" | "interrupted") => ({
+      type: "subagent.updated" as const,
+      driver,
+      subagent: makeRunOwnedSubagentFixture(fixture(status)),
+      turnItem: makeRunOwnedSubagentTurnItemFixture(fixture(status)),
+    });
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () =>
+        Stream.make(pair("running"), pair("interrupted"), rootTerminalEvent(ids, "completed")),
+      ingestNormalized: (request) =>
+        request.event.type === "turn_item.updated" &&
+        request.event.turnItem.status === "interrupted"
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: "disk full",
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    const subagentId = makeRunOwnedSubagentFixture(fixture("running")).id;
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "subagent.updated" && event.payload.id === subagentId
+          ? [`subagent ${event.payload.status}`]
+          : event.type === "turn-item.updated" && event.payload.type === "subagent"
+            ? [`item ${event.payload.status}`]
+            : [],
+      ),
+      ["subagent failed", "item failed"],
+    );
+  }),
+);
+
 it.effect.each([
   { status: "completed", failure: "later-stream", interrupt: "succeeds" },
   { status: "failed", failure: "later-stream", interrupt: "succeeds" },
@@ -3998,7 +4042,11 @@ function captureRootRunTermination(input: {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
     // The rows the provider's events stored, which the run reads back when its runtime is lost.
-    const stored = {
+    const stored: {
+      subagents: Map<string, OrchestrationV2Subagent>;
+      nodes: Map<string, OrchestrationV2ExecutionNode>;
+      turnItems: Map<string, OrchestrationV2TurnItem>;
+    } = {
       subagents: new Map<string, OrchestrationV2Subagent>(),
       nodes: new Map<string, OrchestrationV2ExecutionNode>(),
       turnItems: new Map<string, OrchestrationV2TurnItem>(),
@@ -4108,6 +4156,26 @@ function captureRootRunTermination(input: {
             ingestNormalized: (request) =>
               store(request.event).pipe(
                 Effect.andThen(input.ingestNormalized?.(request) ?? Effect.succeed([])),
+              ),
+            // A failed transaction stores none of its rows.
+            ingestTogether: (ingest) =>
+              ProviderEventIngestor.commitThenAfterCommit(
+                (work) =>
+                  Effect.suspend(() => {
+                    const subagents = new Map(stored.subagents);
+                    const nodes = new Map(stored.nodes);
+                    const turnItems = new Map(stored.turnItems);
+                    return work.pipe(
+                      Effect.onError(() =>
+                        Effect.sync(() => {
+                          stored.subagents = subagents;
+                          stored.nodes = nodes;
+                          stored.turnItems = turnItems;
+                        }),
+                      ),
+                    );
+                  }),
+                ingest,
               ),
           }),
           ServerSettings.layerTest(),
@@ -4681,15 +4749,19 @@ function runBackgroundItemScenario(
               return coordinator === undefined ? write : coordinator.barrier(write);
             },
             ingestTogether: (ingest) =>
-              Effect.suspend(() => {
-                together = ++togetherCalls;
-                return ingest;
-              }).pipe(
-                Effect.ensuring(
-                  Effect.sync(() => {
-                    together = undefined;
-                  }),
-                ),
+              ProviderEventIngestor.commitThenAfterCommit(
+                (work) =>
+                  Effect.suspend(() => {
+                    together = ++togetherCalls;
+                    return work;
+                  }).pipe(
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        together = undefined;
+                      }),
+                    ),
+                  ),
+                ingest,
               ),
           }),
           ServerSettings.layerTest(),

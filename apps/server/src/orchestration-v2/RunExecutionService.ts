@@ -1411,8 +1411,8 @@ export const layer: Layer.Layer<
         const trackChildLifecycle = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
           deliverable: boolean,
+          routing: ProviderEventRoutingState,
         ) {
-          const routing = yield* Ref.get(eventRouting);
           if (event.type === "provider_turn.updated") {
             const isRoot =
               event.providerTurn.runAttemptId === input.attempt.id ||
@@ -1815,7 +1815,7 @@ export const layer: Layer.Layer<
               continue;
             // A failed write fails ingestion like any provider write.
             yield* ingestDelivered(event, event);
-            yield* trackChildLifecycle(event, true);
+            yield* trackChildLifecycle(event, true, yield* Ref.get(eventRouting));
           }
           yield* scheduleIdleFlush;
         });
@@ -1926,7 +1926,11 @@ export const layer: Layer.Layer<
               pendingBackgroundProviderTurns.delete(event.providerTurnId);
             }
           }
-          yield* trackChildLifecycle(event, deliveredEvent !== null);
+          // Failure finalization ends the open work this tracks, so it must match what is stored:
+          // inside a paired ingestion it waits for the commit and is skipped if that rolls back.
+          yield* ProviderEventIngestor.afterCommit(
+            trackChildLifecycle(event, deliveredEvent !== null, yield* Ref.get(eventRouting)),
+          );
           yield* scheduleIdleFlush;
         });
         const providerEventFiber = yield* eventSink
