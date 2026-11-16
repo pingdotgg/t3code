@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "./fileZoom";
 import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import { useEffect, useRef, useState } from "react";
 import { FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -19,7 +20,7 @@ const bridge = `(() => {
   if (!e.ctrlKey || !e.deltaY) return;
   e.preventDefault();
   const delta = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1);
-  apply(zoom * Math.exp(-delta * .01), e.clientX, e.clientY);
+  apply((${pinchFileZoom.toString()})(zoom, Math.exp(-delta * .01), .25, 5), e.clientX, e.clientY);
  }, {passive:false});
  addEventListener('message', e => {
   if (e.source === parent && e.data?.type === 't3-file-set-zoom' && Number.isFinite(e.data.zoom)) apply(e.data.zoom);

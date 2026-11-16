@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "./fileZoom";
 import { FileZoomControls } from "./FileZoomControls";
 import {
   useEffect,
@@ -321,7 +322,7 @@ export default function PdfViewer(props: {
   };
   usePinchZoom(scroll, (factor, point) => {
     if (!pdf) return;
-    const next = Math.min(PDF_MAX_ZOOM, Math.max(PDF_MIN_ZOOM, scale * factor));
+    const next = pinchFileZoom(scale, factor, PDF_MIN_ZOOM, PDF_MAX_ZOOM);
     if (next !== scale) changeZoom(next, point);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
@@ -514,7 +515,7 @@ export default function PdfViewer(props: {
             {visible.map(({ index, ratio }) => (
               <div
                 key={index}
-                className="absolute bg-white shadow-sm"
+                className="absolute overflow-clip bg-white shadow-sm"
                 style={
                   {
                     top: offsets[index],

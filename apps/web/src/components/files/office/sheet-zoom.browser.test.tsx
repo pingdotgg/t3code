@@ -64,6 +64,8 @@ it("selects the cell under the pointer after zooming a workbook", async () => {
   );
   await userEvent.keyboard("{Control>}");
   await userEvent.wheel(locator, { delta: { y: 168.139916 } });
+  await expect.element(screen.getByText("100%", { exact: true })).toBeVisible();
+  await userEvent.wheel(locator, { delta: { y: 99.425227 } });
   await userEvent.keyboard("{/Control}");
   await expect.element(screen.getByText("37%", { exact: true })).toBeVisible();
   await vi.waitFor(() => {

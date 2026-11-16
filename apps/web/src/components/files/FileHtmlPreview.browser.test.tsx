@@ -6,7 +6,7 @@ it("zooms the sandboxed HTML page and resets to 100 percent", async () => {
   const url = URL.createObjectURL(
     new Blob(
       [
-        '<h1>HTML page</h1><script>addEventListener("load",()=>parent.postMessage("html-fixture-ready","*"))</script>',
+        '<h1>HTML page</h1><script>addEventListener("load",()=>parent.postMessage("html-fixture-ready","*")); addEventListener("message",e=>{if(e.data?.type==="fixture-pinch") dispatchEvent(new WheelEvent("wheel",{ctrlKey:true,deltaY:e.data.delta,cancelable:true}))})</script>',
       ],
       { type: "text/html" },
     ),
@@ -36,6 +36,13 @@ it("zooms the sandboxed HTML page and resets to 100 percent", async () => {
     );
     await screen.getByRole("button", { name: "Reset zoom to 100%" }).click();
     await expect.element(screen.getByText("100%")).toBeVisible();
+    await screen.getByRole("button", { name: "Zoom out", exact: true }).click();
+    await expect.element(screen.getByText("75%")).toBeVisible();
+    const frame = screen.container.querySelector("iframe")!;
+    frame.contentWindow!.postMessage({ type: "fixture-pinch", delta: -90 }, "*");
+    await expect.element(screen.getByText("100%")).toBeVisible();
+    frame.contentWindow!.postMessage({ type: "fixture-pinch", delta: -22.314355 }, "*");
+    await expect.element(screen.getByText("125%")).toBeVisible();
   } finally {
     URL.revokeObjectURL(url);
   }

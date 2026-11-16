@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "./fileZoom";
 import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import { useLayoutEffect, useRef, useState } from "react";
 import { MaximizeIcon } from "lucide-react";
@@ -45,7 +46,7 @@ export default function PreviewImageContent(props: {
     const node = ref.current;
     if (!node || !natural.width) return;
     const previous = pendingScale.current ?? scale;
-    const next = Math.max(0.05, Math.min(8, previous * factor));
+    const next = pinchFileZoom(previous, factor, 0.05, 8);
     if (next === previous) return;
     const width = natural.width * scale;
     const height = natural.height * scale;

@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "../fileZoom";
 import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "../FileZoomControls";
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
 import { observeResize } from "~/lib/observeResize";
@@ -88,7 +89,7 @@ export function OfficePages(props: {
     const root = scroller.current;
     if (!root) return;
     const previous = pendingZoom.current ?? zoom;
-    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, previous * factor));
+    const next = pinchFileZoom(previous, factor, MIN_ZOOM, MAX_ZOOM);
     if (next === previous) return;
     const bounds = root.getBoundingClientRect();
     const y = bounds.top + point.y;

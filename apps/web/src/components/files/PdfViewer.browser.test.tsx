@@ -235,6 +235,8 @@ it("pinches only the PDF around the pointer and leaves plain wheels scrolling", 
     expect(canceled.at(-1)).toBe(true);
     expect(canvas().getBoundingClientRect().width).toBe(612 * 3);
     await userEvent.wheel(locator, { delta: { y: 1000 } });
+    await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBe(612));
+    await userEvent.wheel(locator, { delta: { y: 1000 } });
     await userEvent.keyboard("{/Control}");
     await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBe(612 * 0.25));
     expect(canceled.at(-1)).toBe(true);

@@ -1,3 +1,4 @@
+import { nextFileZoom } from "./fileZoom";
 import { use } from "react";
 import { FilePreviewActions } from "./FilePreviewActions";
 import { MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
@@ -22,7 +23,7 @@ export function FileZoomControls(props: {
       <FileSurfaceAction
         label="Zoom out"
         disabled={props.disabled || props.zoom <= props.min}
-        onPress={() => props.onChange(Math.max(props.min, props.zoom - 0.25))}
+        onPress={() => props.onChange(nextFileZoom(props.zoom, -1, props.min, props.max))}
       >
         <MinusIcon className="size-3.5" />
       </FileSurfaceAction>
@@ -32,7 +33,7 @@ export function FileZoomControls(props: {
       <FileSurfaceAction
         label="Zoom in"
         disabled={props.disabled || props.zoom >= props.max}
-        onPress={() => props.onChange(Math.min(props.max, props.zoom + 0.25))}
+        onPress={() => props.onChange(nextFileZoom(props.zoom, 1, props.min, props.max))}
       >
         <PlusIcon className="size-3.5" />
       </FileSurfaceAction>

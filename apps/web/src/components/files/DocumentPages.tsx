@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "./fileZoom";
 import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import DOMPurify from "dompurify";
 import { useEffect, useRef, useState } from "react";
@@ -157,10 +158,7 @@ export default function DocumentPages(props: {
             stopPinch.current = view
               ? listenForPinch(view, (factor, point) => {
                   const previous = liveZoom.current;
-                  const next = Math.min(
-                    MAX_READING_ZOOM,
-                    Math.max(MIN_READING_ZOOM, previous * factor),
-                  );
+                  const next = pinchFileZoom(previous, factor, MIN_READING_ZOOM, MAX_READING_ZOOM);
                   if (next === previous) return;
                   liveZoom.current = next;
                   setReadingZoom(node, next);

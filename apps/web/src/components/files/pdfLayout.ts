@@ -1,7 +1,8 @@
+import { nextFileZoom } from "./fileZoom";
+
 const PDF_PAGE_GAP = 16;
 export const PDF_MIN_ZOOM = 0.25;
 export const PDF_MAX_ZOOM = 3;
-const PDF_ZOOM_STEP = 0.25;
 
 export function pdfPageWidth(viewportWidth: number, pageWidth: number, zoom: number | null) {
   const fitWidth = Math.max(1, viewportWidth - 2 * PDF_PAGE_GAP);
@@ -12,9 +13,7 @@ export function pdfPageWidth(viewportWidth: number, pageWidth: number, zoom: num
 }
 
 export function stepPdfZoom(scale: number, direction: 1 | -1) {
-  return direction > 0
-    ? Math.min(PDF_MAX_ZOOM, scale + PDF_ZOOM_STEP)
-    : Math.max(PDF_MIN_ZOOM, scale - PDF_ZOOM_STEP);
+  return nextFileZoom(scale, direction, PDF_MIN_ZOOM, PDF_MAX_ZOOM);
 }
 
 /** Top offset of each page plus the end of the last one; ratios are height / width. */

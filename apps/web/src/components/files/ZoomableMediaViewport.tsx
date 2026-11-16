@@ -1,3 +1,4 @@
+import { pinchFileZoom } from "./fileZoom";
 import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { observeResize } from "~/lib/observeResize";
@@ -53,7 +54,7 @@ export function ZoomableMediaViewport({
           })
         : undefined;
     anchor.current = { ...point, left: root.scrollLeft, top: root.scrollTop, scale: zoom, targets };
-    setZoom(Math.min(maxZoom, Math.max(minZoom, zoom * factor)));
+    setZoom(pinchFileZoom(zoom, factor, minZoom, maxZoom));
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the media point beneath the pointer after the new scaled bounds commit.
   useLayoutEffect(() => {

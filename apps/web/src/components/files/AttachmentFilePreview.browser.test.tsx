@@ -1698,7 +1698,8 @@ it("keeps a workspace PDF's page, offset and zoom when a new revision reloads it
     const offset = () =>
       region().getBoundingClientRect().top -
       region().querySelector('canvas[aria-label="Page 2"]')!.getBoundingClientRect().top;
-    await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
+    for (let step = 0; step < 2; step++)
+      await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
     await screen.getByRole("button", { name: "Next page", exact: true }).click();
     await expect.element(screen.getByText("2 / 3 pages", { exact: true })).toBeVisible();
     const zoom = screen.container.textContent!.match(/\d+%/)![0];

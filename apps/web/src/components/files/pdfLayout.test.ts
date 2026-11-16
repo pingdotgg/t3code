@@ -24,16 +24,16 @@ describe("pdfPageWidth", () => {
 });
 
 describe("stepPdfZoom", () => {
-  it("steps by a quarter and clamps to 25%..300%", () => {
+  it("uses preset zoom levels within 25%..300%", () => {
     expect(stepPdfZoom(1, 1)).toBe(1.25);
     expect(stepPdfZoom(1, -1)).toBe(0.75);
     expect(stepPdfZoom(2.9, 1)).toBe(3);
     expect(stepPdfZoom(0.3, -1)).toBe(0.25);
   });
 
-  it("starts from the fit-width scale when no zoom is set", () => {
+  it("moves from the fit-width scale to the next preset", () => {
     const { scale } = pdfPageWidth(500, 612, null);
-    expect(stepPdfZoom(scale, 1)).toBeCloseTo(468 / 612 + 0.25);
+    expect(stepPdfZoom(scale, 1)).toBe(1);
   });
 });
 
