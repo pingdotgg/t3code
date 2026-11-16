@@ -143,6 +143,27 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
+  it.live("stops surviving shell children when the recorded server exits before restart", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const gate = path.join(stateDir, "gate");
+      NodeChildProcess.execFileSync("mkfifo", [gate]);
+      const server = yield* spawnGroup(SERVE_ARGS, `sleep 600 & read _ < '${gate}'; exit 0`);
+      yield* recordFromDeadServer(stateDir, server);
+      yield* fs.writeFileString(gate, "\n");
+      yield* server.exited;
+      expect(groupExists(server.pid)).toBe(true);
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(yield* fs.readDirectory(path.join(stateDir, "opencode-servers"))).toEqual([]);
+      expect(groupExists(server.pid)).toBe(false);
+    }).pipe(provideHost),
+  );
+
   it.live("records a group whose spawned wrapper already exited", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
