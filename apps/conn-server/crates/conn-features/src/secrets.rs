@@ -96,9 +96,7 @@ impl SecretRequests {
                         return;
                     };
                     let service = Self(inner);
-                    let _lock = service.0.lock.lock().await;
                     let _ = service.disk(sweep).await;
-                    drop(_lock);
                     drop(service);
                     tokio::time::sleep(Duration::from_secs(60 * 60)).await;
                 }
@@ -136,7 +134,6 @@ impl SecretRequests {
     }
 
     pub async fn answer(&self, input: SecretRequestAnswerInput) -> Result<(), SecretError> {
-        let _lock = self.0.lock.lock().await;
         let records = self.projection(&input.thread_id).await?;
         let item = records
             .get("turnItems")
@@ -211,9 +208,13 @@ impl SecretRequests {
             fields.insert("secretStatus".into(), json!(status));
         }
         if self.0.engine.record_secret_request(command).await.is_err() {
-            if saved {
-                self.remove_answer(&input.thread_id, &input.turn_item_id)
-                    .await?;
+            if saved
+                && self
+                    .remove_answer(&input.thread_id, &input.turn_item_id)
+                    .await
+                    .is_err()
+            {
+                eprintln!("Could not delete a secret request value");
             }
             return Err(SecretError("record_failed"));
         }
@@ -228,8 +229,13 @@ impl SecretRequests {
             if recorded
                 .is_some_and(|i| i.get("secretStatus").and_then(Value::as_str) != Some("saved"))
             {
-                self.remove_answer(&input.thread_id, &input.turn_item_id)
-                    .await?;
+                if self
+                    .remove_answer(&input.thread_id, &input.turn_item_id)
+                    .await
+                    .is_err()
+                {
+                    eprintln!("Could not delete a secret request value");
+                }
                 return Err(SecretError("agent_stopped"));
             }
         }
@@ -269,7 +275,6 @@ impl SecretRequests {
     }
 
     pub async fn save_to_file(&self, thread: &str, item: &str) -> Result<String, SecretError> {
-        let _lock = self.0.lock.lock().await;
         let records = self.projection(thread).await?;
         let card = records
             .get("turnItems")
@@ -291,6 +296,7 @@ impl SecretRequests {
             .unwrap_or_default()
             .to_owned();
         let (thread, item) = (thread.to_owned(), item.to_owned());
+        let _lock = self.0.lock.lock().await;
         self.disk(move |dir, now| {
             let reference = ref_for(dir, &thread, &item)?;
             let file = file_path(dir, &reference)?;
@@ -312,11 +318,11 @@ impl SecretRequests {
         key: &str,
         value: String,
     ) -> Result<String, SecretError> {
-        let _lock = self.0.lock.lock().await;
+        self.disk(sweep).await?;
         let thread = thread.to_owned();
         let key = format!("pasted\0{namespace}\0{key}");
-        self.disk(move |dir, now| {
-            sweep(dir, now)?;
+        let _lock = self.0.lock.lock().await;
+        self.disk(move |dir, _| {
             let file = file_path(dir, &ref_for(dir, &thread, &key)?)?;
             if !file.try_exists().map_err(|_| SecretError("store_failed"))? {
                 check_capacity(dir)?;
@@ -424,16 +430,20 @@ fn write_file(dir: &Path, file: &Path, value: &str) -> Result<(), SecretError> {
     secret_store::ensure_dir(&files).map_err(|_| SecretError("store_failed"))?;
     let partial = file.with_extension("partial");
     let _ = std::fs::remove_file(&partial);
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&partial)
-        .map_err(|_| SecretError("store_failed"))?;
-    output
-        .write_all(value.as_bytes())
-        .and_then(|()| std::fs::rename(&partial, file))
-        .map_err(|_| SecretError("store_failed"))
+    let result = (|| {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&partial)?;
+        output.write_all(value.as_bytes())?;
+        output.sync_all()?;
+        std::fs::rename(&partial, file)
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&partial);
+    }
+    result.map_err(|_| SecretError("store_failed"))
 }
 
 fn entries(dir: &Path) -> Result<impl Iterator<Item = std::fs::DirEntry>, SecretError> {
@@ -522,6 +532,147 @@ mod tests {
     use super::*;
     use std::fs;
 
+    struct TestEngine {
+        records: Value,
+        fail_record_in: Option<PathBuf>,
+    }
+    impl Engine for TestEngine {
+        fn dispatch(
+            &self,
+            _: conn_contract::Command,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_contract::DispatchCommandResult,
+                conn_engine::EngineError<conn_contract::DispatchCommandError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("unused".into())) })
+        }
+        fn subscribe_shell(
+            &self,
+            _: conn_contract::SubscribeShellInput,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_engine::Subscription<
+                    conn_contract::ShellStreamItem,
+                    conn_contract::GetShellSnapshotError,
+                >,
+                conn_engine::EngineError<conn_contract::GetShellSnapshotError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("unused".into())) })
+        }
+        fn subscribe_thread(
+            &self,
+            _: conn_contract::SubscribeThreadInput,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_engine::Subscription<
+                    conn_contract::ThreadStreamItem,
+                    conn_contract::GetThreadProjectionError,
+                >,
+                conn_engine::EngineError<conn_contract::GetThreadProjectionError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("unused".into())) })
+        }
+        fn get_thread_projection(
+            &self,
+            _: ThreadId,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<Value, conn_engine::EngineError<conn_contract::GetThreadProjectionError>>,
+        > {
+            Box::pin(std::future::ready(Ok(self.records.clone())))
+        }
+        fn record_secret_request(
+            &self,
+            _: Value,
+        ) -> conn_engine::BoxFuture<'_, Result<(), String>> {
+            Box::pin(async move {
+                if let Some(dir) = &self.fail_record_in {
+                    let dir = dir.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let file = dir.join(format!(
+                            "{}.bin",
+                            store_name(&ref_for(&dir, "thread", "item").unwrap())
+                        ));
+                        fs::remove_file(&file).unwrap();
+                        fs::create_dir(file).unwrap();
+                    })
+                    .await
+                    .unwrap();
+                    Err("record failed".into())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+    fn pending_records() -> Value {
+        json!({"thread":{"projectId":"p"},"runs":[{"id":"run","status":"running"}],"turnItems":[{"id":"item","type":"secret_request","threadId":"thread","runId":"run","nodeId":"node","secretStatus":"pending","label":"Key","reason":"Fixture"}]})
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_answer_can_complete_while_an_unrelated_consumer_holds_the_lock() {
+        use std::{
+            future::Future,
+            task::{Context, Poll, Waker},
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "conn-secret-answer-lock-{}",
+            conn_support::uuid_v4()
+        ));
+        let service = SecretRequests::new(
+            &dir,
+            Arc::new(TestEngine {
+                records: pending_records(),
+                fail_record_in: None,
+            }),
+            Arc::new(crate::clock::SystemClock),
+        );
+        let _consumer = service.0.lock.lock().await;
+        let mut answer = std::pin::pin!(
+            service.answer(
+                conn_contract::from_json(
+                    json!({"threadId":"thread","turnItemId":"item","answer":{"type":"decline"}})
+                )
+                .unwrap()
+            )
+        );
+        assert!(
+            matches!(
+                answer
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Ready(Ok(()))
+            ),
+            "answer must not wait for an unrelated consumer"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn failed_answer_cleanup_does_not_replace_the_record_failure() {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-secret-record-error-{}",
+            conn_support::uuid_v4()
+        ));
+        let service = SecretRequests::new(
+            &dir,
+            Arc::new(TestEngine {
+                records: pending_records(),
+                fail_record_in: Some(dir.join("secrets")),
+            }),
+            Arc::new(crate::clock::SystemClock),
+        );
+        let result = service.answer(conn_contract::from_json(json!({"threadId":"thread","turnItemId":"item","answer":{"type":"save","secret":"test-only"}})).unwrap()).await;
+        assert_eq!(result.unwrap_err().0, "record_failed");
+        drop(service);
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[tokio::test(flavor = "current_thread")]
     async fn waits_are_bounded_and_dropping_a_wait_releases_its_slot() {
         let dir =
@@ -546,6 +697,23 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn failed_shell_file_publication_removes_the_partial_file() {
+        let root =
+            std::env::temp_dir().join(format!("conn-secret-partial-{}", conn_support::uuid_v4()));
+        let dir = root.join("secrets");
+        let file = dir.join("files").join("a".repeat(32));
+        fs::create_dir_all(&file).unwrap();
+        assert_eq!(
+            write_file(&dir, &file, "test-only").unwrap_err().0,
+            "store_failed"
+        );
+        assert!(
+            !file.with_extension("partial").exists(),
+            "a failed rename must not leave a secret partial file"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn store_matches_t3_refs_and_records_and_preserves_failed_file_writes() {
         let root =

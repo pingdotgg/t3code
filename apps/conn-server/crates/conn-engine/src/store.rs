@@ -143,7 +143,16 @@ fn collection_of(event_type: &str) -> Option<&'static str> {
 }
 
 /// Events that change only a row's body: they move the shell only when they add a row.
-fn streams_only(event_type: &str) -> bool {
+fn streams_only(event_type: &str, payload: &Value) -> bool {
+    if event_type == "turn-item.updated"
+        && matches!(
+            payload.get("type").and_then(Value::as_str),
+            Some("secret_request" | "link_request" | "user_message")
+        )
+    {
+        return false;
+    }
+
     matches!(
         event_type,
         "message.updated" | "turn-item.updated" | "node.updated" | "provider-turn.updated"
@@ -846,6 +855,7 @@ impl Tx<'_> {
                 .map_err(err)?;
         }
 
+        let affects_shell = inserted || !streams_only(event_type, &payload);
         let mut event = json!({
             "id": format!("event:{seq}"),
             "threadId": thread_id,
@@ -874,7 +884,7 @@ impl Tx<'_> {
                 )
                 .map_err(err)?;
         }
-        if inserted || !streams_only(event_type) {
+        if affects_shell {
             match self.touched.iter_mut().find(|(id, _)| *id == thread_id) {
                 Some(entry) => entry.1 = seq,
                 None => self.touched.push((thread_id, seq)),

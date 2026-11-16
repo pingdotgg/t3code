@@ -350,7 +350,9 @@ thread's `--mcp-config`, and `claude -p --model claude-haiku-5-5 --strict-mcp-co
 a secret card through `Engine::record_secret_request`, waits on committed thread changes and
 returns a one-use ref, an owner-only file path or T3's unsaved note. Values stay in
 `conn_features::secrets::SecretRequests`, beside settings secrets. This server does not
-advertise secret-provider reference answers. `panel_open` shows all five panel kinds through
+advertise secret-provider reference answers. `schedule_task` consumes refs for webhook signing
+in the task's project, once only; an idempotent retry keeps the stored signing secret.
+`panel_open` shows all five panel kinds through
 the connected desktop and stays hidden from outside clients. Browser URLs and tab ids fail
 with `capability_denied`: they need the unimplemented desktop preview relay and current-tab
 pinning. No browser capability is advertised and no hidden browser is started.

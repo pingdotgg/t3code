@@ -41,6 +41,37 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test(flavor = "current_thread")]
+    async fn responses_enforce_trimmed_ids_and_utf16_input_bounds() {
+        let mut table = MethodTable::new();
+        register(
+            &mut table,
+            &Deps {
+                panels: Some(conn_features::panels::PanelBroker::default()),
+                ..Deps::default()
+            },
+        );
+        let Some(Handler::Unary(respond)) = table.get("panels.respond") else {
+            panic!("response registered");
+        };
+        for (field, value) in [
+            ("requestId", "   ".to_owned()),
+            ("requestId", "😀".repeat(65)),
+            ("deviceName", "x".repeat(201)),
+            ("error", "x".repeat(8193)),
+        ] {
+            let mut input = json!({"requestId":"unknown","ok":true});
+            input[field] = json!(value);
+            assert!(
+                matches!(
+                    respond(CallContext::default(), input).await,
+                    Err(Failure::Die(_))
+                ),
+                "{field} must fail contract decoding"
+            );
+        }
+        assert!(respond(CallContext::default(),json!({"requestId":"😀".repeat(64),"ok":true,"deviceName":"x".repeat(200),"error":"x".repeat(8192)})).await.is_ok());
+    }
+    #[tokio::test(flavor = "current_thread")]
     async fn rpc_delivers_the_request_and_the_first_response_finishes_the_wait() {
         let broker = conn_features::panels::PanelBroker::default();
         let mut table = MethodTable::new();

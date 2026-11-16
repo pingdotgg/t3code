@@ -1754,17 +1754,14 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         clock: Arc::new(conn_features::clock::SystemClock),
         zone: jiff::tz::TimeZone::UTC,
         runner: Arc::new(conn_features::scheduled::EngineRunner::new(engine.clone())),
+        secret_requests: base.service.config.secrets.clone(),
         start_timer: false,
     })
     .await;
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
         panels: Some(conn_features::panels::PanelBroker::default()),
-        secrets: Some(conn_features::secrets::SecretRequests::new(
-            &base.dir,
-            engine.clone(),
-            Arc::new(conn_features::clock::SystemClock),
-        )),
+        secrets: config.secrets.clone(),
         engine,
         environment_id: config.environment_id.clone(),
         label: config.label.clone(),
@@ -2568,6 +2565,16 @@ async fn panel_open_delivers_each_panel_to_the_callers_desktop_and_stays_hidden(
     let broker = f.service.config.panels.as_ref().unwrap();
     let mut desktop = broker.subscribe().unwrap();
     let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+
+    for field in ["url", "tabId", "profileId"] {
+        let mut input = json!({"panel":"browser"});
+        input[field] = json!("   ");
+        assert_eq!(
+            rpc_error(&mut agent, "panel_open", input).await.0,
+            -32602,
+            "{field}"
+        );
+    }
     for panel in ["database", "mcp", "diff", "files", "browser"] {
         let mut args = json!({"panel":panel,"focusWindow":false});
         if panel == "database" {
@@ -2620,6 +2627,82 @@ async fn panel_open_delivers_each_panel_to_the_callers_desktop_and_stays_hidden(
             .as_str()
             .unwrap()
             .contains("No Conn desktop app")
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn saved_secret_refs_sign_webhooks_with_project_scope_one_use_and_safe_replays() {
+    let f = fixture_with_tasks("secret-webhook").await;
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Signing", "hang", "full-access", "default").await;
+    let ask = ask_secret(
+        &f,
+        &thread,
+        json!({"label":"Signing key","reason":"Test webhook","clientRequestId":"sign-key"}),
+    );
+    let card = await_secret_card(&f, &thread, "Signing key").await;
+    f.service.config.secrets.as_ref().unwrap().answer(from_json(json!({"threadId":thread,"turnItemId":card["id"],"answer":{"type":"save","secret":"test-sign-key"}})).unwrap()).await.unwrap();
+    let saved = ask.await.unwrap();
+    let signature = json!({"header":"x-signature","encoding":"hex","prefix":"sha256=","secretRef":saved["secretRef"],"secret":"must-not-replace-the-ref"});
+    let tasks = f.service.config.scheduled_tasks.as_ref().unwrap();
+    let wrong = tasks.upsert(from_json(json!({"title":"Wrong project","prompt":"Hello","enabled":true,"projectId":"other-project","schedule":{"type":"webhook","signature":signature},"workspaceStrategy":{"type":"root"},"modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},"runtimeMode":"full-access","interactionMode":"default"})).unwrap()).await.unwrap_err();
+    assert!(
+        wrong.to_string().contains("already used or does not exist"),
+        "{wrong}"
+    );
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let args = json!({"title":"Signed webhook","prompt":"Hello","clientRequestId":"signed-webhook","schedule":{"type":"webhook","signature":signature}});
+    let task = agent.ok("schedule_task", args.clone()).await;
+    assert_eq!(
+        agent.ok("schedule_task", args).await["scheduledTaskId"],
+        task["scheduledTaskId"]
+    );
+    let (code,message) = agent.failure("schedule_task",json!({"prompt":"Hello","clientRequestId":"another-webhook","schedule":{"type":"webhook","signature":signature}})).await;
+    assert_eq!(code, "orchestration_error");
+    assert!(
+        message.contains("already used or does not exist"),
+        "{message}"
+    );
+    let task = tasks
+        .find(task["scheduledTaskId"].as_str().unwrap())
+        .await
+        .unwrap();
+    let token = task
+        .webhook
+        .as_ref()
+        .unwrap()
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap();
+    let body = b"{}";
+    let signed = format!(
+        "sha256={}",
+        conn_support::hex::hex(&conn_support::hmac::hmac_sha256(b"test-sign-key", body))
+    );
+    let result = tasks
+        .trigger_webhook(conn_features::scheduled::webhook::Delivery {
+            hook_id: task.id.clone(),
+            token: token.to_owned(),
+            method: "POST".into(),
+            query: String::new(),
+            headers: vec![("x-signature".into(), signed)],
+            body: body.to_vec(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            result,
+            conn_features::scheduled::webhook::TriggerResult::Accepted { .. }
+        ),
+        "{result:?}"
+    );
+    assert!(
+        !serde_json::to_string(&tasks.list().await)
+            .unwrap()
+            .contains("test-sign-key")
     );
     f.service.config.engine.shutdown().await;
 }

@@ -13,8 +13,6 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, mut input: SecretRequestAnswerInput| {
             let secrets = secrets.clone();
             async move {
-                input.thread_id = input.thread_id.trim().to_owned();
-                input.turn_item_id = input.turn_item_id.trim().to_owned();
                 if let conn_contract::SecretRequestAnswerInputAnswer::Save(save) = &mut input.answer
                 {
                     save.secret = save.secret.trim().to_owned();
@@ -75,6 +73,18 @@ mod tests {
             Failure::Fail(json!({"_tag":"SecretRequestError","reason":"load_failed"}))
         );
         assert!(matches!(answer(CallContext::default(),json!({"threadId":"missing","turnItemId":"missing","answer":{"type":"save","secret":"   "}})).await, Err(Failure::Die(_))));
+        for field in ["threadId", "turnItemId"] {
+            let mut input =
+                json!({"threadId":"missing","turnItemId":"missing","answer":{"type":"decline"}});
+            input[field] = json!("   ");
+            assert!(
+                matches!(
+                    answer(CallContext::default(), input).await,
+                    Err(Failure::Die(_))
+                ),
+                "{field} must fail contract decoding"
+            );
+        }
         conn_engine::Engine::shutdown(engine.as_ref()).await;
         drop(table);
         std::fs::remove_dir_all(dir).unwrap();

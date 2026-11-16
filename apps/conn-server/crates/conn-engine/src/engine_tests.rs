@@ -4188,3 +4188,42 @@ async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart
     );
     engine.shutdown().await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn closing_a_secret_card_clears_the_shell_snapshot_and_resume_stream() {
+    let db = TempDb::new("secret-shell-close");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "secret-shell-thread")).await;
+    let mut changes = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut changes).await;
+    dispatch(&engine, message("t1", "secret-shell-run", "hang")).await;
+    until_provider_turn(&mut changes).await;
+    let p = projection(&engine, "t1").await;
+    let run = &p["runs"][0];
+    for status in ["saved", "declined", "cancelled"] {
+        let item = format!("secret-{status}");
+        let mut command = json!({"commandId":format!("{item}-pending"),"threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":item,"label":"Key","reason":"Fixture","secretStatus":"pending"});
+        engine.record_secret_request(command.clone()).await.unwrap();
+        let before = engine.shell_snapshot().await.unwrap();
+        assert_eq!(before["threads"][0]["pendingRuntimeRequest"]["id"], item);
+        command["commandId"] = json!(format!("{item}-closed"));
+        command["secretStatus"] = json!(status);
+        engine.record_secret_request(command).await.unwrap();
+        let after = engine.shell_snapshot().await.unwrap();
+        assert!(
+            after["threads"][0]["pendingRuntimeRequest"].is_null(),
+            "{status}: {after}"
+        );
+        let mut shell = engine.subscribe_shell(from_json(json!({"afterSequence":before["snapshotSequence"],"requestCompletionMarker":true})).unwrap()).await.unwrap();
+        let changed = next(&mut shell).await;
+        assert_eq!(changed["kind"], "thread.updated", "{status}: {changed}");
+        assert!(
+            changed["thread"]["pendingRuntimeRequest"].is_null(),
+            "{status}: {changed}"
+        );
+    }
+    engine.shutdown().await;
+}

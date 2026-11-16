@@ -6,6 +6,18 @@ use serde_json::json;
 use std::time::Duration;
 
 pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let mut decoded = args.clone();
+    for key in ["url", "tabId", "profileId"] {
+        if let Some(serde_json::Value::String(value)) = decoded.get_mut(key) {
+            *value = value.trim().to_owned();
+            if value.is_empty() {
+                return Err(ToolError::InvalidParams(format!(
+                    "Expected a non-blank string\n  at [\"{key}\"]"
+                )));
+            }
+        }
+    }
+    let args = &decoded;
     let caller = cx.require_thread("This tool")?;
     cx.writing_caller().await?;
     let broker = cx

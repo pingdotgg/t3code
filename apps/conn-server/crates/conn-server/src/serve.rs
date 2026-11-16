@@ -211,23 +211,25 @@ pub async fn serve_with_instances(
         SqliteEngine::open(config),
         "cannot open the engine",
     ));
+    let secrets = conn_features::secrets::SecretRequests::new(
+        &state_dir,
+        engine.clone(),
+        Arc::new(conn_features::clock::SystemClock),
+    );
     let scheduled_tasks =
         conn_features::scheduled::ScheduledTasks::start(conn_features::scheduled::Config {
             state_dir: state_dir.clone(),
             clock: Arc::new(conn_features::clock::SystemClock),
             zone: jiff::tz::TimeZone::system(),
             runner: Arc::new(conn_features::scheduled::EngineRunner::new(engine.clone())),
+            secret_requests: Some(secrets.clone()),
             start_timer: true,
         })
         .await;
     let _ = host.scheduled_tasks.set(scheduled_tasks.clone());
     let mut deps = Deps {
         panels: Some(conn_features::panels::PanelBroker::default()),
-        secrets: Some(conn_features::secrets::SecretRequests::new(
-            &state_dir,
-            engine.clone(),
-            Arc::new(conn_features::clock::SystemClock),
-        )),
+        secrets: Some(secrets),
         engine: Some(engine.clone()),
         scheduled_tasks: Some(scheduled_tasks),
         annotations: Some(conn_features::annotations::Annotations::new(
