@@ -6,7 +6,12 @@ import "~/index.css";
 
 import { act, render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
-import { fileSurface, pullRequestSurface, useRightPanelStore } from "../rightPanelStore";
+import {
+  fileSurface,
+  hostRightPanel,
+  pullRequestSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
 import {
   commitLayoutDrop,
@@ -220,6 +225,7 @@ it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps 
 
 const threadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("chat"));
 const pullRequestThreadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("pr"));
+const sideChatRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("side"));
 
 function SurfaceSync() {
   useLayoutSurfaceSync();
@@ -288,7 +294,7 @@ it("opens a thread's pull request beside a chat of another thread, and it surviv
   ).toHaveLength(1);
 });
 
-it.each<{ name: string; surface: LayoutDragSurface }>([
+it.each<{ name: string; surface: LayoutDragSurface; hosted?: boolean }>([
   {
     name: "pull request",
     surface: pullRequestSurface({
@@ -299,10 +305,14 @@ it.each<{ name: string; surface: LayoutDragSurface }>([
     }),
   },
   { name: "file", surface: fileSurface("src/app.ts", 12, 0) },
+  { name: "file of a side chat", surface: fileSurface("src/app.ts", 12, 0), hosted: true },
 ])(
   "drops only the dragged $name where it lands when the thread's panel hides other surfaces",
-  async ({ surface }) => {
+  async ({ surface, hosted }) => {
     using fixture = setupPullRequestDrop();
+    using _host = hosted
+      ? { [Symbol.dispose]: hostRightPanel(sideChatRef, pullRequestThreadRef) }
+      : undefined;
     const { chatPaneId } = fixture;
     useRightPanelStore.setState({
       byThreadKey: {
@@ -313,7 +323,11 @@ it.each<{ name: string; surface: LayoutDragSurface }>([
         },
       },
     });
-    const source: LayoutDragSource = { kind: "surface", threadRef: pullRequestThreadRef, surface };
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: hosted ? sideChatRef : pullRequestThreadRef,
+      surface,
+    };
     const tabFor = (surfaceId: string) =>
       findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
         ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
@@ -332,3 +346,33 @@ it.each<{ name: string; surface: LayoutDragSurface }>([
     expect(tabFor("diff")?.pane.id).toBe(chatPaneId);
   },
 );
+
+it("drops a side chat's file as its parent's tab where it lands, then moves that tab", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  using _host = { [Symbol.dispose]: hostRightPanel(sideChatRef, pullRequestThreadRef) };
+  const surface = fileSurface("src/app.ts", 12, 0);
+  const source: LayoutDragSource = { kind: "surface", threadRef: sideChatRef, surface };
+  const parentTabs = () =>
+    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef);
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
+  });
+  const dropped = parentTabs()[0]!;
+  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
+  expect(
+    isLayoutDropUseful(useLayoutStore.getState().layout, source, {
+      kind: "side",
+      paneId: dropped.pane.id,
+      side: "left",
+    }),
+  ).toBe(false);
+
+  await act(() => {
+    expect(commitLayoutDrop(source, { kind: "into", paneId: chatPaneId })).toBe(true);
+  });
+  expect(parentTabs().map(({ pane }) => pane.id)).toEqual([chatPaneId]);
+});
