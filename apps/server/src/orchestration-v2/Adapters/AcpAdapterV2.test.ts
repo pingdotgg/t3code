@@ -3380,34 +3380,55 @@ describe("AcpAdapterV2", () => {
           update: { sessionUpdate, messageId, content: { type: "text", text } },
         });
 
-      yield* replay("user_message_chunk", "u1", "hel");
-      yield* replay("user_message_chunk", "u1", "lo");
+      yield* replay("user_message_chunk", "u1", "<monitor-event> is ");
+      yield* replay("user_message_chunk", "u1", "XML");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
       yield* replay("agent_message_chunk", "a1", " ");
       yield* replay("agent_message_chunk", "a1", "there");
       yield* replay("agent_message_chunk", "a3", "\t");
-      yield* replay("agent_message_chunk", "a3", "code");
+      yield* replay("agent_message_chunk", "a3", "code with <monitor-event>");
       yield* replay("agent_message_chunk", "a4", "\n\n");
+      yield* replay("user_message_chunk", "u3", "Why did Monitor 0123abcd ended appear?");
+      // Grok's injected monitor wakes replay as user chunks and stay out of history.
+      yield* replay(
+        "user_message_chunk",
+        "u4",
+        '\n<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">\nline\n</monitor-event>',
+      );
+      yield* replay(
+        "user_message_chunk",
+        "u5",
+        'Monitor "019f44a5-87d1-7640-8e35-6a4667ffc873" ended: exit 0',
+      );
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
       yield* replay("user_message_chunk", "u2", "\n");
       yield* replay("user_message_chunk", "u2", "\tone");
+      yield* sessionUpdateHandler({
+        sessionId: "mock-child-session",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Child private work" },
+        },
+      });
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
       assert.deepEqual(texts(first), [
-        "user:hello",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next",
-        "assistant:\tcode",
+        "assistant:\tcode with <monitor-event>",
+        "user:Why did Monitor 0123abcd ended appear?",
       ]);
       assert.deepEqual(texts(second), [
-        "user:hello",
+        "user:<monitor-event> is XML",
         "assistant:hi there",
         "user:next\n\tone",
-        "assistant:\tcode",
+        "assistant:\tcode with <monitor-event>",
+        "user:Why did Monitor 0123abcd ended appear?",
         "assistant:done",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
@@ -4682,6 +4703,11 @@ describe("AcpAdapterV2", () => {
         const startupMethods = yield* pollProtocolMethods(protocolEvents);
         assert.include(startupMethods, "session/resume");
         assert.notInclude(startupMethods, "session/new");
+        const loaded = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(
+          loaded.messages.map((message) => `${message.role}:${message.text}`),
+          ["user:replay"],
+        );
 
         yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
         assert.notInclude(yield* pollProtocolMethods(protocolEvents), "session/resume");
@@ -11187,6 +11213,19 @@ describe("acpPostSettleContinuationOfferEvidence", () => {
       acpPostSettleContinuationOfferEvidence(monitorStartAck, {
         normalizeToolCall: normalizeXAiAcpToolCallState,
       }),
+    );
+  });
+  it("offers on a reply that only mentions monitor markup, not on monitor chatter", () => {
+    const reply = (text: string) =>
+      ({
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      }) as const;
+    assert.isTrue(acpPostSettleContinuationOfferEvidence(reply("<monitor-event> tags wrap it")));
+    assert.isFalse(
+      acpPostSettleContinuationOfferEvidence(
+        reply('<monitor-event task_id="019f44a5-87d1-7640-8e35-6a4667ffc873">line</monitor-event>'),
+      ),
     );
   });
 });
