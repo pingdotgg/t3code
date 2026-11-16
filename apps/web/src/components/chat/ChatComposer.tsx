@@ -2784,7 +2784,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const { files, folders } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
-    const pastedContext = (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
+    const pastedContext =
+      !isLiteralPendingAnswer &&
+      (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
     if (
       folders.length > 0 ||
       (!pastedContext &&

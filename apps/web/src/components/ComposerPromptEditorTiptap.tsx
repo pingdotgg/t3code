@@ -1405,7 +1405,7 @@ function ComposerPromptEditorTiptapInner(
           if (!clipboardData) return false;
           if (
             clipboardData.files.length > 0 &&
-            !readPastedComposerContext(clipboardData)?.records.length
+            (literalText || !readPastedComposerContext(clipboardData)?.records.length)
           )
             return false;
           const pastedText = readPastedPlainText(clipboardData);
