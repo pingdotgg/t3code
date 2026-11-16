@@ -522,7 +522,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       linuxWmClass: "t3-dulli",
       packageName: "t3-dulli",
       productName: "T3 Dulli",
-      updateRepository: "YJJosh/t3code",
+      updateRepository: "YJJosh/t3dulli",
       usesPrereleaseFeed: true,
     });
   });
@@ -538,13 +538,13 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it.effect("defaults Dulli desktop publishing to the fork prerelease feed", () =>
     Effect.gen(function* () {
       const dulliConfig = yield* resolveGitHubPublishConfig("latest", {
-        defaultRepository: "YJJosh/t3code",
+        defaultRepository: "YJJosh/t3dulli",
         releaseType: "prerelease",
       }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
       assert.deepStrictEqual(dulliConfig, {
         provider: "github",
         owner: "YJJosh",
-        repo: "t3code",
+        repo: "t3dulli",
         releaseType: "prerelease",
       });
     }),
@@ -678,7 +678,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         {
           provider: "github",
           owner: "YJJosh",
-          repo: "t3code",
+          repo: "t3dulli",
           releaseType: "prerelease",
         },
       ]);

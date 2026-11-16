@@ -64,7 +64,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 const LINUX_ICON_SIZES = [16, 22, 24, 32, 48, 64, 128, 256, 512] as const;
 const DESKTOP_APP_ID = "com.t3tools.t3code";
 const DULLI_DESKTOP_APP_ID = "com.yjjosh.t3dulli";
-const DULLI_UPDATE_REPOSITORY = "YJJosh/t3code";
+const DULLI_UPDATE_REPOSITORY = "YJJosh/t3dulli";
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
@@ -4022,7 +4022,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     packageManager: rootPackageJson.packageManager,
     description: brandMetadata.description,
     license: "MIT",
-    homepage: options.brand === "dulli" ? "https://github.com/YJJosh/t3code" : "https://t3.codes",
+    homepage: options.brand === "dulli" ? "https://github.com/YJJosh/t3dulli" : "https://t3.codes",
     author: brandMetadata.author,
     main: "apps/desktop/dist-electron/boot.cjs",
     build: yield* createBuildConfig(

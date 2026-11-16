@@ -31,10 +31,10 @@ export const APP_DISPLAY_NAME =
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
 export const DESKTOP_DOWNLOAD_URL =
   APP_BASE_NAME === "T3 Dulli"
-    ? "https://github.com/YJJosh/t3code/releases"
+    ? "https://github.com/YJJosh/t3dulli/releases"
     : "https://t3.codes/download";
 // Redirects to the App Store or Google Play to match the phone that opens it.
 export const MOBILE_APP_URL =
   APP_BASE_NAME === "T3 Dulli"
-    ? "https://github.com/YJJosh/t3code/releases"
+    ? "https://github.com/YJJosh/t3dulli/releases"
     : "https://t3.codes/mobile";

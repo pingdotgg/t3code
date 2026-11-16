@@ -4,7 +4,7 @@ import { APP_BASE_NAME } from "../branding";
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 const DEFAULT_DESKTOP_RELEASE_REPOSITORY =
-  APP_BASE_NAME === "T3 Dulli" ? "YJJosh/t3code" : "pingdotgg/t3code";
+  APP_BASE_NAME === "T3 Dulli" ? "YJJosh/t3dulli" : "pingdotgg/t3code";
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 
 function isValidRepositorySegment(value: string | undefined): value is string {
@@ -16,7 +16,7 @@ function isValidRepositorySegment(value: string | undefined): value is string {
 function desktopReleaseRepositoryUrl(repository: string | undefined): string {
   const configuredRepository =
     repository === "T3 Dulli"
-      ? "YJJosh/t3code"
+      ? "YJJosh/t3dulli"
       : repository === "T3 Code"
         ? "pingdotgg/t3code"
         : (repository?.trim() ?? "");

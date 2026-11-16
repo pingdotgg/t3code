@@ -39,7 +39,7 @@ export function npmLauncherPackageManifest(version: string, databaseMigration: n
     description:
       "T3 Dulli CLI. Downloads the self-contained executable for this platform from the GitHub Release.",
     license: serverPackageJson.license,
-    repository: { type: "git", url: "https://github.com/YJJosh/t3code", directory: "apps/server" },
+    repository: { type: "git", url: "https://github.com/YJJosh/t3dulli", directory: "apps/server" },
     bin: { t3: "./bin/t3.mjs" },
     files: ["bin", "dist"],
     engines: { node: ">=20.11" },

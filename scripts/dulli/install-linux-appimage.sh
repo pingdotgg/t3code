@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo="${T3_DULLI_GITHUB_REPOSITORY:-YJJosh/t3code}"
+repo="${T3_DULLI_GITHUB_REPOSITORY:-YJJosh/t3dulli}"
 tag="${1:-}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 install_dir="${XDG_BIN_HOME:-$HOME/.local/bin}"

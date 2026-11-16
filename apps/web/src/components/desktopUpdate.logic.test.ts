@@ -94,7 +94,7 @@ describe("canCheckForUpdate", () => {
 
 it("opens the fork release history for Dulli builds", () => {
   expect(getDesktopUpdateReleaseHistoryUrl("T3 Dulli")).toBe(
-    "https://github.com/YJJosh/t3code/releases",
+    "https://github.com/YJJosh/t3dulli/releases",
   );
   expect(getDesktopUpdateReleaseHistoryUrl("T3 Code")).toBe(
     "https://github.com/pingdotgg/t3code/releases",
@@ -103,7 +103,7 @@ it("opens the fork release history for Dulli builds", () => {
 
 it("uses Dulli's release repository and product name", () => {
   expect(getDesktopUpdateReleaseUrl("0.0.36-pi.1", "T3 Dulli")).toBe(
-    "https://github.com/YJJosh/t3code/releases/tag/v0.0.36-pi.1",
+    "https://github.com/YJJosh/t3dulli/releases/tag/v0.0.36-pi.1",
   );
   expect(
     getDesktopUpdateInstallConfirmationMessage(

@@ -6,7 +6,7 @@ The fork keeps upstream's native providers, subagents, schedules, and usage feat
 
 ## Install
 
-Download desktop installers and the Android APK from [T3 Dulli releases](https://github.com/YJJosh/t3code/releases). Fork releases use versions such as `0.1.9-dulli.1` and are marked as prereleases on GitHub.
+Download desktop installers and the Android APK from [T3 Dulli releases](https://github.com/YJJosh/t3dulli/releases). Fork releases use versions such as `0.1.9-dulli.1` and are marked as prereleases on GitHub.
 
 For the CLI:
 

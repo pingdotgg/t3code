@@ -1,6 +1,6 @@
 # T3 Dulli development
 
-T3 Dulli is the `YJJosh/t3code` community fork of **T3 Code v0.1.9** (`24e77473ec`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of this fork. Upstream's own Pi provider remains available.
+T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.9** (`24e77473ec`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider, Pi extensions, Pi sessions, and Pi judge are not part of this fork. Upstream's own Pi provider remains available.
 
 ## Identity and coexistence
 
@@ -16,7 +16,7 @@ Build desktop artifacts with `--brand dulli`; omitting the flag retains upstream
 | Linux WM class                   | `t3-dulli`                                  |
 | Internal desktop origin          | `t3dulli://app/`                            |
 | Desktop artifact prefix          | `T3-Dulli-`                                 |
-| Updates                          | `YJJosh/t3code` prereleases                 |
+| Updates                          | `YJJosh/t3dulli` prereleases                |
 | Default T3 home                  | `~/.t3-dulli`                               |
 
 The fork never claims upstream's `t3code://` callbacks. Its Chromium profile is `t3-dulli` under the platform's application-data directory, separate from upstream profiles. Its systemd service is `t3-dulli.service`; its launchd label is `com.yjjosh.t3dulli.service`. The npm CLI and desktop shim both use `t3`, matching the old fork. Choose which installation owns `t3` on PATH; the desktop installer refuses to replace a foreign command and only removes its own shim.
@@ -56,10 +56,12 @@ Desktop's normal Latest track reads the `dulli` prerelease feed. The old same-ba
 
 Repository setup required before publication:
 
-- npm trusted publisher for **`@yjosh/t3`**, repository `YJJosh/t3code`, workflow `fork-desktop-release.yml` (retain the existing trusted-publisher binding).
+- npm trusted publisher for **`@yjosh/t3`**, repository `YJJosh/t3dulli`, workflow `fork-desktop-release.yml`. The repository was renamed from `YJJosh/t3code`; the trusted publisher must name the new repository, or the npm publish step fails.
 - Secrets `DULLI_MACOS_CERTIFICATE_P12_BASE64` and `DULLI_MACOS_CERTIFICATE_PASSWORD`, plus variable `DULLI_MACOS_CERTIFICATE_SHA1`, for the persistent macOS community identity. The workflow handles RC2 PKCS#12 files on OpenSSL 3 and imports trust noninteractively on the ephemeral runner.
 - Java 21 and the Android SDK/NDK selected by Expo SDK 58 / React Native 0.88.1 for APK builds. Both clean Expo prebuild and Gradle inherit all four `T3CODE_ANDROID_RELEASE_*` settings through the job environment; for v0.1.9, Android versionCode is `10,090,000 + build`.
 - Secrets `DULLI_ANDROID_KEYSTORE_BASE64`, `DULLI_ANDROID_KEYSTORE_PASSWORD`, `DULLI_ANDROID_KEY_ALIAS`, and `DULLI_ANDROID_KEY_PASSWORD`, plus variable `DULLI_ANDROID_CERT_SHA256`. Keep the same Android key to upgrade existing installs. APK identity and signer fingerprint are verified before publication.
+
+The repository was called `YJJosh/t3code` up to v0.1.9-dulli.3. GitHub redirects the old name, so installs from those releases still find updates and downloads under `YJJosh/t3dulli`. Never create a new repository named `YJJosh/t3code`: that breaks the redirect for every older install.
 
 macOS community builds are not notarized: first launch may require **System Settings → Privacy & Security → Open Anyway**. Windows builds are unsigned and can trigger SmartScreen. Android APKs are sideloaded and have no upstream OTA channel; install newer APKs manually. Only approve artifacts you trust.
 
