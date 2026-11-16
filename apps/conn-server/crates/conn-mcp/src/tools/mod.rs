@@ -16,9 +16,11 @@ mod background;
 mod html;
 mod manage;
 mod message;
+mod panels;
 mod projects;
 mod pull_requests;
 mod scheduled;
+mod secrets;
 mod tasks;
 mod threads;
 
@@ -49,8 +51,10 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 
 /// Every name in `tools.implemented` has an arm here; a test checks both ways.
 #[cfg(test)]
-pub(crate) const HANDLED: [&str; 35] = [
+pub(crate) const HANDLED: [&str; 37] = [
     "html_render",
+    "panel_open",
+    "request_secret",
     "t3_background_wait",
     "link_pull_request",
     "link_pull_requests",
@@ -121,6 +125,8 @@ pub(crate) async fn call(
         "t3_queue" => manage::queue(&cx, &args).await,
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "panel_open" => panels::open(&cx, &args).await,
+        "request_secret" => secrets::request(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,
         "t3_background_wait" => background::wait(&cx, &args).await,
         "delegate_task" => tasks::delegate(&cx, &args).await,

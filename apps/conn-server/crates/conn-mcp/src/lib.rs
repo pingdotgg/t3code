@@ -48,6 +48,10 @@ pub struct McpConfig {
     pub annotations: Option<conn_features::annotations::Annotations>,
     /// Attachment publication and protected HTML source reads.
     pub files: Option<Arc<conn_files::Files>>,
+    /// The store also used by secrets.answerRequest.
+    pub secrets: Option<conn_features::secrets::SecretRequests>,
+    /// The broker also used by panels.requests and panels.respond.
+    pub panels: Option<conn_features::panels::PanelBroker>,
 }
 
 impl std::fmt::Debug for McpConfig {

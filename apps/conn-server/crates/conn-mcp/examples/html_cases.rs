@@ -76,6 +76,8 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         hosted_app_url: conn_mcp::DEFAULT_HOSTED_APP_URL.into(),
         scheduled_tasks: None,
         annotations: None,
+        secrets: None,
+        panels: None,
         files: Some(files),
     });
     let client = Caller::Client(ClientCaller {

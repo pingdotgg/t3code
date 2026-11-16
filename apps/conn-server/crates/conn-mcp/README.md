@@ -85,7 +85,7 @@ hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_req
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
 
-**Served: 35 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
+**Served: 37 of 87.** Definitions come byte for byte from `apps/server`. Each served tool has
 a unit test and `parity.mjs` steps.
 
 Where they differ, because the engine does not do it yet:
@@ -219,7 +219,7 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-Totals: served 35 (the five pull request link tools since source control part 4,
+Totals: served 37 (the five pull request link tools since source control part 4,
 `t3_background_wait` since 2026-11-14); needs nothing new 11; needs an engine or provider
 feature 3; needs a part of the server or a client we do not have 52. (`schedule_task` and
 three more scheduled task tools, and the four annotation tools, are served too but still
@@ -354,3 +354,20 @@ its attachment. The result is the normal client render reference and T3's succes
 No preview capability is advertised. `html_preview` and the browser tools remain unserved.
 The implementation omits optional browser-measured heights and provider-result recovery;
 see [HTML publication parity](../conn-files/HTML-PORTING.md).
+## Secret requests
+
+`request_secret` acts as the calling thread and stays hidden from outside clients. It records
+a secret card through `Engine::record_secret_request`, waits on committed thread changes and
+returns a one-use ref, an owner-only file path or T3's unsaved note. Values stay in
+`conn_features::secrets::SecretRequests`, beside settings secrets. This server does not
+advertise secret-provider reference answers. `schedule_task` consumes refs for webhook signing
+in the task's project, once only; an idempotent retry keeps the stored signing secret.
+`panel_open` shows all five panel kinds through
+the connected desktop and stays hidden from outside clients. Browser URLs and tab ids fail
+with `capability_denied`: they need the unimplemented desktop preview relay and current-tab
+pinning. No browser capability is advertised and no hidden browser is started.
+
+`secret_*` Rust tests prove active-run ownership, save, decline, timeout, Stop, aborted calls,
+one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
+the same hidden-tool result on both servers. The `url` dependency is already linked through
+source control; it validates the tool's http(s) URL input without a second parser.

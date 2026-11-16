@@ -3979,6 +3979,11 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
     dispatch(&engine, create("t1", "c1")).await;
     dispatch(&engine, message("t1", "c2", "hello")).await;
     run_to_end(&engine, "t1", "run:t1:1").await;
+    let mut changes = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut changes).await;
     dispatch(&engine, message("t1", "c3", "latestart")).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     dispatch(&engine, stop("t1", "c4")).await;
@@ -3986,7 +3991,16 @@ async fn a_turn_accepted_after_stop_is_interrupted() {
         run_of(&projection(&engine, "t1").await, "run:t1:2")["status"],
         "interrupted"
     );
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    loop {
+        let item = next(&mut changes).await;
+        let event = &item["event"];
+        if event["type"] == "provider-turn.updated"
+            && event["payload"]["runAttemptId"] == "run:t1:2:attempt:1"
+            && event["payload"]["status"] == "interrupted"
+        {
+            break;
+        }
+    }
     let calls = crate::lock(&provider.calls).clone();
     assert!(calls.contains(&"abandon run:t1:2".to_owned()), "{calls:?}");
     assert!(
@@ -4116,4 +4130,114 @@ async fn work_queued_behind_an_abandoned_start_runs_after_it() {
     let abandoned = calls.iter().position(|c| c == "start abandoned run:t1:2");
     let next_start = calls.iter().position(|c| c == "start run:t1:3");
     assert!(abandoned.is_some() && abandoned < next_start, "{calls:?}");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart() {
+    let db = TempDb::new("secret-cards");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "secret-thread")).await;
+        let mut changes = engine
+            .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut changes).await;
+        dispatch(&engine, message("t1", "secret-run", "hang")).await;
+        until_provider_turn(&mut changes).await;
+        let p = projection(&engine, "t1").await;
+        let run = &p["runs"][0];
+        let command = json!({"commandId":"secret-pending","threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":"secret-card","label":"API key","reason":"Test","secretStatus":"pending"});
+        let mut wrong = command.clone();
+        wrong["nodeId"] = json!("wrong");
+        assert!(engine.record_secret_request(wrong).await.is_err());
+        engine.record_secret_request(command.clone()).await.unwrap();
+        let p = projection(&engine, "t1").await;
+        let initial = p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "secret-card")
+            .unwrap();
+        let mut declined = command.clone();
+        declined["commandId"] = json!("secret-declined");
+        declined["secretStatus"] = json!("declined");
+        engine.record_secret_request(declined).await.unwrap();
+        let mut again = command.clone();
+        again["commandId"] = json!("secret-again");
+        engine.record_secret_request(again).await.unwrap();
+        let p = projection(&engine, "t1").await;
+        let cards: Vec<_> = p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["id"] == "secret-card")
+            .collect();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["secretStatus"], "declined");
+        assert_eq!(cards[0]["ordinal"], initial["ordinal"]);
+        assert_eq!(cards[0]["startedAt"], initial["startedAt"]);
+        let mut waiting = command;
+        waiting["commandId"] = json!("secret-waiting");
+        waiting["turnItemId"] = json!("restart-card");
+        engine.record_secret_request(waiting).await.unwrap();
+        engine.begin_shutdown();
+        engine.shutdown().await;
+    }
+    let (engine, _) = open(&db);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["runs"].as_array().unwrap().len(),
+        1,
+        "a run waiting on a card is never auto-resumed"
+    );
+    assert_eq!(
+        p["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == "restart-card")
+            .unwrap()["secretStatus"],
+        "cancelled"
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn closing_a_secret_card_clears_the_shell_snapshot_and_resume_stream() {
+    let db = TempDb::new("secret-shell-close");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "secret-shell-thread")).await;
+    let mut changes = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut changes).await;
+    dispatch(&engine, message("t1", "secret-shell-run", "hang")).await;
+    until_provider_turn(&mut changes).await;
+    let p = projection(&engine, "t1").await;
+    let run = &p["runs"][0];
+    for status in ["saved", "declined", "cancelled"] {
+        let item = format!("secret-{status}");
+        let mut command = json!({"commandId":format!("{item}-pending"),"threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":item,"label":"Key","reason":"Fixture","secretStatus":"pending"});
+        engine.record_secret_request(command.clone()).await.unwrap();
+        let before = engine.shell_snapshot().await.unwrap();
+        assert_eq!(before["threads"][0]["pendingRuntimeRequest"]["id"], item);
+        command["commandId"] = json!(format!("{item}-closed"));
+        command["secretStatus"] = json!(status);
+        engine.record_secret_request(command).await.unwrap();
+        let after = engine.shell_snapshot().await.unwrap();
+        assert!(
+            after["threads"][0]["pendingRuntimeRequest"].is_null(),
+            "{status}: {after}"
+        );
+        let mut shell = engine.subscribe_shell(from_json(json!({"afterSequence":before["snapshotSequence"],"requestCompletionMarker":true})).unwrap()).await.unwrap();
+        let changed = next(&mut shell).await;
+        assert_eq!(changed["kind"], "thread.updated", "{status}: {changed}");
+        assert!(
+            changed["thread"]["pendingRuntimeRequest"].is_null(),
+            "{status}: {changed}"
+        );
+    }
+    engine.shutdown().await;
 }

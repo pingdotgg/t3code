@@ -265,6 +265,7 @@ pub struct Config {
     pub clock: Arc<dyn Clock>,
     pub zone: TimeZone,
     pub runner: Arc<dyn TaskRunner>,
+    pub secret_requests: Option<crate::secrets::SecretRequests>,
     /// `false` leaves the timer parked: only `runNow` runs tasks. Tests use it as the T3
     /// server's tests park their scheduler.
     pub start_timer: bool,
@@ -281,6 +282,7 @@ struct Inner {
     clock: Arc<dyn Clock>,
     zone: TimeZone,
     runner: Arc<dyn TaskRunner>,
+    secret_requests: Option<crate::secrets::SecretRequests>,
     /// The store: every task, in no order. Held across a file write so writes land in order.
     tasks: Mutex<Vec<ScheduledTask>>,
     /// Tasks with a run between its start and its record (`activeRuns`).
@@ -386,6 +388,7 @@ impl ScheduledTasks {
                 clock: config.clock,
                 zone: config.zone,
                 runner: config.runner,
+                secret_requests: config.secret_requests,
                 tasks: Mutex::new(tasks),
                 active: StdMutex::new(HashSet::new()),
                 followers: StdMutex::new(HashMap::new()),
@@ -571,10 +574,12 @@ impl ScheduledTasks {
                     .ok()
                     .and_then(|c| c.get(&id).cloned());
                 let save = webhook::prepare_save(
-                    &input.schedule,
+                    &input,
                     &id,
                     existing.as_ref().map(|e| (e, stored.as_ref())),
-                )?;
+                    self.inner.secret_requests.as_ref(),
+                )
+                .await?;
                 (save.schedule, Some(save.credentials))
             }
         };

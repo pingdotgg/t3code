@@ -1840,6 +1840,7 @@ pub(crate) fn finish_run_as(
     if !is_live(&run) {
         return Ok(false);
     }
+    crate::secret_requests::cancel_pending(tx, thread_id, run_id)?;
     if status == "interrupted" {
         write_interrupt_result(tx, thread_id, &run, None)?;
     }

@@ -60,9 +60,14 @@ fn may_continue(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> 
     let resting = !thread["archivedAt"].is_null()
         || thread["settledOverride"] == "settled"
         || !thread["snoozedUntil"].is_null();
-    let pending = !tx
-        .entities_where(thread_id, "runtimeRequests", "status", "pending")?
-        .is_empty();
+    let secret_pending = tx
+        .entities_where(thread_id, "turnItems", "secretStatus", "pending")?
+        .iter()
+        .any(|i| i.get("runId") == run.get("id"));
+    let pending = secret_pending
+        || !tx
+            .entities_where(thread_id, "runtimeRequests", "status", "pending")?
+            .is_empty();
     // The provider thread must be one it can resume.
     let resumable = thread["activeProviderThreadId"]
         .as_str()

@@ -349,7 +349,7 @@ async fn checks_the_configured_signature_and_keeps_the_secret_write_only() {
             .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
-    // A secretRef needs `request_secret`, which this server does not serve.
+    // This service is not wired to the secret request store yet.
     assert!(
         refused(
             &service,
