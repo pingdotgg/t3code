@@ -3554,6 +3554,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Include turn completion so unchanged message rows reveal their footer and spacing
   // even when the final message update arrives before the turn settles.
   const listAppearanceData = {
+    group,
     disclosureLayout,
     reduceMotion,
     formatMessageTime,

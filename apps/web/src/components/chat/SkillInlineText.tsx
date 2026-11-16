@@ -39,6 +39,8 @@ function SkillInlineText(props: {
     });
   }
   for (const mention of groupMentionOccurrences(props.text, props.group)) {
+    const member = mention.member;
+    const threadRef = props.threadRef;
     chips.push({
       start: mention.start,
       end: mention.end,
@@ -48,6 +50,11 @@ function SkillInlineText(props: {
           label={mention.label}
           isPrimary={mention.isPrimary}
           source={mention.source}
+          onOpenWork={
+            member === "primary" || threadRef === undefined
+              ? undefined
+              : () => useRightPanelStore.getState().openSideChat(threadRef, member)
+          }
         />
       ),
     });
