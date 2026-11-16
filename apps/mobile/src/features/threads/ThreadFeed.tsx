@@ -2,7 +2,11 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
-import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import {
+  ThreadMarkdownVideo,
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -81,6 +85,7 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
+  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -98,7 +103,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { textDirection } from "@t3tools/shared/textDirection";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -114,8 +119,10 @@ import {
   useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
+  type Dispatch,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
 } from "react";
 import {
   Image,
@@ -136,7 +143,10 @@ import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/F
 import { assetImageSource } from "../../lib/assetImageSource";
 import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
-import { isFileBackedComposerAttachment } from "../../lib/composerImages";
+import {
+  isFileBackedComposerAttachment,
+  type FileBackedComposerAttachment,
+} from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
 import {
   rememberSentImage,
@@ -173,7 +183,11 @@ import {
 import { AppText as Text } from "../../components/ui/AppText";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
-import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
+import {
+  attachmentVideoPreviewSource,
+  mediaVideoThumbnailKey,
+  type MediaVideoPreviewSource,
+} from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
@@ -444,7 +458,14 @@ function AssistantForkButton(props: {
           },
         })
           .then(async (result) => {
-            if (result._tag !== "Success") return;
+            if (isAtomCommandInterrupted(result)) return;
+            if (result._tag !== "Success") {
+              Dialog.alert(
+                "Could not confirm fork",
+                "Reconnect and check the thread list before trying again.",
+              );
+              return;
+            }
             const targetThreadReady = await waitForThreadShell(
               scopeThreadRef(props.environmentId, targetThreadId),
             );
@@ -658,7 +679,6 @@ function MessageAttachmentFile(props: {
   readonly attachment: ChatFileAttachment;
   readonly onPressPreview: (source: FilePreviewSource) => void;
   readonly onPlaybackStart: () => void;
-  readonly standaloneMedia?: boolean;
   readonly standaloneFile?: boolean;
   readonly available?: boolean;
 }) {
@@ -795,14 +815,10 @@ function MessageAttachmentFile(props: {
 
   if (videoType !== null) {
     return (
-      <View
-        className={props.standaloneMedia ? undefined : "my-1"}
-        style={{ width: props.standaloneMedia ? 320 : 224, maxWidth: "100%" }}
-      >
+      <View className="my-1" style={{ width: 224, maxWidth: "100%" }}>
         <ThreadMarkdownVideo
           source={attachmentVideoPreviewSource(props.environmentId, attachment, sourceIdentifier)}
           onPlaybackStart={props.onPlaybackStart}
-          borderRadius={props.standaloneMedia ? 20 : undefined}
         />
       </View>
     );
@@ -893,7 +909,6 @@ function UserMessageMedia(props: {
     ...props.pendingAttachments.map((attachment, index) => {
       const image = isImageAttachment(attachment);
       return {
-        id: attachment.id,
         image,
         content:
           image && attachment.uploadedAttachmentId ? (
@@ -907,30 +922,31 @@ function UserMessageMedia(props: {
               onImageLoad={(loaded) => rememberSentImage(props.messageId, index, loaded)}
               onPressPreview={props.onPressPreview}
             />
-          ) : !image && attachment.uploadedAttachmentId ? (
-            <ThreadMarkdownVideo
-              source={attachmentVideoPreviewSource(props.environmentId, {
-                ...attachment,
-                type: "file",
-                id: attachment.uploadedAttachmentId,
-              })}
+          ) : !image ? (
+            <UserMessageVideo
+              environmentId={props.environmentId}
+              messageId={props.messageId}
+              index={index}
+              local={isFileBackedComposerAttachment(attachment) ? attachment : null}
+              uploaded={
+                attachment.uploadedAttachmentId === undefined
+                  ? null
+                  : { ...attachment, type: "file", id: attachment.uploadedAttachmentId }
+              }
               onPlaybackStart={props.onPlaybackStart}
-              borderRadius={20}
             />
           ) : (
-            <PendingMessageMedia
+            <PendingMessageImage
               attachment={attachment}
               {...imageProps(index)}
               {...handoffProps(sentImageHandoff(props.messageId, index, attachment.id))}
               onImageLoad={(image) => rememberSentImage(props.messageId, index, image)}
               onPressPreview={props.onPressPreview}
-              onPlaybackStart={props.onPlaybackStart}
             />
           ),
       };
     }),
     ...props.attachments.map((attachment, index) => ({
-      id: attachment.id,
       image: isImageAttachment(attachment),
       content: isImageAttachment(attachment) ? (
         <MessageAttachmentImage
@@ -943,12 +959,13 @@ function UserMessageMedia(props: {
           onPressPreview={props.onPressPreview}
         />
       ) : isFileAttachment(attachment) ? (
-        <MessageAttachmentFile
+        <UserMessageVideo
           environmentId={props.environmentId}
-          attachment={attachment}
-          onPressPreview={props.onPressPreview}
+          messageId={props.messageId}
+          index={index}
+          local={null}
+          uploaded={attachment}
           onPlaybackStart={props.onPlaybackStart}
-          standaloneMedia
         />
       ) : null,
     })),
@@ -972,7 +989,8 @@ function UserMessageMedia(props: {
         media
           .filter((_, index) => index % 2 === 0)
           .map((item, index) => (
-            <View key={item.id} className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
+            // oxlint-disable-next-line react/no-array-index-key -- delivery re-ids attachments; position is the stable identity
+            <View key={index} className="flex-row" style={{ gap: StyleSheet.hairlineWidth }}>
               <View className="min-w-0 flex-1">{item.content}</View>
               {media[index * 2 + 1] ? (
                 <View className="min-w-0 flex-1">{media[index * 2 + 1]!.content}</View>
@@ -984,9 +1002,10 @@ function UserMessageMedia(props: {
     </View>
   ) : (
     <View className="items-end gap-2">
-      {media.map((item) => (
+      {media.map((item, index) => (
         <View
-          key={item.id}
+          // oxlint-disable-next-line react/no-array-index-key -- delivery re-ids attachments; a new key would remount the media
+          key={index}
           className="overflow-hidden rounded-[20px]"
           style={{ width: item.image ? undefined : 320, maxWidth: "100%" }}
         >
@@ -1001,7 +1020,7 @@ function UserMessageMedia(props: {
   );
 }
 
-function PendingMessageMedia(props: {
+function PendingMessageImage(props: {
   readonly attachment: QueuedThreadMessage["attachments"][number];
   readonly className: string;
   readonly maxWidth?: number;
@@ -1009,36 +1028,70 @@ function PendingMessageMedia(props: {
   readonly handoff?: SentImageHandoff;
   readonly onImageLoad?: (image: SentImageHandoff) => void;
   readonly onPressPreview: (source: FilePreviewSource) => void;
-  readonly onPlaybackStart: () => void;
 }) {
   const withGallery = useFilePreviewGallery();
   const { attachment, handoff } = props;
   const fileBacked = isFileBackedComposerAttachment(attachment);
   const preview = useLocalAttachmentPreview(fileBacked ? attachment : null);
-  if (isImageAttachment(attachment)) {
-    // The composer already showed this image; reuse its pixels and shape instead of a blank box.
-    const uri =
-      handoff?.uri ?? (fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri));
-    return (
-      <MessageImage
-        key={attachment.id}
-        source={uri == null ? undefined : { uri }}
-        className={props.className}
-        maxWidth={props.maxWidth}
-        height={props.height}
-        accessibilityLabel={`Open ${attachment.name}`}
-        {...handoffProps(handoff)}
-        onLoad={(size) => {
-          if (uri) props.onImageLoad?.({ uri, aspectRatio: size.width / size.height });
-        }}
-        onPress={() => {
-          const source = composerImageGallery([attachment])[0];
-          if (source) props.onPressPreview(withGallery(source));
-        }}
-      />
-    );
+  // The composer already showed this image; reuse its pixels and shape instead of a blank box.
+  const uri =
+    handoff?.uri ?? (fileBacked ? preview.uri : (attachment.dataUrl ?? attachment.previewUri));
+  return (
+    <MessageImage
+      key={attachment.id}
+      source={uri == null ? undefined : { uri }}
+      className={props.className}
+      maxWidth={props.maxWidth}
+      height={props.height}
+      accessibilityLabel={`Open ${attachment.name}`}
+      {...handoffProps(handoff)}
+      onLoad={(size) => {
+        if (uri) props.onImageLoad?.({ uri, aspectRatio: size.width / size.height });
+      }}
+      onPress={() => {
+        const source = composerImageGallery([attachment])[0];
+        if (source) props.onPressPreview(withGallery(source));
+      }}
+    />
+  );
+}
+
+/**
+ * A sent video from queueing through delivery. Every stage renders this one player under a
+ * thumbnail key of message and position, so swapping the local file for the server copy keeps
+ * the poster on screen instead of remounting to black and extracting a frame again.
+ */
+function UserMessageVideo(props: {
+  readonly environmentId: EnvironmentId;
+  readonly messageId: string;
+  readonly index: number;
+  readonly local: FileBackedComposerAttachment | null;
+  readonly uploaded: ChatFileAttachment | null;
+  readonly onPlaybackStart: () => void;
+}) {
+  const sourceIdentifier = useId();
+  const preview = useLocalAttachmentPreview(props.local);
+  const current: MediaVideoPreviewSource | null =
+    props.local !== null && preview.uri !== null
+      ? {
+          type: "media",
+          name: props.local.name,
+          mimeType: props.local.mimeType,
+          uri: preview.uri,
+        }
+      : props.uploaded !== null
+        ? attachmentVideoPreviewSource(props.environmentId, props.uploaded, sourceIdentifier)
+        : null;
+  // Each copy of a message reopens its local file; keep the last source while the next one loads.
+  const [shown, setShown] = useState(current);
+  if (
+    current !== null &&
+    (shown === null || mediaVideoThumbnailKey(current) !== mediaVideoThumbnailKey(shown))
+  ) {
+    setShown(current);
   }
-  if (preview.uri === null) {
+  const source = current ?? shown;
+  if (source === null) {
     return (
       <View className="aspect-video items-center justify-center bg-black">
         {preview.error ? (
@@ -1051,12 +1104,8 @@ function PendingMessageMedia(props: {
   }
   return (
     <ThreadMarkdownVideo
-      source={{
-        type: "media",
-        name: attachment.name,
-        mimeType: attachment.mimeType,
-        uri: preview.uri,
-      }}
+      source={source}
+      thumbnailKey={JSON.stringify(["user-message-video", props.messageId, props.index])}
       onPlaybackStart={props.onPlaybackStart}
       borderRadius={20}
     />
@@ -1119,12 +1168,26 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
   );
 }
 
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
+function ThreadMediaVisibility(props: {
+  readonly rowId: string;
+  readonly setRetainedRowId: Dispatch<SetStateAction<string | null>>;
+  readonly children: ReactNode;
+}) {
+  const { rowId, setRetainedRowId } = props;
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
     useCallback((token) => setVisible(token.sizeVisible > 0), []),
   );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
+  const retain = useCallback(
+    (retained: boolean) =>
+      setRetainedRowId((current) => (retained ? rowId : current === rowId ? null : current)),
+    [rowId, setRetainedRowId],
+  );
+  return (
+    <ThreadMediaRetainContext value={retain}>
+      <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>
+    </ThreadMediaRetainContext>
+  );
 }
 
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
@@ -2796,6 +2859,10 @@ const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
   on: { dataChange: true, itemLayout: true, layout: true },
 } as const;
 
+// A thread switch remounts the feed. Starting from the last split pane's size lays rows out once,
+// instead of at width 0 and again when the new feed's own layout reports the same width.
+let lastSplitViewport: { windowWidth: number; width: number; height: number } | null = null;
+
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const formatMessageTime = useMessageTimeFormatter();
   const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
@@ -2806,6 +2873,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
+  const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
+  const focused = useIsFocused();
+  if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
       setReviewSelectedSectionId(
@@ -2830,10 +2901,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const settledPaneWidth = useWorkspaceSettledContentWidth();
   const splitLayout = (props.layoutVariant ?? "compact") !== "compact";
-  const [measuredViewportWidth, setViewportWidth] = useState(() => (splitLayout ? 0 : windowWidth));
+  const [initialSplitViewport] = useState(() =>
+    splitLayout && lastSplitViewport?.windowWidth === windowWidth ? lastSplitViewport : null,
+  );
+  const [measuredViewportWidth, setViewportWidth] = useState(() =>
+    splitLayout ? (initialSplitViewport?.width ?? 0) : windowWidth,
+  );
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
-  const [viewportHeight, setViewportHeight] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(() => initialSplitViewport?.height ?? 0);
   const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
   const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
   const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3433,10 +3509,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headerMaterialVisibleRef.current = visible;
     onHeaderMaterialVisibilityChange?.(visible);
   };
-  const handleMetricsChange = () => {
+  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
+  const [landedListKey, setLandedListKey] = useState<string | null>(null);
+  // LegendList reports ready, and shows its rows, while rows measured during its initial scroll can
+  // still leave it hundreds of points short of the end; isAtEnd stays true through that.
+  const settling = props.feed.length > 0 && landedListKey !== feedThreadKey;
+  const landingFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reportMetrics = (ready: boolean) => {
     const state = listRef.current?.getState();
-    if (state) onIsAtEndChange?.(state.isAtEnd);
+    if (!state) return;
+    if (
+      settling &&
+      ready &&
+      (state.distanceFromEnd <= 2 || !state.isFollowingEnd || props.jumpToMessageId)
+    ) {
+      setLandedListKey(feedThreadKey);
+    }
+    // Offset 0 before the first positioning, and the gaps while rows measure in, are not the
+    // user leaving the end; only a scroll away stops end following.
+    onIsAtEndChange?.(settling || state.isAtEnd || state.isFollowingEnd);
   };
+  const handleMetricsChange = () => reportMetrics(loadedListKey === feedThreadKey);
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     reportHeaderMaterialVisibility(
       event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
@@ -3450,6 +3544,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     handleMetricsChange();
     const stops = [
       state.listen("isAtEnd", handleMetricsChange),
+      state.listen("isFollowingEnd", handleMetricsChange),
       state.listen("totalSize", handleMetricsChange),
       state.listen("footerSize", handleMetricsChange),
       state.listen("headerSize", handleMetricsChange),
@@ -3458,7 +3553,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       for (const stop of stops) stop();
     };
   }, [listRef, handleMetricsChange]);
-  const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the landing fallback timer when the feed unmounts
+  useEffect(
+    () => () => {
+      if (landingFallback.current !== null) clearTimeout(landingFallback.current);
+    },
+    [],
+  );
   const [workGroupScrollPositions] = useState(
     () => new Map<string, ThreadWorkGroupScrollPosition>(),
   );
@@ -3466,7 +3567,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // Opening at a message: once the filled list has loaded, the render that sees
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
-  const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
   const jumpReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
@@ -3530,6 +3630,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const handleViewportLayout = (event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     const nextHeight = Math.round(event.nativeEvent.layout.height);
+    if (splitLayout) lastSplitViewport = { windowWidth, width: nextWidth, height: nextHeight };
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
   };
@@ -3798,7 +3899,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         threadId={props.threadId}
         workspaceRoot={props.workspaceRoot}
       >
-        <ThreadMediaVisibility>
+        <ThreadMediaVisibility rowId={info.item.id} setRetainedRowId={setRetainedMediaRowId}>
           {info.item.type === "message" &&
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.freshContext ? (
@@ -3902,7 +4003,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           <KeyboardAwareLegendList
             ref={attachList}
             dataKey={feedThreadKey}
-            style={{ flex: 1 }}
+            style={settling ? { flex: 1, opacity: 0 } : { flex: 1 }}
             // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
             applyWorkaroundForContentInsetHitTestBug
             {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
@@ -3937,6 +4038,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }}
             getFixedItemSize={getFixedItemSize}
             drawDistance={500}
+            {...(retainedMediaRowId ? { alwaysRender: { keys: [retainedMediaRowId] } } : {})}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
             // Android scrolls a tapped selectable message into view when it takes focus, which reads
@@ -3953,7 +4055,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             initialScrollAtEnd
             onReady={() => {
               setLoadedListKey(feedThreadKey);
-              handleMetricsChange();
+              reportMetrics(true);
+              // Never leave the feed hidden if end following stalls short of the end.
+              landingFallback.current = setTimeout(() => setLandedListKey(feedThreadKey), 1000);
             }}
             onLayout={handleMetricsChange}
             onItemSizeChanged={handleItemSizeChanged}
