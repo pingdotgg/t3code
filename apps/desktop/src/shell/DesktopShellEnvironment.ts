@@ -6,6 +6,7 @@ import {
   mergePathValues,
   readUserLoginShell,
   setWindowsPath,
+  windowsEnvironmentValueCommand,
 } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -232,7 +233,7 @@ const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
     ...names.flatMap((name) => {
       return [
         `Write-Output '${startMarker(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        windowsEnvironmentValueCommand(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${endMarker(name)}'`,
       ];
