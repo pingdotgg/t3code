@@ -1,5 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import {
+  WORKTREE_SETUP_STAGE_ORDER,
   worktreeSetupStageLabel,
   type WorktreeSetupSnapshot,
   type WorktreeSetupStage,
@@ -19,8 +20,6 @@ import { useVisibleSecondClock } from "./use-visible-second-clock";
 export interface WorktreeSetupCardProps {
   snapshot: WorktreeSetupSnapshot;
   turnStarted: boolean;
-  turnStartedAt: string | null;
-  working: boolean;
   onCancel: () => void;
   onWorkLocally: (() => void) | null;
 }
@@ -40,38 +39,32 @@ const icons: Record<WorktreeSetupStage["status"], AppSymbolName> = {
 };
 
 export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
-  const { snapshot, turnStarted, turnStartedAt, working } = props;
+  const { snapshot, turnStarted } = props;
   const handedOff = turnStarted && worktreeSetupAgentStarted(snapshot);
   const running = snapshot.phase === "running";
   const backgroundSetup = handedOff && running;
   const scriptName = snapshot.setupScript?.name ?? "Setup script";
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const now = useVisibleSecondClock(running || working);
+  const now = useVisibleSecondClock(running);
   const failed =
     snapshot.phase === "failed" || snapshot.stages.some((stage) => stage.status === "failed");
-  const label =
-    handedOff && working
-      ? `Working for ${elapsed(turnStartedAt, null, now) ?? "0s"}`
-      : running
-        ? handedOff
-          ? "Setup continues…"
-          : "Setting up worktree…"
-        : snapshot.phase === "cancelled"
-          ? "Worktree setup cancelled"
-          : snapshot.phase === "failed"
-            ? "Worktree setup failed"
-            : failed
-              ? "Setup script failed"
-              : "Worktree ready";
+  // Once the agent has the turn, its own fold row carries the working timer.
+  const label = running
+    ? handedOff
+      ? "Setup continues…"
+      : "Setting up worktree…"
+    : snapshot.phase === "cancelled"
+      ? "Worktree setup cancelled"
+      : snapshot.phase === "failed"
+        ? "Worktree setup failed"
+        : failed
+          ? "Setup script failed"
+          : "Worktree ready";
 
   return (
     <View accessibilityLabel="Worktree setup" className="py-1">
       <View className="min-h-11 flex-row items-center gap-2 border-b border-border px-1">
-        <HeaderLabel
-          label={label}
-          active={(running || working) && !detailsOpen}
-          failed={failed && !working}
-        />
+        <HeaderLabel label={label} active={running && !detailsOpen} failed={failed} />
         {!handedOff ? (
           <Text
             className="text-2xs text-foreground-secondary"
@@ -147,12 +140,30 @@ export function WorktreeSetupCard(props: WorktreeSetupCardProps) {
   );
 }
 
-export function WorktreeWorkingHeader({ startedAt }: { startedAt: string }) {
-  const now = useVisibleSecondClock(true);
+/** Holds the card's place until the server publishes the first setup snapshot. */
+// Same rows the first snapshot brings, so the card keeps its height when that snapshot lands.
+const PREPARING_STAGES: ReadonlyArray<WorktreeSetupStage> = WORKTREE_SETUP_STAGE_ORDER.filter(
+  (id) => id !== "agent",
+).map((id) => ({
+  id,
+  status: "pending",
+  startedAt: null,
+  endedAt: null,
+  percent: null,
+  detail: null,
+  tail: [],
+}));
+
+export function WorktreePreparingHeader() {
   return (
     <View className="py-1">
       <View className="min-h-11 flex-row items-center border-b border-border px-1">
-        <HeaderLabel label={`Working for ${elapsed(startedAt, null, now) ?? "0s"}`} active />
+        <HeaderLabel label="Setting up worktree…" active />
+      </View>
+      <View className="pt-1 pb-2">
+        {PREPARING_STAGES.map((stage) => (
+          <StageRow key={stage.id} stage={stage} scriptName={null} now={0} compact />
+        ))}
       </View>
     </View>
   );

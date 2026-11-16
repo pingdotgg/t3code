@@ -215,6 +215,30 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("serves the background image published beside an environment theme", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+      yield* fs.makeDirectory(environmentThemesDir, { recursive: true });
+      const imagePath = `${environmentThemesDir}/frieren.png`;
+      yield* fs.writeFile(imagePath, screenshotPng);
+      const result = yield* issueAssetUrl({
+        resource: { _tag: "environment-theme-background", themeId: "frieren" },
+      });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+      expect(asset).toMatchObject({ kind: "file", path: yield* fs.realPath(imagePath) });
+      if (asset?.kind !== "file") return;
+      const response = yield* assetFileResponse(asset);
+      expect(response.headers["content-type"]).toBe("image/png");
+
+      yield* fs.remove(imagePath);
+      expect(yield* resolveAsset(token, suffix.slice(separator + 1))).toBeNull();
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1012,6 +1036,15 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalCssPath,
       });
+      yield* fileSystem.makeDirectory(path.join(root, "clips"));
+      for (const mediaName of ["clips/clip.mp4", "clips/clip.webm", "clips/clip.mp3"]) {
+        const mediaPath = path.join(root, mediaName);
+        yield* fileSystem.writeFileString(mediaPath, "media bytes");
+        expect(yield* resolveAsset(token, mediaName)).toMatchObject({
+          kind: "file",
+          path: yield* fileSystem.realPath(mediaPath),
+        });
+      }
       for (const extension of ["otf", "ttf", "woff", "woff2"]) {
         const fontName = `preview.${extension}`;
         const fontPath = path.join(root, fontName);

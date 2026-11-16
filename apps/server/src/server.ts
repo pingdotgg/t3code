@@ -220,8 +220,8 @@ import * as ProjectionMaintenance from "./orchestration-v2/ProjectionMaintenance
 import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
 import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import {
-  acceptsConnectionOnLocalHosts,
-  acceptsPrivateNetworkConnection,
+  closeConnectionsOutsideLocalHosts,
+  closeNonPrivateNetworkConnections,
   loopbackUrlHostForAddress,
 } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
@@ -368,25 +368,17 @@ const layerHttpServer = Layer.unwrap(
       privateNetworkOnly: config.privateNetworkOnly,
     });
     yield* ManagedLimits.closeTailscaleServeTo(policy, { host: bindHost, port: config.port });
+    const runSync = Effect.runSyncWith(yield* Effect.context<never>());
     return NodeHttpServer.layer(
       () => {
         const server = rejectRequestsUntilServing(
           keepIdleConnections(guardHttpResponseWriteErrors(NodeHttp.createServer())),
         );
         if (config.privateNetworkOnly) {
-          server.on("connection", (socket) => {
-            if (!acceptsPrivateNetworkConnection(socket)) {
-              socket.destroy();
-            }
-          });
+          runSync(closeNonPrivateNetworkConnections(server));
         }
-        const acceptedLocalHosts = config.acceptedLocalHosts;
-        if (acceptedLocalHosts) {
-          server.on("connection", (socket) => {
-            if (!acceptsConnectionOnLocalHosts(socket, acceptedLocalHosts)) {
-              socket.destroy();
-            }
-          });
+        if (config.acceptedLocalHosts) {
+          runSync(closeConnectionsOutsideLocalHosts(server, config.acceptedLocalHosts));
         }
         return server;
       },
@@ -518,7 +510,10 @@ const layerVcs = Layer.empty.pipe(
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
-const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+const layerPortScanner = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(layerBackground),
+);
 
 const layerTerminal = TerminalManager.layer(
   ProviderInstanceRegistryHydration.deriveProviderInstanceConfigMap,
