@@ -248,54 +248,68 @@ function setupPullRequestDrop() {
   return { chatPaneId, [Symbol.dispose]: () => stack.dispose() };
 }
 
-it("opens a thread's pull request beside a chat of another thread, and it survives a reload", async () => {
-  using fixture = setupPullRequestDrop();
-  const { chatPaneId } = fixture;
-  const source: LayoutDragSource = {
-    kind: "surface",
-    threadRef: pullRequestThreadRef,
+it.each<{ name: string; surface: LayoutDragSurface; hosted?: boolean }>([
+  {
+    name: "pull request",
     surface: pullRequestSurface({
       projectId: "project",
       repository: "owner/repo",
       number: 7,
       url: "https://github.com/owner/repo/pull/7",
     }),
-  };
-  const surfaceTab = () =>
-    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
-      ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === source.surface.id,
+  },
+  { name: "side chat's file", surface: fileSurface("src/app.ts", 12, 0), hosted: true },
+])(
+  "opens a thread's $name beside a chat of another thread, and it survives a reload",
+  async ({ surface, hosted }) => {
+    using fixture = setupPullRequestDrop();
+    const { chatPaneId } = fixture;
+    using _host = hosted
+      ? { [Symbol.dispose]: hostRightPanel(sideChatRef, pullRequestThreadRef) }
+      : undefined;
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: hosted ? sideChatRef : pullRequestThreadRef,
+      surface,
+    };
+    const surfaceTab = () =>
+      findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+        ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === source.surface.id,
+      );
+    await using screen = await render(<SurfaceSync />);
+
+    await act(() => {
+      expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(
+        true,
+      );
+    });
+    const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
+    expect(surfaceTab()!.column.id).toBe(chatColumn.id);
+    expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, surfaceTab()!.pane.id]);
+    expect(findLayoutChatForThread(useLayoutStore.getState().layout, pullRequestThreadRef)).toBe(
+      null,
     );
-  await using screen = await render(<SurfaceSync />);
+    expect(
+      isLayoutDropUseful(useLayoutStore.getState().layout, source, {
+        kind: "side",
+        paneId: surfaceTab()!.pane.id,
+        side: "left",
+      }),
+    ).toBe(false);
 
-  await act(() => {
-    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
-  });
-  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
-  expect(surfaceTab()!.column.id).toBe(chatColumn.id);
-  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, surfaceTab()!.pane.id]);
-  expect(findLayoutChatForThread(useLayoutStore.getState().layout, pullRequestThreadRef)).toBe(
-    null,
-  );
-  expect(
-    isLayoutDropUseful(useLayoutStore.getState().layout, source, {
-      kind: "side",
-      paneId: surfaceTab()!.pane.id,
-      side: "left",
-    }),
-  ).toBe(false);
+    await screen.unmount();
+    await using _reloaded = await render(<SurfaceSync />);
+    expect(surfaceTab()?.pane.id).toBeDefined();
 
-  await screen.unmount();
-  await using _reloaded = await render(<SurfaceSync />);
-  expect(surfaceTab()?.pane.id).toBeDefined();
-
-  await act(() => {
-    expect(commitLayoutDrop(source, { kind: "into", paneId: chatPaneId })).toBe(true);
-  });
-  expect(surfaceTab()!.pane.id).toBe(chatPaneId);
-  expect(
-    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef),
-  ).toHaveLength(1);
-});
+    await act(() => {
+      expect(commitLayoutDrop(source, { kind: "into", paneId: chatPaneId })).toBe(true);
+    });
+    expect(surfaceTab()!.pane.id).toBe(chatPaneId);
+    expect(
+      findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef),
+    ).toHaveLength(1);
+  },
+);
 
 it.each<{ name: string; surface: LayoutDragSurface; hosted?: boolean }>([
   {
@@ -349,36 +363,6 @@ it.each<{ name: string; surface: LayoutDragSurface; hosted?: boolean }>([
     expect(tabFor("diff")?.pane.id).toBe(chatPaneId);
   },
 );
-
-it("drops a side chat's file as its parent's tab where it lands, then moves that tab", async () => {
-  using fixture = setupPullRequestDrop();
-  const { chatPaneId } = fixture;
-  using _host = { [Symbol.dispose]: hostRightPanel(sideChatRef, pullRequestThreadRef) };
-  const surface = fileSurface("src/app.ts", 12, 0);
-  const source: LayoutDragSource = { kind: "surface", threadRef: sideChatRef, surface };
-  const parentTabs = () =>
-    findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef);
-  await using _screen = await render(<SurfaceSync />);
-
-  await act(() => {
-    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "down" })).toBe(true);
-  });
-  const dropped = parentTabs()[0]!;
-  const chatColumn = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!.column;
-  expect(chatColumn.panes.map((pane) => pane.id)).toEqual([chatPaneId, dropped.pane.id]);
-  expect(
-    isLayoutDropUseful(useLayoutStore.getState().layout, source, {
-      kind: "side",
-      paneId: dropped.pane.id,
-      side: "left",
-    }),
-  ).toBe(false);
-
-  await act(() => {
-    expect(commitLayoutDrop(source, { kind: "into", paneId: chatPaneId })).toBe(true);
-  });
-  expect(parentTabs().map(({ pane }) => pane.id)).toEqual([chatPaneId]);
-});
 
 it.each(["left", "right"] as const)(
   "moves a file tab open in another workspace to the focused workspace's %s edge",
