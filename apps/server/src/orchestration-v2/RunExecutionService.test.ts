@@ -3488,6 +3488,50 @@ it.effect("ends a subagent whose terminal record was rolled back with its paired
   }),
 );
 
+it.effect("keeps a committed subagent pair settled when its child model sync fails", () =>
+  Effect.gen(function* () {
+    const key = "paired-terminal-sync-failure";
+    const ids = backgroundScenarioIds(key);
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const fixture = (status: "running" | "interrupted") =>
+      ({ ids, providerInstanceId, childThreadId: ids.childThreadId, driver, status }) as const;
+    const pair = (status: "running" | "interrupted") => ({
+      type: "subagent.updated" as const,
+      driver,
+      subagent: makeRunOwnedSubagentFixture(fixture(status)),
+      turnItem: makeRunOwnedSubagentTurnItemFixture(fixture(status)),
+    });
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () =>
+        Stream.make(pair("running"), pair("interrupted"), rootTerminalEvent(ids, "completed")),
+      // The ingestor defers a child model sync, which writes, until the pair commits.
+      ingestNormalized: (request) =>
+        request.event.type === "subagent.updated" && request.event.subagent.status === "interrupted"
+          ? ProviderEventIngestor.writeAfterCommit(
+              Effect.fail(
+                new ProviderEventIngestor.ProviderEventPublishError({
+                  providerSessionId: ProviderSessionId.make(`session:${key}`),
+                  eventCount: 1,
+                  cause: "disk full",
+                }),
+              ),
+            ).pipe(Effect.as([]))
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "subagent.updated" ||
+        (event.type === "turn-item.updated" && event.payload.type === "subagent")
+          ? [event.type]
+          : [],
+      ),
+      [],
+    );
+  }),
+);
+
 it.effect.each([
   { status: "completed", failure: "later-stream", interrupt: "succeeds" },
   { status: "failed", failure: "later-stream", interrupt: "succeeds" },

@@ -233,28 +233,49 @@ export interface ProviderEventIngestorV2Shape {
   ) => Effect.Effect<A, E | EventSink.EventSinkV2Error | ProviderEventIngestorV2Error, R>;
 }
 
-// Taking a thread lock inside a write transaction deadlocks a command that holds the lock and waits
-// to write, so ingestTogether runs this work after its commit.
-const AfterCommit = Context.Reference<
-  Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>> | undefined
->("t3/orchestration-v2/ProviderEventIngestor/AfterCommit", { defaultValue: () => undefined });
+interface AfterCommitQueue {
+  /** The run's view of what is stored; it cannot fail, so all of it applies once stored. */
+  readonly bookkeeping: Array<Effect.Effect<void>>;
+  // Taking a thread lock inside a write transaction deadlocks a command that holds the lock and
+  // waits to write, so these writes wait for the commit.
+  readonly writes: Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>>;
+}
+const AfterCommit = Context.Reference<AfterCommitQueue | undefined>(
+  "t3/orchestration-v2/ProviderEventIngestor/AfterCommit",
+  { defaultValue: () => undefined },
+);
 
-/** Runs `ingest` through `commit`, then the work it left for after the commit, none if it fails. */
+/**
+ * Runs `ingest` through `commit`. Once it commits, applies all of its bookkeeping, then its
+ * follow-up writes; nothing if it fails.
+ */
 // Runs for each adapter emission; the provider batch owns the span.
 export const commitThenAfterCommit = Effect.fnUntraced(function* <A, E, R, E2, R2>(
   commit: (ingest: Effect.Effect<A, E, R>) => Effect.Effect<A, E2, R2>,
   ingest: Effect.Effect<A, E, R>,
 ) {
-  const queue: Array<Effect.Effect<unknown, ProviderEventIngestorV2Error>> = [];
-  const result = yield* commit(Effect.provideService(ingest, AfterCommit, queue));
-  for (const work of queue) yield* work;
+  const queue: AfterCommitQueue = { bookkeeping: [], writes: [] };
+  const result = yield* Effect.uninterruptibleMask((restore) =>
+    Effect.gen(function* () {
+      const committed = yield* commit(restore(Effect.provideService(ingest, AfterCommit, queue)));
+      for (const work of queue.bookkeeping) yield* work;
+      return committed;
+    }),
+  );
+  for (const work of queue.writes) yield* work;
   return result;
 });
 
-/** Runs `work` after the commit of the enclosing `ingestTogether`, or now outside one. */
-export const afterCommit = (work: Effect.Effect<void, ProviderEventIngestorV2Error>) =>
+/** Applies `work` once the enclosing `ingestTogether` commits, or now outside one. */
+export const afterCommit = (work: Effect.Effect<void>) =>
   Effect.flatMap(AfterCommit, (queue) =>
-    queue === undefined ? work : Effect.sync(() => void queue.push(work)),
+    queue === undefined ? work : Effect.sync(() => void queue.bookkeeping.push(work)),
+  );
+
+/** Runs `write` after the enclosing `ingestTogether` commits and applies its bookkeeping. */
+export const writeAfterCommit = (write: Effect.Effect<unknown, ProviderEventIngestorV2Error>) =>
+  Effect.flatMap(AfterCommit, (queue) =>
+    queue === undefined ? Effect.asVoid(write) : Effect.sync(() => void queue.writes.push(write)),
   );
 
 export class ProviderEventIngestorV2 extends Context.Service<
@@ -892,12 +913,11 @@ export const layer: Layer.Layer<
                       }),
                   ),
                 );
-                return Effect.flatMap(AfterCommit, (afterCommit) => {
-                  if (afterCommit === undefined)
-                    return Effect.map(sync, (synced) => [...storedEvents, ...synced]);
-                  afterCommit.push(sync);
-                  return Effect.succeed(storedEvents);
-                });
+                return Effect.flatMap(AfterCommit, (afterCommit) =>
+                  afterCommit === undefined
+                    ? Effect.map(sync, (synced) => [...storedEvents, ...synced])
+                    : Effect.as(writeAfterCommit(sync), storedEvents),
+                );
               }),
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
