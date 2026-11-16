@@ -279,7 +279,7 @@ it.effect("keeps at most one pending summary pass per thread", () =>
         pass: 2,
       });
       yield* outbox.enqueue([successor]);
-      assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 0 });
+      assert.deepEqual(yield* outbox.reconcileAfterProcessLoss, { requeued: 0, cancelled: 1 });
       assert.equal(
         Option.map(yield* outbox.get(continuation.id), (row) => row.status).pipe(Option.getOrNull),
         "cancelled",

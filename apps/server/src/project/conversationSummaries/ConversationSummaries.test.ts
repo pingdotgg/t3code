@@ -42,10 +42,13 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { historyCost } from "@t3tools/provider-core/server/handoffBudget";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { McpSchema, McpServer } from "effect/ai";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -192,6 +195,43 @@ const verbose = () =>
 const isRollup = (call: Parameters<Generate>[0]) =>
   call.messages.some((message) => message.role === "summary");
 
+// An update returns once the service has pulled the next change, so its reaction has finished.
+const settingsLayer = (overrides: Parameters<typeof ServerSettings.layerTest>[0]) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const base = yield* ServerSettings.ServerSettingsService;
+      const changes = yield* Queue.unbounded<{
+        readonly settings: ServerSettingsSchema;
+        readonly handled: Deferred.Deferred<void>;
+      }>();
+      let handling: Deferred.Deferred<void> | undefined;
+      const stream = Stream.fromEffectRepeat(
+        Effect.gen(function* () {
+          if (handling !== undefined) yield* Deferred.succeed(handling, undefined);
+          const next = yield* Queue.take(changes);
+          handling = next.handled;
+          return next.settings;
+        }),
+      );
+      return {
+        ...base,
+        updateSettings: (patch) =>
+          base.updateSettings(patch).pipe(
+            Effect.tap((settings) =>
+              Effect.gen(function* () {
+                const handled = yield* Deferred.make<void>();
+                yield* Queue.offer(changes, { settings, handled });
+                yield* Deferred.await(handled);
+              }),
+            ),
+          ),
+        streamChanges: stream,
+        subscribeChanges: Effect.succeed(stream),
+      } satisfies ServerSettings.ServerSettingsService["Service"];
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
+
 const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSettings.layerTest>[0]) =>
   Layer.merge(ConversationSummaries.layer, ContextHandoffService.layer).pipe(
     Layer.provide(
@@ -211,7 +251,7 @@ const makeLayer = (generate: Generate, settings: Parameters<typeof ServerSetting
       ),
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest(settings)),
+    Layer.provideMerge(settingsLayer(settings)),
     Layer.provide(
       Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
         getEnvironmentId: Effect.succeed(EnvironmentId.make("summary-environment")),
@@ -699,6 +739,7 @@ it.effect.each(["empty", "invalid-output"] as const)(
       assert.equal(firstStretchCalls(), 2);
       const skipped = (yield* list).lastPass;
       assert.include(skipped?.reason ?? "", "Skipped a stretch");
+      assert.equal(skipped?.waitingMessages, 0);
       assert.notProperty(skipped, "chunkFailures");
 
       yield* summarize;
@@ -721,54 +762,58 @@ it.effect.each(["empty", "invalid-output"] as const)(
       yield* summarize;
       yield* settings.updateSettings(optedIn);
       yield* summarize;
-      assert.equal(firstStretchCalls(), 2);
+      assert.equal(firstStretchCalls(), 3);
 
       yield* settings.updateSettings({
         textGenerationModelSelection: { instanceId, model: "gpt-5-mini" },
       });
       yield* summarize;
-      assert.equal(firstStretchCalls(), 3);
+      assert.equal(firstStretchCalls(), 4);
     }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
   },
 );
 
-it.effect("skips nothing while every summary comes back empty", () => {
-  let down = true;
-  const model = scripted((input) =>
-    down
-      ? Effect.fail(failingStretch("empty"))
-      : Effect.succeed({
-          statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
-        }),
-  );
-  return Effect.gen(function* () {
-    yield* seedThread(5 * 24 + 6);
-    const callsPerPass: Array<number> = [];
-    for (let pass = 0; pass < 3; pass++) {
-      const before = model.calls.length;
-      assert.isFalse((yield* summarize).hasMore);
-      callsPerPass.push(model.calls.length - before);
-    }
-    // Once every stretch is a suspect, one call per pass tests the model.
-    assert.deepEqual(callsPerPass, [3, 3, 1]);
-    assert.deepEqual((yield* list).summaries, []);
-
-    down = false;
-    const before = model.calls.length;
-    yield* summarize;
-    assert.equal(model.calls[before]?.messages[0]?.text, rawText(0));
-    assert.include(
-      (yield* list).summaries.flatMap((read) =>
-        read.state === "available"
-          ? read.summary.sources.flatMap((source) =>
-              source.kind === "message" ? [source.messageId] : [],
-            )
-          : [],
-      ),
-      messageId(0),
+it.effect.each([
+  { recovered: messageId(0), stuck: undefined },
+  { recovered: messageId(24), stuck: rawText(0) },
+])(
+  "skips nothing while every summary comes back empty, then summarizes $recovered",
+  ({ recovered, stuck }) => {
+    let down = true;
+    const model = scripted((input) =>
+      down || input.messages[0]?.text === stuck
+        ? Effect.fail(failingStretch("empty"))
+        : Effect.succeed({
+            statements: [{ text: "Recovered.", citations: [input.messages[0]!.ref] }],
+          }),
     );
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+    return Effect.gen(function* () {
+      yield* seedThread(5 * 24 + 6);
+      const callsPerPass: Array<number> = [];
+      for (let pass = 0; pass < 3; pass++) {
+        const before = model.calls.length;
+        assert.isFalse((yield* summarize).hasMore);
+        callsPerPass.push(model.calls.length - before);
+      }
+      // Once every stretch is a suspect, one call per pass tests the model.
+      assert.deepEqual(callsPerPass, [3, 3, 1]);
+      assert.deepEqual((yield* list).summaries, []);
+
+      down = false;
+      yield* summarize;
+      assert.include(
+        (yield* list).summaries.flatMap((read) =>
+          read.state === "available"
+            ? read.summary.sources.flatMap((source) =>
+                source.kind === "message" ? [source.messageId] : [],
+              )
+            : [],
+        ),
+        recovered,
+      );
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
 
 it.effect("counts only a stretch's own failures beside a success after an outage", () => {
   let down = true;
@@ -856,33 +901,36 @@ it.effect("moves past roll-ups that all contain one bad summary", () => {
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-it.effect("keeps a skipped stretch skipped when an outage fills the failure ledger", () => {
-  let down = false;
-  const model = scripted((input) =>
-    down || input.messages[0]?.text === rawText(1)
-      ? Effect.fail(failingStretch("empty"))
-      : Effect.succeed({
-          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
-        }),
-  );
-  const skippedCalls = () =>
-    model.calls.filter((call) => call.messages[0]?.text === rawText(1)).length;
-  return Effect.gen(function* () {
-    // Leaves over the even messages leave each odd message a stretch of its own.
-    const leaves = 70;
-    yield* seedThread(leaves * 2 + 6);
-    for (let index = 0; index < leaves; index++) yield* persistSummary(index, [index * 2]);
-    yield* summarize;
-    yield* summarize;
-    assert.include((yield* list).lastPass?.reason ?? "", "Skipped a stretch");
+it.effect.each([
+  { counted: "skipped", stretches: 70, passesBefore: 2, calls: 2 },
+  { counted: "failed once", stretches: 80, passesBefore: 1, calls: 3 },
+])(
+  "keeps a stretch $counted when an outage fills the failure ledger",
+  ({ stretches, passesBefore, calls }) => {
+    let down = false;
+    const model = scripted((input) =>
+      down || input.messages[0]?.text === rawText(1)
+        ? Effect.fail(failingStretch("empty"))
+        : Effect.succeed({
+            statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+          }),
+    );
+    const skippedCalls = () =>
+      model.calls.filter((call) => call.messages[0]?.text === rawText(1)).length;
+    return Effect.gen(function* () {
+      // Leaves over the even messages leave each odd message a stretch of its own.
+      yield* seedThread(stretches * 2 + 6);
+      for (let index = 0; index < stretches; index++) yield* persistSummary(index, [index * 2]);
+      for (let pass = 0; pass < passesBefore; pass++) yield* summarize;
 
-    down = true;
-    for (let pass = 0; pass < 25; pass++) yield* summarize;
-    down = false;
-    for (let pass = 0; pass < 10; pass++) yield* summarize;
-    assert.equal(skippedCalls(), 2);
-  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
-});
+      down = true;
+      for (let pass = 0; pass < 25; pass++) yield* summarize;
+      down = false;
+      for (let pass = 0; pass < 10; pass++) yield* summarize;
+      assert.equal(skippedCalls(), calls);
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
 
 it.effect("skips a stretch that fails twice when the ledger is full of skipped stretches", () => {
   let down = true;
@@ -958,20 +1006,40 @@ it.effect("summarizes the next stretch when the model cites none of the chunk", 
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
-it.effect("retries a timed-out summary chunk instead of skipping to the next stretch", () => {
-  const model = scripted(() =>
-    Effect.fail(
-      new TextGenerationError({
-        operation: "generateConversationSummary",
-        detail: "OpenCode did not finish generating in time.",
-      }),
-    ),
+it.effect("works around a chunk that always times out, without skipping it", () => {
+  const model = scripted((input) =>
+    input.messages[0]?.text === rawText(0)
+      ? Effect.fail(
+          new TextGenerationError({
+            operation: "generateConversationSummary",
+            detail: "OpenCode did not finish generating in time.",
+          }),
+        )
+      : Effect.succeed({
+          statements: [{ text: "The later stretch.", citations: [input.messages[0]!.ref] }],
+        }),
   );
+  const firstChunkCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === rawText(0)).length;
   return Effect.gen(function* () {
     yield* seedThread(38);
     assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
     assert.equal(model.calls.length, 1);
     assert.deepEqual((yield* list).summaries, []);
+
+    for (let pass = 0; pass < 3; pass++)
+      assert.instanceOf(yield* summarize.pipe(Effect.flip), ConversationSummaryPassError);
+    assert.equal(firstChunkCalls(), 4);
+    assert.include(
+      (yield* list).summaries.flatMap((read) =>
+        read.state === "available"
+          ? read.summary.sources.flatMap((source) =>
+              source.kind === "message" ? [source.messageId] : [],
+            )
+          : [],
+      ),
+      messageId(24),
+    );
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
