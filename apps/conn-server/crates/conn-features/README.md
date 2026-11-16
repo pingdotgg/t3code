@@ -173,34 +173,11 @@ with its state and what it needs from outside the server.
 
 ## Secret requests and panels
 
-Secret cards follow `SecretRequests.ts` and `OrchestratorMcpService.requestSecret`: the calling
-provider must own an active run; values never enter events or projections. The client sees
-pending, saved, declined or cancelled. A timeout, Stop, server restart or cancelled MCP call
-closes a pending card. Saved refs and shell files use the settings secret store's directory,
-T3's salted HMAC names and JSON format, 0700 directories and 0600 files. Refs are scoped to a
-project and consumed once; webhook signing consumes a ref in the scheduled task's project.
-An idempotent schedule retry keeps its stored signing secret after the ref was consumed.
-File delivery removes the stored copy. A pasted value keeps its
-exact bytes and needs no card. Retry keys keep the first result. Cleanup runs at startup,
-hourly and before writes; entries expire after 24 hours.
-
 Bounds differ from T3: 64 simultaneous secret waits, 1,024 retained answers and files,
 16 desktop subscribers, 16 queued panel requests per desktop and 64 pending panel requests.
 A full store or wait limit refuses the request; a full desktop queue refuses delivery.
-Panel responses cap device names at 200 and errors at 8,192 UTF-16 units, as requested in
-review; T3's current response schema leaves both unbounded.
-The services keep locks, counters and pending senders, never saved answers in memory.
-Only Linux server file permissions are implemented; no Windows or Android path is added.
-A sealed Linux debug-process measurement added 32 KiB `Pss_Anon` for the idle services,
-and 108 KiB above baseline with 16 panel subscriptions and 64 reserved secret wait slots.
-This measures the services on an idle SQLite engine, not a whole server with a running agent.
-
-Tests map T3's secret save, one-use consume, project scope, lost-card, file delivery and
-pasted-value cases to `conn-mcp`'s `secret_*` tests and this crate's `secrets::tests`.
-`panels::tests` covers all four `AgentPanelBroker.test.ts` cases plus bounds and cancellation;
-`conn-server` tests its RPC wiring, and `effect-client.mjs` decodes a real broker delivery in
-the fixture server. `panel_open` is hidden from outside clients and refuses browser URL/tab
-automation with `capability_denied`; it never starts a hidden browser.
+Panel responses cap device names at 200 and errors at 8,192 UTF-16 units; T3 leaves both
+unbounded. Secret-provider references and browser URL/tab automation are not served.
 
 ## Test logins
 

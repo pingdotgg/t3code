@@ -195,17 +195,32 @@ impl conn_engine::EngineHost for FilesHost {
         Box::pin(async move {
             let list: Vec<conn_contract::ChatAttachment> =
                 conn_contract::from_json(attachments).map_err(|e| e.to_string())?;
-            conn_files::attachments::validate_claims(&list)?;
             tokio::task::spawn_blocking(move || {
-                list.iter()
-                    .map(|a| files.attachments.claim(&thread, a))
-                    .collect::<Result<Vec<_>, _>>()
+                files
+                    .attachments
+                    .claim_all(&thread, &list)
                     .map(|list| conn_contract::to_json(&list))
             })
             .await
             .map_err(|e| e.to_string())?
         })
     }
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 async fn git_project(f: &Fixture) -> PathBuf {
@@ -229,18 +244,7 @@ async fn git_project(f: &Fixture) -> PathBuf {
                 "init",
             ],
         ] {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&path)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
+            git(&path, &args);
         }
     })
     .await
@@ -612,42 +616,36 @@ async fn handoff_fetches_remote_base_and_list_falls_back_after_worktree_cleanup(
     let source = root.clone();
     let remote = f.dir.join("remote.git");
     let remote_sha = tokio::task::spawn_blocking(move || {
-        let run = |args: Vec<&str>| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&source)
-                .env("GIT_CONFIG_GLOBAL", "/dev/null")
-                .env("GIT_CONFIG_NOSYSTEM", "1")
-                .output()
-                .unwrap();
-            assert!(
-                out.status.success(),
-                "{}",
-                String::from_utf8_lossy(&out.stderr)
-            );
-            String::from_utf8(out.stdout).unwrap().trim().to_owned()
-        };
-        let sha = run(vec!["rev-parse", "HEAD"]);
-        run(vec![
-            "clone",
-            "--bare",
-            source.to_str().unwrap(),
-            remote.to_str().unwrap(),
-        ]);
-        run(vec!["remote", "add", "origin", remote.to_str().unwrap()]);
-        run(vec![
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "-c",
-            "commit.gpgsign=false",
-            "commit",
-            "-q",
-            "--allow-empty",
-            "-m",
-            "local",
-        ]);
+        let sha = git(&source, &["rev-parse", "HEAD"]);
+        git(
+            &source,
+            &[
+                "clone",
+                "--bare",
+                source.to_str().unwrap(),
+                remote.to_str().unwrap(),
+            ],
+        );
+        git(
+            &source,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        git(
+            &source,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "local",
+            ],
+        );
         sha
     })
     .await
@@ -808,7 +806,6 @@ async fn checkout_gate(f: &Fixture, root: &std::path::Path) -> (PathBuf, PathBuf
     let hook = root.join(".git/hooks/post-checkout");
     let (a, b, c) = (ready.clone(), release.clone(), hook);
     tokio::task::spawn_blocking(move || {
-        use std::os::unix::fs::PermissionsExt;
         assert!(
             std::process::Command::new("mkfifo")
                 .args([&a, &b])
@@ -817,16 +814,15 @@ async fn checkout_gate(f: &Fixture, root: &std::path::Path) -> (PathBuf, PathBuf
                 .success()
         );
         let quote = |p: &PathBuf| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
-        std::fs::write(
+        conn_support::test_util::executable(
             &c,
-            format!(
+            &format!(
                 "#!/bin/sh\nprintf ready > {}\nread release < {}\n",
                 quote(&a),
                 quote(&b)
             ),
         )
         .unwrap();
-        std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o755)).unwrap();
     })
     .await
     .unwrap();

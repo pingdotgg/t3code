@@ -10,21 +10,19 @@ name: Conn Server CI
 # - musl: the x86_64-unknown-linux-musl release binary that Orbit runs; prints its size.
 # The checks against the rest of the monorepo run in conn-server-checks.yml.
 #
-# The nightly upstream sync runs these jobs on its sync/* branch and waits for them before it
-# merges (FORK.md, "Upstream scope" and "Conn Server").
+# Pull requests and main/sync pushes run these jobs when the Rust tree or this workflow
+# changes. The monorepo comparisons have their own broader paths in conn-server-checks.yml.
 
 on:
   pull_request:
-    paths:
+    paths: &paths
       - apps/conn-server/**
       - .github/workflows/conn-server-ci.yml
   push:
     branches:
       - main
       - "sync/**"
-    paths:
-      - apps/conn-server/**
-      - .github/workflows/conn-server-ci.yml
+    paths: *paths
   workflow_dispatch:
 
 permissions:

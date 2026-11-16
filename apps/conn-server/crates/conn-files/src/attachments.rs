@@ -686,6 +686,26 @@ impl AttachmentStore {
         })
     }
 
+    /// Claims a message's uploads together, releasing earlier copies if any claim fails.
+    pub fn claim_all(
+        &self,
+        thread_id: &str,
+        attachments: &[ChatAttachment],
+    ) -> Result<Vec<ChatAttachment>, String> {
+        validate_claims(attachments)?;
+        let mut claimed = Vec::with_capacity(attachments.len());
+        for attachment in attachments {
+            match self.claim(thread_id, attachment) {
+                Ok(kept) => claimed.push(kept),
+                Err(reason) => {
+                    self.release(&claimed);
+                    return Err(reason);
+                }
+            }
+        }
+        Ok(claimed)
+    }
+
     /// Removes claimed copies of a message that was not accepted.
     pub fn release(&self, claimed: &[ChatAttachment]) {
         for attachment in claimed {

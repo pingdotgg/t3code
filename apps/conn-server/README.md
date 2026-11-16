@@ -71,9 +71,7 @@ two levels up (`tools/monorepo.mjs`), and resolve `effect`, `@t3tools/*` and Pla
 `node_modules`. The Conn Server has no `node_modules` of its own. `tools/check.sh` stops with
 one line when the monorepo has no `node_modules`.
 
-In CI, `.github/workflows/conn-server-ci.yml` runs the Rust jobs on changes to
-`apps/conn-server`, and `conn-server-checks.yml` runs `tools/check.sh` on changes to
-`apps/conn-server` or `packages/contracts`. The nightly upstream sync runs neither.
+CI path filters and sync triggers are listed in [`docs/upkeep.md`](docs/upkeep.md#when-the-checks-run).
 
 `tools/check.sh` runs, in order:
 

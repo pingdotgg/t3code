@@ -7,16 +7,7 @@ use std::time::Duration;
 
 pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let mut decoded = args.clone();
-    for key in ["url", "tabId", "profileId"] {
-        if let Some(serde_json::Value::String(value)) = decoded.get_mut(key) {
-            *value = value.trim().to_owned();
-            if value.is_empty() {
-                return Err(ToolError::InvalidParams(format!(
-                    "Expected a non-blank string\n  at [\"{key}\"]"
-                )));
-            }
-        }
-    }
+    super::trim_non_blank(&mut decoded, &["url", "tabId", "profileId"])?;
     let args = &decoded;
     let caller = cx.require_thread("This tool")?;
     cx.writing_caller().await?;
@@ -31,7 +22,7 @@ pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
     if !browser
         && ["url", "tabId", "profileId"]
             .iter()
-            .any(|key| str_arg(args, key).is_some_and(|v| !v.is_empty()))
+            .any(|key| str_arg(args, key).is_some())
     {
         return Err(invalid(
             "url, tabId and profileId apply to the browser panel only.",
@@ -40,9 +31,7 @@ pub(super) async fn open(cx: &Cx<'_>, args: &Args) -> ToolResult {
     if panel != "database" && args.contains_key("sql") {
         return Err(invalid("sql applies to the database panel only."));
     }
-    if str_arg(args, "url").is_some_and(|v| !v.is_empty())
-        && str_arg(args, "tabId").is_some_and(|v| !v.is_empty())
-    {
+    if str_arg(args, "url").is_some() && str_arg(args, "tabId").is_some() {
         return Err(invalid("Pass url or tabId, not both."));
     }
     if browser && !broker.has_desktop() {

@@ -219,8 +219,8 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `t3_theme_set` | not served | writesEnvironment | server: themes | |
 | `t3_project_clone` | not served | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
-The generated catalog serves 46 tools. `tools.implemented` is the source of the served set.
-The batch, attachment and worktree port's constraints and test mapping are in [PORTING.md](PORTING.md).
+The generated catalog serves 48 tools. `tools.implemented` is the source of the served set.
+
 
 **Named but not served (12):** `device_list`, `device_open`,
 `device_screenshot`, `fill_credential`, `html_preview`, `html_render`, `preview_open`, `preview_status` (and the
@@ -340,28 +340,14 @@ subagent })` returns an `McpServerEntry { url, authorization, .. }` for one prov
 thread's `--mcp-config`, and `claude -p --model claude-haiku-5-5 --strict-mcp-config
 --mcp-config <file>` listed threads, launched one and waited for it.
 
-## Secret requests
+## Secret requests and panels
 
-`request_secret` acts as the calling thread and stays hidden from outside clients. It records
-a secret card through `Engine::record_secret_request`, waits on committed thread changes and
-returns a one-use ref, an owner-only file path or T3's unsaved note. Values stay in
-`conn_features::secrets::SecretRequests`, beside settings secrets. This server does not
-advertise secret-provider reference answers. `schedule_task` consumes refs for webhook signing
-in the task's project, once only; an idempotent retry keeps the stored signing secret.
-`panel_open` shows all five panel kinds through
-the connected desktop and stays hidden from outside clients. Browser URLs and tab ids fail
-with `capability_denied`: they need the unimplemented desktop preview relay and current-tab
-pinning. No browser capability is advertised and no hidden browser is started.
-
-`secret_*` Rust tests prove active-run ownership, save, decline, timeout, Stop, aborted calls,
-one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
-the same hidden-tool result on both servers. The `url` dependency is already linked through
-source control; it validates the tool's http(s) URL input without a second parser.
-
-`mcp_call` and `mcp_connect` use the same `conn_features::panels::PanelBroker` as
-`panel_open`, through `panels.requests` / `panels.respond`. They retain T3's 90-second action
-timeout and accept the first successful desktop response. Input decoding trims names and
-checks the contract's UTF-16 limits before a request reaches the desktop.
+Secret-provider reference answers are not advertised. Browser URLs and tab ids fail with
+`capability_denied`: they need the desktop preview relay and current-tab pinning, which are
+not served. [conn-features](../conn-features/README.md#secret-requests-and-panels) lists the
+secret and panel bounds that differ from T3.
+`mcp_call` and `mcp_connect` go through the same panel broker, with T3's 90-second action
+timeout.
 
 ## Test logins and database panel
 
