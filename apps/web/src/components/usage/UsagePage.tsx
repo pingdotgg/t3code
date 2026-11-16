@@ -177,6 +177,7 @@ function UsageModelDialogHost({
 
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
@@ -537,6 +538,8 @@ export function UsagePage() {
               </div>
             ) : (
               <UsageOverview
+                breakdown={breakdown}
+                onBreakdownChange={setBreakdown}
                 merged={merged}
                 shownWindow={shownWindow}
                 hour12={hour12}
@@ -585,6 +588,8 @@ export function UsagePage() {
 }
 
 function UsageOverview({
+  breakdown,
+  onBreakdownChange,
   merged,
   shownWindow,
   hour12,
@@ -598,6 +603,8 @@ function UsageOverview({
   showChatGptSharing,
   onSelectModel,
 }: {
+  readonly breakdown: "model" | "time";
+  readonly onBreakdownChange: (value: "model" | "time") => void;
   readonly merged: MergedUsage;
   readonly shownWindow: UsageSummaryInput;
   readonly hour12: boolean;
@@ -611,7 +618,6 @@ function UsageOverview({
   readonly showChatGptSharing: boolean;
   readonly onSelectModel: (key: string) => void;
 }) {
-  const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const shownHourly = shownWindow.resolution === "hour";
   const loading = usageLoading(showingKept, selectedEnvironments, refreshingUsage, hiddenProviders);
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
@@ -853,7 +859,7 @@ function UsageOverview({
             value={[breakdown]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value === "model" || value === "time") setBreakdown(value);
+              if (value === "model" || value === "time") onBreakdownChange(value);
             }}
           >
             {(
