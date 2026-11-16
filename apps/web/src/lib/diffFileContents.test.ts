@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { createGitDiffFileContentsLoader } from "./diffFileContents";
 import { getRenderablePatch } from "./diffRendering";
+import { MAX_RENDERED_DIFF_LINE_LENGTH } from "./longDiffLines";
 
 const originalLines = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);
 const changedLines = originalLines.map((line, index) => (index === 29 ? "line 30 changed" : line));
@@ -85,6 +86,31 @@ describe("createGitDiffFileContentsLoader", () => {
     const loader = loaderReturning(toContents(oldLines), toContents(newLines));
 
     await expect(loader(partialFileDiff())).rejects.toThrow("changed since the diff was loaded");
+  });
+
+  it("cuts long lines in loaded contents the way the rendered patch cuts them", async () => {
+    const long = "x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH * 2);
+    const longLines = (last: string) =>
+      originalLines.map((line, index) => (index === 29 ? `${long}${last}` : line));
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -30 +30 @@",
+      `-${long}a`,
+      `+${long}b`,
+      "",
+    ].join("\n");
+
+    const loaded = await loaderReturning(
+      toContents(longLines("a")),
+      toContents(longLines("b")),
+    )(parsePartialFileDiff(patch));
+
+    expect(loaded.newFile.contents.split("\n")[29]).toBe(
+      `${"x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH)} … 10,001 more characters not shown`,
+    );
   });
 
   it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {

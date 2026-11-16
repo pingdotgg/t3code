@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
+import { clampLongLinesInContents } from "./longDiffLines";
 
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
@@ -117,7 +118,12 @@ function createDiffFileContentsLoader(
     const oldPath = fileDiff.prevName
       ? resolveFileDiffPath({ ...fileDiff, name: fileDiff.prevName })
       : newPath;
-    const contents = await load({ changeType: fileDiff.type, oldPath, newPath });
+    const loaded = await load({ changeType: fileDiff.type, oldPath, newPath });
+    // Expanded contents must match the clamped patch lines or reproducesPatch rejects them.
+    const contents = {
+      oldContents: clampLongLinesInContents(loaded.oldContents),
+      newContents: clampLongLinesInContents(loaded.newContents),
+    };
     const newFile = {
       name: newPath,
       contents: contents.newContents,

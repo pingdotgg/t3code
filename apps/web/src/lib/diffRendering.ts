@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { clampFileDiffLongLines } from "./longDiffLines";
 import { READABLE_LIGHT_THEME_NAME } from "./readableSyntaxTheme";
 
 // Light mode uses a darker pierre-light so syntax stays readable on every code surface.
@@ -167,7 +168,8 @@ export function getRenderablePatch(
     });
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
-      const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
+      const clamped = clampFileDiffLongLines(file);
+      const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(clamped) : clamped;
       return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
     });
     if (files.length > 0) {
