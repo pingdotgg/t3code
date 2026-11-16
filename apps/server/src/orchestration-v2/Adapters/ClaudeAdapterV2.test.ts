@@ -15230,13 +15230,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     { case: "after a request goes out", requesting: true, backgroundProgress: false },
     { case: "while a skill it forked runs", requesting: false, forkedTask: true },
     {
+      case: "while an earlier background agent starts a nested task",
+      requesting: false,
+      nestedTaskStarted: true,
+    },
+    {
       case: "while an earlier background task reports progress",
       requesting: false,
       backgroundProgress: true,
     },
   ])(
     "does not keep a turn silently running when Claude goes quiet $case",
-    ({ requesting, backgroundProgress = false, forkedTask = false }) =>
+    ({ requesting, backgroundProgress = false, forkedTask = false, nestedTaskStarted = false }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const now = yield* DateTime.now;
@@ -15282,6 +15287,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               description: "Earlier background task",
               usage: { total_tokens: 1, tool_uses: 0, duration_ms: 1 },
               uuid: "00000000-0000-4000-8000-000000000793",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        if (nestedTaskStarted) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "earlier-nested-task",
+              description: "Nested task of an earlier background agent",
+              spawn_depth: 2,
+              uuid: "00000000-0000-4000-8000-000000000795",
               session_id: WAKE_NATIVE_SESSION,
             }),
           );
