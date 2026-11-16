@@ -1201,6 +1201,18 @@ export function chatActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+/** A local copy of the runtime's error shares the runtime's key, so one dismissal covers both. */
+export function threadErrorIsServerRuntime(input: {
+  readonly isServerThread: boolean;
+  readonly localServerError: string | null;
+  readonly runtimeError: string | null;
+}): boolean {
+  return (
+    input.isServerThread &&
+    (input.localServerError === null || input.localServerError === input.runtimeError)
+  );
+}
+
 /**
  * The latest failed run, which owns the session's error until a later run completes: a run that
  * completes proves the session works, so a later session error is a new one.

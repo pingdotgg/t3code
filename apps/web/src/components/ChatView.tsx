@@ -42,6 +42,7 @@ import {
   isThreadEnvironmentLocked,
   resolveDraftHeroState,
   threadErrorBannerRunId,
+  threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
 import { recallCheckoutIsRepo, rememberCheckoutIsRepo } from "./ChatView.logic";
@@ -975,7 +976,11 @@ export default function ChatView(props: ChatViewProps) {
   const threadErrorBannerKey = getThreadErrorBannerKey(
     routeThreadKey,
     threadError,
-    isServerThread && localServerError === null
+    threadErrorIsServerRuntime({
+      isServerThread,
+      localServerError,
+      runtimeError: serverRuntime?.lastError ?? null,
+    })
       ? threadErrorBannerRunId(serverProjection?.runs ?? [])
       : null,
   );
