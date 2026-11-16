@@ -25,11 +25,16 @@ fn main() {
             })
             .expect("open a terminal");
         manager
-            .write(conn_contract::TerminalWriteInput {
-                thread_id: "example".into(),
-                terminal_id: "term-1".into(),
-                data: "exec sleep 1000 & wait\n".into(),
-            })
+            .write(
+                conn_contract::TerminalWriteInput {
+                    thread_id: "example".into(),
+                    terminal_id: "term-1".into(),
+                    data: "exec sleep 1000 & wait\n".into(),
+                    binary: None,
+                    reply: None,
+                },
+                None,
+            )
             .await
             .expect("write");
         println!("shell {}", snapshot.pid.unwrap_or_default());

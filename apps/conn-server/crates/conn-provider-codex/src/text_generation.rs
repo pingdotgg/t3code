@@ -5,7 +5,8 @@
 //!    features.apps=false mcp list --json` (10 s) names the enabled MCP servers, so the exec
 //!    turns them off: a user's MCP server could act on the prompt.
 //! 2. `codex exec … --ephemeral --skip-git-repo-check -s read-only --model <m> --config
-//!    model_reasoning_effort="<e>" [--config service_tier="<t>"] --output-schema <file>
+//!    model_reasoning_effort="<e>" --config features.codex_hooks=false --config
+//!    features.hooks=false [--config service_tier="<t>"] --output-schema <file>
 //!    --output-last-message <file> [--image <path>]… -` reads the prompt on stdin and writes
 //!    its last message, a JSON object, to the output file (180 s).
 //!
@@ -217,7 +218,7 @@ pub fn exec_args(
     image_paths: &[PathBuf],
 ) -> Vec<String> {
     let off = mcp_servers_off(enabled_mcp);
-    let exec_launch = filter_launch_args(launch_args, &EXEC_FILTER);
+    let exec_launch = exec_launch_args(launch_args);
     let launch_sets_table = exec_launch.iter().any(|arg| {
         arg.match_indices("mcp_servers").any(|(at, _)| {
             let before_ok = arg[..at]
@@ -251,6 +252,16 @@ pub fn exec_args(
     args.push(model.to_owned());
     args.push("--config".to_owned());
     args.push(format!("model_reasoning_effort=\"{effort}\""));
+    // Current Codex gives hooks precedence over the historical codex_hooks alias.
+    args.extend(
+        [
+            "--config",
+            "features.codex_hooks=false",
+            "--config",
+            "features.hooks=false",
+        ]
+        .map(str::to_owned),
+    );
     if let Some(tier) = service_tier {
         args.push("--config".to_owned());
         args.push(format!("service_tier=\"{tier}\""));
@@ -575,9 +586,43 @@ async fn run_exec(
     Ok(())
 }
 
+/// `codexExecLaunchArgs`: the exec filter, without a launch arg that enables hooks. Feature
+/// toggles beat config overrides, so a launch arg's hook enable would undo ours.
+fn exec_launch_args(launch_args: &str) -> Vec<String> {
+    const HOOK_FEATURES: [&str; 2] = ["hooks", "codex_hooks"];
+    let args = filter_launch_args(launch_args, &EXEC_FILTER);
+    let hook = |name: Option<&String>| name.is_some_and(|n| HOOK_FEATURES.contains(&n.as_str()));
+    args.iter()
+        .enumerate()
+        .filter(|&(index, arg)| {
+            if let Some(feature) = arg.strip_prefix("--enable=") {
+                return !HOOK_FEATURES.contains(&feature);
+            }
+            if arg == "--enable" {
+                return !hook(args.get(index + 1));
+            }
+            let after_enable = index
+                .checked_sub(1)
+                .and_then(|i| args.get(i))
+                .is_some_and(|a| a == "--enable");
+            !(after_enable && HOOK_FEATURES.contains(&arg.as_str()))
+        })
+        .map(|(_, arg)| arg.clone())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exec_launch_args_drop_a_hook_enable() {
+        let args = "--enable hooks --enable=codex_hooks --enable x --enable=y -c a=1";
+        assert_eq!(
+            exec_launch_args(args),
+            ["--enable", "x", "--enable=y", "-c", "a=1"]
+        );
+    }
 
     #[test]
     fn launch_args_are_filtered_as_t3() {

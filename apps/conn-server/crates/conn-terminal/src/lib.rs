@@ -139,6 +139,8 @@ struct State {
     metadata: Vec<(u64, Arc<Feed<TerminalMetadataStreamEvent>>)>,
     closed: HashSet<Key>,
     closed_order: VecDeque<Key>,
+    /// The attached viewer that answers terminal queries (DA, DSR, DECRQM), until it detaches.
+    query_owner: HashMap<Key, ViewerId>,
     poller: bool,
     next_id: u64,
 }
@@ -160,6 +162,8 @@ struct Session {
     env: BTreeMap<String, String>,
     stop_on_settle: bool,
     status: TerminalSessionStatus,
+    /// Why the shell failed to start, kept so later attachments can show it.
+    startup_error: Option<String>,
     pid: Option<i32>,
     exit_code: Option<i64>,
     exit_signal: Option<i64>,
@@ -336,15 +340,22 @@ impl TerminalManager {
         }
     }
 
-    /// `terminal.write`. Writing to an exited shell does nothing, as in `apps/server`.
-    pub async fn write(&self, input: TerminalWriteInput) -> Result<(), TerminalOpenError> {
+    /// `terminal.write`. Writing to an exited shell does nothing, as in `apps/server`. A
+    /// query reply (`reply`) reaches the shell only from the viewer that answers queries: the
+    /// first attached viewer to reply, until it detaches. A reply from a connection that is no
+    /// viewer is dropped; a write without a viewer claims nothing.
+    pub async fn write(
+        &self,
+        input: TerminalWriteInput,
+        viewer: Option<ViewerId>,
+    ) -> Result<(), TerminalOpenError> {
         let key = (input.thread_id, input.terminal_id);
         let (writer, pid) = {
-            let state = self.inner.lock();
+            let mut state = self.inner.lock();
             let Some(session) = state.sessions.get(&key) else {
                 return Err(lookup_error(&key));
             };
-            match &session.proc {
+            let found = match &session.proc {
                 Some(proc) => (proc.writer.clone(), proc.pid),
                 None if session.status == TerminalSessionStatus::Exited => return Ok(()),
                 None => {
@@ -356,10 +367,15 @@ impl TerminalManager {
                         },
                     ));
                 }
+            };
+            if input.reply == Some(true) && !state.accepts_query_reply(&key, viewer) {
+                return Ok(());
             }
+            found
         };
+        let bytes = pty_input(&input.data, input.binary == Some(true));
         let mut writer = writer.lock().await;
-        let result = writer.write_all(input.data.as_bytes()).await;
+        let result = writer.write_all(&bytes).await;
         result.map_err(|error| {
             TerminalOpenError::TerminalWriteError(TerminalWriteError {
                 tag: Default::default(),
@@ -612,6 +628,7 @@ impl Inner {
                     env,
                     stop_on_settle: launch.stop_on_settle.unwrap_or(false),
                     status: TerminalSessionStatus::Starting,
+                    startup_error: None,
                     pid: None,
                     exit_code: None,
                     exit_signal: None,
@@ -681,6 +698,7 @@ impl Inner {
                     task,
                 });
                 session.status = TerminalSessionStatus::Running;
+                session.startup_error = None;
                 session.pid = Some(pid);
                 session.advance();
                 let snapshot = session.snapshot(None);
@@ -689,6 +707,7 @@ impl Inner {
             }
             Err(error) => {
                 session.status = TerminalSessionStatus::Error;
+                session.startup_error = Some(error.to_string()).filter(|m| !m.is_empty());
                 session.pid = None;
                 session.advance();
                 let event = TerminalAttachStreamEvent::Error(TerminalAttachStreamEventError {
@@ -907,6 +926,31 @@ impl State {
         self.next_id
     }
 
+    /// Whether a query reply from `viewer` goes on to the shell. The first attached viewer to
+    /// reply keeps answering until it detaches, as `acceptsQueryReply` in `apps/server`.
+    fn accepts_query_reply(&mut self, key: &Key, viewer: Option<ViewerId>) -> bool {
+        let attached = |state: &Self, id: ViewerId| {
+            state
+                .watchers
+                .get(key)
+                .is_some_and(|ws| ws.iter().any(|w| w.viewer == Some(id)))
+        };
+        if let Some(id) = viewer
+            && !attached(self, id)
+        {
+            return false;
+        }
+        match (self.query_owner.get(key), viewer) {
+            (Some(owner), Some(id)) => *owner == id,
+            (Some(_), None) => false,
+            (None, Some(id)) => {
+                self.query_owner.insert(key.clone(), id);
+                true
+            }
+            (None, None) => true,
+        }
+    }
+
     fn shared_grid(&self, key: &Key) -> Option<(u16, u16)> {
         self.watchers
             .get(key)?
@@ -1021,6 +1065,7 @@ impl Session {
             cwd: self.cwd.clone(),
             worktree_path: self.worktree_path.clone(),
             status: self.status,
+            error: self.startup_error.clone(),
             pid: self.pid.map(i64::from),
             history: self.history.tail(max_history).to_owned(),
             exit_code: self.exit_code,
@@ -1190,9 +1235,17 @@ impl Drop for Subscription {
             return;
         };
         let had_grid = watchers.iter().any(|w| w.id == self.id && w.grid.is_some());
+        let viewer = watchers
+            .iter()
+            .find(|w| w.id == self.id)
+            .and_then(|w| w.viewer);
         watchers.retain(|w| w.id != self.id);
+        let viewer_left = viewer.is_some_and(|v| !watchers.iter().any(|w| w.viewer == Some(v)));
         if watchers.is_empty() {
             state.watchers.remove(&self.key);
+        }
+        if viewer_left && state.query_owner.get(&self.key) == viewer.as_ref() {
+            state.query_owner.remove(&self.key);
         }
         // The grid may grow back now that this viewer left.
         if had_grid && let Some((cols, rows)) = state.shared_grid(&self.key) {
@@ -1431,3 +1484,16 @@ pub(crate) fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, 
 
 #[cfg(test)]
 mod tests;
+
+/// What the shell receives for client input. `binary` data holds one byte per UTF-16 code
+/// unit, as `ptyInput` in `packages/shared` (`Buffer.from(data, "latin1")`, which keeps each
+/// unit's low byte); other data goes as UTF-8 text.
+fn pty_input(data: &str, binary: bool) -> Vec<u8> {
+    if binary {
+        data.encode_utf16()
+            .map(|unit| unit.to_le_bytes()[0])
+            .collect()
+    } else {
+        data.as_bytes().to_vec()
+    }
+}

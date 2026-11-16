@@ -70,15 +70,28 @@ fn session(thread: &str, terminal: &str) -> TerminalClearInput {
     }
 }
 
+fn write_input(thread: &str, terminal: &str, data: &str) -> TerminalWriteInput {
+    TerminalWriteInput {
+        thread_id: thread.into(),
+        terminal_id: terminal.into(),
+        data: data.into(),
+        binary: None,
+        reply: None,
+    }
+}
+
 async fn write(manager: &TerminalManager, thread: &str, terminal: &str, data: &str) {
     manager
-        .write(TerminalWriteInput {
-            thread_id: thread.into(),
-            terminal_id: terminal.into(),
-            data: data.into(),
-        })
+        .write(write_input(thread, terminal, data), None)
         .await
         .unwrap();
+}
+
+/// A query reply (`reply: true`) as viewer `viewer` writes it.
+async fn reply(manager: &TerminalManager, viewer: ViewerId, data: &str) {
+    let mut input = write_input("t9", "term-1", data);
+    input.reply = Some(true);
+    manager.write(input, Some(viewer)).await.unwrap();
 }
 
 /// Events until `done` matches one; returns them all, the match last.
@@ -261,13 +274,7 @@ async fn finds_terminals_by_id_and_respects_resume() {
         Err(TerminalOpenError::TerminalSessionLookupError(_))
     ));
     assert!(matches!(
-        manager
-            .write(TerminalWriteInput {
-                thread_id: "t3".into(),
-                terminal_id: "term-1".into(),
-                data: "x".into()
-            })
-            .await,
+        manager.write(write_input("t3", "term-1", "x"), None).await,
         Err(TerminalOpenError::TerminalSessionLookupError(_))
     ));
     let mut bad = open_input("t3", "term-1");
@@ -622,4 +629,58 @@ async fn a_closed_shell_ends_while_other_terminals_run() {
     });
     until_dead(first).await;
     assert_eq!(manager.list().len(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn one_viewer_answers_terminal_queries_until_it_leaves() {
+    let manager = TerminalManager::new(config());
+    let mut first = manager.attach(attach_input("t9", "term-1"), 1).unwrap();
+    let second = manager.attach(attach_input("t9", "term-1"), 2).unwrap();
+    // The second viewer answers first and keeps the queries; the first viewer's replies and a
+    // reply from a connection that is no viewer are dropped. Plain input still goes through.
+    reply(&manager, 2, "echo AAA").await;
+    reply(&manager, 1, "BBB").await;
+    reply(&manager, 99, "ZZZ").await;
+    write(&manager, "t9", "term-1", "CCC\n").await;
+    let seen = output_contains(&mut first, "AAACCC").await;
+    assert!(!seen.contains("BBB") && !seen.contains("ZZZ"), "{seen}");
+    // Once it detaches, the next viewer to answer takes over.
+    drop(second);
+    reply(&manager, 1, "echo DDD").await;
+    write(&manager, "t9", "term-1", "\n").await;
+    output_contains(&mut first, "DDD").await;
+    manager.close(TerminalCloseInput {
+        thread_id: "t9".into(),
+        terminal_id: None,
+        delete_history: Some(true),
+    });
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_start_shows_its_error_to_later_attachments() {
+    let manager = TerminalManager::new(TerminalConfig {
+        shells: vec!["/definitely/not/a/shell".into()],
+        ..config()
+    });
+    for viewer in [1, 2] {
+        let mut sub = manager
+            .attach(attach_input("t10", "term-1"), viewer)
+            .unwrap();
+        match sub.next().await {
+            E::Snapshot(s) => {
+                assert_eq!(s.snapshot.status, TerminalSessionStatus::Error);
+                let message = s.snapshot.error.unwrap_or_default();
+                assert!(message.contains("/definitely/not/a/shell"), "{message}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn binary_input_is_one_byte_per_code_unit() {
+    // `Buffer.from(data, "latin1")`: each UTF-16 unit's low byte; text goes as UTF-8.
+    assert_eq!(pty_input("\u{1b}[M \u{e9}!", true), b"\x1b[M \xe9!");
+    assert_eq!(pty_input("\u{e9}", false), "\u{e9}".as_bytes());
+    assert_eq!(pty_input("\u{1e9}", true), [0xe9]);
 }

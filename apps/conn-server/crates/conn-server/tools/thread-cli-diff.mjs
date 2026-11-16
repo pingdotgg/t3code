@@ -74,6 +74,18 @@ const KNOWN = [
   },
 ];
 
+/**
+ * Text that only the T3 server adds, with the reason: removed from T3's text before a text
+ * compare. Anything else in the text still has to match byte for byte.
+ */
+const KNOWN_TEXT = [
+  {
+    text: " Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.",
+    reason:
+      "T3's thread_not_found hint (threadAccess.ts threadNotFound, #31946) points at linked environments, which this server does not serve (no t3_environment_links); a capability is named only when served",
+  },
+];
+
 // ---------------------------------------------------------------------------------------
 // One side: a server, its home, its CLI.
 
@@ -476,7 +488,9 @@ function compare(t3, conn) {
           problems.push(`${stream} layout differs:\n  T3:   ${JSON.stringify(x)}\n  Conn: ${JSON.stringify(y)}`);
         }
       } else {
-        problems.push(`${stream}:\n  T3:   ${JSON.stringify(x)}\n  Conn: ${JSON.stringify(y)}`);
+        const rule = KNOWN_TEXT.find((k) => x.includes(k.text) && x.replaceAll(k.text, "") === y);
+        if (rule) excused.push(`${stream}: T3 adds ${JSON.stringify(rule.text.trim())} (known: ${rule.reason})`);
+        else problems.push(`${stream}:\n  T3:   ${JSON.stringify(x)}\n  Conn: ${JSON.stringify(y)}`);
       }
     }
     if (problems.length > 0) {

@@ -247,7 +247,7 @@ fn is_js_space(c: char) -> bool {
     c.is_whitespace() || c == '\u{feff}'
 }
 
-/// `userlessScpRemoteHost`: `/^([^@:/\\\s]{2,}):(?!:)\/?[^/\s]+(?:\/[^/\s]+)+\/?$/u`.
+/// `userlessScpRemoteHost`: `/^([^@:/\\\s]{2,}):(?!:)\/?[^/\s]+(?:\/[^/\s]+)*\/?$/u`.
 pub fn userless_scp_remote_host(remote_url: &str) -> Option<&str> {
     let text = remote_url.trim_matches(is_js_space);
     let colon = text.find(':')?;
@@ -267,10 +267,10 @@ pub fn userless_scp_remote_host(remote_url: &str) -> Option<&str> {
     let attempt = |path: &str| -> bool {
         let path = path.strip_suffix('/').unwrap_or(path);
         let parts: Vec<&str> = path.split('/').collect();
-        parts.len() >= 2
-            && parts
-                .iter()
-                .all(|p| !p.is_empty() && !p.chars().any(is_js_space))
+        // One segment or more: `host:repo` reads as SSH too.
+        parts
+            .iter()
+            .all(|p| !p.is_empty() && !p.chars().any(is_js_space))
     };
     let ok = attempt(rest) || rest.strip_prefix('/').is_some_and(attempt);
     ok.then_some(host)
@@ -555,12 +555,19 @@ impl HostKind {
         }
     }
 
-    /// `changeRequestHost`, falling back to `projectChangeRequestHost`.
-    fn change_request_host(self, canonical_key: Option<&str>, remote_url: Option<&str>) -> String {
-        if self == HostKind::Forgejo
-            && let Some(remote) = remote_url.and_then(parse_url).filter(is_http)
-        {
-            return host_with_port(&remote).to_lowercase();
+    /// `changeRequestHost`, falling back to `projectChangeRequestHost`. Forgejo's server includes
+    /// its port, which only its resolved web URL or an HTTP remote names; the web URL wins, so
+    /// an SSH remote on another host still finds the web host.
+    fn change_request_host(
+        self,
+        identity: &ProjectIdentity,
+        canonical_key: Option<&str>,
+    ) -> String {
+        if self == HostKind::Forgejo {
+            let remote = || parse_url(&identity.remote_url).filter(is_http);
+            if let Some(url) = resolved_web_url(identity).or_else(remote) {
+                return host_with_port(&url).to_lowercase();
+            }
         }
         project_change_request_host(canonical_key, self.as_str())
     }
@@ -578,10 +585,7 @@ impl HostKind {
                 }
                 match resolved_web_url(identity) {
                     None => in_project_repository(
-                        &self.change_request_host(
-                            Some(&identity.canonical_key),
-                            Some(&identity.remote_url),
-                        ),
+                        &self.change_request_host(identity, Some(&identity.canonical_key)),
                         identity,
                         link,
                     ),
@@ -625,10 +629,7 @@ impl HostKind {
             HostKind::AzureDevOps => false,
             HostKind::Forgejo => match resolved_web_url(identity) {
                 None => on_project_host(
-                    &self.change_request_host(
-                        Some(&identity.canonical_key),
-                        Some(&identity.remote_url),
-                    ),
+                    &self.change_request_host(identity, Some(&identity.canonical_key)),
                     identity,
                     link,
                 ),
@@ -868,7 +869,7 @@ pub fn repository_selector(identity: &ProjectIdentity) -> Option<String> {
 pub fn change_request_host(identity: &ProjectIdentity, kind: Option<&str>) -> Option<String> {
     let canonical = Some(identity.canonical_key.as_str()).filter(|k| !k.is_empty());
     match kind.and_then(HostKind::parse) {
-        Some(host) => Some(host.change_request_host(canonical, Some(&identity.remote_url))),
+        Some(host) => Some(host.change_request_host(identity, canonical)),
         None => {
             let host = canonical
                 .and_then(|k| k.split('/').next())

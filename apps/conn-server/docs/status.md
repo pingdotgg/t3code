@@ -5,7 +5,50 @@ says where the work stands, what is proven, and what is left, in order. Keep it 
 it with every merged step.
 
 Since 2026-11-15 the Conn Server lives in the Conn monorepo, in `apps/conn-server`. Nothing in
-Conn depends on it yet. No container, desktop or mobile client uses the Conn Server.
+Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new containers (see
+"Released and running in Orbit"); no desktop or mobile client uses it.
+
+## Released and running in Orbit (2026-11-16)
+
+- **Release `conn-server-v0.1.0`** (Conn `a7755b30bd`): the release workflow's first run built
+  `conn-server-0.1.0-linux-x64.tar.gz` and published it with its `.sha256`. The first tag run
+  failed at checkout (`persist-credentials: false` runs `git submodule foreach`, which trips
+  on a `.repos` gitlink); the write token now sits in a job of its own that only downloads the
+  tarball and makes the Release (PR #96). Downloaded without a login, the digest matches.
+- **Orbit side** (ADR 0258, `hardimpactdev/orbit`): a Project's `container_server` picks `t3`
+  or `conn` (PR 3834); the recipe pins this release as the agent folder's part `conn-server`
+  (PR 3879). On Beast the converge added the part without restarting a running server, since
+  the new folder version only adds files. `conn:environment-restart` treats the SDK host as
+  it treats a provider (PR 3880).
+- **Live proof** (Nick chose Project 20, `nckrtl`): its clone `conn-trial` (Instance 3418 on
+  Beast) runs `conn-server` 0.1.0 as `t3.service`. One Haiku turn through Orbit's
+  `thread start --wait` completed, with the SDK host on the container's Node 24.22.1.
+
+## Followed to Conn `a7755b30bd` (the 2026-11-16 sync)
+
+`tools/follow-conn.sh --capture`, then each red check followed as T3 does it:
+
+- Terminals: a failed shell start keeps its error for later attachments (#37088); `binary`
+  writes are one byte per UTF-16 unit (#37223); a terminal query reply reaches the shell only
+  from the first attached viewer that answers, until it detaches (#37233).
+- `/mcp`: tools that act as the calling thread are hidden from outside clients
+  (`hiddenFromOutsideClients`, #32764 and Conn's sync): missing from their `tools/list` and
+  "not found" when called (`gen-tools.mjs` writes `src/outside-hidden.txt`; `parity.mjs`
+  checks both servers hide the same tools). Threads say `pinned` (#32727);
+  `run_scheduled_task_now` returns `lastRunError` (#37149).
+- Source control: `host:repo` remotes with one path part read as SSH (#31781); Forgejo's
+  change request host comes from the resolved web URL first (#29784).
+- Codex: full access sends the granular approval policy that keeps MCP prompts, accepts an
+  MCP access prompt without asking, and cancels (not declines) one it cannot answer (#37104);
+  `delegate_task` joins `t3_thread_wait` on the direct-only server (#30019); title runs turn
+  hooks off and drop a launch arg that enables them (#35203).
+- Claude: a Monitor that starts is awaited (#37085).
+- Grok: a completed turn keeps the rows of its background commands, so a dev server that
+  keeps running no longer holds the run open, and its later output and end land on that run
+  (#32109).
+- Known difference: T3's `thread_not_found` text adds a hint about linked environments
+  (#31946); this server serves none, so it does not name `t3_environment_links`
+  (`thread-cli-diff.mjs`, `KNOWN_TEXT`).
 
 ## Moved into the monorepo (2026-11-15)
 
@@ -54,25 +97,6 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
   Stop then took the before-start branch.
 - **Proof:** the fixture replay, every result as expected (Claude 34 of 34) in 6 runs on
   Linux and 3 on macOS; `idle-diff` no difference on both.
-- The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
-- **CI on Linux** (PR #95): `methods.json` names a digest of the contract inputs
-  (`contractDigest`, sha256 over the tracked files) instead of a commit id, which a shallow
-  checkout cannot give and a squash merge rewrites. `parity.mjs` seals the T3 server's `PATH`.
-  ACP agents stop on Linux as in T3 (`terminatePosixOwnedProcessTree`, in
-  `conn-provider-support/src/process_tree.rs`): descendants first, then the root; the probe
-  closes stdin before the stop. The Claude stubs save their records atomically. The Codex
-  `old-cli` probe scenario is gone: only the latest CLIs matter (Nick, 2026-11-15), and its
-  result was a race in T3 on Linux.
-- **The checkpoint waits for background items** (`end_run_holding` in
-  `conn-engine/src/runner.rs`). T3's root event stream keeps the thread's effect lane while a
-  background-capable item of the run (command, dynamic tool, subagent) runs, so its
-  `checkpoint.capture` waits. We captured at the terminal, and on Linux a fast git capture
-  completed the run before Claude's continuation request queued the next one
-  (`claude_background_subagent_after_root` failed 5 of 5). Now the capture waits until those
-  items settle and the provider's pending events are read, or until a message is queued on
-  the thread (then nothing waits on a run the capture holds). Only the capture waits; stop,
-  steer and answers keep their lane. Proof: the fixture replay, 34 of 34 Claude fixtures in
-  4 runs on Linux and 3 on macOS.
 
 ## Why it was parked for a day, and what that means
 
@@ -226,20 +250,19 @@ tarball for Orbit".
   10.1 MB; the binary is 23,089,112 bytes. Same input, same bytes.
 - The server now also finds `sdk-host/index.mjs` beside its real binary (after Orbit's `bin`
   link), and runs it with `node` from `PATH`. A unit test covers the lookup.
-- `.github/workflows/release.yml`: a tag `v<crate version>` builds it and makes a GitHub
-  Release with the `.sha256`. It has not run: no tag is pushed, and Nick has not decided
-  whether the repository goes public (Orbit must be able to fetch the URL).
+- `.github/workflows/conn-server-release.yml`: a tag `conn-server-v<crate version>` builds it
+  and makes a GitHub Release with the `.sha256`. The first release is `conn-server-v0.1.0`
+  (see "Released and running in Orbit").
 - Proven on Beast in the `conn-proof` container, no model: Orbit's unpack, owner and mode
   steps; `conn-server` as `agent`; `serve` ready; the server's Claude status probe started the
   bundled SDK host under the runtime folder's Node 24.22.1, which loaded the SDK and started a
   stub `claude` with the SDK's argv.
 - Node: the T3 release embeds Node 26.12.1 and runs the SDK there; in Orbit our SDK host runs
-  on Node 24.22.1 (its floor is 24.10). CI tests on 26.12.1. A live turn on 24.22.1 is not
-  proven.
+  on Node 24.22.1 (its floor is 24.10). CI tests on 26.12.1. A live Haiku turn on 24.22.1
+  passed in Orbit on 2026-11-16.
 - `tools/check.sh` with `CONN_MONOREPO` (macOS): 44 pass, none skipped, the canary clean
   (`check exit: 0`). `toolchain pin` now also reads `release.yml`.
-- Not built: the Orbit side (the per-Project choice, the recipe entry, `t3.service` and the
-  CLI calls naming `conn-server`).
+- The Orbit side is built (ADR 0258): see "Released and running in Orbit".
 
 ## Proof on Beast (2026-11-15)
 

@@ -116,15 +116,22 @@ const listed = (tool) => {
 };
 
 // What each EnabledWhen filter says for a caller: run it with that caller in the fiber.
+// `outside` is a client with no calling thread (a paired device, `t3 auth session issue`);
+// the others are agents in a thread.
 const scopeFor = (caller) => ({
   environmentId: "environment:gen",
   capabilities: new Set(),
   issuedAt: 0,
   requestNamespace: "gen",
   thread:
-    caller === "subagent"
-      ? { threadId: "t", providerSessionId: "p", providerInstanceId: "claudeAgent", subagent: true }
-      : undefined,
+    caller === "outside"
+      ? undefined
+      : {
+          threadId: "t",
+          providerSessionId: "p",
+          providerInstanceId: "claudeAgent",
+          subagent: caller === "subagent",
+        },
   client: undefined,
   linkedEnvironments: caller !== "links-off",
 });
@@ -137,7 +144,7 @@ const tools = await Effect.runPromise(
       const enabledWhen = Context.getOption(annotations, McpSchema.EnabledWhen);
       const hiddenFor = [];
       if (enabledWhen._tag === "Some") {
-        for (const caller of ["subagent", "links-off"]) {
+        for (const caller of ["outside", "subagent", "links-off"]) {
           const shown = yield* Effect.sync(() => enabledWhen.value({})).pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, scopeFor(caller)),
           );
@@ -165,12 +172,18 @@ if (missing.length > 0) {
   console.error(`apps/server no longer registers: ${missing.join(", ")}`);
   process.exit(1);
 }
-// Filtered tools are none of ours yet; a filter on one would need a Rust check too.
+// conn-mcp knows one filter: tools that act as the calling thread are hidden from outside
+// clients (`hiddenFromOutsideClients`), listed in src/outside-hidden.txt. Any other filter on
+// one of ours would need a Rust check too.
+const outsideHidden = [];
 const catalog = implemented.map((name) => {
   const { "x-conn-hiddenFor": hiddenFor, ...tool } = byName.get(name);
   if (hiddenFor !== undefined) {
-    console.error(`${name} is hidden for ${hiddenFor.join(", ")}; teach conn-mcp that filter.`);
-    process.exit(1);
+    if (hiddenFor.length !== 1 || hiddenFor[0] !== "outside") {
+      console.error(`${name} is hidden for ${hiddenFor.join(", ")}; teach conn-mcp that filter.`);
+      process.exit(1);
+    }
+    outsideHidden.push(`${name}\n`);
   }
   return tool;
 });
@@ -245,8 +258,14 @@ for (const name of implemented) {
   }
 }
 const nullArgumentsOut = NodePath.join(here, "..", "src", "null-arguments.txt");
+const outsideHiddenOut = NodePath.join(here, "..", "src", "outside-hidden.txt");
+// Every tool apps/server registers, whoever may see it: the tests check the agent texts by it.
+const allNamesOut = NodePath.join(here, "..", "fixtures", "t3-tool-names.txt");
+const allNames = tools.map((tool) => `${tool.name}\n`).join("");
 const outputs = [
   [out, text, `${catalog.length} tools`],
+  [outsideHiddenOut, outsideHidden.join(""), `${outsideHidden.length} tools hidden from outside clients`],
+  [allNamesOut, allNames, `${tools.length} tool names`],
   [runningTaskNextOut, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT, "running task next text"],
   [nullArgumentsOut, nullArguments.join(""), `${nullArguments.length} arguments that keep null`],
   [instructionsOut, T3_CODE_ORCHESTRATION_INSTRUCTIONS, "agent instructions"],

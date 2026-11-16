@@ -51,10 +51,20 @@ const SCENARIOS = {
     covers:
       "PATH, __MISE_DIFF and JAVA_HOME from a stand-in login shell (os-jank.ts fixPath), and the codex found on that PATH",
   },
+  // In full access T3 answers an MCP access prompt itself, so the asked case runs in
+  // auto-accept-edits (the fixture's explicit approval and sandbox policy stay; the thread's
+  // runtime mode is the fixture input's \`runtimeMode\`).
   elicitation: {
     fixture: "tool_call_read_only_on_request",
     derive: "elicitation",
+    runtimeMode: "auto-accept-edits",
     covers: "an MCP form elicitation shown as an approval, and its answer",
+  },
+  elicitationFullAccess: {
+    fixture: "tool_call_read_only_on_request",
+    derive: "elicitation",
+    dropApprovals: true,
+    covers: "an MCP form elicitation that full access accepts without asking",
   },
   interrupt: { fixture: "turn_interrupt", covers: "an interrupt" },
   // Thread titles through Codex (`CodexTextGeneration.ts`): `codex mcp list --json`, then
@@ -609,6 +619,8 @@ const attachments = [
 
 const changedInput = (scenario: any, base: any) => {
   let steps = [...(scenario.steps ?? base.steps)];
+  // Nothing asks the user (\`elicitationFullAccess\`): the fixture's approvals are not given.
+  if (scenario.dropApprovals) steps = steps.filter((s: any) => s.type !== "approve_next_runtime_request");
   if (scenario.attachments) {
     const first = steps.findIndex((s: any) => s.type === "message");
     steps[first] = { ...steps[first], attachments };
@@ -621,7 +633,7 @@ const changedInput = (scenario: any, base: any) => {
     const at = steps.findIndex((s: any) => s.type === "message" && ++seen === scenario.setModelBefore.index);
     steps = [...steps.slice(0, at), { type: "set_model", model: scenario.setModelBefore.model }, ...steps.slice(at)];
   }
-  return { ...base, steps };
+  return { ...base, ...(scenario.runtimeMode ? { runtimeMode: scenario.runtimeMode } : {}), steps };
 };
 
 const mcpLayer = (scenario: any) =>
@@ -1033,7 +1045,12 @@ const replayKey = (frame, ignoredConfigKeys) => {
     }
     if (out.method === "turn/start" && out.params && typeof out.params === "object") {
       const p = { ...out.params };
-      if (p.approvalPolicy === "never") delete p.approvalPolicy;
+      // As T3's normalizeReplayFrame (effect-codex-app-server replay.ts): recordings made before
+      // full access kept MCP prompts say \`never\`; both shapes drop out.
+      const fullAccessPolicy = JSON.stringify({
+        granular: { mcp_elicitations: true, request_permissions: false, rules: false, sandbox_approval: false, skill_approval: false },
+      });
+      if (p.approvalPolicy === "never" || JSON.stringify(p.approvalPolicy) === fullAccessPolicy) delete p.approvalPolicy;
       if (p.sandboxPolicy?.type === "dangerFullAccess") delete p.sandboxPolicy;
       if (p.collaborationMode && typeof p.collaborationMode === "object") {
         const c = { ...p.collaborationMode };

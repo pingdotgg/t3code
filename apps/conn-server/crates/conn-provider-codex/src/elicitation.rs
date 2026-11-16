@@ -98,8 +98,10 @@ pub(crate) fn response(params: &Value, decision: &str) -> Value {
     if decision == "decline" || decision == "cancel" {
         return json!({ "action": decision });
     }
+    // T3 cannot answer these itself. `decline` reads as the user's refusal, and Codex's browser
+    // plugin saves it as a thread-wide site denial; `cancel` leaves no saved decision.
     if params["mode"] == "url" {
-        return json!({"action": "decline"});
+        return json!({"action": "cancel"});
     }
     let persist = match decision {
         "acceptForSession" => Some("session"),
@@ -132,7 +134,7 @@ pub(crate) fn response(params: &Value, decision: &str) -> Value {
                 .any(|key| !content.contains_key(key))
         });
     if missing {
-        return json!({"action": "decline"});
+        return json!({"action": "cancel"});
     }
     let mut reply = json!({"action": "accept"});
     if let Some(persist) = persist {
@@ -438,14 +440,14 @@ mod tests {
     }
 
     #[test]
-    fn declines_required_form_fields_that_an_approval_prompt_cannot_collect() {
+    fn cancels_required_form_fields_that_an_approval_prompt_cannot_collect() {
         let input = with(
             request(),
             "requestedSchema",
             json!({"type": "object", "properties": {"email": {"type": "string", "format": "email"}},
                 "required": ["email"]}),
         );
-        assert_eq!(response(&input, "accept"), json!({"action": "decline"}));
+        assert_eq!(response(&input, "accept"), json!({"action": "cancel"}));
     }
 
     #[test]
@@ -453,7 +455,8 @@ mod tests {
         let url = json!({"mode": "url", "message": "Finish signing in to continue.",
             "serverName": "computer-use", "threadId": "provider-thread-1", "turnId": "turn-1",
             "elicitationId": "sign-in-1", "url": "https://example.com/authorize"});
-        assert_eq!(response(&url, "accept"), json!({"action": "decline"}));
+        // `cancel`, not `decline`: Codex's browser plugin saves a decline as a site denial.
+        assert_eq!(response(&url, "accept"), json!({"action": "cancel"}));
     }
 
     #[test]

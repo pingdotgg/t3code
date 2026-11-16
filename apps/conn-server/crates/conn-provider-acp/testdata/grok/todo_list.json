@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/todo_list/grok_transcript.ndjson through the orchestrator fixture runner at c0e0f16781; driver dropped.",
- "capturedOn": "2026-11-15",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/todo_list/grok_transcript.ndjson through the orchestrator fixture runner at a7755b30bd; driver dropped.",
+ "capturedOn": "2026-11-16",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -12063,7 +12063,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     },
     "promptSuggestions": {
      "_id": "Exit",
@@ -12084,7 +12084,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     },
     "providerSessionId": "provider-session:provider-instance:grok:thread:thread%3Afixture%3Atodo_list%3Aproject%3Aproject%253Afixture%253Atodo_list%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ea50ea93-b0ab-4c77-a9e4-4fcde38dabb3",
     "existingProviderThread": {
@@ -12226,7 +12226,7 @@
     "runtimePolicy": {
      "runtimeMode": "full-access",
      "interactionMode": "default",
-     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "cwd": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     }
    },
    "exit": {
@@ -12968,7 +12968,7 @@
     "type": "dynamic_tool",
     "toolName": "list_dir",
     "input": {
-     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     }
    }
   },
@@ -13013,15 +13013,15 @@
     "parentItemId": null,
     "ordinal": 106,
     "status": "pending",
-    "title": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz`",
+    "title": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC`",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "dynamic_tool",
-    "toolName": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz`",
+    "toolName": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC`",
     "input": {
      "variant": "ListDir",
-     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     }
    }
   },
@@ -13125,21 +13125,21 @@
     "parentItemId": null,
     "ordinal": 106,
     "status": "completed",
-    "title": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz`",
+    "title": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC`",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:00.002Z",
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "dynamic_tool",
-    "toolName": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz`",
+    "toolName": "List `/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC`",
     "input": {
      "variant": "ListDir",
-     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "target_directory": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     },
     "output": {
      "type": "ListDir",
      "Content": {
-      "content": "- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/\n  - README.md",
-      "absolute_root_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+      "content": "- /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/\n  - README.md",
+      "absolute_root_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
      }
     }
    }
@@ -13567,7 +13567,7 @@
     "type": "dynamic_tool",
     "toolName": "read_file",
     "input": {
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json"
     }
    }
   },
@@ -13612,7 +13612,7 @@
     "parentItemId": null,
     "ordinal": 110,
     "status": "pending",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -13620,8 +13620,8 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json"
     }
    }
   },
@@ -13673,7 +13673,7 @@
     "type": "dynamic_tool",
     "toolName": "read_file",
     "input": {
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json"
     }
    }
   },
@@ -13718,7 +13718,7 @@
     "parentItemId": null,
     "ordinal": 111,
     "status": "pending",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -13726,8 +13726,8 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json"
     }
    }
   },
@@ -13779,7 +13779,7 @@
     "type": "dynamic_tool",
     "toolName": "read_file",
     "input": {
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md"
     }
    }
   },
@@ -13824,7 +13824,7 @@
     "parentItemId": null,
     "ordinal": 112,
     "status": "pending",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -13832,8 +13832,8 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md"
     }
    }
   },
@@ -14084,7 +14084,7 @@
     "parentItemId": null,
     "ordinal": 112,
     "status": "completed",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:00.002Z",
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -14092,15 +14092,15 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md"
     },
     "output": {
      "type": "ReadFile",
      "FileContent": {
       "content": "1→# todo_list\n",
       "content_concise": "1→# todo_list\n",
-      "absolute_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/README.md",
+      "absolute_path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/README.md",
       "offset": null,
       "raw_output": "# todo_list\n",
       "total_lines": 2
@@ -14149,7 +14149,7 @@
     "parentItemId": null,
     "ordinal": 110,
     "status": "failed",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:00.002Z",
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -14157,12 +14157,12 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json"
     },
     "output": {
      "type": "ReadFile",
-     "FileNotFound": "Error: /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/package.json does not exist.\nNote: your current working directory is /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "FileNotFound": "Error: /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/package.json does not exist.\nNote: your current working directory is /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     }
    }
   },
@@ -14207,7 +14207,7 @@
     "parentItemId": null,
     "ordinal": 111,
     "status": "failed",
-    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json",
+    "title": "Read /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:00.002Z",
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -14215,12 +14215,12 @@
     "toolName": "Read",
     "input": {
      "variant": "ReadFile",
-     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json",
-     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json"
+     "target_file": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json",
+     "path": "/var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json"
     },
     "output": {
      "type": "ReadFile",
-     "FileNotFound": "Error: /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz/tsconfig.json does not exist.\nNote: your current working directory is /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-nwyrzz"
+     "FileNotFound": "Error: /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC/tsconfig.json does not exist.\nNote: your current working directory is /var/folders/1j/07wx_xvs2j11pqghj72mqlt80000gn/T/t3-orchestrator-v2-todo_list-Te57HC"
     }
    }
   },

@@ -1838,7 +1838,11 @@ impl<E: Env> Mapper<E> {
             .or_else(|| p["conversationId"].as_str())
             .unwrap_or_default()
             .to_owned();
-        let native_turn = if method == "execCommandApproval" || method == "applyPatchApproval" {
+        // Legacy approvals and an elicitation without a turn id find the thread's active turn.
+        let by_thread = method == "execCommandApproval"
+            || method == "applyPatchApproval"
+            || (method == "mcpServer/elicitation/request" && p["turnId"].as_str().is_none());
+        let native_turn = if by_thread {
             self.turns
                 .values()
                 .find(|t| t.native_thread_id == thread_id)
@@ -1856,17 +1860,23 @@ impl<E: Env> Mapper<E> {
                 | "applyPatchApproval"
                 | "mcpServer/elicitation/request"
         );
-        // T3 declines at once an elicitation an approval cannot answer (a URL, or a form
-        // with required fields it cannot fill), and one with no active turn.
-        if method == "mcpServer/elicitation/request"
-            && (crate::elicitation::response(p, "accept")["action"] != "accept"
-                || native_turn.is_none())
-        {
-            out.push(Out::Write(reply(&id, json!({"action": "decline"}))));
-            out.push(Out::Skipped(
-                "an MCP elicitation an approval cannot answer".into(),
-            ));
-            return;
+        // T3 cancels at once an elicitation an approval cannot answer (a URL, or a form with
+        // required fields it cannot fill), and one with no active turn. In full access it
+        // accepts the rest without asking.
+        if method == "mcpServer/elicitation/request" {
+            let acceptance = crate::elicitation::response(p, "accept");
+            let turn = native_turn.as_deref().and_then(|t| self.turns.get(t));
+            if acceptance["action"] != "accept" || turn.is_none() {
+                out.push(Out::Write(reply(&id, json!({"action": "cancel"}))));
+                out.push(Out::Skipped(
+                    "an MCP elicitation an approval cannot answer".into(),
+                ));
+                return;
+            }
+            if turn.is_some_and(|t| t.runtime_mode == "full-access") {
+                out.push(Out::Write(reply(&id, acceptance)));
+                return;
+            }
         }
         if !known {
             out.push(Out::Write(reply_error(
