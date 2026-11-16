@@ -9,7 +9,7 @@
 #                            (default: stable; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
 #   T3CODE_HOME              T3 home directory (default: ~/.t3)
-#   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
+#   T3CODE_INSTALL_BIN_DIR   where the `t3` command goes (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
 #
 # The archive is unpacked into $T3CODE_HOME/runtime/versions/<version>, the
@@ -267,8 +267,31 @@ fi
 
 step "Setting up the t3 command..."
 mkdir -p "$bin_dir"
-# Replace only this home's own t3 links: into its versions, or the desktop app's launcher.
-# Anything that is not a symlink (a script, a copied binary) belongs to someone else.
+# Exec by absolute path: through a symlink, argv0 is the link, and the Cursor SDK looks for its
+# helpers beside it. t3 update and t3 install write the same script.
+nl='
+'
+launcher_head="#!/bin/sh${nl}exec '"
+launcher_tail="' \"\$@\"${nl}"
+# The x keeps a trailing newline in the path through command substitution.
+launcher_script() {
+  quoted="$(printf '%sx' "$1" | sed "s/'/'\\\\''/g")"
+  printf '%s%s%s' "$launcher_head" "${quoted%x}" "$launcher_tail"
+}
+# The executable an unedited launcher script at $1 runs; a user's own wrapper prints nothing.
+script_t3() {
+  [ -f "$1" ] && [ ! -L "$1" ] && [ "$(wc -c < "$1")" -le 4096 ] || return 0
+  contents="$(cat "$1"; printf x)"
+  contents="${contents%x}"
+  case "$contents" in "$launcher_head"*"$launcher_tail") ;; *) return 0 ;; esac
+  quoted="${contents#"$launcher_head"}"
+  unquoted="$(printf '%sx' "${quoted%"$launcher_tail"}" | sed "s/'\\\\''/'/g")"
+  unquoted="${unquoted%x}"
+  [ -n "$unquoted" ] && [ "$(launcher_script "$unquoted"; printf x)" = "${contents}x" ] && printf '%s' "$unquoted"
+  return 0
+}
+# Replace only this home's own t3 launchers: into its versions, or the desktop app's launcher.
+# Anything else (a user's script, a copied binary) belongs to someone else.
 # Exactly <versions>/<version>/t3 ($1 under $2), never another program inside a version.
 version_t3() {
   case "$1" in "$2"/*) ;; *) return 1 ;; esac
@@ -278,13 +301,17 @@ slot_empty=true
 if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
   slot_empty=false
   owned=false
+  real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
   if [ -L "${bin_dir}/t3" ]; then
     existing="$(readlink "${bin_dir}/t3" 2>/dev/null || true)"
     case "$existing" in /*) ;; *) existing="${bin_dir}/${existing}" ;; esac
-    real_versions_dir="$(CDPATH='' cd -P -- "$versions_dir" && pwd)"
-    # Through a symlinked T3 home the link text names the alias; resolve its folder to compare.
+  else
+    existing="$(script_t3 "${bin_dir}/t3")"
+  fi
+  if [ -n "$existing" ]; then
+    # Through a symlinked T3 home the path names the alias; resolve its folder to compare.
     existing_dir="$(CDPATH='' cd -P -- "$(dirname -- "$existing")" 2>/dev/null && pwd || true)"
-    # The text alone counts only without . or .. segments (a pruned version leaves a dangling link).
+    # The text alone counts only without . or .. segments (a pruned version leaves a dangling path).
     case "$existing" in
       */./* | */../* | */. | */..) ;;
       *)
@@ -298,13 +325,22 @@ if [ -e "${bin_dir}/t3" ] || [ -L "${bin_dir}/t3" ]; then
   fi
   "$owned" || fail "another t3 is already at ${bin_dir}/t3. Remove it and run this again, or run ${target_dir}/t3 directly."
 fi
-# An empty spot is linked without -f, so a file that appears after the check above is kept.
+launcher_tmp="$(mktemp "${bin_dir}/.t3.XXXXXX")"
+trap 'rm -f "$launcher_tmp"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+launcher_script "${target_dir}/t3" > "$launcher_tmp"
+chmod 755 "$launcher_tmp"
+# An empty spot is hard-linked without -f, so a file that appears after the check above is kept.
 if "$slot_empty"; then
-  ln -s "${target_dir}/t3" "${bin_dir}/t3" || fail "could not link ${bin_dir}/t3; something else was created there."
+  ln "$launcher_tmp" "${bin_dir}/t3" || fail "could not write ${bin_dir}/t3; something else was created there."
 else
   # Known race, accepted: a file written here after the ownership check above is overwritten.
-  ln -sfn "${target_dir}/t3" "${bin_dir}/t3"
+  # mv replaces a legacy symlink rather than writing through it.
+  mv -f "$launcher_tmp" "${bin_dir}/t3"
 fi
+rm -f "$launcher_tmp"
+trap - EXIT
 # Pruning keeps what this launcher points at; a background service cannot see bin_dir otherwise.
 launcher="$(CDPATH='' cd -P -- "$bin_dir" && pwd)/t3"
 launchers="${t3_home}/runtime/launchers"
