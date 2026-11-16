@@ -1084,6 +1084,19 @@ export const make = Effect.gen(function* () {
                     };
                   }
                 }
+                const owner =
+                  publicHost ?? sourceControlDefinitions.findByRepositoryKey(referenceKey);
+                const readable = owner === undefined ? null : registry.get(owner.kind);
+                if (
+                  readable !== null &&
+                  !readable.readsPublicHostWithoutCheckout &&
+                  readable.servesHost?.(host) !== false
+                ) {
+                  return yield* new PullRequestUnavailableError({
+                    reason: "repository-without-project",
+                    repository,
+                  });
+                }
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
