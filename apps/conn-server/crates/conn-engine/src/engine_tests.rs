@@ -1101,6 +1101,10 @@ async fn clients_add_rename_and_remove_projects() {
     .unwrap();
     assert_eq!(created["title"], "Repo");
     assert_eq!(created["deletedAt"], Value::Null);
+    assert_eq!(
+        serde_json::to_value(engine.projects_snapshot().await.unwrap()).unwrap(),
+        engine.shell_snapshot().await.unwrap()["projects"]
+    );
     let item = next(&mut shell).await;
     assert_eq!(item["kind"], "project.updated");
     assert_eq!(item["project"]["workspaceRoot"], root.as_str());

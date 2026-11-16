@@ -430,7 +430,8 @@ pub(crate) async fn checkout_clone_urls(
         ctx.cwd,
         &locator.host,
         &repo_path(&locator.owner, &locator.name),
-        Value::Null,
+        None,
+        "Repository not found. Check the owner and name and try again.",
     )
     .await?;
     github_urls_value(&value)

@@ -507,7 +507,7 @@ fn the_debug_output_never_holds_a_key() {
     assert!(!format!("{:?}", f.generators).contains("sk-very-secret"));
 }
 
-mod titles {
+pub(crate) mod titles {
     use std::time::Duration;
 
     use super::*;
@@ -538,7 +538,7 @@ mod titles {
 
     /// An agent provider for titles: answers `generate_text` with `answer`, or does not
     /// generate text at all (`None`), and keeps the requests it got.
-    struct AgentProvider {
+    pub(crate) struct AgentProvider {
         id: conn_contract::ProviderInstanceId,
         driver: &'static str,
         answer: Option<Value>,
@@ -546,7 +546,7 @@ mod titles {
     }
 
     impl AgentProvider {
-        fn new(id: &str, driver: &'static str, answer: Option<Value>) -> Arc<Self> {
+        pub(crate) fn new(id: &str, driver: &'static str, answer: Option<Value>) -> Arc<Self> {
             Arc::new(Self {
                 id: id.into(),
                 driver,

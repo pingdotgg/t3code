@@ -192,17 +192,16 @@ impl std::fmt::Debug for McpService {
 }
 
 impl McpService {
-    pub async fn run_worktree_setup(&self, thread: &str, path: &str) -> Result<(), String> {
+    pub async fn run_worktree_setup(
+        &self,
+        thread: &str,
+        path: &str,
+        project: &Value,
+    ) -> Result<(), String> {
         let Some(config) = &self.config.worktrees else {
             return Ok(());
         };
-        let project = self
-            .config
-            .engine
-            .resolve_project("", Some(thread), None)
-            .await
-            .ok_or_else(|| "Project was not found for worktree setup.".to_owned())?;
-        tools::worktree::setup(config, thread, &project, path).await?;
+        tools::worktree::setup(config, thread, project, path).await?;
         Ok(())
     }
 

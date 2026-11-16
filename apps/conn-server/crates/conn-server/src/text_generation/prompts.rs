@@ -14,8 +14,8 @@ use super::js::{self, char_code_at, is_high_surrogate, is_low_surrogate, len16, 
 
 #[path = "generated.rs"]
 mod generated;
-use generated::Part;
-pub(crate) use generated::{COMMIT_POLICIES, COMMIT_PROMPTS, COMMIT_SCHEMAS, TITLE_OUTPUT_SCHEMA};
+pub(crate) use generated::{COMMIT_POLICIES, COMMIT_SCHEMAS, TITLE_OUTPUT_SCHEMA};
+use generated::{COMMIT_PROMPTS, Part};
 
 /// `EARLIER_CONTENT_TRUNCATION_MARKER` and `OMITTED`.
 const OMITTED: &str = "[Earlier content truncated]\n\n";
@@ -239,6 +239,7 @@ pub fn thread_title_prompt(input: &TitlePromptInput) -> String {
                 input.previous_title.as_deref().unwrap_or_default(),
             )),
             Part::Message => prompt.push_str(&message),
+            _ => unreachable!("title template contains only title parts"),
         }
     }
     prompt.push_str(&prompt_suffix(input));
@@ -506,25 +507,39 @@ pub fn commit_message_prompt(
     policy: &str,
     feature: bool,
 ) -> String {
-    let template = COMMIT_PROMPTS
+    let parts = COMMIT_PROMPTS
         .get(usize::from(feature))
+        .and_then(|templates| templates.get(usize::from(!policy.trim().is_empty())))
         .copied()
         .unwrap_or_default();
-    let prompt = template
-        .replace("@@BRANCH@@", branch.unwrap_or("(detached)"))
-        .replace("@@SUMMARY@@", &limit_section(summary, 6000))
-        .replace("@@PATCH@@", &limit_section(patch, 40000))
-        .replace("@@POLICY@@", &limit_section(policy.trim(), 20_000));
-    if policy.trim().is_empty() {
-        prompt.replace("\nAdditional instructions:\n\n", "")
-    } else {
-        prompt
+    let mut prompt = String::new();
+    for part in parts {
+        match part {
+            Part::Text(text) => prompt.push_str(text),
+            Part::Branch => prompt.push_str(branch.unwrap_or("(detached)")),
+            Part::Summary => prompt.push_str(&limit_section(summary, 6000)),
+            Part::Patch => prompt.push_str(&limit_section(patch, 40000)),
+            Part::Policy => prompt.push_str(&limit_section(policy.trim(), 20_000)),
+            _ => unreachable!("commit template contains only commit parts"),
+        }
     }
+    prompt
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_values_are_never_interpreted_as_template_parts() {
+        for policy in ["", "Use clear words."] {
+            let patch = "@@POLICY@@ @@SUMMARY@@\nAdditional instructions:\n\n@@PATCH@@";
+            let prompt =
+                commit_message_prompt(Some("@@PATCH@@"), "@@POLICY@@", patch, policy, false);
+            assert!(prompt.contains(patch), "{prompt}");
+            assert!(prompt.contains("@@PATCH@@"));
+        }
+    }
 
     #[test]
     fn sanitizes_titles_as_the_t3_server() {

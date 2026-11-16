@@ -132,7 +132,7 @@ async fn resolve_inner(
         )
     };
     let response = if let Some(number) = number {
-        github::api_json(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUEST_BY_NUMBER.document,"variables":{"owner":location.owner,"name":location.name,"number":number}})).await?
+        github::api_json(ctx,cwd,&location.host,"graphql",Some(json!({"query":generated::PULL_REQUEST_BY_NUMBER.document,"variables":{"owner":location.owner,"name":location.name,"number":number}})),"Pull request not found. Check the PR number or URL and try again.").await?
     } else if reference.split_once(':').is_some_and(|(owner, branch)| {
         !owner.is_empty() && !owner.contains(['/', ' ', ':']) && !branch.is_empty()
     }) {
@@ -144,7 +144,15 @@ async fn resolve_inner(
                 github::encode_uri_component(&location.name),
                 github::encode_uri_component(reference)
             );
-            let response = github::api_json(ctx, cwd, &location.host, &path, Value::Null).await?;
+            let response = github::api_json(
+                ctx,
+                cwd,
+                &location.host,
+                &path,
+                None,
+                "Pull request not found. Check the PR number or URL and try again.",
+            )
+            .await?;
             if let Some(pr) = response.as_array().and_then(|rows| rows.first()) {
                 found = Some(
                     json!({"number":pr.get("number"),"title":pr.get("title"),"url":pr.get("html_url"),"baseRefName":pr.pointer("/base/ref"),"headRefName":pr.pointer("/head/ref"),"headRefOid":pr.pointer("/head/sha"),"state":if pr.get("merged_at").is_some_and(|v| !v.is_null()) {"MERGED"} else if pr.get("state").and_then(Value::as_str)==Some("open") {"OPEN"} else {"CLOSED"},"isCrossRepository":pr.pointer("/head/repo/full_name")!=pr.pointer("/base/repo/full_name"),"headRepository":{"nameWithOwner":pr.pointer("/head/repo/full_name")},"headRepositoryOwner":{"login":pr.pointer("/head/user/login")}}),
@@ -156,7 +164,7 @@ async fn resolve_inner(
     } else {
         let mut found = None;
         for states in [json!(["OPEN"]), json!(["OPEN", "CLOSED", "MERGED"])] {
-            let response=github::api_json(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUESTS_BY_HEAD.document,"variables":{"owner":location.owner,"name":location.name,"head":reference,"states":states,"first":1}})).await?;
+            let response=github::api_json(ctx,cwd,&location.host,"graphql",Some(json!({"query":generated::PULL_REQUESTS_BY_HEAD.document,"variables":{"owner":location.owner,"name":location.name,"head":reference,"states":states,"first":1}})),"Pull request not found. Check the PR number or URL and try again.").await?;
             if let Some(node) = response
                 .pointer("/data/repository/pullRequests/nodes")
                 .and_then(Value::as_array)
@@ -220,75 +228,6 @@ async fn resolve_inner(
     })
 }
 
-pub fn worktree_branch(number: i64, head: &str, cross: bool, branches: &[String]) -> String {
-    if !cross {
-        return head.into();
-    }
-    let suffix = branch_fragment(head);
-    let creatable = |name: &str| {
-        !branches
-            .iter()
-            .any(|b| name.starts_with(&format!("{b}/")) || b.starts_with(&format!("{name}/")))
-    };
-    let preferred = format!("t3code/pr-{number}/{suffix}");
-    if creatable(&preferred) {
-        return preferred;
-    }
-    let flat = format!("t3code-pr-{number}-{}", suffix.replace('/', "-"));
-    let mut name = flat.clone();
-    for n in 2..=branches.len().saturating_add(2) {
-        if creatable(&name) {
-            return name;
-        }
-        name = format!("{flat}-{n}");
-    }
-    name
-}
-
-pub fn branch_fragment(raw: &str) -> String {
-    let mut result = String::new();
-    let folded = raw
-        .chars()
-        .map(|c| {
-            conn_vcs::generated::LATIN_FOLDS
-                .iter()
-                .find(|(from, _)| from.contains(c))
-                .map(|(_, to)| (*to).to_owned())
-                .unwrap_or_else(|| c.to_string())
-        })
-        .collect::<String>();
-    for c in folded
-        .trim()
-        .to_lowercase()
-        .chars()
-        .filter(|c| !('̀'..='ͯ').contains(c))
-    {
-        if matches!(c, '\'' | '"' | '`') {
-            continue;
-        }
-        let c = if c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-') {
-            c
-        } else {
-            '-'
-        };
-        if matches!(c, '-' | '/') && result.ends_with(c) {
-            continue;
-        }
-        result.push(c);
-    }
-    let result = result
-        .trim_matches(['.', '/', '_', '-'])
-        .chars()
-        .take(64)
-        .collect::<String>();
-    let result = result.trim_end_matches(['.', '/', '_', '-']);
-    if result.is_empty() {
-        "update".into()
-    } else {
-        result.into()
-    }
-}
-
 async fn git(cwd: &Path, args: Vec<String>) -> Result<String, Error> {
     Ok(
         conn_vcs::process::GitCommand::new("GitManager.preparePullRequestThread", cwd, args)
@@ -317,6 +256,19 @@ async fn canonical(path: &Path) -> PathBuf {
         .unwrap_or_default()
 }
 
+async fn find_remote(cwd: &Path, host: &str, repository: &str) -> Result<Option<String>, Error> {
+    for name in repo::remote_names(cwd).await? {
+        if let Some(url) = repo::config_get(cwd, &format!("remote.{name}.url")).await?
+            && repositories::api_host_for_remote(&url).as_deref() == Some(host)
+            && remote::parse_git_remote_repository(&url)
+                .is_some_and(|(_, p)| p.eq_ignore_ascii_case(repository))
+        {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
+}
+
 async fn head_remote(
     ctx: DiscoveryContext<'_>,
     cwd: &Path,
@@ -333,14 +285,8 @@ async fn head_remote(
     let host = registry::parse_change_request_url(&pr.resolved.url)
         .map(|(_, p)| p.link.host)
         .unwrap_or_else(|| "github.com".into());
-    for name in repo::remote_names(cwd).await? {
-        if let Some(url) = repo::config_get(cwd, &format!("remote.{name}.url")).await?
-            && repositories::api_host_for_remote(&url).as_deref() == Some(&host)
-            && remote::parse_git_remote_repository(&url)
-                .is_some_and(|(_, p)| p.eq_ignore_ascii_case(repository))
-        {
-            return Ok(name);
-        }
+    if let Some(name) = find_remote(cwd, &host, repository).await? {
+        return Ok(name);
     }
     let urls =
         repositories::checkout_clone_urls(DiscoveryContext { cwd, ..ctx }, &host, repository)
@@ -373,7 +319,7 @@ async fn fetch_upstream(
     ctx: DiscoveryContext<'_>,
     cwd: &Path,
     pr: &PullRequest,
-) -> Result<String, Error> {
+) -> Result<(String, String), Error> {
     let remote = head_remote(ctx, cwd, pr).await?;
     let Some((sha, _)) = setup::fetch_remote_branch(cwd, &remote, &pr.resolved.head_branch).await?
     else {
@@ -382,26 +328,7 @@ async fn fetch_upstream(
             "The pull request head could not be resolved for this checkout.",
         ));
     };
-    Ok(sha)
-}
-
-async fn configure(
-    ctx: DiscoveryContext<'_>,
-    cwd: &Path,
-    pr: &PullRequest,
-    branch: &str,
-) -> Result<(), Error> {
-    let remote = head_remote(ctx, cwd, pr).await?;
-    if setup::fetch_remote_branch(cwd, &remote, &pr.resolved.head_branch)
-        .await?
-        .is_none()
-    {
-        return Err(Error::manager(
-            cwd,
-            "The pull request head could not be resolved for this checkout.",
-        ));
-    }
-    set_upstream(cwd, branch, &remote, &pr.resolved.head_branch).await
+    Ok((remote, sha))
 }
 
 async fn set_upstream(cwd: &Path, branch: &str, remote: &str, head: &str) -> Result<(), Error> {
@@ -440,17 +367,10 @@ async fn fetch_head(cwd: &Path, pr: &PullRequest) -> Result<String, Error> {
     let mut remote = repo::primary_remote(cwd)
         .await?
         .unwrap_or_else(|| "origin".into());
-    if let Some((_, parsed)) = registry::parse_change_request_url(&pr.resolved.url) {
-        for name in repo::remote_names(cwd).await? {
-            if let Some(url) = repo::config_get(cwd, &format!("remote.{name}.url")).await?
-                && repositories::api_host_for_remote(&url).as_deref() == Some(&parsed.link.host)
-                && remote::parse_git_remote_repository(&url)
-                    .is_some_and(|(_, path)| path.eq_ignore_ascii_case(&parsed.link.repository))
-            {
-                remote = name;
-                break;
-            }
-        }
+    if let Some((_, parsed)) = registry::parse_change_request_url(&pr.resolved.url)
+        && let Some(name) = find_remote(cwd, &parsed.link.host, &parsed.link.repository).await?
+    {
+        remote = name;
     }
     git(
         cwd,
@@ -601,7 +521,6 @@ async fn prepare_inner(
     let cwd = Path::new(&input.cwd);
     let pr = resolve(ctx, cwd, &input.reference).await?;
     let mut branch = pr.resolved.head_branch.clone();
-    // Validate every remote-provided branch before passing it to git.
     if branch.starts_with('-')
         || conn_vcs::process::GitCommand::new(
             "GitManager.preparePullRequestThread",
@@ -646,7 +565,8 @@ async fn prepare_inner(
                     cwd,
                     &location.host,
                     &format!("repos/{}", location.repository),
-                    json!({}),
+                    None,
+                    "Repository not found. Check the owner and name and try again.",
                 )
                 .await?;
                 if repository.get("default_branch").and_then(Value::as_str) == Some(branch.as_str())
@@ -656,8 +576,9 @@ async fn prepare_inner(
                 }
             }
         }
-        let target = match fetch_upstream(ctx, cwd, &pr).await {
-            Ok(sha) => sha,
+        let upstream = fetch_upstream(ctx, cwd, &pr).await;
+        let target = match &upstream {
+            Ok((_, sha)) => sha.clone(),
             Err(_) => fetch_head(cwd, &pr).await?,
         };
         let exists = repo::ref_exists(cwd, &format!("refs/heads/{branch}")).await?;
@@ -684,7 +605,9 @@ async fn prepare_inner(
                 Error::provider(cwd, "The pull request could not be checked out with git.")
             })?;
         }
-        let _ = configure(ctx, cwd, &pr, &branch).await;
+        if let Ok((remote, _)) = upstream {
+            let _ = set_upstream(cwd, &branch, &remote, &pr.resolved.head_branch).await;
+        }
         let on_head = if let Some(sha) = &pr.head_sha {
             refresh(cwd, sha, None).await.unwrap_or(false)
         } else {
@@ -704,7 +627,12 @@ async fn prepare_inner(
         .lines()
         .map(str::to_owned)
         .collect::<Vec<_>>();
-        branch = worktree_branch(pr.resolved.number, &branch, pr.cross_repository, &names);
+        branch = conn_vcs::naming::worktree_branch(
+            pr.resolved.number,
+            &branch,
+            pr.cross_repository,
+            &names,
+        );
         let worktrees = worktree::list_worktrees(cwd).await?;
         let root = canonical(cwd).await;
         let existing = worktrees
@@ -725,7 +653,11 @@ async fn prepare_inner(
             let before = revision(&existing.path, "HEAD").await;
             let on_head = if existing.ref_name.as_deref() == Some(&branch) {
                 let previous = revision(&existing.path, "@{upstream}").await;
-                let _ = configure(ctx, &existing.path, &pr, &branch).await;
+                if let Ok((remote, _)) = fetch_upstream(ctx, &existing.path, &pr).await {
+                    let _ =
+                        set_upstream(&existing.path, &branch, &remote, &pr.resolved.head_branch)
+                            .await;
+                }
                 match refreshed_head(&existing.path, &pr, false).await {
                     Ok(target) => refresh(&existing.path, &target, previous.as_deref())
                         .await
@@ -743,9 +675,10 @@ async fn prepare_inner(
             )
         } else {
             let exists = names.contains(&branch);
+            let upstream = fetch_upstream(ctx, cwd, &pr).await;
             if !exists {
-                let target = match fetch_upstream(ctx, cwd, &pr).await {
-                    Ok(sha) => sha,
+                let target = match &upstream {
+                    Ok((_, sha)) => sha.clone(),
                     Err(_) => fetch_head(cwd, &pr).await.map_err(|mut e| {
                         e.detail = format!(
                             "Failed to materialize pull request #{} branch {} as {branch}.",
@@ -770,7 +703,10 @@ async fn prepare_inner(
             })
             .await?;
             let previous = revision(&worktree.path, "@{upstream}").await;
-            let _ = configure(ctx, &worktree.path, &pr, &branch).await;
+            if let Ok((remote, _)) = upstream {
+                let _ =
+                    set_upstream(&worktree.path, &branch, &remote, &pr.resolved.head_branch).await;
+            }
             let on_head = if exists {
                 match refreshed_head(&worktree.path, &pr, true).await {
                     Ok(target) => {

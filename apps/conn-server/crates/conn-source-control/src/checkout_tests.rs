@@ -4,6 +4,7 @@ use crate::{
     hosts::{Endpoints, Environment},
     settings::Settings,
 };
+use conn_vcs::naming::{branch_fragment, worktree_branch};
 
 #[tokio::test(flavor = "current_thread")]
 async fn resolves_numbers_and_urls_and_reports_no_login() {
@@ -46,6 +47,43 @@ async fn resolves_numbers_and_urls_and_reports_no_login() {
             .unwrap_err()
             .detail
             .starts_with("Pull request not found.")
+    );
+    stub.executable(
+        "gh",
+        &[],
+        "case \"$1\" in auth) printf token ;; api) printf 'HTTP 404' >&2; exit 1 ;; esac",
+    );
+    assert_eq!(
+        github::api_json(
+            ctx,
+            &stub.dir,
+            "github.com",
+            "repos/acme/missing",
+            None,
+            "Repository missing."
+        )
+        .await
+        .unwrap_err()
+        .detail,
+        "Repository missing."
+    );
+    stub.executable(
+        "gh",
+        &[],
+        "case \"$1\" in auth) printf token ;; api) cat ;; esac",
+    );
+    assert_eq!(
+        github::api_json(
+            ctx,
+            &stub.dir,
+            "github.com",
+            "repos/acme/web",
+            Some(json!({"name":"new"})),
+            "Repository missing."
+        )
+        .await
+        .unwrap(),
+        json!({"name":"new"})
     );
     stub.executable("gh", &[], "exit 1");
     let error = resolve(ctx, &stub.dir, "42")
@@ -131,6 +169,7 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
         &["push", "origin", "feature", "HEAD:refs/pull/42/head"],
     );
     git(&work, &["checkout", "main"]);
+    git(&work, &["branch", "-D", "feature"]);
     let rewrite = format!("url.{}.insteadOf", bare.display());
     git(&work, &["config", &rewrite, "https://github.com/acme/web"]);
     git(
@@ -176,7 +215,34 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
             "+refs/heads/main:refs/remotes/origin/main",
         ],
     );
+    let fetches = root.join("fetches");
+    let upload = root.join("upload-pack");
+    std::fs::write(
+        &upload,
+        format!(
+            "#!/bin/sh\nprintf 'fetch\\n' >> '{}'\nexec '{}/git-upload-pack' \"$@\"\n",
+            fetches.display(),
+            git(&root, &["--exec-path"])
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&upload, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &work,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            upload.to_str().unwrap(),
+        ],
+    );
     let (created, setup) = prepare(ctx, &input, &root.join("worktrees")).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&fetches).unwrap().lines().count(),
+        1,
+        "creating the branch fetches its upstream once: {}",
+        std::fs::read_to_string(&fetches).unwrap()
+    );
     assert!(setup);
     let path = PathBuf::from(created.worktree_path.unwrap());
     assert_eq!(git(&path, &["rev-parse", "HEAD"]), first);
@@ -248,10 +314,16 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
     assert!(refused.detail.contains("uncommitted changes"));
     assert_eq!(git(&work, &["branch", "--show-current"]), "main");
     git(&work, &["reset", "--hard"]);
+    let before = std::fs::read_to_string(&fetches).unwrap().lines().count();
     let local = prepare(ctx, &local_input, &root.join("worktrees"))
         .await
         .unwrap()
         .0;
+    assert_eq!(
+        std::fs::read_to_string(&fetches).unwrap().lines().count(),
+        before + 1,
+        "local checkout fetches its upstream once"
+    );
     assert_eq!(local.worktree_path, None);
     assert_eq!(local.branch, "feature");
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), rewritten);

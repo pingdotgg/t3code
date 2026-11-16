@@ -29,6 +29,8 @@ pub mod discovery;
 pub mod error;
 pub mod generated;
 pub mod hub;
+pub mod locks;
+pub mod naming;
 pub mod process;
 pub mod refs;
 pub mod repo;

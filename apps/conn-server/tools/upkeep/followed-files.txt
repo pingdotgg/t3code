@@ -120,6 +120,7 @@ apps/server/src/sourceControl/SourceControlDiscovery.ts
 [crates/conn-vcs]
 packages/shared/src/git.ts
 packages/shared/src/path.ts
+packages/shared/src/serverSettings.ts
 apps/server/src/vcs
 apps/server/src/git
 apps/server/src/review

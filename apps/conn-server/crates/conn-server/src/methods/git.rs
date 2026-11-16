@@ -13,11 +13,10 @@ use conn_source_control::{
 use conn_vcs::{commit, repo};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Weak},
+    sync::Arc,
 };
-use tokio::sync::{Mutex, Semaphore, mpsc};
+use tokio::sync::mpsc;
 
 pub(super) fn manager(cwd: &str, detail: &str) -> Failure {
     Failure::Fail(
@@ -66,47 +65,33 @@ pub(super) async fn project_id(
     let Some(engine) = &deps.engine else {
         return explicit.map(str::to_owned);
     };
-    engine
-        .resolve_project(cwd, thread, explicit)
+    crate::project::resolve(engine.as_ref(), cwd, thread, explicit)
         .await
         .and_then(|p| p.get("id").and_then(Value::as_str).map(str::to_owned))
 }
 
-#[derive(Default)]
-struct RepositoryLocks(std::sync::Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>);
-impl RepositoryLocks {
-    async fn for_cwd(&self, cwd: &str) -> Result<Arc<Mutex<()>>, Failure> {
-        let path = conn_vcs::process::GitCommand::new(
-            "GitManager.repositoryLock",
-            Path::new(cwd),
-            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )
-        .text()
-        .await
-        .map_err(|e| vcs(e.into()))?;
-        let path = PathBuf::from(path.trim());
-        let path =
-            tokio::task::spawn_blocking(move || std::fs::canonicalize(&path).unwrap_or(path))
-                .await
-                .map_err(|e| manager(cwd, &e.to_string()))?;
-        let mut entries = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        entries.retain(|_, lock| lock.strong_count() != 0);
-        let entry = entries.entry(path).or_default();
-        if let Some(lock) = entry.upgrade() {
-            return Ok(lock);
-        }
-        let lock = Arc::new(Mutex::new(()));
-        *entry = Arc::downgrade(&lock);
-        Ok(lock)
-    }
+async fn repository_key(cwd: &str) -> Result<String, Failure> {
+    let path = conn_vcs::process::GitCommand::new(
+        "GitManager.repositoryLock",
+        Path::new(cwd),
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .text()
+    .await
+    .map_err(|e| vcs(e.into()))?;
+    let path = PathBuf::from(path.trim());
+    tokio::task::spawn_blocking(move || {
+        std::fs::canonicalize(&path)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .into_owned()
+    })
+    .await
+    .map_err(|e| manager(cwd, &e.to_string()))
 }
 
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
-    let leases = Arc::new(RepositoryLocks::default());
-    let slots = Arc::new(Semaphore::new(16));
+    let leases = Arc::new(conn_vcs::locks::WorkspaceLocks::default());
     let d = deps.clone();
     table.unary(
         "git.resolvePullRequest",
@@ -137,19 +122,15 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
     );
     let d = deps.clone();
     let locks = leases.clone();
-    let permits = slots.clone();
     table.unary(
         "git.preparePullRequestThread",
         move |_, input: GitPreparePullRequestThreadInput| {
             let d = d.clone();
             let locks = locks.clone();
-            let permit = permits.clone().try_acquire_owned();
             async move {
-                let _permit =
-                    permit.map_err(|_| manager(&input.cwd, "Too many Git actions are running."))?;
-                let lock = locks.for_cwd(&input.cwd).await?;
-                let lease = lock.lock().await;
                 ensure_git(&input.cwd, "GitWorkflowService.preparePullRequestThread").await?;
+                let key = repository_key(&input.cwd).await?;
+                let lease = locks.workspace(&key).await;
                 let project = project_id(&d, &input.cwd, input.thread_id.as_deref(), None).await;
                 let settings = settings(&d, project.as_deref());
                 let env = Environment::process();
@@ -173,7 +154,11 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
                 if let Ok((result, true)) = &result
                     && let (Some(mcp), Some(thread), Some(path)) =
                         (&d.mcp, &input.thread_id, &result.worktree_path)
-                    && let Err(error) = mcp.run_worktree_setup(thread, path).await
+                    && let Some(engine) = &d.engine
+                    && let Some(project) =
+                        crate::project::resolve(engine.as_ref(), &input.cwd, Some(thread), None)
+                            .await
+                    && let Err(error) = mcp.run_worktree_setup(thread, path, &project).await
                 {
                     eprintln!("pull request worktree setup failed: {error}");
                 }
@@ -190,17 +175,14 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         move |_, input: GitRunStackedActionInput| {
             let d = d.clone();
             let locks = leases.clone();
-            let permit = slots.clone().try_acquire_owned();
             async move {
-                let permit =
-                    permit.map_err(|_| manager(&input.cwd, "Too many Git actions are running."))?;
                 let (tx, rx) = mpsc::channel(16);
                 tokio::spawn(async move {
-                    let _permit = permit;
                     let mut phase = None;
                     let result = async {
-                        let lock = locks.for_cwd(&input.cwd).await?;
-                        let _lease = tokio::select! {lease=lock.lock()=>lease, ()=tx.closed()=>return Ok(())};
+                        ensure_git(&input.cwd, "GitWorkflowService.runStackedAction").await?;
+                        let key = repository_key(&input.cwd).await?;
+                        let _lease = tokio::select! {lease=locks.workspace(&key)=>lease, ()=tx.closed()=>return Ok(())};
                         run_commit(&d, &input, &tx, &mut phase).await
                     }.await;
                     if let Err(error) = result {
@@ -262,7 +244,6 @@ async fn run_commit(
     tx: &mpsc::Sender<Result<Value, Failure>>,
     phase: &mut Option<&str>,
 ) -> Result<(), Failure> {
-    ensure_git(&input.cwd, "GitWorkflowService.runStackedAction").await?;
     if input.action != GitStackedAction::Commit {
         return Err(manager(
             &input.cwd,
@@ -304,12 +285,6 @@ async fn run_commit(
             super::git_message::generate(deps, input, branch.as_deref(), &context, feature).await?
         };
         if feature {
-            let fragment = checkout::branch_fragment(suggested.as_deref().unwrap_or(&subject));
-            let base = if fragment.contains('/') {
-                fragment
-            } else {
-                format!("feature/{fragment}")
-            };
             let names = conn_vcs::process::GitCommand::new(
                 "GitManager.runFeatureBranchStep",
                 cwd,
@@ -318,27 +293,9 @@ async fn run_commit(
             .text()
             .await
             .map_err(|e| vcs(e.into()))?;
-            let names = names.lines().map(str::to_lowercase).collect::<Vec<_>>();
-            let mut branch = String::new();
-            let segments = base.split('/').count();
-            for (index, part) in base.split('/').enumerate() {
-                let prefix = if branch.is_empty() {
-                    part.into()
-                } else {
-                    format!("{branch}/{part}")
-                };
-                let mut candidate = prefix.clone();
-                for n in 2..=names.len().saturating_add(2) {
-                    if !names.iter().any(|name| {
-                        name == &candidate
-                            || (index + 1 == segments && name.starts_with(&format!("{candidate}/")))
-                    }) {
-                        break;
-                    }
-                    candidate = format!("{prefix}-{n}");
-                }
-                branch = candidate;
-            }
+            let names = names.lines().map(str::to_owned).collect::<Vec<_>>();
+            let branch =
+                conn_vcs::naming::feature_branch(suggested.as_deref().unwrap_or(&subject), &names);
             conn_vcs::process::GitCommand::new(
                 "GitManager.runFeatureBranchStep",
                 cwd,
@@ -404,6 +361,27 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("conn-commit-rpc-{}", conn_support::uuid_v4()));
         std::fs::create_dir_all(&root).unwrap();
+        let mut nonrepo_table = MethodTable::new();
+        register(&mut nonrepo_table, &Deps::default());
+        let Some(Handler::Stream(nonrepo)) = nonrepo_table.get("git.runStackedAction") else {
+            panic!("stream missing")
+        };
+        let mut stream = nonrepo(
+            CallContext::default(),
+            json!({"cwd":root,"actionId":"not-repo","action":"commit","commitMessage":"message"}),
+        )
+        .await
+        .unwrap();
+        let mut rejected = None;
+        while let Some(event) = stream.recv().await {
+            if let Err(error) = event {
+                rejected = Some(error);
+            }
+        }
+        assert!(
+            matches!(rejected, Some(Failure::Fail(ref e)) if e["_tag"] == "GitManagerError"),
+            "{rejected:?}"
+        );
         git(&root, &["init", "-b", "main"]);
         git(&root, &["config", "user.name", "test"]);
         git(&root, &["config", "user.email", "test@example.com"]);
@@ -481,21 +459,18 @@ mod tests {
         let other = root.join("other");
         std::fs::create_dir_all(&other).unwrap();
         git(&other, &["init", "-b", "main"]);
-        let locks = RepositoryLocks::default();
-        let first = locks.for_cwd(root.to_str().unwrap()).await.unwrap();
-        let sibling_lock = locks.for_cwd(sibling.to_str().unwrap()).await.unwrap();
-        let other_lock = locks.for_cwd(other.to_str().unwrap()).await.unwrap();
-        assert!(Arc::ptr_eq(&first, &sibling_lock));
-        assert!(!Arc::ptr_eq(&first, &other_lock));
-        let held = first.lock().await;
-        assert!(sibling_lock.try_lock().is_err());
-        assert!(other_lock.try_lock().is_ok());
+        let locks = conn_vcs::locks::WorkspaceLocks::default();
+        let first = repository_key(root.to_str().unwrap()).await.unwrap();
+        let sibling_lock = repository_key(sibling.to_str().unwrap()).await.unwrap();
+        let other_lock = repository_key(other.to_str().unwrap()).await.unwrap();
+        assert_eq!(first, sibling_lock);
+        assert_ne!(first, other_lock);
+        let held = locks.workspace(&first).await;
+        let other = locks.workspace(&other_lock).await;
+        assert_eq!(locks.held(), 2);
         drop(held);
-        drop(first);
-        drop(sibling_lock);
-        drop(other_lock);
-        let _next = locks.for_cwd(root.to_str().unwrap()).await.unwrap();
-        assert_eq!(locks.0.lock().unwrap().len(), 1);
+        drop(other);
+        assert_eq!(locks.held(), 0);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

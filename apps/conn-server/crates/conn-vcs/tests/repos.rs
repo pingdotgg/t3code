@@ -811,7 +811,7 @@ async fn commits_selected_paths_without_staged_bystanders() {
     write(&fx.work, "-option", "literal\n");
     git(&fx.work, &["add", "other"]);
     let paths = vec!["README.md".into(), "-option".into()];
-    let context = commit::prepare(&fx.work, Some(&paths))
+    let context = commit::prepare_context(&fx.work, Some(&paths), true)
         .await
         .unwrap()
         .unwrap();
@@ -830,7 +830,7 @@ async fn commits_selected_paths_without_staged_bystanders() {
         "-option\nREADME.md"
     );
     assert!(
-        commit::prepare(&fx.work, Some(&paths))
+        commit::prepare_context(&fx.work, Some(&paths), true)
             .await
             .unwrap()
             .is_none()
@@ -840,10 +840,20 @@ async fn commits_selected_paths_without_staged_bystanders() {
 #[tokio::test]
 async fn all_files_commit_and_clean_repositories_skip() {
     let fx = Fixture::new("commit-all");
-    assert!(commit::prepare(&fx.work, None).await.unwrap().is_none());
+    assert!(
+        commit::prepare_context(&fx.work, None, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
     write(&fx.work, "new", "new\n");
     let objects = git(&fx.work, &["count-objects", "-v"]);
-    assert!(commit::prepare(&fx.work, None).await.unwrap().is_some());
+    assert!(
+        commit::prepare_context(&fx.work, None, true)
+            .await
+            .unwrap()
+            .is_some()
+    );
     assert_eq!(git(&fx.work, &["count-objects", "-v"]), objects);
     assert!(git(&fx.work, &["diff", "--cached", "--name-only"]).is_empty());
     git(&fx.work, &["config", "user.name", "test"]);
@@ -851,7 +861,12 @@ async fn all_files_commit_and_clean_repositories_skip() {
     commit::create(&fx.work, "All changes", "", None)
         .await
         .unwrap();
-    assert!(commit::prepare(&fx.work, None).await.unwrap().is_none());
+    assert!(
+        commit::prepare_context(&fx.work, None, true)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -865,7 +880,7 @@ async fn partial_commit_does_not_clear_merge_state() {
     write(&fx.work, "README.md", "resolved\n");
     let selected = vec!["README.md".into()];
     assert!(
-        commit::prepare(&fx.work, Some(&selected))
+        commit::prepare_context(&fx.work, Some(&selected), true)
             .await
             .unwrap()
             .is_some()
@@ -904,14 +919,19 @@ async fn partial_commit_does_not_clear_merge_state() {
         "<<<<<<< ours\nours\n=======\ntheirs\n>>>>>>> theirs\n",
     );
     assert!(
-        commit::prepare(&fx.work, None)
+        commit::prepare_context(&fx.work, None, true)
             .await
             .unwrap_err()
             .to_string()
             .contains("unresolved merge conflicts")
     );
     write(&fx.work, "README.md", "Heading\n=======\nresolved\n");
-    assert!(commit::prepare(&fx.work, None).await.unwrap().is_some());
+    assert!(
+        commit::prepare_context(&fx.work, None, true)
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -923,10 +943,16 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
         &"a line of text for a generated commit message\n".repeat(30_000),
     );
     write(&fx.work, ".gitattributes", "large.txt diff=external\n");
-    let context = commit::prepare(&fx.work, None).await.unwrap().unwrap();
+    let context = commit::prepare_context(&fx.work, None, true)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(context.patch.ends_with("\n\n[truncated]"));
     git(&fx.work, &["config", "diff.external.textconv", "false"]);
-    let context = commit::prepare(&fx.work, None).await.unwrap().unwrap();
+    let context = commit::prepare_context(&fx.work, None, true)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));

@@ -342,40 +342,17 @@ pub trait Engine: Send + Sync {
         unsupported("the shell snapshot")
     }
 
-    /// Resolves a thread's project, an explicit project, or the active project at `cwd`.
-    fn resolve_project<'a>(
-        &'a self,
-        cwd: &'a str,
-        thread: Option<&'a str>,
-        explicit: Option<&'a str>,
-    ) -> BoxFuture<'a, Option<Value>> {
+    /// Live project summaries, without loading thread projections.
+    fn projects_snapshot(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<Value>, EngineError<GetShellSnapshotError>>> {
         Box::pin(async move {
-            let thread_project = if let Some(thread) = thread {
-                self.get_thread_projection(thread.into())
-                    .await
-                    .ok()
-                    .and_then(|p| {
-                        p.pointer("/thread/projectId")
-                            .and_then(Value::as_str)
-                            .map(str::to_owned)
-                    })
-            } else {
-                None
-            };
-            let id = thread_project.as_deref().or(explicit);
-            let shell = self.shell_snapshot().await.ok()?;
-            shell
-                .get("projects")?
-                .as_array()?
-                .iter()
-                .find(|p| {
-                    p.get("deletedAt").is_none_or(Value::is_null)
-                        && match id {
-                            Some(id) => p.get("id").and_then(Value::as_str) == Some(id),
-                            None => p.get("workspaceRoot").and_then(Value::as_str) == Some(cwd),
-                        }
-                })
+            let shell = self.shell_snapshot().await?;
+            Ok(shell
+                .get("projects")
+                .and_then(Value::as_array)
                 .cloned()
+                .unwrap_or_default())
         })
     }
 

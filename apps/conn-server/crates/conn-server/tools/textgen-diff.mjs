@@ -145,7 +145,7 @@ async function t3(testCase) {
 
 for (const includeBranch of [false, true]) {
   for (const policy of ["", "Use direct words.", "A".repeat(21000)]) {
-    const input = {branch: "feature/fix", stagedSummary: "M\tfile", stagedPatch: "diff\n".repeat(9000), policy, includeBranch};
+    const input = {branch: "feature/fix", stagedSummary: "M\tfile", stagedPatch: "@@POLICY@@ @@PATCH@@ @@SUMMARY@@\nAdditional instructions:\n\n" + "diff\n".repeat(9000), policy, includeBranch};
     const actual = await rust({op: "commitPrompt", input});
     const expected = Prompts.buildCommitMessagePrompt({...input, policy: {commitInstructions: policy}}).prompt;
     if (actual.ok !== expected) throw new Error("commit prompt differs from T3");

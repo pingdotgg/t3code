@@ -202,10 +202,6 @@ async fn stage(
     Ok(())
 }
 
-pub async fn prepare(cwd: &Path, selected: Option<&[String]>) -> VcsResult<Option<Context>> {
-    prepare_context(cwd, selected, true).await
-}
-
 pub async fn prepare_context(
     cwd: &Path,
     selected: Option<&[String]>,
@@ -259,22 +255,11 @@ pub async fn prepare_context(
         }
     })
     .await
-    .map_err(|e| {
-        VcsError::invalid(
-            "prepareCommitContext",
-            &cwd.to_string_lossy(),
-            e.to_string(),
-        )
-    })?
-    .map_err(|e| {
-        VcsError::invalid(
-            "prepareCommitContext",
-            &cwd.to_string_lossy(),
-            e.to_string(),
-        )
-    })?;
+    .map_err(|e| e.to_string())
+    .and_then(|result| result.map_err(|e| e.to_string()))
+    .map_err(|detail| VcsError::invalid("prepareCommitContext", &cwd.to_string_lossy(), detail))?;
     let index = temporary.join("index");
-    let result = async {
+    async {
         indexed(
             command(
                 cwd,
@@ -348,9 +333,7 @@ pub async fn prepare_context(
             patch,
         }))
     }
-    .await;
-    let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(temporary)).await;
-    result
+    .await
 }
 
 pub async fn create(

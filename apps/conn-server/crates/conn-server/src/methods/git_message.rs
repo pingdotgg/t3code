@@ -25,34 +25,22 @@ pub(super) async fn generate(
         input.project_id.as_deref(),
     )
     .await;
-    let override_settings = settings
-        .get("projectSettingsOverrides")
-        .and_then(|o| project.as_ref().and_then(|p| o.get(p)));
-    let selection = override_settings
-        .and_then(|o| o.get("sourceControlWriterModelSelection"))
-        .or_else(|| settings.get("sourceControlWriterModelSelection"))
-        .filter(|s| !s.is_null())
-        .filter(|s| {
-            let Some(id) = s.get("instanceId").and_then(Value::as_str) else {
-                return false;
-            };
-            if let Some(generator) = generators.config(id) {
-                return generator.get("enabled") != Some(&Value::Bool(false));
-            }
-            let enabled = override_settings
-                .and_then(|o| o.get("providerInstances"))
-                .and_then(|p| p.get(id))
-                .and_then(|p| p.get("enabled"))
-                .or_else(|| {
-                    settings
-                        .get("providerInstances")
-                        .and_then(|p| p.get(id))
-                        .and_then(|p| p.get("enabled"))
-                })
-                != Some(&Value::Bool(false));
-            enabled && deps.providers.get(id).is_some()
-        });
-    let (instance, model, selection) = if let Some(selection) = selection {
+    let selection = title::project_override(
+        &settings,
+        project.as_deref(),
+        "sourceControlWriterModelSelection",
+    )
+    .or_else(|| settings.get("sourceControlWriterModelSelection"))
+    .filter(|s| !s.is_null())
+    .filter(|s| {
+        s.get("instanceId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| {
+                title::selection_enabled(&settings, project.as_deref(), id)
+                    && (generators.config(id).is_some() || deps.providers.get(id).is_some())
+            })
+    });
+    let (instance, _model, selection) = if let Some(selection) = selection {
         (
             selection
                 .get("instanceId")
@@ -69,8 +57,7 @@ pub(super) async fn generate(
     } else {
         title::title_model_selection(&settings, project.as_deref())
     };
-    let style = override_settings
-        .and_then(|o| o.get("sourceControlWritingStyle"))
+    let style = title::project_override(&settings, project.as_deref(), "sourceControlWritingStyle")
         .or_else(|| settings.get("sourceControlWritingStyle"));
     let mode = style
         .and_then(|s| s.get("mode"))
@@ -167,35 +154,25 @@ pub(super) async fn generate(
             json!({"_tag":"TextGenerationError","operation":"generateCommitMessage","detail":detail}),
         )
     };
-    let value = if let Some(result) = generators.run(&instance, &model, &prompt).await {
-        let text = result.map_err(error)?;
-        serde_json::from_str::<Value>(&prompts::extract_json_object(&text))
-            .map_err(|_| error("The model API returned invalid structured output.".into()))?
-    } else {
-        let provider = deps.providers.get(&instance).ok_or_else(|| {
-            error(format!(
-                "No provider instance registered for id '{instance}'."
-            ))
-        })?;
-        let request = conn_provider::TextGenerationRequest {
-            operation: "generateCommitMessage".into(),
-            cwd: input.cwd.clone(),
-            prompt,
-            output_schema: prompts::COMMIT_SCHEMAS
-                .get(usize::from(feature))
-                .copied()
-                .unwrap_or_default()
-                .into(),
-            model_selection: conn_contract::from_json(selection)
-                .map_err(|e| error(e.to_string()))?,
-            image_paths: vec![],
-            timeout: None,
-        };
-        provider
-            .generate_text(request)
-            .await
-            .map_err(|e| error(e.to_string()))?
+    let request = conn_provider::TextGenerationRequest {
+        operation: "generateCommitMessage".into(),
+        cwd: input.cwd.clone(),
+        prompt,
+        output_schema: prompts::COMMIT_SCHEMAS
+            .get(usize::from(feature))
+            .copied()
+            .unwrap_or_default()
+            .into(),
+        model_selection: conn_contract::from_json(selection).map_err(|e| error(e.to_string()))?,
+        image_paths: vec![],
+        timeout: None,
     };
+    let (text, label) = crate::text_generation::generate(generators, &deps.providers, request)
+        .await
+        .map_err(error)?
+        .ok_or_else(|| error("The selected provider does not support text generation.".into()))?;
+    let value: Value = serde_json::from_str(&prompts::extract_json_object(&text))
+        .map_err(|_| error(format!("{label} returned invalid structured output.")))?;
     let subject = value
         .get("subject")
         .and_then(Value::as_str)
@@ -206,30 +183,13 @@ pub(super) async fn generate(
         .trim()
         .trim_end_matches('.')
         .trim();
-    let mut subject = crate::text_generation::js::slice16(subject, 0, 72)
+    let mut subject = subject.to_owned();
+    if mode == "conventional_commits" {
+        subject = lowercase_description(&subject);
+    }
+    let mut subject = crate::text_generation::js::slice16(&subject, 0, 72)
         .trim_end()
         .to_owned();
-    if mode == "conventional_commits"
-        && let Some((prefix, description)) = subject.split_once(": ")
-        && description
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_uppercase())
-        && description
-            .chars()
-            .nth(1)
-            .is_some_and(|c| c.is_ascii_lowercase())
-    {
-        subject = format!(
-            "{prefix}: {}{}",
-            description
-                .chars()
-                .next()
-                .unwrap_or_default()
-                .to_ascii_lowercase(),
-            description.chars().skip(1).collect::<String>()
-        );
-    }
     if subject.is_empty() {
         subject = "Update project files".into();
     }
@@ -249,14 +209,86 @@ pub(super) async fn generate(
     ))
 }
 
+fn lowercase_description(subject: &str) -> String {
+    let kind_end = subject
+        .find(|c: char| !c.is_ascii_lowercase())
+        .unwrap_or(subject.len());
+    if kind_end == 0 {
+        return subject.into();
+    }
+    let mut rest = subject.get(kind_end..).unwrap_or_default();
+    if let Some(scope) = rest.strip_prefix('(') {
+        let Some((scope, suffix)) = scope.split_once(')') else {
+            return subject.into();
+        };
+        if scope.contains('\n') {
+            return subject.into();
+        }
+        rest = suffix;
+    }
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    let Some(description) = rest.strip_prefix(": ") else {
+        return subject.into();
+    };
+    if !description.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return subject.into();
+    }
+    let word_end = description
+        .char_indices()
+        .skip(1)
+        .find(|(_, c)| !c.is_ascii_lowercase())
+        .map_or(description.len(), |(i, _)| i);
+    if description
+        .get(word_end..)
+        .is_some_and(|s| s.starts_with(|c: char| c.is_ascii_alphanumeric()))
+    {
+        return subject.into();
+    }
+    let start = subject.len() - description.len();
+    format!(
+        "{}{}{}",
+        subject.get(..start).unwrap_or_default(),
+        description
+            .get(..word_end)
+            .unwrap_or_default()
+            .to_ascii_lowercase(),
+        description.get(word_end..).unwrap_or_default()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::text_generation::{TextGenerators, tests::Stub};
     use std::sync::Arc;
+    #[test]
+    fn conventional_prefix_and_whole_word_match_t3() {
+        for (input, expected) in [
+            ("feat(scope: detail): Word", "feat(scope: detail): word"),
+            ("feat(scope)): Word", "feat(scope)): Word"),
+            ("feat(): A thing", "feat(): a thing"),
+            ("feat: URL value", "feat: URL value"),
+            ("Feat: Word", "Feat: Word"),
+            ("feat: Word2", "feat: Word2"),
+        ] {
+            assert_eq!(lowercase_description(input), expected);
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn project_writer_generates_with_its_style_and_normalizes_the_subject() {
-        let stub=Stub::start(|_|(200,json!({"choices":[{"finish_reason":"stop","message":{"content":"{\"subject\":\"feat: Add support.\",\"body\":\" details \"}"}}]}).to_string())).await;
+        let replies = std::sync::Arc::new(std::sync::Mutex::new(
+            [
+                "feat: Add support.",
+                "feat: GitHub login",
+                "feat: A thing",
+                "Anything: Word",
+                "feat(scope)!: Word",
+                "feat: A1 thing",
+            ]
+            .into_iter(),
+        ));
+        let stub=Stub::start(move |_| { let subject = replies.lock().unwrap().next().unwrap(); (200,json!({"choices":[{"finish_reason":"stop","message":{"content":json!({"subject":subject,"body":" details "}).to_string()}}]}).to_string()) }).await;
         let config = json!({"textGenerators":{"router":{"kind":"openaiCompatible","baseUrl":format!("{}/v1",stub.base)}},"projectSettingsOverrides":{"p":{"sourceControlWriterModelSelection":{"instanceId":"router","model":"test-model"},"sourceControlWritingStyle":{"mode":"conventional_commits"}}}});
         let settings = config.as_object().unwrap().clone();
         let deps = Deps {
@@ -280,10 +312,75 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(subject, "feat: add support");
+        for expected in [
+            "feat: GitHub login",
+            "feat: a thing",
+            "Anything: Word",
+            "feat(scope)!: word",
+            "feat: A1 thing",
+        ] {
+            let (subject, _, _) = generate(
+                &deps,
+                &input,
+                None,
+                &commit::Context {
+                    summary: "M file".into(),
+                    patch: "+x".into(),
+                },
+                false,
+            )
+            .await
+            .unwrap();
+            assert_eq!(subject, expected);
+        }
+
         assert_eq!(body, "details");
         let calls = stub.taken();
         let body: Value = serde_json::from_str(&calls.first().unwrap().body).unwrap();
         assert_eq!(body["model"], "test-model");
         assert!(body.to_string().contains("Use Conventional Commits"));
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn disabled_writer_falls_back_to_the_title_generator() {
+        let stub=Stub::start(|_|(200,json!({"choices":[{"finish_reason":"stop","message":{"content":"{\"subject\":\"Fallback\",\"body\":\"\"}"}}]}).to_string())).await;
+        let settings = json!({"textGenerationModelSelection":{"instanceId":"router","model":"fallback"},"textGenerators":{"router":{"kind":"openaiCompatible","baseUrl":format!("{}/v1",stub.base)}},"sourceControlWritingStyle":{"mode":"custom"}}).as_object().unwrap().clone();
+        for provider in [
+            json!({"driver":"codex","config":{"enabled":false}}),
+            json!({"driver":"grok"}),
+        ] {
+            let mut settings = settings.clone();
+            settings.insert("providerInstances".into(), json!({"writer":provider}));
+            settings.insert(
+                "sourceControlWriterModelSelection".into(),
+                json!({"instanceId":"writer","model":"wrong"}),
+            );
+            let providers: Vec<Arc<dyn conn_provider::Provider>> =
+                vec![crate::text_generation::tests::titles::AgentProvider::new(
+                    "writer",
+                    "codex",
+                    Some(json!({"subject":"Wrong","body":""})),
+                )];
+            let deps = Deps {
+                text_generators: Some(Arc::new(TextGenerators::new(move || settings.clone()))),
+                providers: providers.into(),
+                ..Deps::default()
+            };
+            let input =
+                conn_contract::from_json(json!({"cwd":"/unused","actionId":"a","action":"commit"}))
+                    .unwrap();
+            let (subject, _, _) = generate(
+                &deps,
+                &input,
+                None,
+                &commit::Context {
+                    summary: "M file".into(),
+                    patch: "+x".into(),
+                },
+                false,
+            )
+            .await
+            .unwrap();
+            assert_eq!(subject, "Fallback");
+        }
     }
 }

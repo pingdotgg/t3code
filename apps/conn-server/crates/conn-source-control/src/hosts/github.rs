@@ -741,7 +741,8 @@ pub(crate) async fn api_json(
     cwd: &std::path::Path,
     host: &str,
     endpoint: &str,
-    body: serde_json::Value,
+    body: Option<serde_json::Value>,
+    not_found: &str,
 ) -> Result<serde_json::Value, crate::repository::HostFailure> {
     if !is_github_host(host) {
         return Err(crate::repository::HostFailure::new(
@@ -760,12 +761,19 @@ pub(crate) async fn api_json(
             CredentialError::Unresolved(e) => e,
         }; crate::repository::HostFailure::new(detail)
     })?;
+    let mut args = vec!["api", endpoint, "--hostname", host];
+    args.extend(if body.is_some() {
+        ["--input", "-"]
+    } else {
+        ["--method", "GET"]
+    });
     let mut call = crate::cli::CliCall::new(
         "GitHubSourceControlProvider.getChangeRequest",
         "gh",
-        ["api", endpoint, "--hostname", host, "--input", "-"],
+        args,
         cwd,
     );
+    call.stdin = body.map(|body| body.to_string().into_bytes());
     call.env = ctx.probe_env(&[
         (
             if host == "github.com" || host.ends_with(".ghe.com") {
@@ -778,24 +786,12 @@ pub(crate) async fn api_json(
         ("GH_DEBUG", "".into()),
         ("GH_PROMPT_DISABLED", "1".into()),
     ]);
-    if endpoint == "graphql" {
-        call.stdin = Some(body.to_string().into_bytes());
-    } else {
-        call.args = vec![
-            "api".into(),
-            endpoint.into(),
-            "--hostname".into(),
-            host.into(),
-            "--method".into(),
-            "GET".into(),
-        ];
-    }
     let output = crate::cli::run(call).await.map_err(|e| {
         let text = e.stderr().to_lowercase();
         crate::repository::HostFailure::new(if text.contains("401") {
             "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry."
         } else if text.contains("404") {
-            "Pull request not found. Check the PR number or URL and try again."
+            not_found
         } else if text.contains("rate limit") {
             "GitHub API rate limit exceeded. Requests resume when the limit resets."
         } else {
