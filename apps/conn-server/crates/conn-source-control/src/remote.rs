@@ -182,21 +182,8 @@ pub(crate) fn decode_uri_component(text: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// `^<a>/<b>/<c>$` where no part holds `/`, `?` or `#`.
-fn three_parts<'a>(
-    path: &'a str,
-    prefix: &str,
-    middle: &str,
-) -> Option<(&'a str, &'a str, &'a str)> {
-    let rest = path.strip_prefix(prefix)?;
-    let (first, rest) = rest.split_once('/')?;
-    let (second, third) = rest.split_once(middle)?;
-    let clean = |s: &str| !s.is_empty() && !s.contains(['/', '?', '#']);
-    (clean(first) && clean(second) && clean(third)).then_some((first, second, third))
-}
-
 /// `cloneUrlForProtocol`: the same repository over the other protocol, or `None` when it
-/// cannot be rewritten safely (a custom port, an Azure URL of another shape, a bad escape).
+/// cannot be rewritten safely (a custom port, a bad escape).
 pub fn clone_url_for_protocol(url: &str, protocol: CloneProtocol) -> Option<String> {
     let parsed = parse_clone_url(url)?;
     if parsed.protocol == protocol {
@@ -204,15 +191,6 @@ pub fn clone_url_for_protocol(url: &str, protocol: CloneProtocol) -> Option<Stri
     }
     if parsed.custom_port {
         return None;
-    }
-    let host = parsed.host.to_lowercase();
-    if parsed.protocol == CloneProtocol::Ssh && host == "ssh.dev.azure.com" {
-        let (org, project, repo) = three_parts(parsed.path, "v3/", "/")?;
-        return Some(format!("https://dev.azure.com/{org}/{project}/_git/{repo}"));
-    }
-    if parsed.protocol == CloneProtocol::Https && host == "dev.azure.com" {
-        let (org, project, repo) = three_parts(parsed.path, "", "/_git/")?;
-        return Some(format!("git@ssh.dev.azure.com:v3/{org}/{project}/{repo}"));
     }
     match protocol {
         CloneProtocol::Ssh => Some(format!(
@@ -364,30 +342,6 @@ fn parse_git_remote_repository_with(
     with_user.or_else(|| attempt(&normalized))
 }
 
-/// Azure DevOps's `isAzureHostname`.
-pub(crate) fn is_azure_hostname(hostname: &str) -> bool {
-    hostname == "dev.azure.com"
-        || hostname.ends_with(".dev.azure.com")
-        || hostname.ends_with(".visualstudio.com")
-}
-
-/// Azure DevOps's `repositoryKeyFromRemote`, on a remote's `host/path` with `.git` kept: the SSH
-/// spelling rewritten to the web one, any other Azure key as written, `None` for other hosts.
-fn azure_repository_key_from_remote(key: &str) -> Option<String> {
-    let parts: Vec<&str> = key.split('/').collect();
-    if let [host, "v3", org, project, repo] = parts.as_slice() {
-        let clean = [org, project, repo].iter().all(|s| !s.is_empty());
-        if clean && *host == "ssh.dev.azure.com" {
-            return Some(format!("dev.azure.com/{org}/{project}/_git/{repo}"));
-        }
-        if clean && *host == "vs-ssh.visualstudio.com" {
-            return Some(format!("{org}.visualstudio.com/{project}/_git/{repo}"));
-        }
-    }
-    // Azure takes a name as written, so its keys keep the `.git` other hosts drop.
-    is_azure_hostname(key.split('/').next().unwrap_or_default()).then(|| key.to_owned())
-}
-
 /// `normalizeGitRemoteUrl`: `host/path` for a remote that names a host, else the remote itself,
 /// lower case.
 pub fn normalize_git_remote_url(value: &str) -> String {
@@ -397,16 +351,9 @@ pub fn normalize_git_remote_url(value: &str) -> String {
     }
 }
 
-/// The registry's `repositoryKeyFromRemote`: `normalizeGitRemoteUrl`, unless a host spells the
-/// remote's `host/path` (`.git` kept) its own way; only Azure DevOps does.
+/// The registry's `repositoryKeyFromRemote`, with only the GitHub definition registered.
 pub fn repository_key_from_remote(remote_url: &str) -> String {
-    let key = normalize_git_remote_url(remote_url);
-    match parse_git_remote_repository_with(remote_url, true) {
-        Some((host, path)) => {
-            azure_repository_key_from_remote(&format!("{host}/{path}")).unwrap_or(key)
-        }
-        None => key,
-    }
+    normalize_git_remote_url(remote_url)
 }
 
 /// `scheme://` at `index`: `[a-z][a-z0-9+.-]*://`, case-insensitive. Returns the index after
@@ -611,22 +558,6 @@ mod tests {
             "custom port"
         );
         assert_eq!(
-            clone_url_for_protocol(
-                "git@ssh.dev.azure.com:v3/org/proj/repo",
-                CloneProtocol::Https
-            )
-            .as_deref(),
-            Some("https://dev.azure.com/org/proj/_git/repo")
-        );
-        assert_eq!(
-            clone_url_for_protocol(
-                "https://dev.azure.com/org/proj/_git/repo",
-                CloneProtocol::Ssh
-            )
-            .as_deref(),
-            Some("git@ssh.dev.azure.com:v3/org/proj/repo")
-        );
-        assert_eq!(
             clone_url_for_protocol("git@host:a b/c", CloneProtocol::Https).as_deref(),
             Some("https://host/a%20b/c"),
             "SCP paths are literal and get encoded"
@@ -654,7 +585,7 @@ mod tests {
         );
         assert_eq!(
             repository_key_from_remote("git@ssh.dev.azure.com:v3/org/proj/repo"),
-            "dev.azure.com/org/proj/_git/repo"
+            "ssh.dev.azure.com/v3/org/proj/repo"
         );
         assert_eq!(
             repository_key_from_remote("/srv/repos/x.git"),
@@ -665,14 +596,14 @@ mod tests {
             "c:/repos/x",
             "a drive"
         );
-        // T3 since b9a68e0: one spelling of escaped names, Azure keeps `.git`, IPv6 SCP hosts.
+        // Escaped names and IPv6 SCP hosts keep the shared git spelling.
         assert_eq!(
             repository_key_from_remote("https://github.com/o/a%20%28B%29.git"),
             "github.com/o/a%20(b)"
         );
         assert_eq!(
             repository_key_from_remote("https://dev.azure.com/o/p/_git/r.git"),
-            "dev.azure.com/o/p/_git/r.git"
+            "dev.azure.com/o/p/_git/r"
         );
         assert_eq!(repository_key_from_remote("git@[::1]:o/r.git"), "[::1]/o/r");
         assert_eq!(canonical_repository_path("A%C3%84/%zz"), "a%c3%a4/%zz");

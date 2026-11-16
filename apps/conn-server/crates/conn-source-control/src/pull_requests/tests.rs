@@ -169,7 +169,6 @@ async fn connect(stubs: &StubDir, base: &str) -> Client {
 
     let endpoints = Endpoints {
         github_rest: Some(base.into()),
-        ..Endpoints::default()
     };
 
     Client::connect(
@@ -849,7 +848,6 @@ async fn repository_not_found_hints_follow_the_credential_source() {
     let child_env = stubs.path_env();
     let endpoints = Endpoints {
         github_rest: Some(server.base.clone()),
-        ..Endpoints::default()
     };
     let cases: Vec<Value> = serde_json::from_str(include_str!("cases.json")).expect("cases");
     for case in cases.iter().filter(|c| c["kind"] == "access-hint") {

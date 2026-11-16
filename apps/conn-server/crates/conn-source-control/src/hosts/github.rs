@@ -43,7 +43,6 @@ fn spec() -> CliSpec {
             "--json".into(),
             "hosts".into(),
         ],
-        auth_retry_args: None,
         probe_timeout: DEFAULT_PROBE_TIMEOUT,
         install_hint: INSTALL_HINT,
     }
@@ -1008,7 +1007,6 @@ mod tests {
             let env = Environment::fixed([("GH_TOKEN", "environment-token")]);
             let endpoints = Endpoints {
                 github_rest: Some(server.base.clone()),
-                ..Endpoints::default()
             };
             let child_env = stubs.path_env();
             let item = discover(DiscoveryContext {
@@ -1267,7 +1265,6 @@ mod tests {
         let env = Environment::fixed([("GH_TOKEN", "env-token")]);
         let endpoints = Endpoints {
             github_rest: Some(server.base.clone()),
-            ..Endpoints::default()
         };
         let (child_env, s) = (stubs.path_env(), defaults());
         let c = ctx(&stubs, &s, &env, &endpoints, &child_env);

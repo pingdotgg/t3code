@@ -137,7 +137,6 @@ fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
         cache: TtlCache::new(32),
         endpoints: Endpoints {
             github_rest: Some(endpoint.into()),
-            ..Endpoints::default()
         },
         host_environment: Environment::fixed([]),
         child_env: vec![("PATH", path), ("HOME", dir.0.clone().into_os_string())],
