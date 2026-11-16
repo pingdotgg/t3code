@@ -55,6 +55,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  recordPreparingComposerImageFailure,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 
@@ -299,6 +300,11 @@ export function useComposerAttachmentIntake(input: {
     const questionDiscarded =
       questionAttachmentTarget !== null &&
       !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget];
+    // Before the placeholders go, so a held send sees the failure, not just an empty strip.
+    if (
+      [...compressionErrors.keys()].some((id) => isPreparingComposerImage(attachmentTargetKey, id))
+    )
+      recordPreparingComposerImageFailure(attachmentTargetKey);
     // Same tick as the draft insert below, so the strip swaps placeholders for
     // real tiles in one render. A placeholder removed meanwhile stays removed.
     const stillPreparingIds = removePreparingComposerImages(

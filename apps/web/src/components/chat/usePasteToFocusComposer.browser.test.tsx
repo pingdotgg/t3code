@@ -73,6 +73,26 @@ vi.mock(
   },
 );
 
+// A file named broken.png fails compression the way an unreadable image does, once the test
+// calls `brokenImage.fail`.
+const brokenImage = vi.hoisted(() => {
+  let fail = () => {};
+  const failed = new Promise<void>((resolve) => {
+    fail = resolve;
+  });
+  return { failed, fail: () => fail() };
+});
+vi.mock("~/lib/imageCompression", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("~/lib/imageCompression")>();
+  return {
+    ...actual,
+    prepareImageForAttachment: (file: File, maxBytes: number) =>
+      file.name === "broken.png"
+        ? brokenImage.failed.then(() => ({ ok: false, reason: "unreadable" }) as const)
+        : actual.prepareImageForAttachment(file, maxBytes),
+  };
+});
+
 function pasteOnPage(fill: (clipboardData: DataTransfer) => void) {
   const clipboardData = new DataTransfer();
   fill(clipboardData);
@@ -118,6 +138,37 @@ it("text and screenshots pasted outside the composer send with an Enter right af
       expect.objectContaining({ name: "second.png" }),
     ],
   });
+});
+
+it("an Enter held for a compressing image sends nothing when the image fails", async () => {
+  const thread = threadWithHistory("paste-to-focus-broken-image", 1);
+  using _environment = installFakeEnvironment([thread], { acceptCommands: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  (document.activeElement as HTMLElement | null)?.blur();
+  pasteOnPage((data) => data.setData("text/plain", "Check this."));
+  pasteOnPage((data) =>
+    data.items.add(new File([new Uint8Array([1, 2, 3])], "broken.png", { type: "image/png" })),
+  );
+  await userEvent.keyboard("{Enter}");
+  brokenImage.fail();
+
+  // The error and the end of compression land in one commit, which also decides the held send.
+  await expect.element(page.getByText("'broken.png' could not be read as an image.")).toBeVisible();
+  expect(dispatchedCommands().map((command) => command.type)).not.toContain("message.dispatch");
+  expect(page.getByTestId("composer-editor").element().textContent).toContain("Check this.");
 });
 
 it("a copied image chip pasted outside the composer lands in it as a chip", async () => {

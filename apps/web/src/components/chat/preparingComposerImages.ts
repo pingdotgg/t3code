@@ -18,12 +18,28 @@ const NO_PREPARING_IMAGES: ReadonlyArray<PreparingComposerImage> = [];
  */
 const usePreparingComposerImageStore = create<{
   readonly byTargetKey: Readonly<Record<string, ReadonlyArray<PreparingComposerImage>>>;
-}>(() => ({ byTargetKey: {} }));
+  /** Counts images per target that failed to compress, so a held send can tell one failed. */
+  readonly failuresByTargetKey: Readonly<Record<string, number>>;
+}>(() => ({ byTargetKey: {}, failuresByTargetKey: {} }));
 
 export function usePreparingComposerImages(targetKey: string) {
   return usePreparingComposerImageStore(
     (state) => state.byTargetKey[targetKey] ?? NO_PREPARING_IMAGES,
   );
+}
+
+export function usePreparingComposerImageFailures(targetKey: string): number {
+  return usePreparingComposerImageStore((state) => state.failuresByTargetKey[targetKey] ?? 0);
+}
+
+/** Records that an image for the target failed to compress. Call before removing it. */
+export function recordPreparingComposerImageFailure(targetKey: string): void {
+  usePreparingComposerImageStore.setState((state) => ({
+    failuresByTargetKey: {
+      ...state.failuresByTargetKey,
+      [targetKey]: (state.failuresByTargetKey[targetKey] ?? 0) + 1,
+    },
+  }));
 }
 
 export function getPreparingComposerImages(
