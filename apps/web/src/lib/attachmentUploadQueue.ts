@@ -8,7 +8,6 @@ import {
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
-  abortableTransfer,
   attachmentUploadError,
   createAttachmentUploadRegistry,
 } from "@t3tools/client-runtime/state/attachment-uploads";
@@ -268,25 +267,27 @@ const uploadJob = Effect.fn("WebAttachmentUploads.upload")(function* (job: Uploa
       return connection ? resolveAssetUrl(connection.httpBaseUrl, relativeUrl) : null;
     },
     transport: (url) =>
-      abortableTransfer((signal) =>
-        uploadBytes({
-          url,
-          file,
-          mimeType,
-          signal,
-          onProgress: (progress) => {
-            const step = Math.floor(progress * 20);
-            if (step === lastStep || signal.aborted) return;
-            lastStep = step;
-            setUploadState(job.image.id, {
-              status: "uploading",
-              environmentId: job.environmentId,
-              progress,
-              ...(job.previous ? { previous: job.previous } : {}),
-            });
-          },
-        }),
-      ),
+      Effect.tryPromise({
+        try: (signal) =>
+          uploadBytes({
+            url,
+            file,
+            mimeType,
+            signal,
+            onProgress: (progress) => {
+              const step = Math.floor(progress * 20);
+              if (step === lastStep || signal.aborted) return;
+              lastStep = step;
+              setUploadState(job.image.id, {
+                status: "uploading",
+                environmentId: job.environmentId,
+                progress,
+                ...(job.previous ? { previous: job.previous } : {}),
+              });
+            },
+          }),
+        catch: attachmentUploadError,
+      }),
   });
   if (result.status === "uploaded") {
     setUploadState(job.image.id, {

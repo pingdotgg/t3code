@@ -24,27 +24,6 @@ export function attachmentUploadError(cause: unknown): AttachmentUploadError {
   });
 }
 
-/**
- * Runs a promise-based transfer as an Effect. Interrupting it aborts the transfer and waits for
- * it to settle, so the same bytes are never sent twice at once.
- */
-export function abortableTransfer<A>(
-  start: (signal: AbortSignal) => Promise<A>,
-): Effect.Effect<A, AttachmentUploadError> {
-  return Effect.suspend(() => {
-    const controller = new AbortController();
-    const done = start(controller.signal);
-    return Effect.tryPromise({ try: () => done, catch: attachmentUploadError }).pipe(
-      Effect.onInterrupt(() =>
-        Effect.sync(() => controller.abort()).pipe(
-          Effect.andThen(Effect.tryPromise({ try: () => done, catch: attachmentUploadError })),
-          Effect.ignore,
-        ),
-      ),
-    );
-  });
-}
-
 export type AttachmentUploadStatus =
   | { readonly status: "uploading"; readonly progress: number }
   | { readonly status: "ready" }
@@ -69,18 +48,14 @@ class UploadKey<Request> implements Equal.Equal {
 /**
  * Every upload of an attachment, shared by key. Holders keep an upload running, and anyone who
  * needs its result joins the running upload instead of starting another. An upload is
- * interrupted once nothing holds it, and the same attachment does not upload again until that
- * interrupted upload has settled.
+ * interrupted once nothing holds it.
  */
 export function createAttachmentUploadRegistry<Request>(options: {
   readonly key: (request: Request) => string;
   readonly environmentId: (request: Request) => EnvironmentId;
   /** Uploads running at once against one environment; the rest wait their turn. */
   readonly concurrencyPerEnvironment: number;
-  /**
-   * Uploads one attachment and returns its uploaded id. Interrupting it must cancel the
-   * transfer and wait for it to settle.
-   */
+  /** Uploads one attachment and returns its uploaded id; interrupting it cancels the transfer. */
   readonly upload: (
     request: Request,
     reportProgress: (progress: number) => void,
@@ -118,29 +93,22 @@ export function createAttachmentUploadRegistry<Request>(options: {
     }
     return semaphore;
   };
-  const running = new Set<Fiber.Fiber<string, AttachmentUploadError>>();
-  // The latest upload per key: a re-added attachment waits for an interrupted one to settle.
-  const latest = new Map<string, Fiber.Fiber<string, AttachmentUploadError>>();
+  const running = new Map<string, Fiber.Fiber<string, AttachmentUploadError>>();
 
-  const transfer = (
-    key: UploadKey<Request>,
-    previous: Fiber.Fiber<string, unknown> | undefined,
-  ) => {
+  const transfer = (key: UploadKey<Request>) => {
     const request = key.request!;
-    return (previous === undefined ? Effect.void : Fiber.await(previous)).pipe(
-      Effect.andThen(
-        Effect.suspend(() => {
-          if (statuses[key.id]?.status !== "uploading") {
-            setStatus(key.id, { status: "uploading", progress: 0 });
-          }
-          return options.upload(request, (progress) =>
-            setStatus(key.id, {
-              status: "uploading",
-              progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
-            }),
-          );
-        }).pipe(Semaphore.withPermits(permitsFor(options.environmentId(request)), 1)),
-      ),
+    return Effect.suspend(() => {
+      if (statuses[key.id]?.status !== "uploading") {
+        setStatus(key.id, { status: "uploading", progress: 0 });
+      }
+      return options.upload(request, (progress) =>
+        setStatus(key.id, {
+          status: "uploading",
+          progress: Math.floor(Math.max(0, Math.min(1, progress)) * 20) / 20,
+        }),
+      );
+    }).pipe(
+      Semaphore.withPermits(permitsFor(options.environmentId(request)), 1),
       Effect.tap((uploadedId) => options.onUploaded?.(request, uploadedId) ?? Effect.void),
       Effect.tap(() => Effect.sync(() => setStatus(key.id, { status: "ready" }))),
       Effect.tapError((error) =>
@@ -157,14 +125,10 @@ export function createAttachmentUploadRegistry<Request>(options: {
           setStatus(key.id, { status: "uploading", progress: 0 });
           yield* Effect.addFinalizer(() => Effect.sync(() => setStatus(key.id, undefined)));
           // Starts in the holder's call, so an upload begins as soon as something holds it.
-          const fiber = yield* Effect.forkScoped(transfer(key, latest.get(key.id)), {
-            startImmediately: true,
-          });
-          latest.set(key.id, fiber);
-          running.add(fiber);
+          const fiber = yield* Effect.forkScoped(transfer(key), { startImmediately: true });
+          running.set(key.id, fiber);
           fiber.addObserver(() => {
-            running.delete(fiber);
-            if (latest.get(key.id) === fiber) latest.delete(key.id);
+            if (running.get(key.id) === fiber) running.delete(key.id);
           });
           return fiber;
         }),
@@ -227,16 +191,16 @@ export function createAttachmentUploadRegistry<Request>(options: {
       synced.delete(key);
       sync(requested);
     },
-    /** The upload running or last run for the key, to await it without holding it. */
+    /** The key's running upload, to await it without holding it. */
     current(key: string): Fiber.Fiber<string, AttachmentUploadError> | undefined {
-      return latest.get(key);
+      return running.get(key);
     },
     status(key: string): AttachmentUploadStatus | undefined {
       return statuses[key];
     },
     async settled() {
       while (running.size > 0) {
-        await Effect.runPromise(Fiber.awaitAll([...running]));
+        await Effect.runPromise(Fiber.awaitAll([...running.values()]));
       }
     },
     dispose() {

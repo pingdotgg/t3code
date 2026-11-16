@@ -33,7 +33,6 @@ import {
 import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
 import {
-  abortableTransfer,
   attachmentUploadError,
   type AttachmentUploadError,
 } from "@t3tools/client-runtime/state/attachment-uploads";
@@ -317,9 +316,10 @@ export const uploadComposerAttachment = Effect.fn("uploadComposerAttachment")(fu
         : resolveAssetUrl(connection.value.httpBaseUrl, relativeUrl);
     },
     transport: (url) =>
-      abortableTransfer((signal) =>
-        uploadFileBytes(environmentId, attachment, url, signal, onProgress),
-      ),
+      Effect.tryPromise({
+        try: (signal) => uploadFileBytes(environmentId, attachment, url, signal, onProgress),
+        catch: attachmentUploadError,
+      }),
   });
   if (result.status === "uploaded") return result.attachmentId;
   if (result.attachmentId !== null) {

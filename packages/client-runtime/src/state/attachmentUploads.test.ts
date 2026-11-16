@@ -5,7 +5,7 @@ import * as Fiber from "effect/Fiber";
 import { vi } from "vite-plus/test";
 
 import {
-  abortableTransfer,
+  attachmentUploadError,
   createAttachmentUploadRegistry,
   type AttachmentUploadError,
   type AttachmentUploadStatus,
@@ -42,7 +42,10 @@ function createQueue(options: {
     environmentId: (candidate) => candidate.environmentId,
     concurrencyPerEnvironment: options.concurrencyPerEnvironment ?? 3,
     upload: (candidate, report) =>
-      abortableTransfer((signal) => options.upload(candidate, signal, report)),
+      Effect.tryPromise({
+        try: (signal) => options.upload(candidate, signal, report),
+        catch: attachmentUploadError,
+      }),
     ...(options.onUploaded ? { onUploaded: options.onUploaded } : {}),
     onChange: options.onChange,
   });
@@ -172,46 +175,6 @@ describe("attachment upload registry", () => {
     expect(states).toEqual({ [uploadKey(other, "photo")]: { status: "ready" } });
     queue.sync([]);
     expect(states).toEqual({});
-    queue.dispose();
-  });
-
-  it("restarts a re-added attachment after its aborted transfer finishes settling", async () => {
-    const firstStarted = Promise.withResolvers<void>();
-    const firstSettled = Promise.withResolvers<string>();
-    const secondStarted = Promise.withResolvers<void>();
-    const secondSettled = Promise.withResolvers<string>();
-    let states: Readonly<Record<string, AttachmentUploadStatus>> = {};
-    let firstSignal: AbortSignal | undefined;
-    const upload = vi.fn(async (_request: UploadRequest, signal: AbortSignal) => {
-      if (!firstSignal) {
-        firstSignal = signal;
-        firstStarted.resolve();
-        return firstSettled.promise;
-      }
-      secondStarted.resolve();
-      return secondSettled.promise;
-    });
-    const queue = createQueue({
-      upload,
-      onChange: (next) => {
-        states = next;
-      },
-    });
-    const local = request("re-added");
-    queue.sync([local]);
-    await firstStarted.promise;
-    queue.sync([]);
-    queue.sync([local]);
-    expect(firstSignal?.aborted).toBe(true);
-    expect(upload).toHaveBeenCalledOnce();
-    firstSettled.resolve("aborted");
-    await secondStarted.promise;
-    expect(upload).toHaveBeenCalledTimes(2);
-    secondSettled.resolve("uploaded");
-    await queue.settled();
-    expect(states[uploadKey(environmentId, local.attachment.id)]).toEqual({
-      status: "ready",
-    });
     queue.dispose();
   });
 
