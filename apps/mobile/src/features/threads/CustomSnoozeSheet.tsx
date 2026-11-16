@@ -1,4 +1,5 @@
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { CUSTOM_TIME_SHEET_COPY, type CustomTimeSheetPurpose } from "./customSnoozeDate";
 import {
   DatePicker,
   Host,
@@ -48,8 +49,10 @@ const units = [
 export function CustomSnoozeSheet(props: {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
+  readonly purpose?: CustomTimeSheetPurpose;
 }) {
   const { width, height } = useWindowDimensions();
+  const copy = CUSTOM_TIME_SHEET_COPY[props.purpose ?? "snooze"];
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
   const [date, setDate] = useState(() => new Date(Date.now() + 3_600_000));
   const [amount, setAmount] = useState(2);
@@ -98,6 +101,7 @@ export function CustomSnoozeSheet(props: {
         </Popover.Trigger>
         <Popover.Content>
           <SnoozePopoverNavigation
+            copy={copy}
             width={popoverWidth}
             height={popoverHeight}
             onClose={props.onClose}
@@ -113,7 +117,7 @@ export function CustomSnoozeSheet(props: {
                 modifiers={[padding({ all: 16 }), foregroundStyle(colors["--color-foreground"])]}
               >
                 <Picker
-                  label="Snooze mode"
+                  label={copy.modeLabel}
                   selection={mode}
                   onSelectionChange={(value: CustomSnoozeInput["mode"]) => {
                     setMode(value);
@@ -129,7 +133,7 @@ export function CustomSnoozeSheet(props: {
                 </Picker>
                 {mode === "date" ? (
                   <DatePicker
-                    title="Snooze until"
+                    title={copy.untilLabel}
                     selection={date}
                     displayedComponents={["date", "hourAndMinute"]}
                     onDateChange={updateDate}
@@ -212,6 +216,7 @@ export function CustomSnoozeSheet(props: {
 }
 
 function SnoozePopoverNavigation(props: {
+  readonly copy: (typeof CUSTOM_TIME_SHEET_COPY)[CustomTimeSheetPurpose];
   readonly width: number;
   readonly height: number;
   readonly onClose: () => void;
@@ -224,10 +229,10 @@ function SnoozePopoverNavigation(props: {
         <View style={{ width: props.width, height: props.height }}>
           <StandaloneStack>
             <SheetHeader
-              title="Custom snooze"
+              title={props.copy.title}
               onCancel={props.onClose}
-              accessibilityLabel="Cancel custom snooze"
-              confirm={{ label: "Snooze", onPress: props.onSubmit }}
+              accessibilityLabel={props.copy.cancelLabel}
+              confirm={{ label: props.copy.submit, onPress: props.onSubmit }}
             />
             <ScrollView
               contentInsetAdjustmentBehavior="automatic"

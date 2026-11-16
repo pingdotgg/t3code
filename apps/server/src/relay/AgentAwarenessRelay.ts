@@ -23,6 +23,7 @@ import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestratio
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { normalizeRelayIssuer, RELAY_ACTIVITY_PUBLISH_TYP } from "@t3tools/shared/relayJwt";
+import { isMutedCompletion, isThreadMuted } from "@t3tools/shared/threadMute";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -100,6 +101,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
+    // Muting withdraws the thread from push; unmuting restores it.
+    case "thread.mute-set":
     case "run.created":
     case "run.updated":
     case "runtime-request.updated":
@@ -361,9 +364,10 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   return {
     projectId: input.thread.value.projectId,
-    state: snoozedCompletion(input.thread.value, state)
-      ? null
-      : sanitizeRelayAgentActivityState(state),
+    state:
+      snoozedCompletion(input.thread.value, state) || mutedTerminalWork(input.thread.value, state)
+        ? null
+        : sanitizeRelayAgentActivityState(state),
     subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
@@ -380,6 +384,15 @@ function snoozedCompletion(
     return false;
   }
   return isSnoozed(thread, completedAt);
+}
+
+// Ending a mute must not replay what finished while it was in effect.
+function mutedTerminalWork(
+  thread: AgentAwarenessThread,
+  state: { readonly phase: string } | null,
+): boolean {
+  if (state?.phase !== "completed" && state?.phase !== "failed") return false;
+  return isMutedCompletion(thread, thread.latestRunCompletedAt);
 }
 
 function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
@@ -401,7 +414,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
       // Publishing a waiting subagent republishes its top-level thread.
       if (subagentAwaitsUser(thread)) return true;
       const project = projectById.get(thread.projectId);
-      if (!project) {
+      if (!project || isThreadMuted(thread, input.startedAt)) {
         return false;
       }
       const state = projectThreadAwarenessV2({
@@ -490,6 +503,14 @@ export const make = Effect.gen(function* () {
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
   let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  // A timed mute ends without an event; republish then so a thread still
+  // waiting on the user alerts again. One timer per thread, for its latest end.
+  const muteEndTimers = new Map<
+    ThreadId,
+    { readonly endMs: number; readonly fiber: Fiber.Fiber<void> }
+  >();
+  let scheduleMuteEnd: (threadId: ThreadId, endMs: number | null) => Effect.Effect<void> = () =>
+    Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
@@ -586,14 +607,24 @@ export const make = Effect.gen(function* () {
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
+    // A muted thread publishes like an archived one, so the relay clears it
+    // and no device is alerted.
+    const muted =
+      threadShell !== null && isThreadMuted(threadShell, (yield* DateTime.now).epochMilliseconds);
+    yield* scheduleMuteEnd(
+      threadId,
+      muted && threadShell.mutedUntil != null
+        ? DateTime.toEpochMillis(threadShell.mutedUntil)
+        : null,
+    );
     const thread =
-      threadShell === null || threadShell.archivedAt !== null
+      threadShell === null || threadShell.archivedAt !== null || muted
         ? Option.none<AgentAwarenessThread>()
         : Option.some(threadShell);
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       thread,
       project,
@@ -925,6 +956,28 @@ export const make = Effect.gen(function* () {
         unlinkedRetryDelayMs = Math.min(unlinkedRetryDelayMs * 2, 60_000);
       }
     }
+  });
+
+  scheduleMuteEnd = Effect.fnUntraced(function* (threadId: ThreadId, endMs: number | null) {
+    const current = muteEndTimers.get(threadId);
+    if (current?.endMs === endMs) return;
+    if (current !== undefined) {
+      muteEndTimers.delete(threadId);
+      yield* Fiber.interrupt(current.fiber);
+    }
+    if (endMs === null) return;
+    const delayMs = Math.max(0, endMs - (yield* DateTime.now).epochMilliseconds) + 1;
+    const fiber = yield* Effect.sleep(delayMs).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          if (muteEndTimers.get(threadId)?.endMs !== endMs) return Effect.void;
+          muteEndTimers.delete(threadId);
+          return worker.enqueue(threadId);
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
+    muteEndTimers.set(threadId, { endMs, fiber });
   });
 
   schedulePublishConfirm = (threadId) =>

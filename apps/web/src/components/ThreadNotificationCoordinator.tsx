@@ -8,6 +8,7 @@ import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
 import { monitorHoldsWakeCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { isMutedCompletion, isThreadMuted, threadMuteEndsAt } from "@t3tools/shared/threadMute";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import type { AtomRegistry } from "effect/reactivity";
@@ -55,6 +56,10 @@ interface WatchedEnvironment {
   previous: Map<ThreadId, NotificationState>;
   reconnecting: boolean;
   readonly gate: ReturnType<typeof createThreadNotificationGate<ThreadId>>;
+  /** Threads muted at their last observation; a timed mute ends without a snapshot change. */
+  readonly muted: Set<ThreadId>;
+  muteEndTimer: ReturnType<typeof setTimeout> | undefined;
+  reobserve: () => void;
 }
 
 /**
@@ -257,6 +262,7 @@ export function startThreadNotifications(
       const subagentRequest = subagentRequests.get(rawThread.id) ?? null;
       if (
         !entry.reconnecting &&
+        !entry.muted.has(rawThread.id) &&
         prior?.raw === rawThread &&
         prior.subagentRequest === subagentRequest
       ) {
@@ -302,13 +308,36 @@ export function startThreadNotifications(
     entry.previous = next;
     entry.gate.retain(new Set(next.keys()));
     const now = Date.now();
+    for (const id of entry.muted) if (!next.has(id)) entry.muted.delete(id);
     for (const [prior, state] of changed) {
+      const muted = isThreadMuted(state.raw, now);
+      const muteEnded = !muted && entry.muted.has(state.thread.id);
+      if (muted) entry.muted.add(state.thread.id);
+      else entry.muted.delete(state.thread.id);
       entry.gate.observe(state.thread.id, prior, state, {
-        archived: state.thread.archivedAt !== null,
-        quiet: state.raw.latestRunStopRequested === true,
+        // A muted thread is silent like an archived one. Completions from the mute stay
+        // quiet when it ends, but a request still waiting announces then.
+        archived: state.thread.archivedAt !== null || muted,
+        muteEnded,
+        quiet:
+          state.raw.latestRunStopRequested === true ||
+          isMutedCompletion(state.raw, state.raw.latestRunCompletedAt),
         snoozed: isSnoozedForNotification(state.thread, state.completedAt, now),
       });
     }
+    scheduleMuteEnd(entry, now);
+  };
+
+  const scheduleMuteEnd = (entry: WatchedEnvironment, now: number) => {
+    clearTimeout(entry.muteEndTimer);
+    entry.muteEndTimer = undefined;
+    let nextEnd = Infinity;
+    for (const id of entry.muted) {
+      const end = threadMuteEndsAt(entry.previous.get(id)?.raw ?? {}, now);
+      if (typeof end === "number" && end < nextEnd) nextEnd = end;
+    }
+    if (nextEnd === Infinity) return;
+    entry.muteEndTimer = setTimeout(entry.reobserve, nextEnd - now + 1);
   };
 
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
@@ -320,6 +349,9 @@ export function startThreadNotifications(
         const state = entry.previous.get(threadId);
         if (state) present(environmentId, state, kind);
       }),
+      muted: new Set(),
+      muteEndTimer: undefined,
+      reobserve: () => {},
     };
     let threads: ReadonlyArray<OrchestrationV2ThreadShell> | null = null;
     const unsubscribeShell = registry.subscribe(
@@ -341,6 +373,7 @@ export function startThreadNotifications(
     const reobserve = () => {
       if (threads !== null) observeThreads(environmentId, entry, threads);
     };
+    entry.reobserve = reobserve;
     const unsubscribeRequests = registry.subscribe(
       environmentThreadShells.pendingSubagentRequestsAtom(environmentId),
       reobserve,
@@ -353,6 +386,7 @@ export function startThreadNotifications(
       unsubscribeShell();
       unsubscribeRequests();
       unsubscribeDelegated();
+      clearTimeout(entry.muteEndTimer);
       entry.gate.clear();
     };
     return entry;

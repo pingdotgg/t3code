@@ -15,7 +15,8 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
-import { pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
+import { pickMuteEnd, pickSnoozePreset, resolveSnoozePresets } from "../components/Sidebar.snooze";
+import { isThreadMuted } from "@t3tools/shared/threadMute";
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
@@ -31,6 +32,7 @@ import { readEnvironmentScope } from "../state/session";
 import {
   readEnvironmentServerConfigLoaded,
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsMute,
   readThreadShell,
   useProjects,
 } from "../state/entities";
@@ -84,6 +86,7 @@ export function useThreadActionMenu(input: {
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     archiveThread,
     deleteThread,
     markThreadUnread,
@@ -122,6 +125,7 @@ export function useThreadActionMenu(input: {
       const supports = {
         settlement: configLoaded,
         autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
+        mute: readEnvironmentSupportsMute(threadRef.environmentId),
         snooze: configLoaded,
         pinning: configLoaded,
         titleRegeneration: configLoaded,
@@ -136,6 +140,7 @@ export function useThreadActionMenu(input: {
         isPinned: thread.pinnedAt != null,
         isSettled: supports.settlement && thread.settledOverride === "settled",
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
+        isMuted: isThreadMuted(thread, now.getTime()),
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
         isRegeneratingTitle,
@@ -184,6 +189,19 @@ export function useThreadActionMenu(input: {
           failureToast(title, squashAtomCommandFailure(result));
         }
       };
+      if (action.startsWith("mute:")) {
+        const choice = await pickMuteEnd(
+          action as `mute:${string}`,
+          snoozePresets,
+          timestampFormat,
+          threadRef.environmentId,
+        );
+        if (!choice) return;
+        await reportFailure("Failed to mute notifications", () =>
+          setThreadMuted(threadRef, true, choice.mutedUntil),
+        );
+        return;
+      }
       switch (action) {
         case "find":
           onFind?.(threadRef);
@@ -237,6 +255,11 @@ export function useThreadActionMenu(input: {
         case "auto-settle:disabled":
           await reportFailure("Failed to update auto-settle", () =>
             setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
+          );
+          return;
+        case "unmute":
+          await reportFailure("Failed to unmute notifications", () =>
+            setThreadMuted(threadRef, false),
           );
           return;
         case "rename":

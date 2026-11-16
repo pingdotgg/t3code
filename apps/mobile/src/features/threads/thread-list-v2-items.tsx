@@ -50,7 +50,7 @@ import {
   ProviderInstanceIcon,
   providerInstanceNameLabel,
 } from "../../components/ProviderIcon";
-import { useNowAfter } from "../../lib/clock";
+import { useDeadlinePassed, useNowAfter } from "../../lib/clock";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { copyThreadReference } from "../../lib/copyThreadReference";
@@ -685,11 +685,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
+  readonly onSetThreadMuted: (
+    thread: EnvironmentThreadShell,
+    muted: boolean,
+    mutedUntil?: string,
+  ) => void;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
+  readonly muteSupported: boolean;
   readonly titleRegenerationSupported: boolean;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
@@ -733,6 +739,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onSetThreadAutoSettle,
+    onSetThreadMuted,
     onMoveThread,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -825,12 +832,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  const [customMuteOpen, setCustomMuteOpen] = useState(false);
   // Recycling changes identity without remounting; clear local UI directly because equality may skip the render closure.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
+    setCustomMuteOpen(false);
   }
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
@@ -843,6 +852,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleSetAutoSettle = useCallback(
     (enabled: boolean) => onSetThreadAutoSettle(thread, enabled),
     [onSetThreadAutoSettle, thread],
+  );
+  const handleSetMuted = useCallback(
+    (muted: boolean, mutedUntil?: string) => onSetThreadMuted(thread, muted, mutedUntil),
+    [onSetThreadMuted, thread],
   );
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
@@ -870,6 +883,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
   });
+  // Mute offers the same times as snooze, whether or not the row can snooze.
+  const mutePresets = resolveThreadListV2SnoozePresets({
+    secondary: props.muteSupported ? "snooze" : null,
+    now: props.snoozePresetMinute || snoozeGateNow,
+    presets: props.snoozePresets,
+  });
+  // A timed mute ends without an event, so re-render at its end.
+  const muteEndMs = thread.mutedUntil ? Date.parse(thread.mutedUntil) : null;
+  const muteEnded = useDeadlinePassed(muteEndMs);
+  const isMuted = thread.mutedAt != null && !muteEnded;
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
       ...snoozePresets.map((preset) => ({
@@ -913,9 +936,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : [],
     [props.pinningSupported, thread.pinnedAt],
   );
-  const autoSettleMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.autoSettleOptOutSupported
+  // Per-thread settings, not lifecycle verbs. Auto-settle is a submenu with
+  // the current option checked, matching web.
+  const threadSettingMenuItems = useMemo<MenuAction[]>(
+    () => [
+      ...(props.autoSettleOptOutSupported
         ? [
             {
               id: "auto-settle",
@@ -935,8 +960,35 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ],
             } satisfies MenuAction,
           ]
-        : [],
-    [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
+        : []),
+      ...(props.muteSupported
+        ? [
+            isMuted
+              ? { id: "unmute", title: "Unmute notifications", image: "bell" }
+              : {
+                  id: "mute",
+                  title: "Mute notifications",
+                  image: "bell.slash",
+                  subactions: [
+                    { id: "mute:forever", title: "Until I unmute" },
+                    ...mutePresets.map((preset) => ({
+                      id: `mute:${preset.id}`,
+                      title: preset.label,
+                      subtitle: preset.whenLabel,
+                    })),
+                    { id: "mute:custom", title: "Custom…" },
+                  ],
+                },
+          ]
+        : []),
+    ],
+    [
+      props.autoSettleOptOutSupported,
+      props.muteSupported,
+      thread.autoSettleDisabledAt,
+      isMuted,
+      mutePresets,
+    ],
   );
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
   const titleMenuItems = useMemo<MenuAction[]>(
@@ -983,7 +1035,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: [],
         secondary: [
           ...titleMenuItems,
-          ...autoSettleMenuItems,
+          ...threadSettingMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SNOOZED_MENU_ACTIONS[1]!,
         ],
@@ -1008,7 +1060,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         pin: pinMenuItems,
         secondary: [
           ...titleMenuItems,
-          ...autoSettleMenuItems,
+          ...threadSettingMenuItems,
           LEGACY_MENU_ACTIONS[0]!,
           SLIM_MENU_ACTIONS[1]!,
         ],
@@ -1027,13 +1079,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       pin: pinMenuItems,
       secondary: [
         ...titleMenuItems,
-        ...autoSettleMenuItems,
+        ...threadSettingMenuItems,
         LEGACY_MENU_ACTIONS[0]!,
         CARD_MENU_ACTIONS[1]!,
       ],
     });
   }, [
-    autoSettleMenuItems,
+    threadSettingMenuItems,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1054,6 +1106,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
       if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
+      if (nativeEvent.event === "unmute") handleSetMuted(false);
+      if (nativeEvent.event === "mute:forever") handleSetMuted(true);
+      if (nativeEvent.event === "mute:custom") {
+        setCustomMuteOpen(true);
+        return;
+      }
+      if (nativeEvent.event.startsWith("mute:") && nativeEvent.event !== "mute:forever") {
+        const muteSelection = resolveThreadListV2SnoozeMenuSelection({
+          event: `snooze:${nativeEvent.event.slice("mute:".length)}`,
+          displayedPresets: mutePresets,
+          now: new Date(),
+          presets: props.snoozePresets,
+        });
+        if (muteSelection._tag === "selected") {
+          handleSetMuted(true, muteSelection.preset.snoozedUntil);
+        } else if (muteSelection._tag === "expired") {
+          Dialog.alert("Could not mute thread", "That time has passed. Choose another time.");
+        }
+        return;
+      }
       if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
@@ -1112,12 +1184,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleSettle,
       handleSnooze,
       handleSetAutoSettle,
+      handleSetMuted,
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
       markThreadUnread,
       setCustomSnoozeOpen,
+      setCustomMuteOpen,
       snoozePresets,
+      mutePresets,
       props.snoozePresets,
     ],
   );
@@ -1581,6 +1656,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     <View collapsable={false}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+      )}
+      {customMuteOpen && (
+        <CustomSnoozeSheet
+          purpose="mute"
+          onClose={() => setCustomMuteOpen(false)}
+          onSnooze={(mutedUntil) => handleSetMuted(true, mutedUntil)}
+        />
       )}
       <ThreadSwipeable
         dormant={dormant}

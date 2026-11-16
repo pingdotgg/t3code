@@ -53,6 +53,7 @@ export function useThreadListV2(input: {
   readonly searchMatches: ReadonlyMap<string, unknown>;
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
+  readonly muteEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly pinReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly activeReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys: ReadonlySet<string>;
@@ -225,6 +226,7 @@ export function useThreadListV2(input: {
         settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${input.now.slice(0, 16)}:00.000Z`,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
+        ...(input.muteEnvironmentIds ? { muteEnvironmentIds: input.muteEnvironmentIds } : {}),
         queuedThreadKeys: input.queuedThreadKeys,
         moveAvailability,
         shelfPreferencesLoading: !input.shelfPreferencesLoaded,
@@ -237,6 +239,7 @@ export function useThreadListV2(input: {
       input.settledShelfExpanded,
       input.now,
       input.snoozeEnvironmentIds,
+      input.muteEnvironmentIds,
       input.queuedThreadKeys,
       moveAvailability,
       input.shelfPreferencesLoaded,

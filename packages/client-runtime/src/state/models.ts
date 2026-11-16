@@ -187,6 +187,8 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?: import("@t3tools/contracts").OrchestrationV2LimitRecovery | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
+  readonly mutedAt?: string | null;
+  readonly mutedUntil?: string | null;
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
@@ -342,6 +344,8 @@ export function presentThreadShell(
     limitRecovery: thread.limitRecovery ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
+    mutedAt: nullableIso(thread.mutedAt ?? null),
+    mutedUntil: nullableIso(thread.mutedUntil ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
     ...(thread.lastVisitedAt === undefined

@@ -1,4 +1,5 @@
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { CUSTOM_TIME_SHEET_COPY, type CustomTimeSheetPurpose } from "./customSnoozeDate";
 import {
   BasicAlertDialog,
   Column,
@@ -42,6 +43,7 @@ import {
 type Props = {
   readonly onClose: () => void;
   readonly onSnooze: (snoozedUntil: string) => void;
+  readonly purpose?: CustomTimeSheetPurpose;
 };
 
 const roundedCorner = Shape.RoundedCorner;
@@ -61,6 +63,7 @@ function systemUses24HourClock() {
 }
 
 export function CustomSnoozeSheet(props: Props) {
+  const copy = CUSTOM_TIME_SHEET_COPY[props.purpose ?? "snooze"];
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const [is24Hour, setIs24Hour] = useState(systemUses24HourClock);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to AppState to re-read the native 24-hour clock setting when the app resumes
@@ -144,7 +147,7 @@ export function CustomSnoozeSheet(props: Props) {
                 verticalArrangement={{ spacedBy: 16 }}
                 modifiers={[fillMaxWidth(), padding(24, 24, 24, 16)]}
               >
-                <Text style={titleTypography}>Custom snooze</Text>
+                <Text style={titleTypography}>{copy.title}</Text>
                 <RNHostView matchContents={{ vertical: true }} modifiers={[fillMaxWidth()]}>
                   <SegmentedControl
                     variant="card"
@@ -264,7 +267,7 @@ export function CustomSnoozeSheet(props: Props) {
                     onClick={submit}
                     colors={{ contentColor: colors["--color-foreground"] }}
                   >
-                    <Text style={bodyTypography}>Snooze</Text>
+                    <Text style={bodyTypography}>{copy.submit}</Text>
                   </TextButton>
                 </Row>
               </Column>

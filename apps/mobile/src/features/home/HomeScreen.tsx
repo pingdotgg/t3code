@@ -141,6 +141,11 @@ interface HomeScreenProps {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly onSetThreadMuted: (
+    thread: EnvironmentThreadShell,
+    muted: boolean,
+    mutedUntil?: string,
+  ) => Promise<boolean>;
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -367,6 +372,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleSetThreadAutoSettle = props.onSetThreadAutoSettle;
   const handleRegenerateThreadTitle = props.onRegenerateThreadTitle;
   const handleRenameThread = props.onRenameThread;
+  const handleSetThreadMuted = props.onSetThreadMuted;
   const handleDeleteThread = props.onDeleteThread;
   const handleUnsettleThread = props.onUnsettleThread;
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -400,6 +406,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -420,6 +427,7 @@ export function HomeScreen(props: HomeScreenProps) {
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     queuedThreadKeys,
@@ -570,6 +578,8 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+        muteSupported={muteEnvironmentIds.has(thread.environmentId)}
+        onSetThreadMuted={handleSetThreadMuted}
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)

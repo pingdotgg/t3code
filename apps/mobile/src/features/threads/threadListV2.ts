@@ -19,6 +19,7 @@ import {
   threadSearchSubject,
 } from "@t3tools/client-runtime/state/thread-search";
 import { foldSearchQuery, rankSearchItems, scoreThreadSearch } from "@t3tools/shared/paletteSearch";
+import { isMutedCompletion } from "@t3tools/shared/threadMute";
 import {
   createInboxReturnTracker,
   isThreadWorking,
@@ -234,10 +235,12 @@ export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
 export function threadHasUnseenCompletion(
-  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt" | "mutedAt" | "mutedUntil">,
 ): boolean {
   const completedAt = thread.latestRun?.completedAt;
   if (!completedAt) return false;
+  // A run that finished while muted is not news.
+  if (isMutedCompletion(thread, completedAt)) return false;
   const status = thread.latestRun?.status;
   if (status === "interrupted" || status === "cancelled") return false;
   const completedAtMs = Date.parse(completedAt);
@@ -577,6 +580,8 @@ export function buildThreadListV2ListItems(input: {
   readonly settledShelfHeaderIndex?: number | null;
   readonly snoozeLabelNow?: string;
   readonly snoozeEnvironmentIds?: ReadonlySet<EnvironmentId>;
+  /** The mute menu offers the snooze times, so these rows tick too. */
+  readonly muteEnvironmentIds?: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly moveAvailability?: ReadonlyMap<string, ThreadMoveAvailability>;
   readonly shelfPreferencesLoading?: boolean;
@@ -589,10 +594,11 @@ export function buildThreadListV2ListItems(input: {
         : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
-      !item.snoozed &&
       input.snoozeLabelNow !== undefined &&
-      (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
-      canSnooze(item.thread, { now: input.snoozeLabelNow })
+      (input.muteEnvironmentIds?.has(item.thread.environmentId) === true ||
+        (!item.snoozed &&
+          (input.snoozeEnvironmentIds?.has(item.thread.environmentId) ?? true) &&
+          canSnooze(item.thread, { now: input.snoozeLabelNow })))
         ? input.snoozeLabelNow
         : undefined;
     const move =

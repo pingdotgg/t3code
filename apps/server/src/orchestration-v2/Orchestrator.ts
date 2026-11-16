@@ -81,6 +81,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { isThreadMuted } from "@t3tools/shared/threadMute";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
@@ -633,6 +634,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.snooze":
     case "thread.unsnooze":
     case "thread.auto-settle.set":
+    case "thread.mute.set":
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
@@ -4118,6 +4120,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.snooze"
           | "thread.unsnooze"
           | "thread.auto-settle.set"
+          | "thread.mute.set"
           | "thread.pin"
           | "thread.unpin"
           | "thread.pin.reorder"
@@ -4598,6 +4601,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       restoredUnsettledAt = parsed.value;
     }
+    let mutedUntil: DateTime.Utc | null = null;
+    if (command.type === "thread.mute.set") {
+      const nowMs = DateTime.toEpochMillis(now);
+      // Unmuting records when the mute ended, so a repeat must not move that past finished work.
+      if (!command.muted && !isThreadMuted(thread, nowMs)) return;
+      if (command.muted && command.mutedUntil !== undefined) {
+        const parsedMutedUntil = DateTime.make(command.mutedUntil);
+        if (
+          Option.isNone(parsedMutedUntil) ||
+          DateTime.toEpochMillis(parsedMutedUntil.value) <= nowMs
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} mute end ${command.mutedUntil} is not in the future.`,
+          });
+        }
+        mutedUntil = parsedMutedUntil.value;
+      }
+    }
     let snoozedUntil: DateTime.Utc | null = null;
     if (command.type === "thread.snooze") {
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
@@ -4763,6 +4786,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: unchanged ? thread.updatedAt : now,
           };
         }
+        // Muting changes delivery, not activity, so it keeps updatedAt.
+        case "thread.mute.set":
+          return command.muted
+            ? { ...thread, mutedAt: now, mutedUntil }
+            : { ...thread, mutedUntil: now };
         case "thread.pin": {
           const alreadyPinned = thread.pinnedAt != null;
           const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
@@ -5227,6 +5255,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.unsnoozed" as const;
         case "thread.auto-settle.set":
           return "thread.auto-settle-set" as const;
+        case "thread.mute.set":
+          return "thread.mute-set" as const;
         case "thread.pin":
           return "thread.pinned" as const;
         case "thread.unpin":
@@ -15056,6 +15086,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.snooze":
       case "thread.unsnooze":
       case "thread.auto-settle.set":
+      case "thread.mute.set":
       case "thread.pin":
       case "thread.unpin":
       case "thread.pin.reorder":
@@ -15458,6 +15489,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
+          command.type === "thread.mute.set" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||

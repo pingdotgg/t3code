@@ -14,3 +14,22 @@ export function applySnoozePickerTime(date: Date, selected: Date): Date {
   next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
   return next;
 }
+
+/** Muting picks its end time with the same sheet as snoozing. */
+export const CUSTOM_TIME_SHEET_COPY = {
+  snooze: {
+    title: "Custom snooze",
+    modeLabel: "Snooze mode",
+    untilLabel: "Snooze until",
+    submit: "Snooze",
+    cancelLabel: "Cancel custom snooze",
+  },
+  mute: {
+    title: "Mute notifications",
+    modeLabel: "Mute mode",
+    untilLabel: "Mute until",
+    submit: "Mute",
+    cancelLabel: "Cancel muting",
+  },
+} as const;
+export type CustomTimeSheetPurpose = keyof typeof CUSTOM_TIME_SHEET_COPY;

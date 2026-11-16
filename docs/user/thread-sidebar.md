@@ -339,3 +339,19 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+## Mute a thread
+
+Choose **Mute notifications** from a thread's menu to stop its alerts on every device:
+desktop and browser notifications, sounds, in-app toasts, and mobile push. Use it for
+threads that run on a schedule and that you check when it suits you. Pick how long:
+**Until I unmute**, one of your snooze options, or **Custom…** for a date, time, or
+duration. A muted thread stays in the list and keeps showing its status; on web and
+desktop it also shows a crossed-out bell. Runs that finish while it is muted do not get
+the Done marker. Choose **Unmute notifications** to turn alerts back on early; a timed
+mute also ends on its own. When a mute ends, a thread still waiting for your approval or
+answer alerts you then, while runs that finished during the mute stay quiet. You can ask
+an agent to mute its own thread too.
+
+A scheduled task set to start a new thread for each run opens a fresh, unmuted thread
+every time, so muting one of those threads does not quiet the next run.

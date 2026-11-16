@@ -130,6 +130,7 @@ describe("startup agent activity", () => {
     const newCompleted = ThreadId.make("new-completed");
     const oldFailed = ThreadId.make("old-failed");
     const newFailed = ThreadId.make("new-failed");
+    const muteEnded = ThreadId.make("mute-ended");
     const ids = AgentAwarenessRelay.resolveAgentAwarenessRelayActiveThreadIds({
       environmentId: EnvironmentId.make("relay-env"),
       startedAt,
@@ -158,9 +159,20 @@ describe("startup agent activity", () => {
         }),
         shell({ id: ThreadId.make("idle"), status: "idle" }),
         shell({ id: ThreadId.make("missing-project"), projectId: ProjectId.make("missing") }),
+        shell({ id: ThreadId.make("muted"), mutedAt: DateTime.makeUnsafe(NOW) }),
+        shell({
+          id: ThreadId.make("muted-for-now"),
+          mutedAt: DateTime.makeUnsafe("2026-09-04T11:00:00.000Z"),
+          mutedUntil: DateTime.makeUnsafe("2026-09-04T13:00:00.000Z"),
+        }),
+        shell({
+          id: muteEnded,
+          mutedAt: DateTime.makeUnsafe("2026-09-04T11:00:00.000Z"),
+          mutedUntil: DateTime.makeUnsafe("2026-09-04T11:30:00.000Z"),
+        }),
       ],
     });
-    assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed]);
+    assert.deepStrictEqual(ids, [THREAD_ID, newCompleted, newFailed, muteEnded]);
   });
 });
 
@@ -995,6 +1007,236 @@ describe("AgentAwarenessRelay", () => {
       assert.equal(publications[1]?.state, null);
     }),
   );
+
+  it.effect("withdraws a muted thread and restores it when unmuted", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 1);
+      yield* Ref.set(currentShell, shell({ mutedAt: yield* DateTime.now }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state, null);
+      const mutedAt = yield* DateTime.now;
+      yield* Ref.set(currentShell, shell({ mutedAt, mutedUntil: mutedAt }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 3);
+      assert.notEqual(publications[2]?.state, null);
+    }),
+  );
+
+  it.effect("restores a thread when its timed mute ends without an event", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const now = yield* DateTime.now;
+      yield* Ref.set(
+        currentShell,
+        shell({ mutedAt: now, mutedUntil: DateTime.add(now, { minutes: 15 }) }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      yield* TestClock.adjust("15 minutes");
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.at(-1)?.state?.phase, "running");
+    }),
+  );
+
+  it.effect("republishes a thread on its own when its timed mute ends", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      const now = yield* DateTime.now;
+      yield* Ref.set(
+        currentShell,
+        shell({ mutedAt: now, mutedUntil: DateTime.add(now, { minutes: 15 }) }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      const quiet = publications.length;
+      // A thread waiting on the user emits nothing more, so the end itself must publish.
+      yield* TestClock.adjust("15 minutes");
+      yield* relay.drain;
+      assert.isAbove(publications.length, quiet);
+      assert.equal(publications.at(-1)?.state?.phase, "running");
+    }),
+  );
+
+  // Ending a mute stores its time as mutedUntil, so work that finished before it stays quiet.
+  const makeMuteRelay = Effect.fnUntraced(function* (
+    confirmWithdrawal = true,
+    holdCompletion = false,
+  ) {
+    const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+    const pulls = yield* Queue.unbounded<void>();
+    const harness = yield* makeTestRelay({
+      domainEvents: Stream.fromEffectRepeat(
+        Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+      ),
+    });
+    yield* harness.relay.start();
+    yield* Queue.take(pulls);
+    const deliverMuteSet = Effect.fnUntraced(function* (
+      mutedAt: DateTime.Utc,
+      mutedUntil: DateTime.Utc | null,
+      occurredAt: DateTime.Utc,
+    ) {
+      yield* Queue.offer(events, {
+        id: EventId.make(`event:mute:${DateTime.toEpochMillis(occurredAt)}`),
+        type: "thread.mute-set",
+        threadId: THREAD_ID,
+        occurredAt,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: THREAD_ID,
+          projectId: PROJECT_ID,
+          title: "Thread",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+          forkedFrom: null,
+          createdAt: occurredAt,
+          updatedAt: occurredAt,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+          mutedAt,
+          mutedUntil,
+        },
+      });
+      yield* Queue.take(pulls);
+      yield* harness.relay.drain;
+    });
+    // Publish live work, then mute and let the withdrawal confirm.
+    yield* harness.relay.publishThread(THREAD_ID);
+    if (holdCompletion) {
+      yield* Ref.set(
+        harness.currentShell,
+        shell({ status: "completed", latestRunCompletedAt: yield* DateTime.now }),
+      );
+      yield* harness.relay.publishThread(THREAD_ID);
+    }
+    const mutedAt = yield* DateTime.now;
+    yield* Ref.set(harness.currentShell, shell({ mutedAt }));
+    yield* deliverMuteSet(mutedAt, null, mutedAt);
+    if (confirmWithdrawal) {
+      yield* TestClock.adjust("5 seconds");
+      yield* harness.relay.drain;
+      assert.equal(harness.publications.length, 2);
+      assert.equal(harness.publications[1]?.state, null);
+    }
+    // Unmuting keeps mutedAt and records the end, as the orchestrator does.
+    const unmute = Effect.fnUntraced(function* (overrides: Parameters<typeof shell>[0]) {
+      const unmutedAt = yield* DateTime.now;
+      yield* Ref.set(harness.currentShell, shell({ ...overrides, mutedAt, mutedUntil: unmutedAt }));
+      yield* deliverMuteSet(mutedAt, unmutedAt, unmutedAt);
+    });
+    return { ...harness, mutedAt, unmute };
+  });
+
+  it.effect("keeps work that finished while muted quiet after unmuting", () =>
+    Effect.gen(function* () {
+      const { relay, publications, unmute } = yield* makeMuteRelay();
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* unmute({ status: "completed", latestRunCompletedAt: finishedAt });
+      // Past the confirmation window a first terminal state would otherwise publish.
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+    }),
+  );
+
+  it.effect(
+    "keeps a run that finished while muted quiet when its held background work ends later",
+    () =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications, mutedAt, unmute } = yield* makeMuteRelay();
+        const finishedAt = yield* DateTime.now;
+        yield* TestClock.adjust("1 second");
+        const finished = { status: "completed", latestRunCompletedAt: finishedAt } as const;
+        yield* unmute({
+          ...finished,
+          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor", awaited: true }],
+        });
+        assert.equal(publications.at(-1)?.state?.phase, "running");
+        const unmutedAt = yield* DateTime.now;
+        yield* Ref.set(currentShell, shell({ ...finished, mutedAt, mutedUntil: unmutedAt }));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.isFalse(
+          publications.some((publication) => publication.state?.phase === "completed"),
+        );
+      }),
+  );
+
+  it.effect("clears a stale live card when unmuted before withdrawal confirms", () =>
+    Effect.gen(function* () {
+      const { relay, publications, unmute } = yield* makeMuteRelay(false);
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* unmute({ status: "completed", latestRunCompletedAt: finishedAt });
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+    }),
+  );
+
+  it.effect("does not restore a muted completion held across settlement", () =>
+    Effect.gen(function* () {
+      const { relay, publications, unmute } = yield* makeMuteRelay(false, true);
+      const finishedAt = yield* DateTime.now;
+      yield* TestClock.adjust("1 second");
+      yield* unmute({
+        status: "completed",
+        settledOverride: "settled",
+        latestRunCompletedAt: finishedAt,
+      });
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.at(-1)?.state, null);
+      assert.isFalse(publications.some((publication) => publication.state?.phase === "completed"));
+    }),
+  );
+
+  it.effect("alerts for work that finished after the unmute even when read later", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications, mutedAt } = yield* makeMuteRelay();
+      const unmutedAt = yield* DateTime.now;
+      yield* TestClock.adjust("3 seconds");
+      yield* Ref.set(
+        currentShell,
+        shell({
+          status: "completed",
+          latestRunCompletedAt: DateTime.add(unmutedAt, { seconds: 1 }),
+          mutedAt,
+          mutedUntil: unmutedAt,
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      // A first terminal state after a withdrawal waits out its confirmation.
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.equal(publications.length, 3);
+      assert.equal(publications[2]?.state?.phase, "completed");
+    }),
+  );
+
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;

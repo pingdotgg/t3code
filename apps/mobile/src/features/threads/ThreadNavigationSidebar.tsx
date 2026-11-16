@@ -143,6 +143,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadMuted,
     moveThread,
     renameThread,
     regenerateThreadTitle,
@@ -259,6 +260,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     snoozePresetsByEnvironmentId,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -279,6 +281,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     searchMatches: threadSearchMatchByKey,
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
+    muteEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     queuedThreadKeys,
@@ -464,6 +467,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             snoozePresets={snoozePresetsByEnvironmentId.get(thread.environmentId)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+            muteSupported={muteEnvironmentIds.has(thread.environmentId)}
+            onSetThreadMuted={setThreadMuted}
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)

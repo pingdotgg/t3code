@@ -394,6 +394,17 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           command = { ...common, type: "thread.pin", ...(orderKey ? { orderKey } : {}) };
           break;
         }
+        case "mute":
+        case "unmute":
+          command = {
+            ...common,
+            type: "thread.mute.set",
+            muted: input.action === "mute",
+            ...(input.action === "mute" && input.mutedUntil !== undefined
+              ? { mutedUntil: input.mutedUntil }
+              : {}),
+          };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

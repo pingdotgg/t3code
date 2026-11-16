@@ -39,6 +39,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BellOffIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -75,7 +76,11 @@ import { useNowSecond } from "../../hooks/useNowSecond";
 import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
+import {
+  formatRelativeTimeLabel,
+  formatShortTimestamp,
+  parseTimestampDate,
+} from "../../timestampFormat";
 import type { SidebarThreadSummary } from "../../types";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
@@ -231,6 +236,14 @@ function SidebarProviderStack(props: {
       <span className="relative z-10 inline-flex items-center">{current}</span>
     </span>
   );
+}
+
+/** The mute's end time, with its weekday when it is not today. */
+function muteEndLabel(mutedUntil: string, timestampFormat: TimestampFormat): string {
+  const time = formatShortTimestamp(mutedUntil, timestampFormat);
+  const end = parseTimestampDate(mutedUntil);
+  if (!end || end.toDateString() === new Date().toDateString()) return time;
+  return `${end.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
 }
 
 function SidebarThreadTooltip({
@@ -1117,6 +1130,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
   ) : null;
+  const mutedUntilMs = thread.mutedUntil ? Date.parse(thread.mutedUntil) : null;
+  const muteEnded = useDeadlinePassed(mutedUntilMs);
+  const muteLabel =
+    thread.mutedAt == null || muteEnded
+      ? null
+      : thread.mutedUntil
+        ? `Notifications muted until ${muteEndLabel(thread.mutedUntil, props.timestampFormat)}`
+        : "Notifications muted";
+  const muteIndicator =
+    muteLabel === null ? null : (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="img"
+              aria-label={muteLabel}
+              className="inline-flex shrink-0 items-center text-muted-foreground/65"
+            />
+          }
+        >
+          <BellOffIcon aria-hidden className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{muteLabel}</TooltipPopup>
+      </Tooltip>
+    );
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -1278,6 +1316,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {title}
               {multiline ? titleLineIcons : null}
               {pinIndicator}
+              {muteIndicator}
               {multiline ? null : terminalStatusIcon}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
@@ -1463,6 +1502,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
+              {muteIndicator}
               {props.projectDisplayName ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
