@@ -9,9 +9,12 @@ import type { TextGenerationPolicy } from "@t3tools/provider-core/server/textGen
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
-function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
+function policyInstruction(
+  instruction: string | undefined,
+  heading = "Additional instructions:",
+): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
-  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
+  return trimmed ? ["", heading, limitSection(trimmed, 20_000)] : [];
 }
 
 export interface CommitMessagePromptInput {
@@ -467,14 +470,10 @@ ${limitTitleMessage(forkSource.history, 8_000)}`;
 }
 
 function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
-  const trimmedInstructions = input.instructions?.trim();
-  const additionalInstructions = trimmedInstructions
-    ? [
-        "",
-        "Additional instructions from the user. Where they conflict with the editorial rules above, including the word and character limits, follow these instead:",
-        limitSection(trimmedInstructions, 20_000),
-      ]
-    : [];
+  const additionalInstructions = policyInstruction(
+    input.instructions,
+    "Additional instructions from the user. Where they conflict with the editorial rules above, including the word and character limits, follow these instead:",
+  );
   const attachmentLines = (input.attachments ?? []).map(
     (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
   );
