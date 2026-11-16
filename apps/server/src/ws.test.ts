@@ -63,6 +63,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as Ws from "./ws.ts";
+import * as AnnotationStore from "./annotations/AnnotationStore.ts";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -949,6 +950,8 @@ it.live.each([
         Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
         Layer.mock(DirectEndpoints.DirectEndpoints)({}),
         Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+        // Conn: ws.layer reads the annotation store for the annotations RPCs.
+        Layer.mock(AnnotationStore.AnnotationStore)({}),
         Layer.mock(VcsProcess.VcsProcess)({
           run: (input) =>
             Effect.fail(
