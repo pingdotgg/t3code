@@ -1070,13 +1070,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...input.env,
           ...trace2Monitor.env,
         };
-        const bareEnv = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
-        // Polls never save a refreshed index, so inode, owner or ctime written differently by
-        // another Git (Git for Windows read from WSL) would re-read every file on every poll.
-        const env = {
-          ...bareEnv,
-          ...gitConfigEnv(bareEnv, "core.checkStat", "minimal", hostPlatform),
-        };
+        const env = { ...baseEnv, ...explicitBareRepositoryEnv(baseEnv, hostPlatform) };
         const spawnEnv = { ...env, ...windowsLongPathConfigEnv(hostPlatform, env) };
         const resolved = yield* resolveSpawnCommand("git", [], { env: spawnEnv });
         const spawnError = (cause: unknown) =>
@@ -2359,7 +2353,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       ),
     );
+    // Polls never save a refreshed index, so inode, owner or ctime written by another Git (Git for
+    // Windows read from WSL) would re-read every file each poll. Removal guards keep the full check.
+    const pollStatConfig = ["-c", "core.checkStat=minimal"];
     const statusArgs = [
+      ...pollStatConfig,
       "status",
       "--porcelain=2",
       "--branch",
@@ -2426,7 +2424,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       executeGitWithStableDiagnostics(
         "GitVcsDriver.statusDetails.numstat",
         cwd,
-        ["diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
         { allowNonZeroExit: true, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       );
     // diff-index does not read status output, so both spawn together; a non-repository discards it.

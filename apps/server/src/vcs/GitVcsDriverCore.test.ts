@@ -7307,6 +7307,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps a worktree whose edit kept the file's size and mtime", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "same-stat");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: initialBranch,
+          newRefName: "feature/same-stat",
+        });
+        const readmePath = pathService.join(worktreePath, "README.md");
+        // An mtime older than the index keeps Git's racy-entry check from reading the file anyway.
+        NodeFS.utimesSync(readmePath, 1, 1);
+        yield* git(worktreePath, ["update-index", "--refresh"]);
+        NodeFS.writeFileSync(`${readmePath}.copy`, "# edit\n");
+        NodeFS.utimesSync(`${readmePath}.copy`, 1, 1);
+        NodeFS.renameSync(`${readmePath}.copy`, readmePath);
+
+        const result = yield* Effect.result(driver.removeWorktree({ cwd, path: worktreePath }));
+
+        assert.isTrue(Result.isFailure(result));
+        assert.equal(NodeFS.readFileSync(readmePath, "utf8"), "# edit\n");
+      }),
+    );
+
     it.effect.skipIf(!symlinksSupported)(
       "removes a worktree whose .git file git-annex replaced with a symlink, keeping the symlink when refused",
       () =>
