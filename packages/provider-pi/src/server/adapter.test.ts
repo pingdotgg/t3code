@@ -180,7 +180,7 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly promptModels: ReadonlyArray<string>;
-  /** An extension's pi.setModel or pi.setThinkingLevel, which Pi reports to no RPC client. */
+  /** Simulates a native extension changing Pi's active selection. */
   readonly changeNatively: (change: {
     readonly model?: string;
     readonly thinking?: string;

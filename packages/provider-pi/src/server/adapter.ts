@@ -3072,8 +3072,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
-        // Extensions (pi.setModel, /preset) change Pi's model and thinking without an RPC event,
-        // so confirm a cached selection against Pi before skipping it.
+        // pi.setModel and /preset can change the model without an RPC event.
+        // Confirm cached selections against Pi before skipping them.
         const modelCached =
           modelSelection.model !== PI_INHERIT_MODEL_SLUG && modelSelection.model === appliedModel;
         if (modelCached || (thinking !== undefined && thinking === appliedThinking)) {
