@@ -45,7 +45,7 @@ delegate_task {
   task: "You are an event listener for Ada thread \"<childThreadId>\". Use only the t3-code tools named here (load them with ToolSearch first). Never message anyone, never read or write files.
 
 Repeat this loop, at most 240 rounds:
-A. Call t3_thread_wait with threadId (above), timeoutMs 60000, returnOnQuestion true, untilDelegatedWorkSettled true. Pass no runId.
+A. Call t3_thread_wait with threadId (above), timeoutMs 60000, returnOnQuestion true, untilDelegatedWorkSettled true, untilBackgroundWorkEnds true. Pass no runId.
 B. If the result has hasPendingQuestion true: reply `INPUT <pendingRequestId>` and stop.
 C. If timedOut is true: call t3_get_pending_questions with the threadId. If data.status is \"waiting-approval\" or \"waiting-input\": reply `<data.status in capitals>` and stop. Otherwise go to A.
 D. If timedOut is false: call t3_thread_read with threadId, view \"messages\", limit 1, maxCharsPerItem 300, runLimit 1. If thread.activeRunId is present, the child started another run (a background task or helper woke it): go to A. Otherwise reply `ENDED <thread.status>: <the last assistant message text>` and stop.
