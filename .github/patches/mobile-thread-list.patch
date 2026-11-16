@@ -25,7 +25,7 @@ index 6de4c54d6d..3d330690e3 100644
              providers={providersByEnvironmentId.get(thread.environmentId)}
              environmentLabel={
 diff --git a/apps/mobile/src/features/threads/thread-list-v2-items.tsx b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
-index d304bc87ed..faa2e6c591 100644
+index d304bc87ed..b55c3701e4 100644
 --- a/apps/mobile/src/features/threads/thread-list-v2-items.tsx
 +++ b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
 @@ -661,6 +661,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
@@ -50,6 +50,22 @@ index d304bc87ed..faa2e6c591 100644
    const {
      thread,
      variant,
+@@ -947,7 +943,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+         supported: props.titleRegenerationSupported,
+         isRegenerating: isRegeneratingTitle,
+       }),
+-      { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
+       ...(canTurnIntoProject
+         ? [
+             {
+@@ -975,6 +970,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+         : []),
+       { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
+       { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
++      { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
+     ];
+     if (snoozedRow) {
+       return layoutThreadListV2RowMenuActions({
 @@ -1183,46 +1179,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
        ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
        : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
