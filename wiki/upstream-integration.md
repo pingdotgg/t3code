@@ -6,24 +6,30 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-15T07:56:01+00:00
+  at: 2026-11-16T17:33:52+00:00
 verified:
   - by: opencode/gpt-6.1-sol
-    at: 2026-11-13T18:16:03+00:00
+    at: 2026-11-16T17:33:52+00:00
 snapshot:
-  at: 2026-11-13T18:16:03+00:00
-  fork_main: 8843960553bb019be7cd203aa7965e5774cde4ed
-  upstream_main: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
+  at: 2026-11-16T17:33:52+00:00
+  fork_main: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
+  upstream_main: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
   shared_baseline: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
   last_main_integration: 4e3eaf41faf1a967fd293715b34841ae69589ac2
   last_main_upstream: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
-  missing_upstream_on_main: 0
+  missing_upstream_on_main: 967
   missing_upstream_at_integrated_tip: 0
-  branch_integration: 4e3eaf41faf1a967fd293715b34841ae69589ac2
-  branch_parent: a5f4dfdff860a0d5720d678b59e2eac0be2a5630
-  branch_code_tip: ccb63c2129a16b7d9894d32115266cbc26ceb101
+  branch_integration: b20d057b87353167849d02e1031a334a91298dd7
+  branch_parent: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
+  branch_code_tip: b20d057b87353167849d02e1031a334a91298dd7
   missing_upstream_on_branch: 0
 sources:
+  - id: november-16-candidate
+    resource: "Local revision verification at 2026-11-16T17:33:52+00:00: initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411 has parents freshly fetched fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and upstream 6f5838f9bcdaf31864b93694c5935c93f9532e06. Follow-up merge b20d057b87353167849d02e1031a334a91298dd7 retains it and incorporates upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541. All 967 incoming commits are ancestors of the candidate, with zero branch gap; fork main still lacks them. Of 1763 incoming paths without prior fork changes, 1762 match upstream exactly; ThreadFeed passes Jujutsu terminology to the new preparing header. No push, PR, main integration, or live deployment has occurred. Verification is in progress."
+    title: November 16 local candidate, distinct from unchanged fork main
+  - id: november-16-upstream
+    resource: https://github.com/pingdotgg/t3code/commit/c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
+    title: Pinned upstream tip for the November 16 candidate
   - id: opencode-permissions-retirement
     resource: ../packages/provider-opencode/src/server/v2/adapter.ts
     title: Upstream thread-controlled OpenCode permissions
@@ -397,13 +403,32 @@ sources:
 
 # Upstream integration
 
-Fork `main` at `8843960553` incorporates upstream through `286eeea19f`.
-PR #75 merged all 379 incoming commits with ancestry preserved and zero main gap.
-Remote deployment remains separate.[^november-13-git]
+Fork `main` at `863c2620ff` incorporates upstream through `286eeea19f`.
+The November 16 candidate incorporates all 967 newer upstream commits through
+`c8c51af4e3`, but has not yet reached `main`. Remote deployment remains separate.
+[^november-16-candidate]
 
 This is a revision-pinned snapshot, not a claim about newer upstream work.
 Refresh it after the next review or integration using the
 [maintenance guidance](maintenance.md).
+
+## November 16 candidate
+
+Merge `933b5c5f29` combines fresh fork `main` `863c2620ff` and upstream
+`6f5838f9bc`; follow-up merge `b20d057b87` adds the two upstream fixes fetched
+during verification. The initial audit found that 1,762 of 1,763 incoming paths
+without prior fork changes matched upstream exactly; `ThreadFeed` carries
+Jujutsu terminology into the new mobile preparing header. Verification also
+requires the upstream composer fixture to mock the retained prompt command.
+[^november-16-candidate][^november-16-upstream]
+
+Adopt upstream's folder-picker fuzzy and Unicode matching instead of maintaining
+the overlapping fork implementation. Git and Jujutsu still share the PR workflow,
+including upstream's push-remote and cross-repository fixes. A Git ref snapshot
+cannot certify a Jujutsu status read; return no snapshot so the broadcaster keeps
+its full reconciliation. OpenCode's upstream run attribution remains alongside
+the fork's input-delivery safeguards: an undelivered continuation must not finish
+from an older child report.[^november-16-candidate][^opencode-child-tracking][^shared-pr-workflow]
 
 ## Completed November 13 sync
 
@@ -1129,6 +1154,10 @@ git merge-base --is-ancestor a8df093eb6 origin/main
 git rev-list --count origin/main..upstream/main
 git log --reverse --oneline origin/main..upstream/main
 ```
+
+[^november-16-candidate]: Local November 16 ancestry and incoming-path verification, recorded in frontmatter.
+
+[^november-16-upstream]: Pinned upstream revision for the November 16 integration.
 
 [^november-13-candidate]: Exact November 13 merge and compatibility resolutions.
 

@@ -3174,7 +3174,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const open = [...state.calls.values()].filter(
         (candidate) => candidate.child?.sessionId === childId,
       );
-      const admitted = open.filter((candidate) => !candidate.awaitingChildInput);
+      const inputObserved = open.some((candidate) => candidate.childInputObserved);
+      const admitted = open.filter((candidate) => !inputObserved || !candidate.awaitingChildInput);
       const output = subagentOutput(payload.text);
       const started = admitted
         .flatMap((candidate) =>
@@ -3199,18 +3200,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       open.forEach((candidate) => {
         candidate.observedSubagentReport = true;
       });
-      const inputObserved = open.some((candidate) => candidate.childInputObserved);
-      const awaitingInput = open.some((candidate) => candidate.awaitingChildInput);
       if (
         child?.reusedSubagent &&
-        (awaitingInput ||
-          open.some(
-            (candidate) => candidate.childInputObserved && candidate.executionStatus === undefined,
-          ))
+        open.some(
+          (candidate) => candidate.childInputObserved && candidate.executionStatus === undefined,
+        )
       ) {
         child.ambiguousSubagentReports = true;
       }
-      const ambiguous = child?.ambiguousSubagentReports === true && (inputObserved || awaitingInput);
+      const ambiguous = child?.ambiguousSubagentReports === true && inputObserved;
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
@@ -3492,13 +3490,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user"
       ) {
-        callsForChild(state)
-          .filter((call) => call.awaitingChildInput)
-          .forEach((call) => {
-            call.childInputObserved = true;
+        callsForChild(state).forEach((call) => {
+          call.childInputObserved = true;
+          if (call.awaitingChildInput) {
             call.pendingChildInputs.add(event.data.inboxID);
             call.pendingExecutionStatus = undefined;
-          });
+          }
+        });
         if (state.ambiguousSubagentReports) {
           yield* Effect.forEach(
             callsForChild(state),
