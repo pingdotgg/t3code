@@ -294,8 +294,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
-  // A pgid can be reused within one boot after its original group empties.
-  // Surviving commands must carry the unique marker inherited from this server.
+  // The unique inherited marker proves ownership, including when a pgid is reused.
+  // The boot check is only an additional conservative guard.
   const leaderlessGroupRemains = Effect.fn("OpenCodeServerLedger.leaderlessGroupRemains")(
     function* (entry: OpenCodeServerEntry) {
       if (
