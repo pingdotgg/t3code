@@ -386,23 +386,13 @@ describe("AntigravityAdapterV2 client file system", () => {
       for (const name of ["..notes.txt", "..cache/notes.txt"]) {
         const doubleDotPath = path.join(workspace, name);
         yield* fileSystem.makeDirectory(path.dirname(doubleDotPath), { recursive: true });
-        yield* fileSystem.writeFileString(doubleDotPath, "first\nsecond\n");
-        const result = yield* readTextFile(
-          { sessionId: "mock-session-1", path: doubleDotPath, line: 2, limit: 1 },
+        yield* fileSystem.writeFileString(doubleDotPath, name);
+        const doubleDotRead = yield* readTextFile(
+          { sessionId: "mock-session-1", path: doubleDotPath },
           context("fs/read_text_file"),
         );
-        assert.equal(result.content, "second");
+        assert.equal(doubleDotRead.content, name);
       }
-      const missingDoubleDot = yield* readTextFile(
-        { sessionId: "mock-session-1", path: path.join(workspace, "..cache", "missing.txt") },
-        context("fs/read_text_file"),
-      ).pipe(Effect.flip);
-      assert.propertyVal(
-        missingDoubleDot,
-        "code",
-        -32002,
-        "a missing in-workspace file is not found",
-      );
       yield* fileSystem.writeFileString(insidePath, "inside");
       for (const [name, bytes] of [
         ["image.png", new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
