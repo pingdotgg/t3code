@@ -135,6 +135,8 @@ const ChunkFailure = Schema.Struct({
   key: Schema.String,
   failures: Schema.Int,
   skipped: Schema.optionalKey(Schema.Boolean),
+  // Failed in a pass where nothing succeeded, so not counted until a later pass succeeds.
+  suspect: Schema.optionalKey(Schema.Boolean),
   reason: Schema.String,
 });
 type ChunkFailure = typeof ChunkFailure.Type;
@@ -1182,16 +1184,16 @@ const make = Effect.gen(function* () {
       const live = new Set(keys.values());
       for (const key of chunkFailures.keys()) if (!live.has(key)) chunkFailures.delete(key);
 
-      const isSkipped = (raw: string) => {
+      const failureOf = (raw: string) => {
         const key = keys.get(raw);
-        return key !== undefined && chunkFailures.get(key)?.skipped === true;
+        return key === undefined ? undefined : chunkFailures.get(key);
       };
-      const held = (raw: string, blocked: ReadonlySet<string>) =>
-        blocked.has(raw) || isSkipped(raw);
+      const isSkipped = (raw: string) => failureOf(raw)?.skipped === true;
       // Roll up only roots that end before the first uncovered gap. Roots on the far side of a
       // replaced leaf stay put until that leaf exists, or the roll-up would skip the broken path.
       // A skipped stretch gets no replacement, so it is no gap.
-      const selectWork = (blocked: ReadonlySet<string>) => {
+      const selectFrom = (avoid: (raw: string) => boolean) => {
+        const held = (raw: string) => avoid(raw) || isSkipped(raw);
         const chunks = planLeafChunks({ settled, covered });
         const group = planCondensation(
           rootsBeforeFirstGap({
@@ -1206,14 +1208,18 @@ const make = Effect.gen(function* () {
                 ),
             ),
           }),
-          (run) => !held(rollupKey(run), blocked),
+          (run) => !held(rollupKey(run)),
         );
         if (group !== null) return { kind: "condense" as const, group, key: rollupKey(group) };
-        const chunk = chunks.find((candidate) => !held(leafChunkKey(candidate), blocked));
+        const chunk = chunks.find((candidate) => !held(leafChunkKey(candidate)));
         return chunk === undefined
           ? null
           : { kind: "leaf" as const, chunk, key: leafChunkKey(chunk) };
       };
+      // Suspects go last, so work that failed together cannot hold the front of every pass.
+      const selectWork = (blocked: ReadonlySet<string>) =>
+        selectFrom((raw) => blocked.has(raw) || failureOf(raw)?.suspect === true) ??
+        selectFrom((raw) => blocked.has(raw));
       const blocked = new Set<string>();
       const failed: Array<{ readonly raw: string; readonly reason: string }> = [];
       let attempts = 0;
@@ -1236,20 +1242,25 @@ const make = Effect.gen(function* () {
         generated += 1;
       }
       // With nothing else succeeding, the model may be down or unable to answer at all. Blaming
-      // the chunk would skip the thread's whole history.
-      if (generated === 0 && failed.length > 0)
-        return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
-      for (const { raw, reason } of failed) {
-        const key = yield* keyOf(raw);
-        const failures = (chunkFailures.get(key)?.failures ?? 0) + 1;
+      // the chunk would skip the thread's whole history, so a failure stays a suspect until a
+      // later pass succeeds elsewhere.
+      const charge = (key: string, reason: string, suspect: boolean) => {
+        const failures = (chunkFailures.get(key)?.failures ?? 0) + (suspect ? 0 : 1);
         chunkFailures.delete(key);
         chunkFailures.set(key, {
           key,
           failures,
           ...(failures >= CHUNK_FAILURES_BEFORE_SKIP ? { skipped: true } : {}),
+          ...(suspect ? { suspect: true } : {}),
           reason: reason.slice(0, 300),
         });
-      }
+      };
+      if (generated > 0)
+        for (const failure of chunkFailures.values())
+          if (failure.suspect === true) charge(failure.key, failure.reason, false);
+      for (const { raw, reason } of failed) charge(yield* keyOf(raw), reason, generated === 0);
+      if (generated === 0 && failed.length > 0)
+        return yield* finish("failed", failed[0]!.reason.slice(0, 300), 0, waiting());
       const skipped = [...chunkFailures.values()].filter((failure) => failure.skipped);
       const skipReason =
         skipped.length === 0
