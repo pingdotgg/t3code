@@ -22,6 +22,16 @@ Android uses **Material You Layout** by default unless you have turned it off in
 It changes shapes, spacing, and controls independently
 of the selected theme.
 
+## App icon
+
+On web and desktop, open **Settings → Appearance** and choose **App icon**, or use **Change app
+icon** in the command palette, to pick the black, Sunrise, or Blueprint icon or an older T3 Code
+icon. Desktop shows it in the Dock or taskbar, and the browser shows it in the tab. **Default**
+returns to your build's own icon. The choice is saved separately on each device.
+
+On macOS, the chosen icon shows in the Dock while T3 Code runs; when it is closed, the Dock and
+Finder show the default icon.
+
 ## Style
 
 On web and desktop, **Style** in **Settings → Appearance** sets how buttons and controls are

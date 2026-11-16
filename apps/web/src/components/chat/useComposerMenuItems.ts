@@ -138,7 +138,8 @@ export function useComposerMenuItems({
   // Both `@` and `#` offer thread matches, so subscribe while either menu is open.
   const isThreadTrigger = isPathTrigger || composerTriggerKind === "pull-request";
   const environmentThreadShells = useVisibleThreadShells(isThreadTrigger);
-  // Mounts older settled threads matching the mention, which shells may leave out.
+  // Mounts older settled threads matching the mention, here and on linked machines, which shells
+  // may leave out.
   useThreadSearch(
     isThreadTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],
     isPathTrigger ? pathTriggerQuery : pullRequestTriggerQuery,
