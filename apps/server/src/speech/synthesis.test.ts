@@ -11,7 +11,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
-import { localSynthesisLanguage, localSynthesisRuntimes } from "./LocalSpeechSynthesis.ts";
+import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynthesis.ts";
 import { pcm16Mono } from "./synthesisAudio.ts";
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
@@ -43,24 +43,19 @@ it.each([
     architecture: "arm64",
     libc: undefined,
     glibc: undefined,
-    backends: ["metal"],
+    backend: "metal",
   },
-  {
-    platform: "win32",
-    architecture: "x64",
-    libc: undefined,
-    glibc: undefined,
-    backends: ["vulkan", "cpu"],
-  },
-  { platform: "linux", architecture: "x64", libc: "gnu", glibc: "2.43", backends: ["vulkan"] },
+  { platform: "darwin", architecture: "x64", libc: undefined, glibc: undefined, backend: "cpu" },
+  { platform: "win32", architecture: "x64", libc: undefined, glibc: undefined, backend: "vulkan" },
+  { platform: "linux", architecture: "x64", libc: "gnu", glibc: "2.28", backend: "vulkan" },
+  { platform: "linux", architecture: "arm64", libc: "gnu", glibc: "2.39", backend: "vulkan" },
   {
     platform: "linux",
     architecture: "x64",
     libc: "gnu",
-    glibc: "2.39",
-    error: "glibc 2.43 or newer",
+    glibc: "2.17",
+    error: "glibc 2.28 or newer",
   },
-  { platform: "linux", architecture: "arm64", libc: "gnu", glibc: "2.43", error: "not available" },
   {
     platform: "linux",
     architecture: "x64",
@@ -68,11 +63,18 @@ it.each([
     glibc: undefined,
     error: "not available",
   },
+  {
+    platform: "win32",
+    architecture: "arm64",
+    libc: undefined,
+    glibc: undefined,
+    error: "not available",
+  },
 ] as const)(
-  "installs the speech builds that load on $platform-$architecture with glibc $glibc",
-  ({ backends = [], error, ...host }) => {
-    const result = localSynthesisRuntimes(host);
-    expect(result.runtimes.map((runtime) => runtime.backend)).toEqual(backends);
+  "installs the speech build that loads on $platform-$architecture with glibc $glibc",
+  ({ backend, error, ...host }) => {
+    const result = localSynthesisRuntime(host);
+    expect(result.runtime?.backend).toBe(backend);
     if (error) expect(result.error).toContain(error);
     else expect(result.error).toBeUndefined();
   },

@@ -30,7 +30,6 @@ const withService = <A, E>(
       "speech",
       "runtime",
       `audio-cpp-${AUDIO_CPP_VERSION}-darwin-arm64`,
-      "metal",
     );
     yield* fs.makeDirectory(path.join(runtime, "libs"), { recursive: true });
     yield* fs.writeFileString(path.join(runtime, ".t3-complete"), AUDIO_CPP_VERSION);

@@ -41,19 +41,9 @@ const entry = `
         const lamePath = packageJson("@breezystack/lamejs");
         const lameEntry = join(dirname(lamePath), JSON.parse(readFileSync(lamePath, "utf8")).module);
         lame = await import(pathToFileURL(lameEntry).href);
-        // A Vulkan build will not load without the Vulkan loader, so fall back to the next build.
-        let failure;
-        for (const library of message.libraries) {
-          try {
-            model = bindAudioCpp(koffi, library.path).loadSpeechModel(message.modelPath, {
-              backend: library.backend, threads: message.threads,
-            });
-            break;
-          } catch (error) {
-            failure ??= error;
-          }
-        }
-        if (!model) throw failure;
+        model = bindAudioCpp(koffi, message.libraryPath).loadSpeechModel(message.modelPath, {
+          backend: message.backend, threads: message.threads,
+        });
         reply({ ok: true, backend: model.backend, languages: model.languages });
       } else if (message.kind === "synthesize") {
         cancelled = false;
@@ -111,8 +101,9 @@ export type LocalSynthesisModel = Awaited<ReturnType<typeof loadLocalSynthesisMo
 
 /** Loads a model in an isolated process; aborting `signal` kills it, even mid-synthesis. */
 export async function loadLocalSynthesisModel(options: {
-  /** In preference order; the first that loads on this host is used. */
-  readonly libraries: readonly { readonly path: string; readonly backend: string }[];
+  readonly libraryPath: string;
+  /** Falls back to the CPU when the backend has no device here. */
+  readonly backend: string;
   readonly modelPath: string;
   readonly threads: number;
   readonly signal: AbortSignal;
@@ -181,7 +172,8 @@ export async function loadLocalSynthesisModel(options: {
   try {
     loaded = await send({
       kind: "load",
-      libraries: options.libraries,
+      libraryPath: options.libraryPath,
+      backend: options.backend,
       modelPath: options.modelPath,
       threads: options.threads,
     });

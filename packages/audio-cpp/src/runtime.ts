@@ -1,4 +1,5 @@
-export const AUDIO_CPP_VERSION = "v0.9.4";
+/** A release of github.com/pingdotgg/audio.cpp, whose `T3 release` workflow builds these libraries. */
+export const AUDIO_CPP_VERSION = "t3-2026.11.15";
 
 export type AudioCppRuntime = {
   readonly filename: string;
@@ -24,7 +25,7 @@ const runtime = (
   const filename = `audio-${AUDIO_CPP_VERSION}-lib-${name}`;
   return {
     filename,
-    url: `https://github.com/0xShug0/audio.cpp/releases/download/${AUDIO_CPP_VERSION}/${filename}`,
+    url: `https://github.com/pingdotgg/audio.cpp/releases/download/${AUDIO_CPP_VERSION}/${filename}`,
     size,
     sha256,
     library,
@@ -33,56 +34,47 @@ const runtime = (
   };
 };
 
-// Upstream publishes no Linux arm64 library. The portable Linux build loads Vulkan as a plugin and
-// otherwise runs on the CPU. The Windows Vulkan build links vulkan-1.dll and fails to load without
-// a GPU driver, so the CPU build is installed beside it as the fallback.
-const RUNTIMES: Readonly<Record<string, readonly AudioCppRuntime[]>> = {
-  "darwin-arm64": [
-    runtime(
-      "macos-arm64-metal.tar.gz",
-      14_422_864,
-      "bb1141185d15891d1c6b53f05cd55b0b93614804b340289799cff497fe87cf5b",
-      "libs/libaudiocpp.0.1.0.dylib",
-      "metal",
-    ),
-  ],
-  "darwin-x64": [
-    runtime(
-      "macos-x64-metal.tar.gz",
-      15_509_881,
-      "f0b6c392be9ca933ee2b813d036484c03a15838c55345e08472ec14251a64ad8",
-      "libs/libaudiocpp.0.1.0.dylib",
-      "metal",
-    ),
-  ],
-  "linux-x64": [
-    runtime(
-      "ubuntu-x64-vulkan-portable.tar.gz",
-      47_415_047,
-      "d5dfe390c78acadd153fdb6b8c448cca1ce2d1255fc7998d99ec3df0c29fddfb",
-      "libs/libaudiocpp.so.0.1.0",
-      "vulkan",
-      "2.43",
-    ),
-  ],
-  "win32-x64": [
-    runtime(
-      "windows-x64-vulkan.zip",
-      30_751_615,
-      "cf2fabd8630050491a92c002d7bdfd29eca722c31fb3b8cb0ba9b9c5e6e9ff3d",
-      "libs/audiocpp.dll",
-      "vulkan",
-    ),
-    runtime(
-      "windows-x64-cpu.zip",
-      13_542_870,
-      "41f779687dc20e36900797f43d6762a9542c593931d4b3f3f5e877b0db9baa5e",
-      "libs/audiocpp.dll",
-      "cpu",
-    ),
-  ],
+// Linux and Windows load Vulkan as a plugin and otherwise run on the CPU. Intel Macs build
+// without Metal, as upstream's do.
+const RUNTIMES: Readonly<Record<string, AudioCppRuntime>> = {
+  "darwin-arm64": runtime(
+    "macos-arm64-metal.tar.gz",
+    15_050_502,
+    "d310a03ec334c9eca108afddc155285d415c4a9de7de6f1f11852792dea4ef40",
+    "libs/libaudiocpp.0.1.0.dylib",
+    "metal",
+  ),
+  "darwin-x64": runtime(
+    "macos-x64-cpu.tar.gz",
+    16_205_264,
+    "e28f38d904ca2f62582e30b66daf223a102c49d72dfc4de6652ebc49d560b497",
+    "libs/libaudiocpp.0.1.0.dylib",
+    "cpu",
+  ),
+  "linux-x64": runtime(
+    "linux-x64-vulkan.tar.gz",
+    46_480_833,
+    "bfb156d9803a9d72321edf2618132f5c253d62774d87b8a84404c908bcb14c8d",
+    "libs/libaudiocpp.so.0.1.0",
+    "vulkan",
+    "2.28",
+  ),
+  "linux-arm64": runtime(
+    "linux-arm64-vulkan.tar.gz",
+    40_185_095,
+    "5dcf0ca69930cb326228379d21c357a9474e5fb414b7fbbdbad8d59dc6be9eb8",
+    "libs/libaudiocpp.so.0.1.0",
+    "vulkan",
+    "2.28",
+  ),
+  "win32-x64": runtime(
+    "windows-x64-vulkan.zip",
+    34_389_751,
+    "80c98ef7ccb2ebdb343838727cfce20cceefbf35eeeda6a0ffae4a344f06a613",
+    "libs/audiocpp.dll",
+    "vulkan",
+  ),
 };
 
-/** All builds a host installs, in preference order: the first that loads is used. */
-export const audioCppRuntimes = (platform: string, architecture: string) =>
-  RUNTIMES[`${platform}-${architecture}`] ?? [];
+export const audioCppRuntime = (platform: string, architecture: string) =>
+  RUNTIMES[`${platform}-${architecture}`];

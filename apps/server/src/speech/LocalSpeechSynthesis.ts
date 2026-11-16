@@ -5,7 +5,7 @@ import {
   type SpeechSynthesisCatalog,
   type SpeechSynthesisRequest,
 } from "@t3tools/contracts";
-import { AUDIO_CPP_VERSION, audioCppRuntimes, type AudioCppRuntime } from "@t3tools/audio-cpp";
+import { AUDIO_CPP_VERSION, audioCppRuntime, type AudioCppRuntime } from "@t3tools/audio-cpp";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -97,28 +97,25 @@ const atLeast = (version: string, minimum: string) => {
   return major > wantedMajor || (major === wantedMajor && minor >= wantedMinor);
 };
 
-/** The audio.cpp builds a host installs, or why it cannot run local speech models. */
-export function localSynthesisRuntimes(host: {
+/** The audio.cpp build a host installs, or why it cannot run local speech models. */
+export function localSynthesisRuntime(host: {
   readonly platform: string;
   readonly architecture: string;
   readonly libc: "gnu" | "musl" | undefined;
   readonly glibc: string | undefined;
-}): { readonly runtimes: readonly AudioCppRuntime[]; readonly error?: string } {
-  const runtimes = isSpeechPlatformSupported(host.platform, host.architecture, host.libc)
-    ? audioCppRuntimes(host.platform, host.architecture)
-    : [];
-  if (!runtimes.length)
+}): { readonly runtime?: AudioCppRuntime; readonly error?: string } {
+  const runtime = isSpeechPlatformSupported(host.platform, host.architecture, host.libc)
+    ? audioCppRuntime(host.platform, host.architecture)
+    : undefined;
+  if (!runtime)
     return {
-      runtimes,
       error: `Local speech models are not available on ${host.platform}-${host.architecture}.`,
     };
-  const minimum = runtimes.find((runtime) => runtime.minimumGlibc)?.minimumGlibc;
-  if (minimum && !(host.glibc && atLeast(host.glibc, minimum)))
+  if (runtime.minimumGlibc && !(host.glibc && atLeast(host.glibc, runtime.minimumGlibc)))
     return {
-      runtimes: [],
-      error: `Local speech models need glibc ${minimum} or newer, such as Ubuntu 26.04. This environment has glibc ${host.glibc ?? "unknown"}.`,
+      error: `Local speech models need glibc ${runtime.minimumGlibc} or newer. This environment has glibc ${host.glibc ?? "unknown"}.`,
     };
-  return { runtimes };
+  return { runtime };
 }
 
 const make = Effect.gen(function* () {
@@ -131,52 +128,41 @@ const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
-  const { runtimes, error: unavailable } = localSynthesisRuntimes({
+  const { runtime, error: unavailable } = localSynthesisRuntime({
     platform,
     architecture,
     libc: platform === "linux" ? yield* HostProcess.LinuxLibc : undefined,
     glibc: platform === "linux" ? yield* HostProcess.GlibcVersion : undefined,
   });
-  const runtimeRoot = path.join(
+  const runtimeFile = runtime && {
+    id: "pingdotgg/audio.cpp",
+    revision: AUDIO_CPP_VERSION,
+    filename: runtime.filename,
+    url: runtime.url,
+    size: runtime.size,
+    sha256: runtime.sha256,
+  };
+  const runtimeDirectory = path.join(
     config.stateDir,
     "speech",
     "runtime",
     `audio-cpp-${AUDIO_CPP_VERSION}-${platform}-${architecture}`,
   );
-  const installs = runtimes.map((runtime) => {
-    const directory = path.join(runtimeRoot, runtime.backend);
-    return {
-      runtime,
-      file: {
-        id: "0xShug0/audio.cpp",
-        revision: AUDIO_CPP_VERSION,
-        filename: runtime.filename,
-        url: runtime.url,
-        size: runtime.size,
-        sha256: runtime.sha256,
-      },
-      directory,
-      libraryPath: path.join(directory, runtime.library),
-      // Written last, so a directory without it is an interrupted extraction.
-      completeMarker: path.join(directory, ".t3-complete"),
-    };
-  });
-  type RuntimeInstall = (typeof installs)[number];
+  const libraryPath = runtime && path.join(runtimeDirectory, runtime.library);
+  // Written last, so a directory without it is an interrupted extraction.
+  const completeMarker = path.join(runtimeDirectory, ".t3-complete");
 
-  const missingRuntimes = Effect.filter(installs, (install) =>
-    Effect.gen(function* () {
-      return !(
-        (yield* fs.exists(install.completeMarker)) && (yield* fs.exists(install.libraryPath))
-      );
-    }).pipe(Effect.orElseSucceed(() => true)),
-  );
+  const runtimeReady = Effect.gen(function* () {
+    if (!libraryPath) return false;
+    return (yield* fs.exists(completeMarker)) && (yield* fs.exists(libraryPath));
+  }).pipe(Effect.orElseSucceed(() => false));
 
   // System tar reads .tar.gz on macOS and Linux and .zip on Windows 10 and later.
   const extract = Effect.fn("LocalSpeechSynthesis.extract")(function* (
-    install: RuntimeInstall,
+    library: string,
     archivePath: string,
   ) {
-    const staging = `${install.directory}.${yield* random.uuidV4()}.part`;
+    const staging = `${runtimeDirectory}.${yield* random.uuidV4()}.part`;
     yield* fs.makeDirectory(staging, { recursive: true });
     yield* Effect.gen(function* () {
       const child = yield* spawner.spawn(
@@ -187,14 +173,14 @@ const make = Effect.gen(function* () {
         }),
       );
       const exitCode = yield* child.exitCode;
-      if (exitCode !== 0 || !(yield* fs.exists(path.join(staging, install.runtime.library))))
+      if (exitCode !== 0 || !(yield* fs.exists(path.join(staging, library))))
         return yield* new LocalSynthesisInstallError({
           reason: "failed",
           cause: `tar exited with ${exitCode} or the archive has no library.`,
         });
       yield* fs.writeFileString(path.join(staging, ".t3-complete"), AUDIO_CPP_VERSION);
-      yield* fs.remove(install.directory, { recursive: true, force: true });
-      yield* fs.rename(staging, install.directory);
+      yield* fs.remove(runtimeDirectory, { recursive: true, force: true });
+      yield* fs.rename(staging, runtimeDirectory);
     }).pipe(
       Effect.scoped,
       Effect.onExit((exit) =>
@@ -207,7 +193,7 @@ const make = Effect.gen(function* () {
 
   type Transfer = {
     readonly modelId: string;
-    /** Fixed once the install knows its runtimes, so extracting one does not shrink it. */
+    /** Fixed once the install knows whether it needs the runtime, so extracting it does not shrink it. */
     size: number;
     runtime: number;
     model: number;
@@ -219,8 +205,8 @@ const make = Effect.gen(function* () {
   let removing = false;
 
   const catalog = Effect.gen(function* () {
-    const missing = yield* missingRuntimes;
-    const runtimeSize = missing.reduce((size, install) => size + install.file.size, 0);
+    const ready = yield* runtimeReady;
+    const runtimeSize = ready || !runtimeFile ? 0 : runtimeFile.size;
     const models = yield* Effect.forEach(LOCAL_SYNTHESIS_MODELS, (model) =>
       Effect.gen(function* () {
         const active = transfer?.modelId === model.id ? transfer : undefined;
@@ -233,7 +219,7 @@ const make = Effect.gen(function* () {
             }
           : {
               state:
-                installs.length && !missing.length && (yield* store.isReady(model.file))
+                ready && (yield* store.isReady(model.file))
                   ? ("installed" as const)
                   : ("downloadable" as const),
               size,
@@ -262,7 +248,7 @@ const make = Effect.gen(function* () {
   // Publishes the transfer before forking: a cached file can finish before forkIn returns.
   const reserve = Effect.fn("LocalSpeechSynthesis.reserve")(function* (modelId: string) {
     const model = yield* findModel(modelId);
-    if (!installs.length)
+    if (!runtimeFile || !runtime)
       return yield* new LocalSynthesisInstallError({ reason: "unsupported-platform" });
     // Checked and claimed without yielding, so a concurrent download or removal cannot interleave.
     if (removing || (transfer && transfer.modelId !== modelId))
@@ -278,13 +264,11 @@ const make = Effect.gen(function* () {
       transfer = state;
       const install = Effect.gen(function* () {
         // Read after claiming: no removal can start while this transfer exists.
-        const missing = yield* missingRuntimes;
-        state.size = missing.reduce((size, install) => size + install.file.size, state.size);
-        let installed = 0;
-        for (const install of missing) {
-          const archivePath = yield* store.download(install.file, {
+        if (!(yield* runtimeReady)) {
+          state.size += runtimeFile.size;
+          const archivePath = yield* store.download(runtimeFile, {
             onProgress: (downloaded) => {
-              state.runtime = installed + downloaded;
+              state.runtime = downloaded;
               state.verifying = false;
             },
             onVerificationStart: () => {
@@ -292,10 +276,9 @@ const make = Effect.gen(function* () {
             },
           });
           state.verifying = true;
-          yield* extract(install, archivePath);
-          yield* store.remove(install.file).pipe(Effect.ignore);
-          installed += install.file.size;
-          state.runtime = installed;
+          yield* extract(runtime.library, archivePath);
+          yield* store.remove(runtimeFile).pipe(Effect.ignore);
+          state.runtime = runtimeFile.size;
         }
         state.verifying = false;
         yield* store.download(model.file, {
@@ -376,7 +359,7 @@ const make = Effect.gen(function* () {
             );
             if (remaining.length === 0)
               yield* fs
-                .remove(runtimeRoot, { recursive: true, force: true })
+                .remove(runtimeDirectory, { recursive: true, force: true })
                 .pipe(Effect.mapError(installFailed));
           }),
         ),
@@ -400,12 +383,12 @@ const make = Effect.gen(function* () {
     request: SpeechSynthesisRequest,
     queue: Queue.Queue<Uint8Array, SpeechSynthesisError | Cause.Done>,
   ) {
-    if (!installs.length) return yield* failure("unavailable");
+    if (!runtime || !libraryPath) return yield* failure("unavailable");
     const definition = LOCAL_SYNTHESIS_MODELS.find(
       (model) => model.id === (request.model || LOCAL_SYNTHESIS_MODELS[0]!.id),
     );
     if (!definition) return yield* failure("model-unavailable");
-    if ((yield* missingRuntimes).length) return yield* failure("missing-model");
+    if (!(yield* runtimeReady)) return yield* failure("missing-model");
     const modelPath = yield* store.installedPath(definition.file);
     if (!modelPath) return yield* failure("missing-model");
     // Held until the stream ends, after any cancelled synthesis has stopped.
@@ -420,10 +403,8 @@ const make = Effect.gen(function* () {
       const loaded = yield* Effect.tryPromise({
         try: () =>
           loadLocalSynthesisModel({
-            libraries: installs.map((install) => ({
-              path: install.libraryPath,
-              backend: install.runtime.backend,
-            })),
+            libraryPath,
+            backend: runtime.backend,
             modelPath,
             threads: Math.max(1, Math.min(8, NodeOS.availableParallelism() - 1)),
             signal: lifetime.signal,
