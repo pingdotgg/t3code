@@ -236,7 +236,6 @@ export function MarkdownCodeBlock({
           {canRun ? (
             <SharedTooltipTrigger
               label="Run in terminal"
-
               render={
                 <Button
                   type="button"

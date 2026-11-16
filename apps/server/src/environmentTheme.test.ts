@@ -304,6 +304,35 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     );
   });
 
+  it.effect(
+    "reports the image beside a theme as its background, with a new revision per file",
+    () =>
+      withEnvironmentThemes(
+        { "look.json": encodeThemeFile(NIGHTFALL_THEME), "look.png": "first" },
+        Effect.gen(function* () {
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const background = Effect.map(currentThemes, (themes) => themes[0]?.background);
+          const image = path.join(environmentThemesDir, "look.png");
+
+          const first = yield* background;
+          assert.isDefined(first);
+          yield* fs.writeFileString(image, "a longer second image");
+          assert.notStrictEqual(yield* background, first);
+
+          yield* fs.remove(image);
+          assert.isUndefined(yield* background);
+          if (symlinksSupported) {
+            const outside = path.join(environmentThemesDir, "..", "outside.png");
+            yield* fs.writeFileString(outside, "outside");
+            yield* fs.symlink(outside, image);
+            assert.isUndefined(yield* background);
+          }
+        }),
+      ),
+  );
+
   it.effect("keeps the served theme when an update does not fit the size limit", () => {
     const large = (name: string): EnvironmentThemeFile => ({
       ...NIGHTFALL_THEME,
