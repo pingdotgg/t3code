@@ -1433,13 +1433,13 @@ describe("AntigravityAdapterV2 foreground command waits", () => {
         const waitFiber = yield* session
           .awaitBackgroundTasks({
             providerThread,
-            taskIds: ["mock-session-1/task-1"],
+            taskIds: ["call_fg"],
             awaited: true,
           })
           .pipe(Effect.forkScoped);
         yield* Deferred.succeed(finishForeground, undefined);
         const waited = yield* Fiber.join(waitFiber);
-        assert.deepEqual(waited, { matched: ["mock-session-1/task-1"] });
+        assert.deepEqual(waited, { matched: ["call_fg"] });
 
         yield* Deferred.succeed(finishPrompt, undefined);
         const events = Array.from(yield* Fiber.join(eventsFiber));

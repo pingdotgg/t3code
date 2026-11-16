@@ -31,6 +31,7 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  readAntigravityTaskIds,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
@@ -225,6 +226,12 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     mcpInstructions: ANTIGRAVITY_BACKGROUND_WAIT_INSTRUCTIONS,
     foregroundCommandWait: {
+      ...(profileDirectory === undefined
+        ? {}
+        : {
+            resolveTaskIds: (sessionId: string, toolCallIds: ReadonlyArray<string>) =>
+              readAntigravityTaskIds(profileDirectory, sessionId, toolCallIds),
+          }),
       isOpenForegroundCommand: isAntigravityForegroundCommandOpen,
       isForegroundCommand: isAntigravityForegroundCommand,
       buildContinuationPrompt: (openTools, { hasT3Mcp }) => {

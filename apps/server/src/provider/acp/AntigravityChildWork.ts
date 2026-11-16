@@ -22,6 +22,10 @@ const METADATA_TOOL_CALL = 4;
 const STEP_PLANNER_RESPONSE = 20;
 const PLANNER_TOOL_CALLS = 7;
 const STEP_INVOKE_SUBAGENT = 143;
+const STEP_RUN_COMMAND = 28;
+const RUN_COMMAND_ID = 13;
+const STEP_GENERIC = 140;
+const STEP_TASK_DETAILS = 148;
 const INVOKE_SPECS = 9;
 const INVOKE_RESULTS = 10;
 const INVOKE_SUBAGENT_STEP_TYPE = 127;
@@ -191,6 +195,110 @@ const plannerCallIdsAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number)
   );
   return planner === undefined ? undefined : plannerInvokeCallIds(planner);
 };
+
+/** ACP omits native command/child IDs; the parent's persisted tool record owns that mapping. */
+export const readAntigravityTaskIds = Effect.fn("readAntigravityTaskIds")(function* (
+  profileDirectory: string,
+  rootSessionId: string,
+  toolCallIds: ReadonlyArray<string>,
+) {
+  if (!NATIVE_ID.test(rootSessionId)) return new Map<string, ReadonlyArray<string>>();
+  return yield* Effect.tryPromise({
+    try: async () => {
+      const result = new Map<string, ReadonlyArray<string>>();
+      const root = await antigravityProfileRoot(profileDirectory);
+      if (root === undefined) return result;
+      // The CLI's app-data-directory option selects either native session store.
+      const file =
+        (await antigravityManagedPath(
+          root,
+          ["antigravity-cli", "conversations", `${rootSessionId}.db`],
+          "file",
+        )) ??
+        (await antigravityManagedPath(
+          root,
+          ["antigravity-acp", "conversations", `${rootSessionId}.db`],
+          "file",
+        ));
+      if (file === undefined) return result;
+      const database = new NodeSqlite.DatabaseSync(file.path, { readOnly: true });
+      try {
+        const owners = new Map(toolCallIds.map((id) => [id, id]));
+        for (const id of toolCallIds) {
+          const step = /^(.*):(\d+)$/.exec(id);
+          if (step?.[1] !== rootSessionId) continue;
+          const payload = payloadOf(
+            database
+              .prepare(
+                "SELECT step_payload FROM steps WHERE idx = ? AND step_format = 0 AND length(step_payload) <= ?",
+              )
+              .get(Number(step[2]), MAX_STEP_BYTES),
+          );
+          const calls =
+            payload === undefined
+              ? []
+              : safely((bytes) =>
+                  messages(
+                    message(bytes, STEP_PLANNER_RESPONSE) ?? new Uint8Array(),
+                    PLANNER_TOOL_CALLS,
+                  ).flatMap((call) => {
+                    const callId = text(call, 1);
+                    return callId === undefined ? [] : [callId];
+                  }),
+                )(payload);
+          if (calls?.length === 1) owners.set(calls[0]!, id);
+        }
+        let bytes = 0;
+        let rows = 0;
+        // Cortex step types: RUN_COMMAND=21, INVOKE_SUBAGENT=127, GENERIC=132 (exa.cortex_pb).
+        for (const row of database
+          .prepare(
+            "SELECT step_payload FROM steps WHERE step_type IN (21, 127, 132) AND step_format = 0 AND length(step_payload) <= ? ORDER BY idx DESC",
+          )
+          .iterate(MAX_STEP_BYTES)) {
+          const payload = payloadOf(row);
+          if (payload === undefined) continue;
+          bytes += payload.length;
+          if (++rows > MAX_INVOKE_ROWS || bytes > MAX_SCAN_BYTES) break;
+          const record = safely((data) => {
+            const callId = text(message(message(data, STEP_METADATA), METADATA_TOOL_CALL), 1);
+            const taskId = text(message(data, STEP_TASK_DETAILS), 1);
+            const commandId = text(message(data, STEP_RUN_COMMAND), RUN_COMMAND_ID);
+            const genericPayload = message(message(message(data, STEP_GENERIC), 2), 6);
+            const genericChildren =
+              text(genericPayload, 1) === "type.googleapis.com/exa.cortex.core.tools.InvokeSubagent"
+                ? messages(message(genericPayload, 2) ?? new Uint8Array(), 2)
+                : [];
+            const children = messages(
+              message(data, STEP_INVOKE_SUBAGENT) ?? new Uint8Array(),
+              INVOKE_RESULTS,
+            )
+              .concat(genericChildren)
+              .flatMap((child) => {
+                const id = text(child, 1);
+                return id === undefined ? [] : [id];
+              });
+            const id = taskId || commandId;
+            return { callId, ids: children.length > 0 ? children : id ? [id] : [] };
+          })(payload);
+          const owner = record?.callId === undefined ? undefined : owners.get(record.callId);
+          if (
+            owner !== undefined &&
+            record !== undefined &&
+            record.ids.length > 0 &&
+            !result.has(owner)
+          ) {
+            result.set(owner, record.ids);
+          }
+        }
+        return result;
+      } finally {
+        database.close();
+      }
+    },
+    catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+  });
+});
 
 /**
  * Auto-approved calls carry `<sessionId>:<plannerStep>`; the record with that planner call's id
