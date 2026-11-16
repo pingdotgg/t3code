@@ -69,6 +69,7 @@ export const decodeJsonReply = <S extends Schema.Top>(
         new TextGenerationError({
           operation: request.operation,
           detail: `${provider} returned invalid structured output.`,
+          kind: "invalid-output",
           cause,
         }),
     ),

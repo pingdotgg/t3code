@@ -85,10 +85,6 @@ const MAX_SUMMARIES_PER_PASS = 3;
 // One empty or invalid reply can be a cold start. The second is the chunk, and retrying it
 // again only rehashes the thread.
 const CHUNK_FAILURES_BEFORE_SKIP = 2;
-const isDeterministicChunkFailure = (reason: string) =>
-  /returned empty/i.test(reason) ||
-  /invalid structured output/i.test(reason) ||
-  reason === "The model returned no statements citing the summarized sources.";
 // Measured as delivery measures it, so a few roll-ups fit beside the verbatim tail of a 16 KB
 // handoff in any script. The prompt asks for fewer characters, so this cut is a backstop.
 const CONDENSED_MAX_BYTES = 1_536;
@@ -1030,10 +1026,14 @@ const make = Effect.gen(function* () {
             Effect.map((result) => ({ ok: true as const, statements: result.statements })),
             Effect.catchTags({
               TextGenerationError: (error) =>
-                Effect.succeed({ ok: false as const, detail: error.detail }),
+                Effect.succeed({
+                  ok: false as const,
+                  reason: error.detail,
+                  unusableReply: error.kind !== undefined,
+                }),
             }),
           );
-        if (!reply.ok) return { ok: false as const, reason: reply.detail };
+        if (!reply.ok) return reply;
         const cited: Array<ConversationSummaryStatement> = [];
         for (const statement of reply.statements.slice(0, MAX_STATEMENTS)) {
           const text = statement.text.trim().slice(0, MAX_STATEMENT_CHARS).trim();
@@ -1049,10 +1049,15 @@ const make = Effect.gen(function* () {
           return {
             ok: false as const,
             reason: "The model returned no statements citing the summarized sources.",
+            unusableReply: true,
           };
         const current = yield* readRanges({ projectId, threadId, sources: input.ranges });
         if (current.some((source) => source.state !== "available"))
-          return { ok: false as const, reason: "A source changed while it was being summarized." };
+          return {
+            ok: false as const,
+            reason: "A source changed while it was being summarized.",
+            unusableReply: false,
+          };
         // A child id already digests the child's exact ranges, so it stands in for a digest.
         const id = `summary:${yield* digest(
           [
@@ -1181,8 +1186,7 @@ const make = Effect.gen(function* () {
         const published =
           work.kind === "leaf" ? yield* summarizeLeaf(work.chunk) : yield* condense(work.group);
         if (!published.ok) {
-          if (!isDeterministicChunkFailure(published.reason))
-            return yield* failPass(published.reason);
+          if (!published.unusableReply) return yield* failPass(published.reason);
           const count = (chunkFailures.get(work.key)?.failures ?? 0) + 1;
           chunkFailures.set(work.key, {
             key: work.key,

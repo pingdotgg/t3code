@@ -374,6 +374,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
             new TextGenerationError({
               operation,
               detail: "Claude returned invalid structured output.",
+              kind: "invalid-output",
               cause,
             }),
           ),

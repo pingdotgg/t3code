@@ -273,12 +273,13 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
   const protect = <A>(operation: string, effect: Effect.Effect<A, TextGenerationError>) =>
     runtime.auth.controller.withAccess!(effect).pipe(
       Effect.scoped,
-      Effect.mapError(
-        (cause) =>
-          new TextGenerationError({
-            operation,
-            detail: "detail" in cause ? cause.detail : "Codex text generation failed.",
-          }),
+      Effect.mapError((cause) =>
+        cause._tag === "TextGenerationError"
+          ? cause
+          : new TextGenerationError({
+              operation,
+              detail: "detail" in cause ? cause.detail : "Codex text generation failed.",
+            }),
       ),
     );
   const textGeneration: ProviderInstance["textGeneration"] = {

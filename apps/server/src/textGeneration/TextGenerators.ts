@@ -99,6 +99,7 @@ export const make = Effect.gen(function* () {
             new TextGenerationError({
               operation: request.operation,
               detail: error.detail,
+              ...(error.kind === undefined ? {} : { kind: error.kind }),
               cause: error,
             }),
         ),

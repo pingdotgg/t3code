@@ -214,10 +214,11 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           ? (data as { text: string }).text.trim()
           : "";
       if (!text) {
-        return yield* new TextGenerationError({
-          operation,
-          detail: turnError ?? "Pi returned empty output.",
-        });
+        return yield* new TextGenerationError(
+          turnError === undefined
+            ? { operation, detail: "Pi returned empty output.", kind: "empty" }
+            : { operation, detail: turnError },
+        );
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
     },

@@ -302,6 +302,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           return yield* new TextGenerationError({
             operation,
             detail: "Antigravity returned empty text generation output.",
+            kind: "empty",
           });
         }
         return yield* TextGenerationOperations.decodeJsonReply(input, "Antigravity", rawResult);

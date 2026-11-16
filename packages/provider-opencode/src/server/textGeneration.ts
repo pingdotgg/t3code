@@ -396,6 +396,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             new TextGenerationError({
               operation: cause.operation,
               detail: "OpenCode returned empty output.",
+              kind: "empty",
               cause,
             }),
           ),
