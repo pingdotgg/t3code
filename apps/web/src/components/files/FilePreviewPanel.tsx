@@ -581,7 +581,21 @@ interface FileRevealState {
   restoreFrameId: number | null;
 }
 
+// A file pane tab unmounts while another tab of its pane shows, so its offset outlives the panel.
+const savedFileScrollTops = new Map<string, number>();
+const SAVED_FILE_SCROLL_TOPS_LIMIT = 200;
+
+function saveFileScrollTop(key: string, scrollTop: number) {
+  savedFileScrollTops.delete(key);
+  savedFileScrollTops.set(key, scrollTop);
+  if (savedFileScrollTops.size > SAVED_FILE_SCROLL_TOPS_LIMIT) {
+    const oldest = savedFileScrollTops.keys().next().value;
+    if (oldest !== undefined) savedFileScrollTops.delete(oldest);
+  }
+}
+
 function useFileLineReveal(
+  scrollScope: string,
   relativePath: string | null,
   revealLine: number | null,
   revealRequestId: number,
@@ -591,13 +605,14 @@ function useFileLineReveal(
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
 
+    const scrollKey = `${scrollScope}\u0000${relativePath}`;
     const existingState = revealStatesByPath.get(relativePath);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
-      scrollTop: 0,
+      scrollTop: savedFileScrollTops.get(scrollKey) ?? 0,
       scrollContainer: null,
       restoreFrameId: null,
     };
@@ -622,6 +637,7 @@ function useFileLineReveal(
       const restorePending = state.restoreFrameId !== null;
       cancelPendingReveal();
       if (scrollContainer && !restorePending) state.scrollTop = scrollContainer.scrollTop;
+      saveFileScrollTop(scrollKey, state.scrollTop);
       state.scrollContainer = null;
       return;
     }
@@ -1490,7 +1506,12 @@ export default function FilePreviewPanel({
   // Mentions resolve against the workspace, so only workspace files can be added.
   const canAddToChat =
     previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(
+    `${environmentId}\u0000${cwd}`,
+    relativePath,
+    revealLine,
+    revealRequestId,
+  );
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&

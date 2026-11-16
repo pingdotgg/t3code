@@ -2897,6 +2897,7 @@ export default function ChatView(props: ChatViewProps) {
     isWeb: !isElectron,
     isDesktop: isElectron,
   });
+  const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
