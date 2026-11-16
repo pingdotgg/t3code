@@ -101,6 +101,7 @@ function TerminalHeader(props: {
   readonly sessions: ReadonlyArray<TerminalMenuSession>;
   readonly status: Parameters<typeof getTerminalStatusLabel>[0];
   readonly workspaceRoot: string;
+  readonly onBack: () => void;
   readonly onCloseTerminal: () => void;
   readonly onDecreaseFontSize: () => void;
   readonly onIncreaseFontSize: () => void;
@@ -111,11 +112,26 @@ function TerminalHeader(props: {
     <AppBar
       title="Terminal"
       subtitle={props.subtitle}
-      onBack={props.onCloseTerminal}
+      onBack={props.onBack}
       backInSplitView={{
         accessibilityLabel: "Back to chat",
         icon: "chevron.left",
       }}
+      actions={
+        Platform.OS === "android" && props.isEnvironmentReady
+          ? [
+              {
+                accessibilityLabel: "Close terminal",
+                icon: "trash",
+                // Tabler's trash is 18 units tall; the terminal glyph beside it is 16.
+                iconScale: 16 / 18,
+                destructive: true,
+                disabled: !props.canOperateTerminal,
+                onPress: props.onCloseTerminal,
+              },
+            ]
+          : undefined
+      }
       menus={
         props.isEnvironmentReady
           ? [
@@ -382,6 +398,7 @@ function ThreadTerminal(props: {
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const clearTerminal = useAtomCommand(terminalEnvironment.clear, "terminal clear");
+  const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const retryEnvironment = useRetryEnvironment();
   const selectedThreadDetail = useSelectedThreadProjection();
   const selectedThreadDetailWorktreePath =
@@ -690,7 +707,7 @@ function ThreadTerminal(props: {
     );
   };
 
-  const handleCloseTerminal = () => {
+  const handleBack = () => {
     if (navigation.canGoBack()) {
       navigation.goBack();
       return;
@@ -701,6 +718,23 @@ function ThreadTerminal(props: {
         threadId: params.threadId,
       }),
     );
+  };
+
+  const handleCloseTerminal = () => {
+    Dialog.confirm({
+      title: `Close terminal "${resolveTerminalSessionLabel(terminalId, terminal.summary)}"?`,
+      message: "This stops the running process and clears its history.",
+      confirmText: "Confirm",
+      destructive: true,
+      onConfirm: () => {
+        if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
+        void closeTerminal({
+          environmentId: selectedThread.environmentId,
+          input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
+        });
+        exitNavigation.exited();
+      },
+    });
   };
 
   const handleOpenNewTerminal = () => {
@@ -831,6 +865,7 @@ function ThreadTerminal(props: {
           hasRunningSubprocess: terminal.hasRunningSubprocess,
         }}
         workspaceRoot={selectedThreadProject.workspaceRoot}
+        onBack={handleBack}
         onCloseTerminal={handleCloseTerminal}
         onDecreaseFontSize={handleDecreaseFontSize}
         onIncreaseFontSize={handleIncreaseFontSize}
