@@ -266,9 +266,9 @@ const imageProps = {
     padding-bottom: 48px;
   }
 
-  /* Keeps the last line of text above the horizon. */
+  /* Keeps the last line of text above the horizon, but only with room to spare, so nightly never adds a scroll. */
   :global(html[data-channel="nightly"]) .download-page {
-    padding-bottom: 15vh;
+    padding-bottom: clamp(48px, calc(100vh - 700px), 15vh);
   }
 
   .download-head {
@@ -359,6 +359,12 @@ const imageProps = {
     .platform-section--linux .download-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       column-gap: 32px;
+    }
+
+    /* The macOS note may run on under the Windows column, so a longer language keeps it on one line. */
+    [data-platform="mac"] .intel-note {
+      width: max-content;
+      max-width: calc(200% + 32px);
     }
   }
 

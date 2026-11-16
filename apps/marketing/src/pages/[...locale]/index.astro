@@ -57,7 +57,7 @@ const voices = [
         </a>
       </div>
 
-      <div class="install" data-channel="stable">
+      <div class="install">
         <div class="install-bar">
           <div class="install-tabs" role="tablist" aria-label={t.installLabel}>
             {platforms.map((platform, index) => (
@@ -67,6 +67,7 @@ const voices = [
                 id={`tab-${platform.id}`}
                 aria-controls={`panel-${platform.id}`}
                 aria-selected={index === 0 ? "true" : "false"}
+                tabindex={index === 0 ? 0 : -1}
                 data-tab={platform.id}
               >
                 <PlatformIcons platform={platform.id} />
@@ -79,6 +80,7 @@ const voices = [
               id="tab-terminal"
               aria-controls="panel-terminal"
               aria-selected="false"
+              tabindex="-1"
               data-tab="terminal"
             >
               <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7l5 5-5 5M12 18h7"/></svg>
@@ -107,6 +109,33 @@ const voices = [
           </button>
         </div>
       </div>
+
+      <script is:inline>
+        // Runs while the page parses, so the visitor's platform is selected before first paint.
+        (function (tabs) {
+          function select(id) {
+            tabs.forEach(function (tab) {
+              var selected = tab.dataset.tab === id;
+              tab.setAttribute("aria-selected", String(selected));
+              tab.tabIndex = selected ? 0 : -1;
+              document.getElementById("panel-" + tab.dataset.tab).hidden = !selected;
+            });
+          }
+          tabs.forEach(function (tab, index) {
+            tab.addEventListener("click", function () {
+              select(tab.dataset.tab);
+            });
+            tab.addEventListener("keydown", function (event) {
+              if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+              var next = tabs[(index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+              select(next.dataset.tab);
+              next.focus();
+            });
+          });
+          var platform = document.documentElement.dataset.platform;
+          if (document.getElementById("tab-" + platform)) select(platform);
+        })(Array.from(document.querySelectorAll("[data-tab]")));
+      </script>
 
       <p class="intro-phone">
         {t.alsoOn}
@@ -186,36 +215,10 @@ const voices = [
     linux: "-x86_64.AppImage",
   };
 
-  // Set on <html> by the layout's head script.
-  const platform = document.documentElement.dataset.platform;
-  const install = document.querySelector<HTMLElement>(".install");
-  const tabs = [...document.querySelectorAll<HTMLButtonElement>("[data-tab]")];
-
-  function selectTab(id: string) {
-    for (const tab of tabs) {
-      const selected = tab.dataset.tab === id;
-      tab.setAttribute("aria-selected", String(selected));
-      const panel = document.getElementById(`panel-${tab.dataset.tab}`);
-      if (panel) panel.hidden = !selected;
-    }
-  }
-
-  for (const tab of tabs) {
-    tab.addEventListener("click", () => selectTab(tab.dataset.tab ?? "mac"));
-    tab.addEventListener("keydown", (event) => {
-      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
-      const step = event.key === "ArrowRight" ? 1 : -1;
-      const next = tabs[(tabs.indexOf(tab) + step + tabs.length) % tabs.length];
-      selectTab(next.dataset.tab ?? "mac");
-      next.focus();
-    });
-  }
-
   let activeChannel: ReleaseChannel = "stable";
 
   async function loadChannel(channel: ReleaseChannel) {
     activeChannel = channel;
-    if (install) install.dataset.channel = channel;
     const command = channel === "stable" ? "npx t3@latest" : "npx t3@nightly";
     const copy = document.querySelector<HTMLButtonElement>("[data-copy]");
     if (copy) copy.dataset.copy = command;
@@ -241,7 +244,6 @@ const voices = [
 
   onSiteChannel(loadChannel);
 
-  if (tabs.some((tab) => tab.dataset.tab === platform)) selectTab(platform ?? "mac");
   loadChannel(siteChannel());
 
   for (const details of document.querySelectorAll<HTMLDetailsElement>(".faq details")) {
@@ -330,7 +332,7 @@ const voices = [
   }
 
   /* Nightly wears the nightly app's sky. */
-  .install[data-channel="nightly"] {
+  :global(html[data-channel="nightly"]) .install {
     --install-bg: var(--nightly-base);
     --install-fg: #e4eaff;
     --install-dim: rgba(228, 234, 255, 0.85);
@@ -395,12 +397,12 @@ const voices = [
     background: oklch(0.571 0.21 264 / 0.22);
   }
 
-  .install[data-channel="nightly"] .install-row,
-  .install[data-channel="nightly"] .install-row:hover {
+  :global(html[data-channel="nightly"]) .install .install-row,
+  :global(html[data-channel="nightly"]) .install .install-row:hover {
     background: var(--nightly-row), var(--install-bg);
   }
 
-  .install[data-channel="nightly"] .install-row:hover {
+  :global(html[data-channel="nightly"]) .install .install-row:hover {
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.28);
   }
 
