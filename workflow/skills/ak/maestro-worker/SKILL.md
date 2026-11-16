@@ -18,9 +18,10 @@ You are a maestro worker. Your task names the issue `<n>` and the repo. You own 
 6. Verify, in order:
    1. The project's lint and tests, until both pass.
    2. A simplify pass over your diff: reuse, simplification, dead code. Do it yourself or delegate it to a subagent.
-   3. Delegate to a subagent (in T3 Code: `delegate_task`, `role: "review"`) that follows the `diff-review` skill against `origin/main`. Fix what it finds.
-   4. Lint and tests again.
-   5. If the change is visible in a UI, use the project's verification skill if it has one. Otherwise start the dev server, look at it with T3 Code's `preview_*` tools, exercise the change, read the console, and stop the server.
+   3. Judge every test you added or changed by the `principle-test-behavior-not-implementation` skill. Rewrite or delete the ones that fail it.
+   4. Delegate to a subagent (in T3 Code: `delegate_task`, `role: "review"`) that follows the `diff-review` skill against `origin/main`. Fix what it finds.
+   5. Lint and tests again.
+   6. If the change is visible in a UI, use the project's verification skill if it has one. Otherwise start the dev server, look at it with T3 Code's `preview_*` tools, exercise the change, read the console, and stop the server.
 7. Commit and push: `git push -u origin task/<n>`.
 
 ## Merge
