@@ -12,6 +12,28 @@ export function installPasteSnapshot(target: Window): () => void {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
       return;
     }
+    // Files go before any text read: `getAsFile()` returns null once the clipboard has changed.
+    if (live.types.includes("Files")) {
+      const items = Array.from(live.items, (item): DataTransferItem => {
+        if (item.kind !== "file") return item;
+        const file = item.getAsFile();
+        // Folder detection needs the entry, which is also gone once the clipboard changes.
+        const entry = item.webkitGetAsEntry();
+        return {
+          kind: item.kind,
+          type: item.type,
+          getAsFile: () => file,
+          getAsString: (callback) => item.getAsString(callback),
+          webkitGetAsEntry: () => entry,
+        };
+      });
+      const files = items.flatMap((item) => {
+        const file = item.kind === "file" ? item.getAsFile() : null;
+        return file ? [file] : [];
+      });
+      Object.defineProperty(live, "items", { value: items });
+      Object.defineProperty(live, "files", { value: files });
+    }
     const readLive = live.getData.bind(live);
     const strings = new Map<string, string>();
     // Plain text first: a tool that waits for the read offers only text, then replaces it.
@@ -21,7 +43,6 @@ export function installPasteSnapshot(target: Window): () => void {
     for (const type of types) {
       if (type !== "Files") strings.set(type, readLive(type));
     }
-    // Files and items stay native: folder detection needs their file system entries.
     Object.defineProperty(live, "getData", {
       value: (format: string) => {
         const type = format.toLowerCase() === "text" ? "text/plain" : format.toLowerCase();
