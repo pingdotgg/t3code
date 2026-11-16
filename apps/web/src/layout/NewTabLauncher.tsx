@@ -293,8 +293,7 @@ function NewTabLauncherBody({
             />
           </>
         ) : null}
-        <div aria-hidden className="h-2 shrink-0" />
-        <DraftProjectGroupLabel>Open a page</DraftProjectGroupLabel>
+        <div aria-hidden className="mx-2.5 my-1 h-px bg-border" />
         <DraftProjectRow
           icon={<PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />}
           label="All pull requests"
