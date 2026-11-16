@@ -42,19 +42,43 @@ pub enum Error {
     Failed(String),
     #[error("{0}")]
     NotFound(String),
+    #[error("{0}")]
+    Forbidden(String),
+    #[error("{0}")]
+    RepositoryNotFound(String, &'static str),
 }
 
 impl Error {
+    pub fn access_hint(&self) -> Option<&'static str> {
+        if let Self::RepositoryNotFound(_, hint) = self {
+            Some(hint)
+        } else {
+            None
+        }
+    }
     pub fn to_contract(&self, operation: &str) -> Value {
         match self {
             Self::Missing | Self::Unauthenticated => {
                 json!({"_tag":"PullRequestUnavailableError", "reason":if *self == Self::Missing {"cli-missing"} else {"cli-unauthenticated"}, "provider":"github", "requirement":if *self == Self::Missing {MISSING} else {UNAUTHENTICATED}})
             }
-            Self::Failed(detail) => {
-                json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail})
-            }
-            Self::NotFound(detail) => {
-                json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail,"reason":"not-found"})
+            Self::Failed(detail)
+            | Self::Forbidden(detail)
+            | Self::NotFound(detail)
+            | Self::RepositoryNotFound(detail, _) => {
+                let reason = match self {
+                    Self::Forbidden(_) => "forbidden",
+                    Self::NotFound(_) | Self::RepositoryNotFound(_, _) => "not-found",
+                    _ => "failed",
+                };
+                let mut value = json!({"_tag":"PullRequestOperationError","operation":operation,"detail":detail,
+                    "cause":{"_tag":"PullRequestProviderError","provider":"github","operation":operation,"reason":reason,"detail":detail}});
+                if reason == "not-found" {
+                    value["reason"] = json!(reason);
+                }
+                if let Some(hint) = self.access_hint() {
+                    value["cause"]["accessHint"] = json!(hint);
+                }
+                value
             }
         }
     }
@@ -105,6 +129,7 @@ pub struct Client {
     host: String,
     root: String,
     token: Secret,
+    credential_source: github::CredentialSource,
 }
 impl Client {
     pub async fn connect(context: DiscoveryContext<'_>, host: &str) -> Result<Self, Error> {
@@ -118,7 +143,7 @@ impl Client {
             .await
             .map_err(|_| Error::Failed("GitHub CLI is unavailable.".into()))?;
 
-        let token = github::credential(context, &host)
+        let (token, credential_source) = github::credential_with_source(context, &host)
             .await
             .map_err(|e| match e {
                 github::CredentialError::CliMissing => Error::Missing,
@@ -131,7 +156,12 @@ impl Client {
             .clone()
             .unwrap_or_else(|| github::rest_root(&host));
 
-        Ok(Self { host, root, token })
+        Ok(Self {
+            host,
+            root,
+            token,
+            credential_source,
+        })
     }
 
     pub fn same_credential(&self, other: &Self) -> bool {
@@ -196,10 +226,14 @@ impl Client {
             return Err(Error::Failed("GitHub API rate limit exceeded.".into()));
         }
         if response.status == 404 {
-            return Err(Error::NotFound(
+            return Err(Error::RepositoryNotFound(
                 "GitHub could not find the requested resource, or the credential cannot see it."
                     .into(),
+                self.credential_source.access_hint(),
             ));
+        }
+        if response.status == 403 {
+            return Err(Error::Forbidden("GitHub returned HTTP 403.".into()));
         }
         if !(200..300).contains(&response.status) {
             return Err(Error::Failed(format!(
@@ -279,7 +313,16 @@ impl Client {
                     .iter()
                     .all(|e| normalize::text(e, "type") == "NOT_FOUND")
                 {
-                    return Err(Error::NotFound("GitHub could not find the requested resource, or the credential cannot see it.".into()));
+                    return Err(Error::RepositoryNotFound("GitHub could not find the requested resource, or the credential cannot see it.".into(), self.credential_source.access_hint()));
+                }
+                if errors
+                    .iter()
+                    .any(|e| normalize::text(e, "type") == "FORBIDDEN")
+                    && errors
+                        .iter()
+                        .all(|e| matches!(normalize::text(e, "type"), "FORBIDDEN" | "NOT_FOUND"))
+                {
+                    return Err(Error::Forbidden("GitHub returned an error.".into()));
                 }
                 return Err(Error::Failed("GitHub returned an error.".into()));
             }

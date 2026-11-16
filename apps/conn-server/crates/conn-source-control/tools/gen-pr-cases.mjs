@@ -1,8 +1,10 @@
 // Characterizations from T3's own normalization functions. No host CLI or network.
 import * as fs from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import { importSource } from "../../../tools/monorepo.mjs";
 const pure = await importSource("packages/source-control-github/src/server/gitHubPullRequestJson.ts");
 const { loginAvatarUrl } = await importSource("packages/source-control-github/src/server/GitHubPullRequestProvider.ts");
+const { isGitHubHost } = await importSource("packages/source-control-github/src/server/GitHubCredentials.ts");
 const { toChangeBreakdown } = await importSource("apps/server/src/pullRequest/pullRequestChangeBreakdown.ts");
 const path = new URL("../src/pull_requests/cases.json", import.meta.url);
 const pr = JSON.parse(fs.readFileSync(new URL("../src/pull_requests/sample.json", import.meta.url)));
@@ -54,6 +56,21 @@ for (const status of ["added","removed","renamed","modified"]) {
   }
 }
 const providerSource=fs.readFileSync(new URL("../../../../../packages/source-control-github/src/server/GitHubPullRequestProvider.ts",import.meta.url),"utf8");
+const failureText = providerSource.slice(providerSource.indexOf("function gitHubProviderFailure("), providerSource.indexOf("\nfunction withAvatar("));
+const classify = new Function("error", `${stripTypeScriptTypes(failureText)}\nreturn gitHubProviderFailure(error);`);
+for (const [status, githubErrorTypes] of [
+  [403, []], [503, []], [200, ["FORBIDDEN"]], [200, ["INTERNAL"]],
+  [200, ["FORBIDDEN", "NOT_FOUND"]], [200, ["FORBIDDEN", "INTERNAL"]], [200, ["FORBIDDEN", null]],
+]) {
+  const input = { status, githubErrorTypes };
+  add("provider-failure", input, classify({ _tag: "GitHubApiResponseError", ...input }).reason);
+}
+for (const credential of ["settings", "env", "gh"]) {
+  add("access-hint", credential, classify({ _tag: "GitHubApiNotFoundError", credential }).accessHint);
+}
+for (const host of ["github.com", "github.example:8443", "localhost", "169.254.169.254", "169.254.1.2:443", "[fe80::1]", "user@github.com", "github.com/path"]) {
+  add("github-host", host, isGitHubHost(host));
+}
 for (const [key,reason] of [["missing","cli-missing"],["unauthenticated","cli-unauthenticated"]]) {
   const match=new RegExp(key+':\\s*"((?:[^"\\\\]|\\\\.)*)"').exec(providerSource);
   if (!match) throw new Error("T3 credential requirement changed shape: "+key);

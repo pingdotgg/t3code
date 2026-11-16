@@ -366,7 +366,7 @@ async fn retries_a_clone_over_https_when_the_ssh_login_is_refused() {
     let stubs = StubDir::new("git-ssh");
     refusing_git(&stubs, false);
     let mut env = with_stub(&scratch, &stubs);
-    env.push(("LC_ALL", "C".into()));
+    env.push(("LC_ALL", "en_US.UTF-8".into()));
     let ctx = ServiceContext {
         child_env: &env,
         ..scratch.ctx()
@@ -384,7 +384,7 @@ async fn retries_a_clone_over_https_when_the_ssh_login_is_refused() {
     assert_eq!(result.remote_url, "https://github.com/octocat/t3code");
     assert_eq!(
         stubs.log("git"),
-        "argv clone --progress -- git@github.com:octocat/t3code.git t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=C\nargv clone --progress -- https://github.com/octocat/t3code t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=C\n",
+        "argv clone --progress -- git@github.com:octocat/t3code.git t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=en_US.UTF-8\nargv clone --progress -- https://github.com/octocat/t3code t3code\n  env GIT_TERMINAL_PROMPT=0\n  env LANGUAGE=C\n  env GIT_PROGRESS_DELAY=0\n  env LC_ALL=en_US.UTF-8\n",
         "argv and CLONE_ENV as T3 runs them; the locale is left alone"
     );
 

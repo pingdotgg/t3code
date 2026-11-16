@@ -24,7 +24,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     path::PathBuf,
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc, Mutex, OnceLock, PoisonError,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -325,8 +325,7 @@ impl Panel {
                 return Ok(Value::Null);
             }
             "linkedThreads" => return self.linked_threads(&input).await,
-            "list" => return self.list(&input).await,
-            "listStats" => return self.list_stats(&input).await,
+            "list" | "listStats" => return self.cached_listing(method, &input).await,
             "filterOptions" => return self.filter_options(&input).await,
             _ => {}
         }
@@ -353,7 +352,8 @@ impl Panel {
 
         let scope = self.credential_scope(&client);
 
-        let identity = if method.starts_with("routing") || input.get("expectedAccountId").is_some()
+        let identity = if method.starts_with("routing")
+            || (method != "diff" && input.get("expectedAccountId").is_some())
         {
             let identity = client
                 .identity()
@@ -398,9 +398,7 @@ impl Panel {
                 .await
                 .map_err(|e| host_error(&e, method))?;
 
-            self.cache.invalidate_all();
-
-            self.refreshes.send_modify(|v| *v = v.saturating_add(1));
+            self.invalidate(Some(&input), true).await;
 
             return Ok(Value::Null);
         }
@@ -470,6 +468,9 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
 
             let method = key.get(1).and_then(Value::as_str).unwrap_or("");
 
+            if !viewed && matches!(method, "list" | "listStats") {
+                return true;
+            }
             (!viewed || method == "filesViewed")
                 && canonical.as_ref().is_none_or(|(host, repo, number)| {
                     key.get(3).and_then(Value::as_str) == Some(host)
@@ -478,7 +479,96 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
                 })
         });
     }
-    async fn list(&self, input: &Value) -> Result<Value, Failure> {
+    async fn cached_listing(&self, method: &str, input: &Value) -> Result<Value, Failure> {
+        let mut projects = self
+            .projects(if method == "list" {
+                input
+            } else {
+                &Value::Null
+            })
+            .await?;
+        if method == "listStats" {
+            projects.retain(|p| {
+                array(input.get("refs")).iter().any(|r| {
+                    text(r, "projectId") == p.id
+                        && text(r, "repository").eq_ignore_ascii_case(&p.repository)
+                })
+            });
+        }
+        let mut clients = BTreeMap::new();
+        for project in &projects {
+            if !clients.contains_key(&project.host) {
+                clients.insert(project.host.clone(), self.client(project, method).await);
+            }
+        }
+        let scopes: Vec<_> = clients
+            .iter()
+            .map(|(host, client)| {
+                json!([
+                    host,
+                    client
+                        .as_ref()
+                        .ok()
+                        .map(|client| self.credential_scope(client))
+                ])
+            })
+            .collect();
+        let project_keys: Vec<_> = projects
+            .iter()
+            .map(|p| json!([p.id, p.title, p.root, p.host, p.repository]))
+            .collect();
+        let mut canonical_input = input.clone();
+        let sorted = if method == "list" {
+            "projectIds"
+        } else {
+            "refs"
+        };
+        if let Some(values) = canonical_input
+            .get_mut(sorted)
+            .and_then(Value::as_array_mut)
+        {
+            values.sort_by_cached_key(Value::to_string);
+        }
+        let key = json!([
+            0,
+            method,
+            null,
+            null,
+            null,
+            null,
+            canonical_input,
+            scopes,
+            project_keys
+        ])
+        .to_string();
+        self.cache
+            .get_with(
+                key,
+                |result| {
+                    if clients.values().all(Result::is_ok)
+                        && let Ok(value) = result
+                        && value.to_string().len() <= 65_536
+                    {
+                        return Duration::from_secs(if method == "list" { 30 } else { 60 });
+                    }
+                    Duration::ZERO
+                },
+                || async {
+                    if method == "list" {
+                        self.list(input, &projects, &clients).await
+                    } else {
+                        self.list_stats(input, &projects, &clients).await
+                    }
+                },
+            )
+            .await
+    }
+    async fn list(
+        &self,
+        input: &Value,
+        projects: &[Project],
+        clients: &BTreeMap<String, Result<Client, Failure>>,
+    ) -> Result<Value, Failure> {
         let mut cursors = BTreeMap::new();
 
         if let Some(c) = input.get("cursors").and_then(Value::as_object) {
@@ -490,8 +580,6 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
                 );
             }
         }
-        let projects = self.projects(input).await?;
-
         let mut unique = BTreeMap::new();
 
         for p in projects {
@@ -514,7 +602,10 @@ if let Ok(identity)=client.identity().await{value["viewer"]=identity.get("viewer
         let mut truncated = false;
 
         for (key, p) in &unique {
-            let client = self.client(p, "list").await;
+            let client = clients
+                .get(&p.host)
+                .cloned()
+                .unwrap_or_else(|| Err(unsupported()));
 
             let identity = match &client {
                 Ok(c) => c.identity().await.map_err(|e| host_error(&e, "list")),
@@ -560,7 +651,7 @@ if let Some(o)=row.as_object_mut(){for key in ["reviewRequestLogins","hasTeamRev
 }truncated|=page.get("truncated")==Some(&Value::Bool(true));
 if let Some(c)=page.get("nextCursor").filter(|v|!v.is_null()){next[key]=c.clone();
 }},
-                Err(error)=>errors.push(json!({"projectId":p.id,"projectTitle":p.title,"message":format!("{} could not be read: {}",p.repository,error)})),
+                Err(error)=>errors.push(json!({"projectId":p.id,"projectTitle":p.title,"message":format!("{} could not be read.{}",p.repository,error.access_hint().map(|hint|format!(" {hint}")).unwrap_or_default())})),
             }
         }
         entries.sort_by(|a, b| text(b, "updatedAt").cmp(text(a, "updatedAt")));
@@ -576,9 +667,12 @@ if let Some(c)=page.get("nextCursor").filter(|v|!v.is_null()){next[key]=c.clone(
         }
         Ok(result)
     }
-    async fn list_stats(&self, input: &Value) -> Result<Value, Failure> {
-        let projects = self.projects(&json!({})).await?;
-
+    async fn list_stats(
+        &self,
+        input: &Value,
+        projects: &[Project],
+        clients: &BTreeMap<String, Result<Client, Failure>>,
+    ) -> Result<Value, Failure> {
         let mut wanted = BTreeMap::new();
 
         for reference in array(input.get("refs")) {
@@ -614,7 +708,7 @@ if let Some(c)=page.get("nextCursor").filter(|v|!v.is_null()){next[key]=c.clone(
                 continue;
             };
 
-            let Ok(client) = self.client(first, "listStats").await else {
+            let Some(Ok(client)) = clients.get(&first.host) else {
                 continue;
             };
 
@@ -955,27 +1049,47 @@ fn capabilities() -> Value {
     json!({"diff":true,"comment":false,"actions":[],"mergeMethods":[],"search":true,"reactions":false,"mentions":true,"referenceSigils":["#"],"viewedFiles":"host","review":{"inlineComment":false,"rangeComment":false,"reply":false,"resolve":false,"verdicts":[]},"reviewers":{"request":false,"listCandidates":false},"checksAlwaysReport":true})
 }
 
+/// Lazily initialized so HTTP and RPC share the same bounded cache and refresh state.
+#[derive(Clone, Default)]
+pub struct Shared(Arc<OnceLock<Arc<Panel>>>);
+
+impl std::fmt::Debug for Shared {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shared")
+            .field("initialized", &self.0.get().is_some())
+            .finish()
+    }
+}
+impl Shared {
+    fn panel(&self, deps: &Deps) -> Option<Arc<Panel>> {
+        let engine = deps.engine.clone()?;
+        Some(
+            self.0
+                .get_or_init(|| {
+                    Arc::new(Panel {
+                        engine,
+                        environment: deps.environment.clone(),
+                        cache: TtlCache::new(32),
+                        endpoints: Endpoints::default(),
+                        host_environment: Environment::process(),
+                        child_env: Vec::new(),
+                        credentials: Mutex::new(VecDeque::new()),
+                        next_scope: AtomicU64::new(1),
+                        refreshes: watch::channel(0).0,
+                        linked: watch::channel(0).0,
+                        monitor: OnceCell::new(),
+                        reports: Mutex::new(VecDeque::new()),
+                    })
+                })
+                .clone(),
+        )
+    }
+}
+
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
-    let Some(engine) = deps.engine.clone() else {
-        return;
-    };
-
-    let panel = Arc::new(Panel {
-        engine,
-        environment: deps.environment.clone(),
-        cache: TtlCache::new(32),
-        endpoints: Endpoints::default(),
-        host_environment: Environment::process(),
-        child_env: Vec::new(),
-        credentials: Mutex::new(VecDeque::new()),
-        next_scope: AtomicU64::new(1),
-        refreshes: watch::channel(0).0,
-        linked: watch::channel(0).0,
-        monitor: OnceCell::new(),
-        reports: Mutex::new(VecDeque::new()),
-    });
-
-    register_panel(table, panel);
+    if let Some(panel) = deps.pull_requests.panel(deps) {
+        register_panel(table, panel);
+    }
 }
 
 fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
@@ -1065,24 +1179,6 @@ pub(crate) async fn diff(
     deps: &Deps,
     input: conn_contract::PullRequestDiffInput,
 ) -> Result<Value, Failure> {
-    let Some(engine) = deps.engine.clone() else {
-        return Err(unsupported());
-    };
-
-    let panel = Panel {
-        engine,
-        environment: deps.environment.clone(),
-        cache: TtlCache::new(1),
-        endpoints: Endpoints::default(),
-        host_environment: Environment::process(),
-        child_env: Vec::new(),
-        credentials: Mutex::new(VecDeque::new()),
-        next_scope: AtomicU64::new(1),
-        refreshes: watch::channel(0).0,
-        linked: watch::channel(0).0,
-        monitor: OnceCell::new(),
-        reports: Mutex::new(VecDeque::new()),
-    };
-
+    let panel = deps.pull_requests.panel(deps).ok_or_else(unsupported)?;
     panel.call("diff", to_json(&input)).await
 }

@@ -3618,6 +3618,130 @@
     }
   },
   {
+    "kind": "provider-failure",
+    "input": {
+      "status": 403,
+      "githubErrorTypes": []
+    },
+    "expected": "forbidden"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 503,
+      "githubErrorTypes": []
+    },
+    "expected": "failed"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 200,
+      "githubErrorTypes": [
+        "FORBIDDEN"
+      ]
+    },
+    "expected": "forbidden"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 200,
+      "githubErrorTypes": [
+        "INTERNAL"
+      ]
+    },
+    "expected": "failed"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 200,
+      "githubErrorTypes": [
+        "FORBIDDEN",
+        "NOT_FOUND"
+      ]
+    },
+    "expected": "forbidden"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 200,
+      "githubErrorTypes": [
+        "FORBIDDEN",
+        "INTERNAL"
+      ]
+    },
+    "expected": "failed"
+  },
+  {
+    "kind": "provider-failure",
+    "input": {
+      "status": 200,
+      "githubErrorTypes": [
+        "FORBIDDEN",
+        null
+      ]
+    },
+    "expected": "failed"
+  },
+  {
+    "kind": "access-hint",
+    "input": "settings",
+    "expected": "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control."
+  },
+  {
+    "kind": "access-hint",
+    "input": "env",
+    "expected": "The server's environment token can't see it. Give it access, or unset it."
+  },
+  {
+    "kind": "access-hint",
+    "input": "gh",
+    "expected": "Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+  },
+  {
+    "kind": "github-host",
+    "input": "github.com",
+    "expected": true
+  },
+  {
+    "kind": "github-host",
+    "input": "github.example:8443",
+    "expected": true
+  },
+  {
+    "kind": "github-host",
+    "input": "localhost",
+    "expected": true
+  },
+  {
+    "kind": "github-host",
+    "input": "169.254.169.254",
+    "expected": true
+  },
+  {
+    "kind": "github-host",
+    "input": "169.254.1.2:443",
+    "expected": true
+  },
+  {
+    "kind": "github-host",
+    "input": "[fe80::1]",
+    "expected": false
+  },
+  {
+    "kind": "github-host",
+    "input": "user@github.com",
+    "expected": false
+  },
+  {
+    "kind": "github-host",
+    "input": "github.com/path",
+    "expected": false
+  },
+  {
     "kind": "unavailable",
     "input": "cli-missing",
     "expected": {

@@ -141,6 +141,8 @@ fn t3_characterizations_match_the_current_upstream_functions() {
         let input = &case["input"];
 
         let actual = match case["kind"].as_str().expect("kind") {
+            "provider-failure" | "access-hint" => continue,
+            "github-host" => json!(github::is_github_host(input.as_str().expect("host"))),
             "summary" => normalize::summary(input, "github.com"),
             "checks" => json!(normalize::checks(input.as_array().expect("contexts"))),
             "breakdown" => normalize::breakdown(input),
@@ -749,4 +751,137 @@ async fn raw_diff_and_paged_commit_diffs_follow_the_http_contract() {
             .any(|(k, v)| k == "accept" && v == "application/vnd.github.diff"),
         "raw media type"
     );
+}
+
+#[tokio::test]
+async fn listings_filter_before_the_limit_and_keep_duplicate_only_cursors() {
+    use crate::http::fake;
+    let server = fake::serve(|_| {
+        let mut draft = sample_pr();
+        draft["number"] = json!(1);
+        draft["isDraft"] = json!(true);
+        let mut ready = draft.clone();
+        ready["number"] = json!(2);
+        ready["isDraft"] = json!(false);
+        (
+            200,
+            json!({"data":{"search":{"nodes":[draft,ready],"pageInfo":{"hasNextPage":false}}}})
+                .to_string(),
+        )
+    })
+    .await;
+    let stubs = StubDir::new("pr-filter-limit");
+    stubs.executable("gh", &[], "echo fake");
+    let client = connect(&stubs, &server.base).await;
+    let page = client
+        .list(
+            "a/b",
+            &json!({"state":"open","limit":1,"filters":{"draft":"exclude"}}),
+            "nick",
+            None,
+        )
+        .await
+        .expect("filtered");
+    assert_eq!(
+        page["items"][0]["number"], 2,
+        "a rejected row cannot use the limit"
+    );
+
+    let server = fake::serve(|_| {
+        let mut pr = sample_pr();
+        pr["number"] = json!(1);
+        pr["updatedAt"] = json!("2026-11-16T00:00:00Z");
+        (200, json!({"data":{"search":{"nodes":[pr],"pageInfo":{"hasNextPage":true,"endCursor":"more"}}}}).to_string())
+    }).await;
+    let client = connect(&stubs, &server.base).await;
+    let cursor = listing::Cursor::parse("2026-11-16T00:00:00Z|1|1").expect("cursor");
+    let page = client
+        .list(
+            "a/b",
+            &json!({"state":"open","limit":1}),
+            "nick",
+            Some(&cursor),
+        )
+        .await
+        .expect("duplicates");
+    assert_eq!(page["items"], json!([]));
+    assert_eq!(
+        page["nextCursor"], "2026-11-16T00:00:00Z|1|1",
+        "consumed rows keep continuation even when none are delivered"
+    );
+}
+
+#[tokio::test]
+async fn forbidden_reads_preserve_the_provider_classification_without_an_invalid_outer_reason() {
+    use crate::http::fake;
+    let cases: Vec<Value> = serde_json::from_str(include_str!("cases.json")).expect("T3 cases");
+    for case in cases.iter().filter(|c| c["kind"] == "provider-failure") {
+        let status = case["input"]["status"].as_u64().expect("status") as u16;
+        let errors: Vec<_> = case["input"]["githubErrorTypes"]
+            .as_array()
+            .expect("error types")
+            .iter()
+            .map(|kind| json!({"type":kind}))
+            .collect();
+        let server = fake::serve(move |_| (status, json!({"errors":errors}).to_string())).await;
+        let stubs = StubDir::new("pr-forbidden");
+        stubs.executable("gh", &[], "echo fake");
+        let client = connect(&stubs, &server.base).await;
+        let error = client
+            .summary(&Lookup::new("a/b", 7).expect("lookup"))
+            .await
+            .expect_err("refused");
+        let value = error.to_contract("summary");
+        assert_eq!(value["cause"]["reason"], case["expected"]);
+        assert!(
+            value.get("reason").is_none(),
+            "T3 only exposes not-found as an outer reason"
+        );
+    }
+}
+
+#[tokio::test]
+async fn repository_not_found_hints_follow_the_credential_source() {
+    use crate::http::fake;
+    let server = fake::serve(|_| (404, json!({"message":"not found"}).to_string())).await;
+    let stubs = StubDir::new("pr-access-hint");
+    stubs.executable("gh", &[], "echo fake");
+    let child_env = stubs.path_env();
+    let endpoints = Endpoints {
+        github_rest: Some(server.base.clone()),
+        ..Endpoints::default()
+    };
+    let cases: Vec<Value> = serde_json::from_str(include_str!("cases.json")).expect("cases");
+    for case in cases.iter().filter(|c| c["kind"] == "access-hint") {
+        let source = case["input"].as_str().expect("source");
+        let raw = if source == "settings" {
+            json!({"sourceControlHosts":{"github":{"tokens":{"github.com":"saved"}}}})
+        } else {
+            json!({})
+        };
+        let settings = Settings::new(raw.as_object().expect("settings").clone());
+        let env = Environment::fixed(if source == "env" {
+            vec![("GH_TOKEN", "env")]
+        } else {
+            vec![]
+        });
+        let client = Client::connect(
+            DiscoveryContext {
+                cwd: &stubs.dir,
+                home: Some(&stubs.dir),
+                settings: &settings,
+                env: &env,
+                endpoints: &endpoints,
+                child_env: &child_env,
+            },
+            "github.com",
+        )
+        .await
+        .expect("credential");
+        let error = client
+            .summary(&Lookup::new("a/b", 7).expect("lookup"))
+            .await
+            .expect_err("not found");
+        assert_eq!(error.access_hint(), case["expected"].as_str(), "{source}");
+    }
 }

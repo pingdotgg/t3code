@@ -651,3 +651,274 @@ async fn declared_github_repository_identity_routes_an_enterprise_checkout() {
     assert_eq!(projects.len(), 1, "known GitHub identity is reused");
     assert_eq!(projects[0].host, "github.example", "Enterprise host");
 }
+
+#[tokio::test]
+async fn viewed_mutations_only_evict_the_references_viewed_files() {
+    let dir = TestDir::new();
+    let (base, task, count) = api().await;
+    let panel = panel(shell(&dir.0), &dir, &base);
+    let mut other = reference();
+    other["number"] = json!(8);
+    for input in [reference(), other.clone()] {
+        panel.call("summary", input.clone()).await.expect("summary");
+        panel.call("filesViewed", input).await.expect("viewed");
+    }
+    let mut input = reference();
+    input["files"] = json!([{"path":"file.rs","viewed":false}]);
+    panel.call("setFilesViewed", input).await.expect("mutation");
+    assert_eq!(
+        *panel.refreshes.borrow(),
+        0,
+        "a viewed toggle is not a PR refresh"
+    );
+    let before = count.load(Ordering::Relaxed);
+    panel
+        .call("summary", reference())
+        .await
+        .expect("summary remains warm");
+    panel
+        .call("filesViewed", other)
+        .await
+        .expect("other PR remains warm");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        before,
+        "unrelated entries remain cached"
+    );
+    panel
+        .call("filesViewed", reference())
+        .await
+        .expect("fresh viewed files");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        before + 1,
+        "only the changed PR is fetched"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn list_and_stats_share_reads_until_refresh() {
+    let dir = TestDir::new();
+    let (base, task, count) = api().await;
+    let panel = panel(shell(&dir.0), &dir, &base);
+    for (method, input) in [
+        ("list", json!({"state":"open"})),
+        ("listStats", json!({"refs":[reference()]})),
+    ] {
+        let reads = count.load(Ordering::Relaxed);
+        let (first, second) = tokio::join!(
+            panel.call(method, input.clone()),
+            panel.call(method, input.clone())
+        );
+        assert_eq!(
+            first.expect("first"),
+            second.expect("second"),
+            "coalesced results"
+        );
+        assert_eq!(
+            count.load(Ordering::Relaxed),
+            reads + 1,
+            "{method} coalesces"
+        );
+        let before = count.load(Ordering::Relaxed);
+        panel.call(method, input.clone()).await.expect("warm");
+        assert_eq!(count.load(Ordering::Relaxed), before, "{method} stays warm");
+        panel
+            .call("invalidate", json!({"reference":reference()}))
+            .await
+            .expect("refresh");
+        panel.call(method, input.clone()).await.expect("fresh");
+        assert_eq!(
+            count.load(Ordering::Relaxed),
+            before + 1,
+            "{method} refreshes"
+        );
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(if method == "list" { 30 } else { 60 })).await;
+        tokio::time::resume();
+        panel.call(method, input.clone()).await.expect("expired");
+        assert_eq!(
+            count.load(Ordering::Relaxed),
+            before + 2,
+            "{method} expires at T3's TTL"
+        );
+        std::fs::write(
+            dir.0.join("gh"),
+            "#!/bin/sh\nprintf '%s\\n' changed-pr-token\n",
+        )
+        .expect("switch login");
+        panel.call(method, input).await.expect("changed credential");
+        assert_eq!(
+            count.load(Ordering::Relaxed),
+            before + 3,
+            "{method} never reuses another credential's cache"
+        );
+        std::fs::write(
+            dir.0.join("gh"),
+            "#!/bin/sh\nprintf '%s\\n' fake-pr-token\n",
+        )
+        .expect("restore login");
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn repository_list_errors_use_t3s_repository_text_and_access_hint() {
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
+    let status = Arc::new(AtomicU64::new(404));
+    let response_status = status.clone();
+    let router = Router::new()
+        .route(
+            "/user",
+            get(|| async { Json(json!({"id":12,"login":"nick"})) }),
+        )
+        .route(
+            "/graphql",
+            post(move || {
+                let status = response_status.load(Ordering::Relaxed) as u16;
+                async move {
+                    (
+                        axum::http::StatusCode::from_u16(status).expect("status"),
+                        Json(json!({"message":"failed read"})),
+                    )
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("serve");
+    });
+    let dir = TestDir::new();
+    let panel = panel(shell(&dir.0), &dir, &base);
+    let result = panel
+        .call("list", json!({"state":"open"}))
+        .await
+        .expect("partial list");
+    assert_eq!(
+        result["errors"][0]["message"],
+        "a/b could not be read. Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+    );
+    status.store(503, Ordering::Relaxed);
+    panel
+        .call("invalidate", json!({}))
+        .await
+        .expect("invalidate");
+    let result = panel
+        .call("list", json!({"state":"open"}))
+        .await
+        .expect("failed repository");
+    assert_eq!(
+        result["errors"][0]["message"], "a/b could not be read.",
+        "no raw provider error without an access hint"
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn http_diff_shares_the_rpc_panels_cache_and_skips_account_verification() {
+    use axum::{Router, routing::get};
+    use conn_source_control::http::{self, HttpRequest, Method};
+    let count = Arc::new(AtomicU64::new(0));
+    let counter = count.clone();
+    let api = Router::new().route(
+        "/repos/a/b/pulls/7",
+        get(move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            async { "diff --git a/file b/file\n" }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind api");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let api_task = tokio::spawn(async move {
+        axum::serve(listener, api).await.expect("api");
+    });
+    let dir = TestDir::new();
+    let engine = shell(&dir.0);
+    let panel = panel(engine.clone(), &dir, &base);
+    let deps = Deps {
+        engine: Some(engine),
+        ..Deps::default()
+    };
+    assert!(
+        deps.pull_requests.0.set(panel).is_ok(),
+        "inject shared service"
+    );
+    let mut table = MethodTable::new();
+    register(&mut table, &deps);
+    let table = Arc::new(table);
+    let auth = crate::auth::AuthStore::in_memory();
+    let session = auth
+        .issue_session(crate::auth::SessionRequest {
+            scopes: vec!["orchestration:read".into()],
+            label: None,
+            subject: None,
+            ttl_ms: crate::auth::SESSION_TTL_MS,
+        })
+        .expect("session");
+    let state = crate::AppState {
+        table: table.clone(),
+        auth,
+        descriptor: Arc::new(json!({})),
+        engine: deps.engine.clone(),
+        deps,
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind server");
+    let url = format!(
+        "http://{}/api/pull-requests/diff",
+        listener.local_addr().expect("addr")
+    );
+    let server_task = tokio::spawn(async move {
+        axum::serve(listener, crate::http::router(state))
+            .await
+            .expect("server");
+    });
+    let mut input = reference();
+    input["expectedAccountId"] = json!("different-account");
+    let request = || {
+        HttpRequest::new(Method::Post, url.clone())
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {}", session.token))
+            .body(input.to_string().into_bytes())
+    };
+    let (first, second) = tokio::join!(http::send(request()), http::send(request()));
+    for response in [first.expect("first"), second.expect("second")] {
+        assert_eq!(response.status, 200, "{}", response.text());
+        assert_eq!(
+            serde_json::from_slice::<Value>(&response.body).expect("JSON")["patch"],
+            "diff --git a/file b/file\n"
+        );
+    }
+    assert_eq!(count.load(Ordering::Relaxed), 1, "HTTP callers coalesce");
+    http::send(request()).await.expect("warm");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        1,
+        "HTTP requests share the cache"
+    );
+    call(
+        &table,
+        "pullRequests.invalidate",
+        json!({"reference":reference()}),
+    )
+    .await
+    .expect("RPC refresh");
+    http::send(request()).await.expect("fresh");
+    assert_eq!(
+        count.load(Ordering::Relaxed),
+        2,
+        "RPC refresh evicts the HTTP diff"
+    );
+    server_task.abort();
+    api_task.abort();
+}
