@@ -9,6 +9,8 @@ import {
 } from "../../lib/videoPreviewSource";
 
 export const ThreadMediaVisibleContext = createContext(false);
+/** Asks the feed to keep this row out of list recycling while its media holds playback state. */
+export const ThreadMediaRetainContext = createContext<(retained: boolean) => void>(() => {});
 
 export function ThreadMarkdownVideo(props: {
   readonly source: MediaVideoPreviewSource;
