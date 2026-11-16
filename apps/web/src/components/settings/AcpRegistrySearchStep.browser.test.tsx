@@ -155,6 +155,9 @@ it("loads registry icons only from the official CDN before an agent is added", a
       },
     ],
   };
+  const iconUrl = "https://cdn.agentclientprotocol.com/registry/v1/latest/icon-boundary-test.svg";
+  const cache = await caches.open("t3-acp-registry-icons-v1");
+  await cache.delete(iconUrl);
   using fetchIcon = vi.spyOn(globalThis, "fetch").mockResolvedValue(
     new Response('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>', {
       headers: { "content-type": "image/svg+xml" },
@@ -163,10 +166,7 @@ it("loads registry icons only from the official CDN before an agent is added", a
   await using _screen = await render(<Step />);
 
   await vi.waitFor(() => {
-    expect(fetchIcon).toHaveBeenCalledWith(
-      "https://cdn.agentclientprotocol.com/registry/v1/latest/icon-boundary-test.svg",
-      expect.anything(),
-    );
+    expect(fetchIcon).toHaveBeenCalledWith(iconUrl, expect.anything());
   });
   expect(fetchIcon.mock.calls.some(([url]) => String(url).includes("untrusted.example"))).toBe(
     false,
