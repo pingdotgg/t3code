@@ -29,10 +29,12 @@ import {
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
+  isAcpRegistryCacheValid,
   updateAcpRegistryEnrichmentCache,
 } from "./driver.ts";
 import {
   acpRegistryAdvertisesModelCatalog,
+  acpRegistryProbeResult,
   normalizeAcpRegistryLiveConfiguration,
 } from "./probe.ts";
 
@@ -100,6 +102,41 @@ function providerWithModels(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it("shows the version reported by a local ACP agent", () => {
+    const probe = acpRegistryProbeResult(identity.instanceId, {
+      sessionId: "test-session",
+      initializeResult: {
+        protocolVersion: 1,
+        agentInfo: { name: "Example agent", version: "1.5.9" },
+      },
+      sessionSetupResult: {},
+      modelConfigId: undefined,
+    });
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ source: "local", commandPath: "example" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "example", version: null, distribution: "local" },
+      probe: { probe, slashCommands: [], skills: [] },
+    });
+    expect(snapshot.version).toBe("1.5.9");
+    const withoutVersion = acpRegistryProbeResult(identity.instanceId, {
+      sessionId: "test-session",
+      initializeResult: { protocolVersion: 1 },
+      sessionSetupResult: {},
+      modelConfigId: undefined,
+    });
+    expect(
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ source: "local", commandPath: "example" }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: { status: "ready", agentId: "example", version: null, distribution: "local" },
+        probe: { probe: withoutVersion, slashCommands: [], skills: [] },
+      }).version,
+    ).toBeNull();
+  });
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,
@@ -657,6 +694,13 @@ describe("acpRegistrySnapshotReadiness", () => {
 });
 
 describe("acpRegistryEnrichmentCache", () => {
+  it("reuses a local probe until expiry even when inspection has no version", () => {
+    const entry = { provider: providerWithModels([], null), expiresAt: 1_000 };
+    expect(isAcpRegistryCacheValid(entry, null, true, 999)).toBe(true);
+    expect(isAcpRegistryCacheValid(entry, null, true, 1_000)).toBe(false);
+    expect(isAcpRegistryCacheValid(entry, "2.0.0", false, 999)).toBe(false);
+    expect(isAcpRegistryCacheValid(entry, "1.0.0", false, 999)).toBe(true);
+  });
   const settledConfiguration = {
     models: [
       { id: "auto", name: "Auto", description: null },
@@ -773,7 +817,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const { id, method } = JSON.parse(line);
   if (id === undefined) return;
   if (method === "initialize") {
-    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+    send({
+      id,
+      result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
+    });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
     send({
@@ -877,6 +924,56 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.invalidateCaches ?? Effect.void;
       yield* instance.snapshot.refresh;
       expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+    }),
+  );
+
+  it.effect("keeps a local agent's reported version through the next readiness check", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a"]));
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ source: "local", commandPath: "agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "agent",
+            version: null,
+            distribution: "local",
+          }),
+          resolve: () =>
+            Effect.succeed({
+              distribution: "local" as const,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            }),
+        }),
+      );
+      const probed = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.version === "1.5.9"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      yield* Fiber.join(probed);
+
+      const nextPublished = yield* instance.snapshot.streamChanges.pipe(
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.invalidateCaches ?? Effect.void;
+      yield* instance.snapshot.refresh;
+      const next = yield* Fiber.join(nextPublished);
+      expect(Option.map(next, (snapshot) => snapshot.version)).toEqual(Option.some("1.5.9"));
     }),
   );
 
