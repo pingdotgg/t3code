@@ -1,8 +1,15 @@
 import type { ComponentProps, ReactNode } from "react";
 import { TooltipPopup } from "./ui/tooltip";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
+export function useHoverPreviewsEnabled(): boolean {
+  return useClientSettings((settings) => settings.hoverPreviews);
+}
+
 export function ThreadHoverCardPopup({ className, ...props }: ComponentProps<typeof TooltipPopup>) {
+  const enabled = useHoverPreviewsEnabled();
+  if (!enabled) return null;
   return (
     <TooltipPopup
       {...props}

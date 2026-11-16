@@ -428,6 +428,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "hover-previews",
+    title: "Hover previews",
+    to: "/settings/appearance",
+    searchTerms: ["popover tooltip preview sidebar subagent minimap timeline details clutter"],
+  },
+  {
     id: "project-grouping",
     title: msg("Project grouping"),
     to: "/settings/general",

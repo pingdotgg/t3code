@@ -10,6 +10,7 @@ import {
   TIMELINE_MINIMAP_MIN_ITEMS,
 } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useHoverPreviewsEnabled } from "../ThreadHoverCard";
 import { cn } from "~/lib/utils";
 
 // A release outside the window can skip `mouseup`, so the next button-free
@@ -49,6 +50,7 @@ export function TimelineMinimap({
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const hoverPreviews = useHoverPreviewsEnabled();
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
     node.addEventListener("wheel", onWheel, { passive: false });
@@ -63,6 +65,7 @@ export function TimelineMinimap({
   const activeItem = resolveTimelineMinimapPreview(
     resolvedActiveIndex === null ? null : (items[resolvedActiveIndex] ?? null),
   );
+  const previewItem = hoverPreviews ? activeItem : null;
   const navigationInteractive =
     resolveTimelineMinimapNavigationInteractive(hitStripWidth) && !passThrough;
   const activeTopPercent =
@@ -223,7 +226,7 @@ export function TimelineMinimap({
                 />
               );
             })}
-            {activeItem ? (
+            {previewItem ? (
               // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
               <span
                 className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
@@ -231,9 +234,9 @@ export function TimelineMinimap({
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
                   <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
-                    {activeItem.userText ?? "User message"}
+                    {previewItem.userText ?? "User message"}
                   </span>
-                  {activeItem.assistantText ? (
+                  {previewItem.assistantText ? (
                     <span
                       className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
                       style={{
@@ -242,7 +245,7 @@ export function TimelineMinimap({
                         WebkitLineClamp: 3,
                       }}
                     >
-                      {activeItem.assistantText}
+                      {previewItem.assistantText}
                     </span>
                   ) : null}
                 </span>
