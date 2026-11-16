@@ -1,9 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as NodeOS from "node:os";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { replayProjectMemory, type ReplayRow } from "./replay-project-memory.ts";
@@ -102,5 +106,69 @@ it.effect("replays invented facts through recall and names the gate", () =>
       .split("\n")
       .map((line) => JSON.parse(line) as ReplayRow);
     assert.equal(lines.length, 4);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("refuses a case-variant path and a symlink into the stand-in state directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-memory-replay-guard-" });
+    const home = path.join(directory, "home");
+    const state = path.join(home, ".t3", "userdata");
+    yield* fs.makeDirectory(state, { recursive: true });
+    const inputs = path.join(directory, "inputs");
+    yield* fs.makeDirectory(inputs);
+    const factsPath = path.join(inputs, "facts.json");
+    const messagesPath = path.join(inputs, "msgs.json");
+    yield* fs.writeFileString(factsPath, JSON.stringify(facts));
+    yield* fs.writeFileString(messagesPath, JSON.stringify(messages));
+    const link = path.join(directory, "state-link");
+    yield* fs.symlink(state, link);
+    const previousHome = process.env.HOME;
+    const previousState = process.env.T3CODE_HOME;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (previousHome === undefined) delete process.env.HOME;
+        else process.env.HOME = previousHome;
+        if (previousState === undefined) delete process.env.T3CODE_HOME;
+        else process.env.T3CODE_HOME = previousState;
+      }),
+    );
+    process.env.HOME = home;
+    process.env.T3CODE_HOME = home;
+    assert.equal(NodeOS.homedir(), home);
+
+    const refusal = (out: string) =>
+      replayProjectMemory({ facts: factsPath, messages: messagesPath, out }).pipe(
+        Effect.exit,
+        Effect.map((exit) => (Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "")),
+      );
+    const linkedOut = path.join(link, "out");
+    assert.include(yield* refusal(linkedOut), "Refusing to touch live T3 data");
+    assert.isFalse(yield* fs.exists(path.join(linkedOut, "results.ndjson")));
+
+    const foldedOut = path.join(home, ".T3", "UserData", "out");
+    const foldedParent = yield* fs.realpath(path.dirname(foldedOut)).pipe(Effect.option);
+    const stateReal = yield* fs.realpath(state);
+    if (Option.isSome(foldedParent) && foldedParent.value === stateReal) {
+      assert.include(yield* refusal(foldedOut), "Refusing to touch live T3 data");
+      assert.isFalse(yield* fs.exists(path.join(stateReal, "out", "results.ndjson")));
+    } else {
+      const distinct = yield* replayProjectMemory({
+        facts: factsPath,
+        messages: messagesPath,
+        out: foldedOut,
+      }).pipe(Effect.exit);
+      const message = Exit.isFailure(distinct) ? Cause.pretty(distinct.cause) : "";
+      assert.notInclude(message, "Refusing to touch live T3 data");
+    }
+
+    const allowed = yield* replayProjectMemory({
+      facts: factsPath,
+      messages: messagesPath,
+      out: path.join(directory, "allowed"),
+    });
+    assert.equal(allowed.summary.factsLoaded, 1);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
