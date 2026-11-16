@@ -196,9 +196,11 @@ function SegmentPopover({
       {choices.length > 0 && redeem ? (
         <div className="flex flex-col gap-1.5 border-t border-border/60 pt-2.5 text-muted-foreground">
           {choices.map((choice) => (
-            <span key={choice.key} className="flex items-center gap-3">
+            <span key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
               <span className="tabular-nums">{choice.summary}</span>
-              {choice.availableCount > 0 ? (
+              {choice.unavailableReason ? (
+                <span>{choice.unavailableReason}</span>
+              ) : choice.availableCount > 0 ? (
                 <Button
                   size="xs"
                   variant="outline"

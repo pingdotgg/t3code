@@ -59,16 +59,17 @@ describe("claudeResetCreditsToContract", () => {
         NOW,
       ),
     ).toEqual({
-      availableCount: 2,
+      availableCount: 5,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
       options: [
-        expect.objectContaining({
+        {
           creditId: "grant_a",
           label: "Full reset",
-          availableCount: 2,
+          description: "Refills your 5-hour and weekly limits.",
+          availableCount: 5,
           expiresAt: "2026-10-01T00:00:00.000Z",
-        }),
+        },
       ],
     });
   });
@@ -107,18 +108,74 @@ describe("claudeResetCreditsToContract", () => {
     expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
   });
 
-  it("offers nothing to redeem without a usable next grant or an eligible account", () => {
-    expect(
-      ClaudeResetCredits.claudeResetCreditsToContract(
-        { eligible: true, next_grant_id: "grant_a", grants: [grant({ usable_now: false })] },
+  it.each([
+    [{}, {}, "Usable once you reach a limit it refills"],
+    [{ use_requires_limit: false }, {}, "Can't be used right now"],
+    [{}, { cooldown_until: "2026-09-22T12:01:00Z" }, "Try again in a minute"],
+    [{}, { cooldown_until: "2026-09-22T11:59:00Z" }, "Usable once you reach a limit it refills"],
+    [{ blocking: ["five_hour"] }, {}, "Can't be used while you're at your 5-hour limit"],
+    [
+      { blocking: ["seven_day"], gives_back_weekly: true },
+      {},
+      "No Fable usage this week to give back",
+    ],
+    [
+      { blocking: ["seven_day_cowork"] },
+      {},
+      "Can't be used while you're at a limit it doesn't refill",
+    ],
+    [
+      { clears: ["five_hour"] },
+      { at_limit: true, exhausted: ["seven_day"] },
+      "Doesn't refill the limit you've reached",
+    ],
+    [{ unavailable_reason: "cooldown", blocking: ["five_hour"] }, {}, "Try again in a minute"],
+  ])(
+    "keeps a banked reset that can't be used yet and says why: %j %j",
+    (overrides, status, why) => {
+      const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "grant_a",
+          grants: [grant({ usable_now: false, ...overrides })],
+          ...status,
+        },
         NOW,
-      ),
-    ).toEqual({ availableCount: 0 });
+      );
+      expect(credits).toEqual({
+        availableCount: 1,
+        options: [expect.objectContaining({ creditId: "grant_a", unavailableReason: why })],
+      });
+    },
+  );
+
+  it("offers a usable reset beside one that is waiting, whichever Claude names next", () => {
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "full_a",
+        grants: [
+          grant({ id: "full_a", type: "full", usable_now: false }),
+          grant({ id: "fable_wait", gives_back_weekly: true, usable_now: false }),
+          grant({ id: "fable_a", gives_back_weekly: true }),
+        ],
+      },
+      NOW,
+    );
+    expect(credits?.nextCreditId).toBeUndefined();
     expect(
-      ClaudeResetCredits.claudeResetCreditsToContract({ eligible: true, grants: [grant({})] }, NOW),
-    ).toEqual({
-      availableCount: 0,
-    });
+      credits?.options?.map(({ creditId, availableCount, unavailableReason }) => [
+        creditId,
+        availableCount,
+        unavailableReason,
+      ]),
+    ).toEqual([
+      ["fable_a", 2, undefined],
+      ["full_a", 1, "Usable once you reach a limit it refills"],
+    ]);
+  });
+
+  it("offers nothing to redeem without an eligible account", () => {
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract(
         { eligible: false, grants: [grant({})] },

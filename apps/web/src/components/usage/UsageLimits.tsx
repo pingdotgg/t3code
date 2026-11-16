@@ -231,8 +231,7 @@ export function LimitWindows({
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
+const OUTCOME_TEXT: Record<Exclude<ProviderConsumeResetCreditOutcome, "reset">, string> = {
   nothingToReset: "Nothing to reset right now.",
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
@@ -255,7 +254,12 @@ export function useResetCredit(environmentId: EnvironmentId) {
     const result = await consume({ environmentId, input: choice.input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      setStatus(
+        result.value.warning ??
+          (result.value.outcome === "reset"
+            ? choice.appliedText
+            : OUTCOME_TEXT[result.value.outcome]),
+      );
       return;
     }
     setStatus(
@@ -326,7 +330,9 @@ export function ResetCredits({
       {resetCreditChoices(credits, input, now).map((choice) => (
         <div key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="tabular-nums">{choice.summary}</span>
-          {choice.availableCount > 0 ? (
+          {choice.unavailableReason ? (
+            <span>{choice.unavailableReason}</span>
+          ) : choice.availableCount > 0 ? (
             <Button
               size="xs"
               variant="outline"

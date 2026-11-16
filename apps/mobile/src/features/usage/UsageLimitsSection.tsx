@@ -221,8 +221,7 @@ export function AccountLimits(props: {
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
+const OUTCOME_TEXT: Record<Exclude<ProviderConsumeResetCreditOutcome, "reset">, string> = {
   nothingToReset: "Nothing to reset right now.",
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
@@ -251,7 +250,12 @@ export function ResetCredits(props: {
     const result = await consume({ environmentId, input: choice.input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
+      setStatus(
+        result.value.warning ??
+          (result.value.outcome === "reset"
+            ? choice.appliedText
+            : OUTCOME_TEXT[result.value.outcome]),
+      );
       return;
     }
     setStatus(
@@ -274,7 +278,9 @@ export function ResetCredits(props: {
       {resetCreditChoices(credits, input, now).map((choice) => (
         <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
           <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
-          {choice.availableCount > 0 ? (
+          {choice.unavailableReason ? (
+            <Text className="text-xs text-foreground-tertiary">{choice.unavailableReason}</Text>
+          ) : choice.availableCount > 0 ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy || !canManageProviders }}

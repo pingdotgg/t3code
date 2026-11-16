@@ -772,7 +772,11 @@ export interface ResetCreditChoice {
   readonly summary: string;
   readonly actionLabel: string;
   readonly confirmDescription: string;
+  /** Shown once the reset is applied. */
+  readonly appliedText: string;
   readonly availableCount: number;
+  /** Set when the reset is banked but can't be redeemed right now; shown in place of the action. */
+  readonly unavailableReason: string | null;
   readonly input: ProviderConsumeResetCreditInput;
 }
 
@@ -791,7 +795,9 @@ export function resetCreditChoices(
         summary: `${option.label} · ${option.availableCount} left${expires ? ` · expires in ${expires}` : ""}`,
         actionLabel: "Use",
         confirmDescription: `${option.label}: ${option.description} This cannot be undone.`,
+        appliedText: `${option.label} applied.`,
         availableCount: option.availableCount,
+        unavailableReason: option.unavailableReason ?? null,
         input: { ...input, creditId: option.creditId },
       };
     });
@@ -810,7 +816,9 @@ export function resetCreditChoices(
       actionLabel: "Use reset",
       confirmDescription:
         "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      appliedText: "Reset applied. Your windows have cleared.",
       availableCount: count,
+      unavailableReason: null,
       input,
     },
   ];

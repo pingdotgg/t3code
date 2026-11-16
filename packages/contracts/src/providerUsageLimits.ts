@@ -30,6 +30,8 @@ export const ServerProviderResetCreditOption = Schema.Struct({
   description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
+  /** Banked but not redeemable right now; clients show this in place of the action. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 

@@ -35,15 +35,21 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  use_requires_limit: Schema.optional(Schema.Boolean),
   clears: Schema.optional(Schema.Array(Schema.Unknown)),
+  blocking: Schema.optional(Schema.Array(Schema.Unknown)),
   type: Schema.optional(Schema.Unknown),
   gives_back_weekly: Schema.optional(Schema.Boolean),
+  unavailable_reason: Schema.optional(Schema.Unknown),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
   eligible: Schema.Boolean,
   grants: Schema.optional(Schema.Array(Schema.Unknown)),
   next_grant_id: Schema.optional(Schema.NullOr(Schema.String)),
+  at_limit: Schema.optional(Schema.Unknown),
+  exhausted: Schema.optional(Schema.Unknown),
+  cooldown_until: Schema.optional(Schema.Unknown),
 });
 const UsageResponse = Schema.Struct({
   cedar_ember: Schema.optional(Schema.NullOr(Schema.Unknown)),
@@ -127,6 +133,58 @@ const grantKind = (grant: typeof Grant.Type): ResetKind => {
   return session && !other ? "session" : other && !session ? "weekly" : "full";
 };
 
+const WAITING_REASONS = {
+  cooldown: "Try again in a minute",
+  blocked_five_hour: "Can't be used while you're at your 5-hour limit",
+  blocked_seven_day: "Can't be used while you're at your weekly limit",
+  blocked_opus: "Can't be used while you're at your weekly Opus limit",
+  blocked_sonnet: "Can't be used while you're at your weekly Sonnet limit",
+  blocked_other: "Can't be used while you're at a limit it doesn't refill",
+  cannot_clear: "Doesn't refill the limit you've reached",
+  needs_limit: "Usable once you reach a limit it refills",
+  unavailable: "Can't be used right now",
+} as const;
+const BLOCKING_REASONS: Record<string, keyof typeof WAITING_REASONS> = {
+  five_hour: "blocked_five_hour",
+  seven_day: "blocked_seven_day",
+  seven_day_opus: "blocked_opus",
+  seven_day_sonnet: "blocked_sonnet",
+};
+
+// Claude Code's own order: the server's stated reason, else a cooldown, what blocks the grant,
+// a limit it can't clear, and last whether it needs a limit at all.
+const waitingReason = (
+  grant: typeof Grant.Type,
+  status: typeof CedarEmber.Type,
+  nowMs: number,
+): string => {
+  const stated = grant.unavailable_reason;
+  if (typeof stated === "string" && stated in WAITING_REASONS) {
+    return WAITING_REASONS[stated as keyof typeof WAITING_REASONS];
+  }
+  const cooldown = status.cooldown_until;
+  if (typeof cooldown === "string" && isFutureTimestamp(cooldown, nowMs)) {
+    return WAITING_REASONS.cooldown;
+  }
+  const blocking = grant.blocking ?? [];
+  for (const limit of blocking) {
+    const reason = typeof limit === "string" ? BLOCKING_REASONS[limit] : undefined;
+    if (reason === "blocked_seven_day" && grant.gives_back_weekly) {
+      return "No Fable usage this week to give back";
+    }
+    if (reason) return WAITING_REASONS[reason];
+  }
+  if (blocking.length > 0) return WAITING_REASONS.blocked_other;
+  const exhausted = Array.isArray(status.exhausted) ? status.exhausted : [];
+  const clears = (limit: unknown) =>
+    (grant.clears ?? []).includes(limit) || (limit === "seven_day" && grant.gives_back_weekly);
+  if (status.at_limit === true && !exhausted.some(clears)) return WAITING_REASONS.cannot_clear;
+  return grant.use_requires_limit === false
+    ? WAITING_REASONS.unavailable
+    : WAITING_REASONS.needs_limit;
+};
+
+/** Every reset still banked stays listed; one Claude won't take right now says why instead. */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -137,11 +195,9 @@ export function claudeResetCreditsToContract(
     .flatMap((raw) => Option.toArray(decodeGrant(raw)))
     .filter(
       (grant) =>
-        !grant.paused &&
-        grant.usable_now &&
-        (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
+        !grant.paused && (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
+  const next = live.find((grant) => grant.usable_now && grant.id === parsed.value.next_grant_id);
   const expiresAt = (grant: typeof Grant.Type | undefined) => {
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
@@ -155,7 +211,7 @@ export function claudeResetCreditsToContract(
   const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
     (kind): Array<ServerProviderResetCreditOption> => {
       const grants = byKind.get(kind);
-      const target = grants?.[0];
+      const target = grants?.find((grant) => grant.usable_now) ?? grants?.[0];
       if (!grants || !target) return [];
       const optionExpiresAt = expiresAt(target);
       return [
@@ -164,16 +220,19 @@ export function claudeResetCreditsToContract(
           ...RESET_KINDS[kind],
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+          ...(target.usable_now
+            ? {}
+            : { unavailableReason: waitingReason(target, parsed.value, nowMs) }),
         },
       ];
     },
   );
   const nextExpiresAt = expiresAt(next);
   return {
-    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
+    availableCount: live.reduce((sum, grant) => sum + grant.resets_left, 0),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
-    ...(next ? { options } : {}),
+    ...(options.length > 0 ? { options } : {}),
   };
 }
 
