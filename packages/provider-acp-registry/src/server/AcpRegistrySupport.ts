@@ -1162,10 +1162,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const commandName = npmCommandName(agent, packageIdentity.name, manifest.value);
       if (commandName === undefined) return Option.none<AcpRegistryPackageInstallReceipt>();
       const binDirectory = platform === "win32" ? globalPrefix : path.join(globalPrefix, "bin");
-      const executablePath = resolveExecutable(commandName, platform, {
-        ...environment,
-        PATH: binDirectory,
-      });
+      const executablePath = resolveExecutable(
+        path.join(binDirectory, commandName),
+        platform,
+        environment,
+      );
       return executablePath === undefined
         ? Option.none<AcpRegistryPackageInstallReceipt>()
         : Option.some<AcpRegistryPackageInstallReceipt>({
