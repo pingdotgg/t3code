@@ -43,6 +43,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -677,11 +678,27 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
+        event("session.retry.scheduled", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+          attempt: 2,
+          at: 2_001,
+          error,
+        }),
         event("session.execution.failed", { sessionID: SESSION, error }),
       ]);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* runtime.startTurn(turnInput(thread));
-      const ended = yield* Fiber.join(terminal);
+      const seen = yield* Fiber.join(collected);
+      assert.deepInclude(errorRows(seen)[0], {
+        status: "running",
+        failure: { class: failureClass, code: error.type, message: error.message, retryable: true },
+      });
+      const ended = seen.find((event) => event.type === "turn.terminal");
       assert.equal(ended?.status, "failed");
       assert.deepEqual(ended?.failure, {
         class: failureClass,
@@ -3987,6 +4004,57 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("keeps a background child's question open past its parent's turn end", () =>
+    Effect.gen(function* () {
+      const form = { ...colorForm, sessionID: CHILD };
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("form.created", { form }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+      const ended = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "provider_turn.updated" && event.providerTurn.status === "completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const request = yield* Fiber.join(requested);
+      assert.equal(request?.nativeRequestRef?.nativeId, form.id);
+      for (const terminal of yield* Fiber.join(ended)) {
+        assert.deepEqual(
+          "retainedRuntimeRequestIds" in terminal ? terminal.retainedRuntimeRequestIds : undefined,
+          [request!.id],
+        );
+      }
+    }),
+  );
+
+  // A cancel without a message aborts the asking session's step, so the child would never report.
+  it.effect.each(["cancel", "decline"] as const)(
+    "lets a background child carry on when its question is dismissed with %s",
+    (decision) =>
+      Effect.gen(function* () {
+        const form = { ...colorForm, sessionID: CHILD };
+        const { runtime, thread } = yield* resumed([
+          ...launchedAndRunning,
+          event("form.created", { form }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+          out("session.form.cancel", { sessionID: CHILD, formID: form.id, message: "<string>" }),
+          reply("session.form.cancel", null),
+        ]);
+        const requested = yield* requestOf(runtime).pipe(Effect.forkScoped);
+        yield* runtime.startTurn(withLineage(thread));
+        const request = yield* Fiber.join(requested);
+        yield* runtime.respondToRuntimeRequest({ requestId: request!.id, decision });
+      }),
+  );
+
   it.effect("keeps a background child's requests when its parent stops during reconciliation", () =>
     Effect.gen(function* () {
       const reading = yield* Deferred.make<void>();
@@ -4854,6 +4922,147 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  it.effect("shows each page a Code Mode script published, whatever the script returned", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const pages = [
+        { html: "<p>orbits</p>", title: "Orbits", height: 480 },
+        { html: "<p>scale</p>", title: "Scale", height: 1490 },
+      ];
+      const references = pages.map((page, index) => ({
+        attachmentId: `thread_opencode2-adapter-0000000${index}-0000-4000-8000-000000000000-html`,
+        title: page.title,
+        height: page.height,
+      }));
+      yield* Effect.forEach(pages, (page, index) =>
+        mcpSessions.recordHtmlRender(threadId, page, references[index]!),
+      );
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-execute" };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name: "execute" }),
+        event("session.tool.called", { ...tool, input: { code: "<script>" }, executed: true }),
+        event(
+          "session.tool.success",
+          {
+            ...tool,
+            // The script returns the first page and discards the second.
+            content: [{ type: "text", text: JSON.stringify({ htmlRender: references[0] }) }],
+            metadata: {
+              toolCalls: [
+                { tool: "search", status: "completed", input: { query: "html" } },
+                {
+                  tool: `${server}.html_preview`,
+                  status: "completed",
+                  input: { html: pages[0]!.html, width: 728 },
+                },
+                { tool: `${server}.html_render`, status: "completed", input: pages[0] },
+                { tool: "t3-code-thread_other.html_render", status: "completed", input: pages[1] },
+                { tool: `${server}.html_render`, status: "completed", input: pages[1] },
+              ],
+              truncated: false,
+            },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const shown = (yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [htmlRenderFromToolItem(event.turnItem)].filter((page) => page !== undefined)
+          : [],
+      );
+      assert.deepEqual(shown, references);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps a script replayed after a reconnect from taking a later script's page", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const page = { html: "<p>orbits</p>", title: "Orbits", height: 480 };
+      const references = [0, 1].map((index) => ({
+        attachmentId: `thread_opencode2-adapter-0000000${index}-0000-4000-8000-000000000000-html`,
+        title: page.title,
+        height: page.height,
+      }));
+      yield* Effect.forEach(references, (reference) =>
+        mcpSessions.recordHtmlRender(threadId, page, reference),
+      );
+      const metadata = {
+        toolCalls: [
+          {
+            tool: "t3-code-thread_opencode2-adapter.html_render",
+            status: "completed",
+            input: page,
+          },
+        ],
+        truncated: false,
+      };
+      const content = [{ type: "text", text: '"done"' }];
+      const script = (id: string) => {
+        const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant_gap", id };
+        return [
+          event("session.tool.input.started", { ...tool, name: "execute" }),
+          event("session.tool.called", { ...tool, input: { code: "<script>" }, executed: true }),
+          event(
+            "session.tool.success",
+            { ...tool, content, metadata, executed: true },
+            undefined,
+            2,
+          ),
+        ];
+      };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        ...script("call-first"),
+        ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
+          content: [
+            {
+              type: "tool",
+              id: "call-first",
+              name: "execute",
+              executed: true,
+              state: { status: "completed", input: { code: "<script>" }, content, metadata },
+              time: { created: 2, ran: 2, completed: 2 },
+            },
+          ],
+        }),
+        ...openRequests([]),
+        ...script("call-second"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const shown = new Map(
+        (yield* Fiber.join(events)).flatMap((event) => {
+          if (event.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool") {
+            return [];
+          }
+          const shownPage = htmlRenderFromToolItem(event.turnItem);
+          return shownPage === undefined ? [] : [[event.turnItem.id, shownPage] as const];
+        }),
+      );
+      assert.deepEqual([...shown.values()], references);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("stores a shell command that exits non-zero as failed", () =>
     Effect.gen(function* () {
       const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-exit" };
@@ -5479,7 +5688,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       error: rateLimited,
     });
   const retrying = {
-    class: "provider_error",
+    class: "usage_limit",
     message: rateLimited.message,
     code: rateLimited.type,
     retryable: true,
@@ -5661,7 +5870,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
         gate,
       );
-      const failed = { ...retrying, class: "usage_limit" as const, retryable: null };
+      const failed = { ...retrying, retryable: null };
       const lastRetry = { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 };
       const rows = errorRows(seen);
       assert.deepEqual(

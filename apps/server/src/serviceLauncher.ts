@@ -30,6 +30,7 @@ import {
   serviceUnitLogPathOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
+  SERVICE_SERVING_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -758,11 +759,12 @@ export const serviceLauncherLockPath = (baseDir: string) =>
 // An exclusive SQLite transaction, like the server's owner lock: the OS drops it when the holder dies.
 async function tryAcquireSqliteLock(
   lockPath: string,
+  busyTimeoutMs = 0,
 ): Promise<{ readonly close: () => void } | undefined> {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(lockPath);
   try {
-    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; BEGIN EXCLUSIVE;`);
     return db;
   } catch (cause) {
     db.close();
@@ -777,6 +779,13 @@ export async function serviceLauncherIsRunning(lockPath: string): Promise<boolea
   lock?.close();
   return lock === undefined;
 }
+
+const servingLockPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_SERVING_LOCK_FILE);
+
+/** Whether a launcher has, or is about to start, a server for this home. An idle one does not. */
+export const serviceLauncherIsServing = (baseDir: string): Promise<boolean> =>
+  serviceLauncherIsRunning(servingLockPath(baseDir)).catch(() => false);
 
 /** Resolves once no launcher holds the lock; the caller bounds the wait through `signal`. */
 export async function waitForServiceLauncherExit(
@@ -857,6 +866,7 @@ export class Launcher {
   #stateDirFreeProbes = 0;
   readonly #output: number | undefined;
   readonly #lockPath: string | undefined;
+  #servingLock: { readonly close: () => void } | undefined;
   readonly #stopChildOverIpc: boolean;
 
   constructor(
@@ -910,6 +920,7 @@ export class Launcher {
         }
       }
     } finally {
+      this.#releaseServing();
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
     }
@@ -925,6 +936,19 @@ export class Launcher {
       await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
     }
     return undefined;
+  }
+
+  // Advisory: without it an SSH launch may start its own server, as it does beside no service.
+  async #claimServing(): Promise<void> {
+    // An SSH launch probes this lock for a moment; wait out that probe.
+    this.#servingLock ??= await tryAcquireSqliteLock(servingLockPath(this.#baseDir), 250).catch(
+      () => undefined,
+    );
+  }
+
+  #releaseServing(): void {
+    this.#servingLock?.close();
+    this.#servingLock = undefined;
   }
 
   #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
@@ -1022,6 +1046,7 @@ export class Launcher {
     // A stop during the probe must not arm a retry that outlives it.
     if (this.#stopRequested) return true;
     this.#clearTimer();
+    this.#releaseServing();
     this.#log(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
     this.#timer = setInterval(
       () =>
@@ -1029,6 +1054,7 @@ export class Launcher {
           if (this.#child !== null || this.#stopping) return;
           if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
           this.#clearTimer();
+          await this.#claimServing();
           await retry();
         }),
       DISK_SPACE_RETRY_MS,
@@ -1057,6 +1083,7 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    await this.#claimServing();
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
@@ -1426,6 +1453,7 @@ export class Launcher {
         await this.#repointServiceUnit(next.activeVersion);
       }
     }
+    this.#releaseServing();
     this.#log(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
@@ -1450,6 +1478,7 @@ export class Launcher {
     this.#stateDirFreeProbes = owned ? 0 : this.#stateDirFreeProbes + 1;
     if (this.#stateDirFreeProbes < 2) return;
     this.#clearTimer();
+    await this.#claimServing();
     this.#log("[service-launcher] The T3 home is free again. Starting the server.\n");
     const update = this.#state.update;
     if (update?.status === "pending") await this.#startTrial(update);

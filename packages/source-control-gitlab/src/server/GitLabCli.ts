@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -22,6 +23,11 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// GitLab allows ~1M-character descriptions; glab's JSON escaping (`\u003c`) can grow one sixfold.
+const MERGE_REQUEST_LIST_MAX_BYTES = 8_000_000;
+const decodeJsonArray = Schema.decodeUnknownExit(
+  Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+);
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -415,6 +421,26 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+function parseRepositoryLookup(repository: string): {
+  readonly host: string | null;
+  readonly projectPath: string;
+} {
+  const trimmed = repository.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { host: null, projectPath: repository };
+  try {
+    const url = new URL(trimmed);
+    const projectPath = decodeURIComponent(url.pathname)
+      .replace(/\/-(?:\/.*)?$/, "")
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\.git$/, "");
+    return projectPath.length === 0
+      ? { host: null, projectPath: repository }
+      : { host: url.host, projectPath };
+  } catch {
+    return { host: null, projectPath: repository };
+  }
+}
+
 // glab prints a missing project or merge request as a bare 404, and an expired
 // OAuth login as an `invalid_grant` refresh failure without suggesting `glab auth login`.
 const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null => {
@@ -481,43 +507,57 @@ export const make = Effect.gen(function* () {
 
   return GitLabCli.of({
     execute,
-    listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function (input) {
-      return execute({
-        cwd: input.cwd,
-        args: [
-          "mr",
-          "list",
-          "--source-branch",
-          sourceRefName(input),
-          ...stateArgs(input.state),
-          "--per-page",
-          String(input.limit ?? 20),
-          "--output",
-          "json",
-        ],
-      }).pipe(
-        Effect.map((result) => result.stdout.trim()),
-        Effect.flatMap((raw) =>
-          raw.length === 0
-            ? Effect.succeed([])
-            : Effect.sync(() => decodeGitLabMergeRequestListJson(raw)).pipe(
-                Effect.flatMap((decoded) => {
-                  if (!Result.isSuccess(decoded)) {
-                    return Effect.fail(
-                      new GitLabMergeRequestListDecodeError({
-                        operation: "listMergeRequests",
-                        command: "glab",
-                        cwd: input.cwd,
-                        cause: decoded.failure,
-                      }),
-                    );
-                  }
-
-                  return Effect.succeed(decoded.success.map(toSummaryWithOptionalUpdatedAt));
-                }),
-              ),
-        ),
-      );
+    listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
+      const limit = input.limit ?? 20;
+      let pageSize = limit;
+      let page = 1;
+      const items: GitLabMergeRequestSummary[] = [];
+      while (items.length < limit) {
+        const result = yield* execute({
+          cwd: input.cwd,
+          args: [
+            "mr",
+            "list",
+            "--source-branch",
+            sourceRefName(input),
+            ...stateArgs(input.state),
+            "--per-page",
+            String(pageSize),
+            ...(page > 1 ? ["--page", String(page)] : []),
+            "--output",
+            "json",
+          ],
+          maxOutputBytes: MERGE_REQUEST_LIST_MAX_BYTES,
+        });
+        if (result.stdoutTruncated && pageSize > 1) {
+          pageSize = Math.max(1, Math.floor(pageSize / 2));
+          page = 1;
+          items.length = 0;
+          continue;
+        }
+        const raw = result.stdout.trim();
+        if (raw.length === 0) break;
+        const decoded = decodeGitLabMergeRequestListJson(raw);
+        if (result.stdoutTruncated || !Result.isSuccess(decoded)) {
+          return yield* new GitLabMergeRequestListDecodeError({
+            operation: "listMergeRequests",
+            command: "glab",
+            cwd: input.cwd,
+            cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
+          });
+        }
+        items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
+        // Count raw entries: the decoder drops invalid ones, which would end paging early.
+        const entries = decodeJsonArray(raw);
+        if (
+          page * pageSize >= limit ||
+          (Exit.isSuccess(entries) && entries.value.length < pageSize)
+        ) {
+          break;
+        }
+        page += 1;
+      }
+      return items.slice(0, limit);
     }),
     getMergeRequest: Effect.fn("GitLabCli.getMergeRequest")(function (input) {
       return executeMergeRequest({
@@ -548,9 +588,14 @@ export const make = Effect.gen(function* () {
       );
     }),
     getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function (input) {
+      const { host, projectPath } = parseRepositoryLookup(input.repository);
       return execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        args: [
+          "api",
+          ...(host === null ? [] : ["--hostname", host]),
+          `projects/${encodeURIComponent(projectPath)}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
