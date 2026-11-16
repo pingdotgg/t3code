@@ -1471,6 +1471,8 @@
 {"key":"ProviderUserInputAnswers","value":{}}
 {"key":"ProviderUserInputAnswers","value":{"b($Q":"0"}}
 {"key":"ProviderUserInputAnswers","value":{"\n":null,"":[[],[],true,null],"qDZp":{}}}
+{"key":"PullRequestDiffInput","value":{"projectId":"xO?0","expectedAccountId":"al_","repository":"`","number":8}}
+{"key":"PullRequestDiffResult","value":{"patch":"�","truncated":false,"nextCursor":"😀"}}
 {"key":"RuntimeMode","value":"approval-required"}
 {"key":"RuntimeMode","value":"auto-accept-edits"}
 {"key":"RuntimeMode","value":"auto"}

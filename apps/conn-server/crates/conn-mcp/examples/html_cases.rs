@@ -62,14 +62,11 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
         ))
     })
     .await??;
-    let browser = std::env::args().nth(2).map(PathBuf::from);
-    let preview = browser.map_or_else(
-        || conn_preview::tabs::Preview::new(state.clone()),
-        |exe| conn_preview::tabs::Preview::with_fixture(state.clone(), exe),
-    );
+    let preview = conn_preview::tabs::Preview::new(state.clone());
     let service = McpService::new(McpConfig {
         preview: Some(preview.clone()),
 
+        test_logins: None,
         refresh_provider: None,
         worktrees: None,
         engine,
@@ -107,6 +104,7 @@ async fn run(state: PathBuf, cases: Vec<Value>) -> Result<Vec<Value>, Error> {
             provider_session_id: runtime.into(),
             provider_instance_id: "claudeAgent".into(),
             subagent: false,
+            preview: true,
         });
         let headers = open(&service, &caller).await?;
         agents.push((caller, headers));

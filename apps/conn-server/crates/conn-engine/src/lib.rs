@@ -211,6 +211,7 @@ pub trait EngineHost: Send + Sync {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentSession {
     pub thread_id: String,
+    pub project_id: Option<String>,
     pub provider_instance_id: String,
     /// The thread is a delegated child (`lineage.relationshipToParent: subagent`).
     pub subagent: bool,
@@ -347,6 +348,20 @@ pub trait Engine: Send + Sync {
     /// `GET /api/orchestration/shell`: `OrchestrationV2ShellSnapshot`.
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         unsupported("the shell snapshot")
+    }
+
+    /// Live project summaries, without loading thread projections.
+    fn projects_snapshot(
+        &self,
+    ) -> BoxFuture<'_, Result<Vec<Value>, EngineError<GetShellSnapshotError>>> {
+        Box::pin(async move {
+            let shell = self.shell_snapshot().await?;
+            Ok(shell
+                .get("projects")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default())
+        })
     }
 
     /// The unary and stream RPC methods [`Engine::call`] and [`Engine::open_stream`] serve, by

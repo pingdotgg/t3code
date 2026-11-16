@@ -409,18 +409,41 @@ pub struct RestRequest<'a> {
     pub body: Option<serde_json::Value>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct RestOptions<'a> {
+    pub accept: &'a str,
+    pub limit: usize,
+    pub timeout: std::time::Duration,
+}
+impl Default for RestOptions<'_> {
+    fn default() -> Self {
+        Self {
+            accept: "application/vnd.github+json",
+            limit: http::DEFAULT_MAX_RESPONSE_BYTES,
+            timeout: http::DEFAULT_TIMEOUT,
+        }
+    }
+}
+
 pub async fn rest(
     request: RestRequest<'_>,
     token: Secret,
     root_override: Option<&str>,
+    options: RestOptions<'_>,
 ) -> Result<HttpResponse, ApiError> {
     let root = root_override.map_or_else(|| rest_root(request.host), str::to_owned);
-    let url = format!("{root}/{}", request.path.trim_start_matches('/'));
-    let mut http_request = HttpRequest::new(request.method, url)
-        .header("accept", "application/vnd.github+json")
+    let url = url::Url::parse(&format!("{root}/"))
+        .and_then(|root| root.join(request.path.trim_start_matches('/')))
+        .map_err(|_| ApiError::Request {
+            host: request.host.into(),
+        })?;
+    let mut http_request = HttpRequest::new(request.method, url.to_string())
+        .header("accept", options.accept)
         .header("x-github-api-version", API_VERSION)
         .header("user-agent", USER_AGENT)
         .secret_header("authorization", "Bearer ", token);
+    http_request.max_response_bytes = options.limit;
+    http_request.timeout = options.timeout;
     if let Some(body) = &request.body {
         http_request = http_request
             .header("content-type", "application/json")
@@ -516,8 +539,9 @@ async fn token_from_gh(
     account: Option<&str>,
 ) -> Result<Secret, CredentialError> {
     let mut args = vec!["auth", "token", "--hostname", host];
-    if let Some(account) = account {
-        args.extend(["--user", account]);
+    let user = account.map(|account| format!("--user={account}"));
+    if let Some(user) = user.as_deref() {
+        args.push(user);
     }
     let mut command =
         crate::discovery::ProbeCommand::new("GitHubCredentials.get", "gh", &args, ctx.cwd);
@@ -539,6 +563,37 @@ pub async fn credential(
     ctx: DiscoveryContext<'_>,
     raw_host: &str,
 ) -> Result<Secret, CredentialError> {
+    credential_with_source(ctx, raw_host)
+        .await
+        .map(|(token, _)| token)
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CredentialSource {
+    Settings,
+    Environment,
+    Gh,
+}
+impl CredentialSource {
+    pub(crate) fn access_hint(self) -> &'static str {
+        match self {
+            Self::Settings => {
+                "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control."
+            }
+            Self::Environment => {
+                "The server's environment token can't see it. Give it access, or unset it."
+            }
+            Self::Gh => {
+                "Your gh login can't see it. Give it access, or save a token in Settings → Source Control."
+            }
+        }
+    }
+}
+
+pub(crate) async fn credential_with_source(
+    ctx: DiscoveryContext<'_>,
+    raw_host: &str,
+) -> Result<(Secret, CredentialSource), CredentialError> {
     let host = raw_host.trim().to_lowercase();
     if !is_github_host(&host) {
         return Err(CredentialError::NotSignedIn);
@@ -552,18 +607,19 @@ pub async fn credential(
         .require()
         .map_err(CredentialError::Unresolved)?
     {
-        return Ok(saved);
+        return Ok((saved, CredentialSource::Settings));
     }
     if let Some(token) = environment_token(&host, ctx.env) {
-        return Ok(token);
+        return Ok((token, CredentialSource::Environment));
     }
     let account = settings.host_account(&host);
-    match token_from_gh(ctx, &host, account).await {
+    let token = match token_from_gh(ctx, &host, account).await {
         Err(CredentialError::NotSignedIn) if account.is_some() => {
             token_from_gh(ctx, &host, None).await
         }
         other => other,
-    }
+    }?;
+    Ok((token, CredentialSource::Gh))
 }
 
 /// `starredPath`: exactly `owner/name`, neither empty nor a dot segment, each part encoded.
@@ -615,6 +671,7 @@ pub async fn starred(ctx: DiscoveryContext<'_>, host: &str, repository: &str, st
         },
         token,
         root,
+        RestOptions::default(),
     )
     .await
     .is_ok_and(|response| response.status == 204)
@@ -676,6 +733,7 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
         },
         token,
         ctx.endpoints.github_rest.as_deref(),
+        RestOptions::default(),
     )
     .await;
     #[derive(Deserialize)]
@@ -734,6 +792,73 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
         auth,
         ..cli
     }
+}
+
+pub(crate) async fn api_json(
+    ctx: DiscoveryContext<'_>,
+    cwd: &std::path::Path,
+    host: &str,
+    endpoint: &str,
+    body: Option<serde_json::Value>,
+    not_found: &str,
+) -> Result<serde_json::Value, crate::repository::HostFailure> {
+    if !is_github_host(host) {
+        return Err(crate::repository::HostFailure::new(
+            "Could not resolve the GitHub repository from this checkout.",
+        ));
+    }
+    let token = credential(ctx, host).await.map_err(|e| {
+        let detail = match e {
+            CredentialError::CliMissing => "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.".into(),
+            CredentialError::NotSignedIn => match ctx.settings.host(KIND).host_account(host) {
+                Some(account)=>format!("No GitHub credential for {account} on {host}: run `gh auth login --hostname {host}` for that account or pick another in Settings → Source Control."),
+                None=>format!("No GitHub credential for {host}: run `gh auth login --hostname {host}`."),
+            },
+            CredentialError::HostDisabled => format!("GitHub host {host} is turned off in Settings → Source Control."),
+            CredentialError::CliFailed => format!("The GitHub CLI could not hand over a credential for {host}. Check `gh auth status` on the server."),
+            CredentialError::Unresolved(e) => e,
+        }; crate::repository::HostFailure::new(detail)
+    })?;
+    let mut args = vec!["api", endpoint, "--hostname", host];
+    args.extend(if body.is_some() {
+        ["--input", "-"]
+    } else {
+        ["--method", "GET"]
+    });
+    let mut call = crate::cli::CliCall::new(
+        "GitHubSourceControlProvider.getChangeRequest",
+        "gh",
+        args,
+        cwd,
+    );
+    call.stdin = body.map(|body| body.to_string().into_bytes());
+    call.env = ctx.probe_env(&[
+        (
+            if host == "github.com" || host.ends_with(".ghe.com") {
+                "GH_TOKEN"
+            } else {
+                "GH_ENTERPRISE_TOKEN"
+            },
+            token.expose().into(),
+        ),
+        ("GH_DEBUG", "".into()),
+        ("GH_PROMPT_DISABLED", "1".into()),
+    ]);
+    let output = crate::cli::run(call).await.map_err(|e| {
+        let text = e.stderr().to_lowercase();
+        crate::repository::HostFailure::new(if text.contains("401") {
+            "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry."
+        } else if text.contains("404") {
+            not_found
+        } else if text.contains("rate limit") {
+            "GitHub API rate limit exceeded. Requests resume when the limit resets."
+        } else {
+            "GitHub request failed."
+        })
+    })?;
+    serde_json::from_str(&output.stdout).map_err(|_| {
+        crate::repository::HostFailure::new("GitHub returned an invalid pull request.")
+    })
 }
 
 #[cfg(test)]
@@ -1059,7 +1184,7 @@ mod tests {
             "gh",
             &["GH_DEBUG", "GH_PROMPT_DISABLED"],
             &format!(
-                "user=''; prev=''; for a in \"$@\"; do [ \"$prev\" = --user ] && user=\"$a\"; prev=\"$a\"; done\nif [ -n \"$user\" ]; then [ \"$user\" = '{signed_out}' ] && exit 0; echo \"token-for-$user\"; else echo active-token; fi"
+                "user=''; prev=''; for a in \"$@\"; do [ \"$prev\" = --user ] && user=\"$a\"; prev=\"$a\"; case \"$a\" in --user=*) user=${{a#--user=}};; esac; done\nif [ -n \"$user\" ]; then [ \"$user\" = '{signed_out}' ] && exit 0; echo \"token-for-$user\"; else echo active-token; fi"
             ),
         )
     }
@@ -1105,6 +1230,10 @@ mod tests {
                 r#"{"hosts":{"github.com":{"enabled":false}}}"#,
                 Err(CredentialError::HostDisabled),
             ),
+            (
+                r#"{"hosts":{"github.com":{"account":"-work","enabled":true}}}"#,
+                Ok("token-for--work".into()),
+            ),
             (r#"{"hosts":{}}"#, Ok("active-token".into())),
         ];
         for (github, expected) in cases {
@@ -1114,6 +1243,10 @@ mod tests {
             let c = ctx(&stubs, &s, &env, &endpoints, &child_env);
             assert_eq!(token_of(c, "github.com").await, expected, "{github}");
         }
+        assert!(
+            stubs.log("gh").contains("--user=-work"),
+            "pinned accounts are a single flag value"
+        );
         assert!(
             stubs
                 .log("gh")
@@ -1148,7 +1281,7 @@ mod tests {
         assert_eq!(
             argv,
             [
-                "argv auth token --hostname github.com --user gone",
+                "argv auth token --hostname github.com --user=gone",
                 "argv auth token --hostname github.com"
             ],
             "T3's argv"

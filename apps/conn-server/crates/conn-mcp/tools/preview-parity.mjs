@@ -313,21 +313,9 @@ export async function previewParity(binary, browser) {
     );
     const state = Path.join(root, "rust");
     FS.mkdirSync(state);
-    if (browser) {
-      const spec = JSON.parse(
-        FS.readFileSync(new URL("../../conn-preview/src/spec.json", import.meta.url), "utf8"),
-      );
-      const os = process.platform === "darwin" ? "macos" : process.platform;
-      const arch = { x64: "x86_64", arm64: "aarch64", ia32: "x86" }[process.arch];
-      const platform = spec.platforms[`${os}-${arch}`];
-      if (!platform) throw Error(`Unsupported fixture platform: ${os}-${arch}`);
-      const dir = Path.join(state, "tools/chrome-headless-shell", platform, spec.version);
-      FS.mkdirSync(Path.dirname(dir), { recursive: true });
-      FS.symlinkSync(Path.dirname(browser), dir);
-    }
     const rust = await new Promise((resolve, reject) => {
-      const child = spawn(binary, [state, ...(browser ? [browser] : [])], {
-        env: sealedEnv(Path.join(root, "rust-env")),
+      const child = spawn(binary, [state], {
+        env: { ...sealedEnv(Path.join(root, "rust-env")), ...(browser ? { CONN_SERVER_BROWSER_PATH: browser } : {}) },
       });
       let stdout = "",
         stderr = "";
@@ -343,6 +331,7 @@ export async function previewParity(binary, browser) {
       child.stdin.end(JSON.stringify(cases));
     });
     if (rust.status !== 0) throw Error(`Rust preview fixture: ${rust.stderr}\n${rust.stdout}`);
+    if (browser && FS.existsSync(Path.join(state, "tools"))) throw Error("Configured Chrome used the runtime installation directory");
     const actual = JSON.parse(rust.stdout).map(
       (reply) => reply.result ?? { rpcError: reply.error?.message },
     );

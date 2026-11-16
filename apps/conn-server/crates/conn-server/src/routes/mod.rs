@@ -10,6 +10,7 @@ mod assets;
 mod hooks;
 pub mod mcp;
 mod preview;
+mod pull_requests;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -17,4 +18,5 @@ pub fn router() -> Router<AppState> {
         .merge(assets::router())
         .merge(hooks::router())
         .merge(preview::router())
+        .merge(pull_requests::router())
 }

@@ -290,6 +290,8 @@ const secretsRs = rustfmt(
     `// Source: ${SECRETS_FILE} (secretSettingsFields per group), packages/source-control-github/src/shared/definition.ts,`,
     "// secrets/secretProviderDefinitions.ts.",
     "",
+    `pub(super) const DEFAULT_AGENT_BROWSER_ACCESS: bool = ${settings.DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess};`,
+    "",
     "/// Secret fields of `providerInstances.*.config`, by the instance's `driver`.",
     "pub(super) const PROVIDER_CONFIG: &[(&str, &[&str])] = &[",
     ...providerFields.map(([driver, fields]) => `(${str(driver)}, ${strs(fields)}),`),
@@ -408,7 +410,14 @@ const LIMITED_METHODS = [
   "preview.open", "preview.list", "preview.close", "preview.resize", "preview.adjust",
   "preview.clearProfile", "preview.reportStatus", "preview.reportProfiles",
   "assets.createUrl",
+  "git.resolvePullRequest",
+  "git.preparePullRequestThread",
+  "git.runStackedAction",
   "secrets.answerRequest",
+  "testLogins.save",
+  "testLogins.update",
+  "testLogins.remove",
+  "testLogins.reveal",
   "panels.respond",
   "server.listTextGeneratorModels",
   "terminal.attach",
@@ -444,7 +453,8 @@ function limitNode(ast) {
   if ((ast.checks ?? []).some((c) => c.annotations?.expected === "a non-blank string")) node.nonBlank = true;
   for (const r of representations(ast)) {
     const p = r.payload;
-    if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
+    else if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
     else if (r.id === "effect/schema/isPattern") {
       // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
       const flags = p.flags.replace("u", "");
@@ -456,7 +466,7 @@ function limitNode(ast) {
     else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
     else if (r.id === "effect/schema/isBetween") { node.minimum=p.minimum;node.maximum=p.maximum; }
   }
-  if (ast._tag === "Arrays" && ast.rest?.length === 1) { const item=limitNode(ast.rest[0]); if(item)node.items=item; }
+  if (ast._tag === "Arrays" && ast.rest?.[0]) node.items = limitNode(ast.rest[0]);
   if (ast._tag === "Objects") {
     const fields = {};
     for (const p of ast.propertySignatures) {
@@ -507,20 +517,24 @@ const limitsRs = rustfmt(
 
 const prompts = await importSource("packages/provider-core/src/server/textGenerationPrompts.ts");
 const PLACEHOLDERS = { '"@@P@@"': "Project", '"@@T@@"': "Previous", "@@M@@": "Message" };
-function promptParts(input) {
-  const { prompt } = prompts.buildThreadTitlePrompt({ message: "@@M@@", ...input });
+function partsOf(prompt, placeholders) {
   const parts = [];
+  const pattern = new RegExp(Object.keys(placeholders).map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"));
   let rest = prompt;
-  const pattern = /"@@P@@"|"@@T@@"|@@M@@/;
   for (let match = pattern.exec(rest); match !== null; match = pattern.exec(rest)) {
     if (match.index > 0) parts.push(`Part::Text(${str(rest.slice(0, match.index))})`);
-    parts.push(`Part::${PLACEHOLDERS[match[0]]}`);
+    parts.push(`Part::${placeholders[match[0]]}`);
     rest = rest.slice(match.index + match[0].length);
   }
   if (rest.length > 0) parts.push(`Part::Text(${str(rest)})`);
-  if (prompt.includes("@@") && parts.filter((p) => !p.startsWith("Part::Text")).length === 0)
-    throw new Error("title prompt placeholders not found");
   return `&[\n${parts.map((p) => `    ${p},`).join("\n")}\n]`;
+}
+function promptParts(input) {
+  return partsOf(prompts.buildThreadTitlePrompt({ message: "@@M@@", ...input }).prompt, PLACEHOLDERS);
+}
+function commitParts(includeBranch, policy) {
+  return partsOf(prompts.buildCommitMessagePrompt({branch:"@@BRANCH@@",stagedSummary:"@@SUMMARY@@",stagedPatch:"@@PATCH@@",includeBranch,...(policy ? {policy:{commitInstructions:"@@POLICY@@"}} : {})}).prompt,
+    {"@@BRANCH@@":"Branch", "@@SUMMARY@@":"Summary", "@@PATCH@@":"Patch", "@@POLICY@@":"Policy"});
 }
 // The title's output schema as T3 writes it for a CLI (`toJsonSchemaObject`, then
 // `JSON.stringify`): Codex reads it from `--output-schema`.
@@ -532,6 +546,7 @@ const titleOutputSchema = JSON.stringify(
     prompts.buildThreadTitlePrompt({ message: "" }).outputSchema,
   ),
 );
+const presets = await importSource("apps/server/src/textGeneration/TextGenerationPresets.ts");
 const titlePromptsRs = rustfmt(
   [
     ...HEADER,
@@ -546,7 +561,7 @@ const titlePromptsRs = rustfmt(
     "    /// `JSON.stringify` of the previous title.",
     "    Previous,",
     "    /// The (limited) message or thread contents.",
-    "    Message,",
+    "    Message, Branch, Summary, Patch, Policy,",
     "}",
     "",
     `pub(super) const INITIAL_WITH_PROJECT: &[Part] = ${promptParts({ projectTitle: "@@P@@" })};`,
@@ -556,13 +571,32 @@ const titlePromptsRs = rustfmt(
     "",
     "/// The title's output schema, as T3 writes it for a CLI (`JSON.stringify(toJsonSchemaObject(...))`).",
     `pub(crate) const TITLE_OUTPUT_SCHEMA: &str = ${str(titleOutputSchema)};`,
+    `pub(crate) const COMMIT_POLICIES: [&str; 2] = [${str(presets.conventionalCommitsTextGenerationPolicy.commitInstructions)},${str(presets.repositoryConventionsTextGenerationPolicy.commitInstructions)}];`,
+    `pub(super) const COMMIT_PROMPTS: [[&[Part]; 2]; 2] = [${[false,true].map(includeBranch => `[${[false,true].map(policy => commitParts(includeBranch,policy)).join(",")}]`).join(",")}];`,
+    `pub(crate) const COMMIT_SCHEMAS: [&str; 2] = [${[false,true].map(includeBranch => str(JSON.stringify(textGenerationUtils.toJsonSchemaObject(prompts.buildCommitMessagePrompt({branch:null,stagedSummary:"",stagedPatch:"",includeBranch}).outputSchema)))).join(",")}];`,
     "",
   ].join("\n"),
 );
 
 // ---- Write or check ----------------------------------------------------------------------
 
+const vcsSource = NodeFS.readFileSync(inMonorepo("apps/server/src/vcs/GitVcsDriverCore.ts"), "utf8");
+const patchLimit = vcsSource.match(/const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = ([\d_]+);/);
+if (!patchLimit) throw new Error("commit patch limit moved");
+const pathFunctions = await importSource("packages/shared/src/path.ts");
+const folds = new Map();
+for (let code = 128; code <= 0x1eff; code++) {
+  const raw = String.fromCodePoint(code);
+  const folded = pathFunctions.foldLatinDiacritics(raw);
+  if (raw !== folded && /^[a-zA-Z]+$/.test(folded)) folds.set(folded, (folds.get(folded) ?? "") + raw);
+}
+const gitRulesRs = rustfmt([...HEADER,
+  `pub const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES: usize = ${patchLimit[1].replaceAll("_", "")};`,
+  `pub const LATIN_FOLDS: &[(&str, &str)] = &[${[...folds].map(([folded, raw]) => `(${str(raw)},${str(folded)})`).join(",")}];`,
+].join("\n"));
+
 const outputs = {
+  "crates/conn-vcs/src/generated.rs": gitRulesRs,
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,

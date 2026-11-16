@@ -235,3 +235,10 @@ if (process.argv.includes("--check")) {
   if (FS.readFileSync(target, "utf8") !== text)
     throw Error("Preview spec drift: run crates/conn-preview/gen-spec.mjs");
 } else FS.writeFileSync(target, text);
+
+const release = Function("chromePlatform", "VERSION", "ARCHIVES", `return ${stripTypeScriptTypes(/const previewBrowserRelease = ([\s\S]*?);\n\nconst megabytes/.exec(browser)?.[1])}`)(chromePlatform, version, archives);
+const chromePin = JSON.stringify(release("linux", "x64"), null, 2) + "\n";
+const pinTarget = Path.join(here, "chrome.json");
+if (process.argv.includes("--check")) {
+  if (FS.readFileSync(pinTarget, "utf8") !== chromePin) throw Error("Chrome release pin drift");
+} else FS.writeFileSync(pinTarget, chromePin);

@@ -11,6 +11,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
     if !read {
         cx.writing_caller().await?;
     }
+    cx.require_preview()?;
     let preview = cx.config().preview.as_ref().ok_or_else(|| {
         ToolError::Message("Preview automation is unavailable for this thread.".into())
     })?;

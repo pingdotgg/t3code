@@ -66,6 +66,7 @@ fn fixture_with(
             hub: conn_vcs::VcsHub::default(),
         }),
         panels: Some(conn_features::panels::PanelBroker::default()),
+        test_logins: Some(conn_features::test_logins::TestLogins::new(&dir)),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
             engine.clone(),
@@ -639,6 +640,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
         thread_id: parent_id.clone(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     assert_eq!(entry.url, "http://127.0.0.1:4711/mcp");
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
@@ -757,6 +759,7 @@ fn credentials_expire_when_idle_and_stay_bounded() {
         thread_id: "t".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     };
     let (token, _) = credentials.issue(request());
     assert!(credentials.resolve(&token).is_some());
@@ -779,6 +782,7 @@ fn a_credential_counts_idle_time_the_wall_clock_shows_after_a_freeze() {
         thread_id: "t".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     credentials.jump_wall(Duration::from_secs(10 * 60));
     assert!(credentials.resolve(&token).is_some(), "10 minutes: alive");
@@ -813,6 +817,7 @@ fn caller_namespaces_key_idempotency_per_credential() {
         provider_session_id: "p".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     assert_eq!(thread.namespace(), "p");
     assert_eq!(client(true).namespace(), "client:swamp");
@@ -844,6 +849,7 @@ fn agent_of(f: &Fixture, thread_id: &str) -> Caller {
         thread_id: thread_id.to_owned(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+        preview: true,
     });
     let token = entry.authorization.strip_prefix("Bearer ").unwrap();
     Caller::Thread(f.service.resolve_thread_token(token).unwrap())
@@ -1698,12 +1704,11 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 9] = [
+const NAMED_NOT_SERVED: [&str; 8] = [
     "device_list",
     "device_open",
     "device_screenshot",
     "fill_credential",
-    "request_credentials",
     "t3_environment_link",
     "t3_environment_links",
     "unwatch_pull_request",
@@ -1776,6 +1781,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: config.secrets.clone(),
+        test_logins: base.service.config.test_logins.clone(),
         engine,
         environment_id: config.environment_id.clone(),
         label: config.label.clone(),
@@ -2810,6 +2816,8 @@ async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
         provider_session_id: "preview-agent".into(),
         provider_instance_id: "claudeAgent".into(),
         subagent: false,
+
+        preview: false,
     });
     let mut agent = Client::open(&f.service, caller).await;
     client
@@ -2872,11 +2880,24 @@ async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chr
     let f = fixture("browser-tools");
     let mut client = Client::open(&f.service, client(true)).await;
     let launched=client.ok("t3_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview tools","runtimeMode":"full-access"})).await;
-    let mut agent = Client::open(
-        &f.service,
-        agent_of(&f, launched["threadId"].as_str().unwrap()),
-    )
-    .await;
+    let thread = launched["threadId"].as_str().unwrap();
+    let mut blocked = agent_of(&f, thread);
+    if let Caller::Thread(caller) = &mut blocked {
+        caller.preview = false;
+    }
+    let mut denied = Client::open(&f.service, blocked).await;
+    let reply = denied
+        .request(
+            "tools/call",
+            json!({"name":"preview_status","arguments":{}}),
+        )
+        .await;
+    assert_eq!(reply["result"]["isError"], true);
+    assert_eq!(
+        reply["result"]["content"][0]["text"],
+        include_str!("preview-unavailable.txt")
+    );
+    let mut agent = Client::open(&f.service, agent_of(&f, thread)).await;
     let status = agent.ok("preview_status", json!({})).await;
     assert_eq!(status["available"], false);
     assert_eq!(status["tabs"], json!([]));
@@ -2928,6 +2949,111 @@ async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chr
         !f.dir.join("tools").exists(),
         "unavailable status must never download Chrome"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_logins_save_find_and_hide_secrets() {
+    let f = fixture("test-logins");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    for tool in ["save_test_login", "request_credentials", "database_query"] {
+        not_offered(&mut swamp, tool, json!({})).await;
+    }
+    let thread = launch_as_swamp(&mut swamp, "Logins", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let saved = agent.ok("save_test_login", json!({"url":" https://www.example.test/login ","username":" admin ","password":" secret password ","label":" Admin ","otpSecret":" OTP "})).await;
+    assert_eq!(saved["createdBy"], "agent");
+    assert_eq!(saved["label"], "Admin");
+    assert_eq!(saved["hasOtp"], true);
+    assert!(saved.get("password").is_none());
+    assert!(saved.get("otpSecret").is_none());
+    let found = agent
+        .ok(
+            "request_credentials",
+            json!({"domain":"http://example.test:8080/sign-in"}),
+        )
+        .await;
+    assert_eq!(
+        found,
+        json!({"items":[{"id":saved["id"],"title":"Admin","urls":["https://www.example.test/login"],"username":" admin ","source":"test"}]})
+    );
+    for domain in ["sub.example.test", "not a host", "ftp://example.test"] {
+        assert_eq!(
+            agent
+                .ok("request_credentials", json!({"domain":domain}))
+                .await,
+            json!({"items":[]})
+        );
+    }
+    for (tool, args) in [
+        (
+            "save_test_login",
+            json!({"url":"x","username":"","password":"x"}),
+        ),
+        ("request_credentials", json!({"domain":" "})),
+    ] {
+        assert_eq!(rpc_error(&mut agent, tool, args).await.0, -32602);
+    }
+    let file = f.dir.join("secrets/test-logins.bin");
+    let saved_bytes = std::fs::read(&file).unwrap();
+    std::fs::write(&file, "invalid fixture store").unwrap();
+    for (tool, args) in [
+        ("request_credentials", json!({"domain":"example.test"})),
+        (
+            "save_test_login",
+            json!({"url":"example.test","username":"u","password":"p"}),
+        ),
+    ] {
+        let reply = agent
+            .request("tools/call", json!({"name":tool,"arguments":args}))
+            .await;
+        assert_eq!(
+            reply["result"],
+            json!({
+                "content":[{"type":"text","text":"T3 Code could not read or save its test logins."}],
+                "isError":true,
+            }),
+            "{tool}: {reply}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"invalid fixture store");
+    }
+    std::fs::write(&file, saved_bytes).unwrap();
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.clone().into())
+        .await
+        .unwrap();
+    assert!(!projection.to_string().contains("secret password"));
+    assert!(!projection.to_string().contains("OTP"));
+    dispatch(
+        &f,
+        json!({"type":"thread.stop","commandId":"stop-logins","threadId":thread}),
+    )
+    .await;
+    swamp
+        .ok(
+            "t3_thread_wait",
+            json!({"threadId":thread,"timeoutMs":1000}),
+        )
+        .await;
+    assert_eq!(
+        agent
+            .failure(
+                "save_test_login",
+                json!({"url":"x","username":"u","password":"p"})
+            )
+            .await
+            .0,
+        "parent_not_active"
+    );
+    assert_eq!(
+        agent
+            .ok("request_credentials", json!({"domain":"example.test"}))
+            .await,
+        found
+    );
+    f.service.config.engine.shutdown().await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3034,6 +3160,138 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
         "parent_not_active"
     );
     f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn database_query_forwards_to_the_desktop_and_returns_its_result() {
+    let f = fixture("database-query");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Database", "hang", "full-access", "default").await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    assert!(
+        plain_failure(&mut agent, "database_query", json!({"sql":"select 1"}))
+            .await
+            .contains("No Conn desktop app")
+    );
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    let database = json!({"connection":"Development","columns":["id"],"rowCount":30.0,"rows":[{"id":1}],"truncated":true});
+    let (result, ()) = tokio::join!(
+        agent.ok(
+            "database_query",
+            json!({"sql":" select 1 ","connection":" Development ","focusWindow":false})
+        ),
+        async {
+            let request = desktop.recv().await.unwrap();
+            assert_eq!(request.thread_id, thread);
+            assert_eq!(request.sql.as_deref(), Some("select 1"));
+            assert_eq!(request.connection.as_deref(), Some("Development"));
+            assert_eq!(request.run, Some(true));
+            assert!(!request.focus_window);
+            broker.respond(from_json(json!({"requestId":request.request_id,"ok":true,"deviceName":"Mac","database":database})).unwrap());
+        }
+    );
+    let mut expected = database;
+    expected["shownOn"] = json!("Mac");
+    assert_eq!(result, expected);
+    for (response, message) in [
+        (
+            json!({"ok":true}),
+            "The Conn desktop showed the database panel but sent no result. It may run an older Conn.",
+        ),
+        (
+            json!({"ok":false,"error":"Only read-only queries are allowed."}),
+            "Only read-only queries are allowed.",
+        ),
+    ] {
+        let (failure, ()) = tokio::join!(
+            plain_failure(
+                &mut agent,
+                "database_query",
+                json!({"sql":"delete from users"})
+            ),
+            async {
+                let request = desktop.recv().await.unwrap();
+                let mut response = response;
+                response["requestId"] = json!(request.request_id);
+                broker.respond(from_json(response).unwrap());
+            }
+        );
+        assert_eq!(failure, message);
+    }
+    assert_eq!(
+        plain_failure(&mut agent, "database_query", json!({"sql":"select 1"})).await,
+        "No Conn desktop showed the database panel within 90 s."
+    );
+    for sql in [" ".to_owned(), "x".repeat(64_001)] {
+        assert_eq!(
+            rpc_error(&mut agent, "database_query", json!({"sql":sql}))
+                .await
+                .0,
+            -32602
+        );
+    }
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_logins_require_preview_capability() {
+    let f = fixture("login-capability");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread =
+        launch_as_swamp(&mut swamp, "Login access", "hang", "full-access", "default").await;
+    let mut caller = agent_of(&f, &thread);
+    if let Caller::Thread(caller) = &mut caller {
+        caller.preview = false;
+    }
+    let mut agent = Client::open(&f.service, caller).await;
+    for (tool, args) in [
+        ("request_credentials", json!({"domain":"example.test"})),
+        (
+            "save_test_login",
+            json!({"url":"example.test","username":"u","password":"p"}),
+        ),
+    ] {
+        let message = plain_failure(&mut agent, tool, args).await;
+        assert!(
+            message.starts_with("MCP credential does not grant the preview capability:"),
+            "{message}"
+        );
+    }
+    assert!(
+        f.service
+            .config
+            .test_logins
+            .as_ref()
+            .unwrap()
+            .list()
+            .await
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[test]
+fn preview_grant_is_retained_per_credential() {
+    let mut credentials = crate::credentials::Credentials::default();
+    let (denied, _) = credentials.issue(ThreadCredentialRequest {
+        thread_id: "t".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: false,
+    });
+    let (granted, _) = credentials.issue(ThreadCredentialRequest {
+        thread_id: "t".into(),
+        provider_instance_id: "claudeAgent".into(),
+        subagent: false,
+        preview: true,
+    });
+    assert!(!credentials.resolve(&denied).unwrap().preview);
+    assert!(credentials.resolve(&granted).unwrap().preview);
+    credentials.touch("t");
+    assert!(!credentials.resolve(&denied).unwrap().preview);
 }
 
 #[tokio::test(flavor = "current_thread", start_paused = true)]

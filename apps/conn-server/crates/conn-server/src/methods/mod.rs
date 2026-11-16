@@ -10,17 +10,21 @@ use crate::table::MethodTable;
 
 mod annotations;
 mod files;
+mod git;
+mod git_message;
 mod mcp_apps;
 mod orchestration;
 mod panels;
 mod preview;
 mod projects;
 pub mod provider;
+pub(crate) mod pull_requests;
 mod scheduled;
 mod secrets;
 pub mod server;
 mod source_control;
 pub mod terminal;
+mod test_logins;
 mod text_generation;
 pub mod vcs;
 
@@ -38,6 +42,8 @@ pub struct Deps {
     /// `/mcp`; `serve.rs` builds it with `routes::mcp::service`.
     pub mcp: Option<Arc<conn_mcp::McpService>>,
     pub vcs: vcs::VcsShared,
+    /// One PR service for RPC reads, refreshes and HTTP diffs.
+    pub pull_requests: pull_requests::Shared,
     /// Shared with the engine host, so a thread's terminals close with it.
     pub terminals: Option<conn_terminal::TerminalManager>,
     /// Files, assets and attachments; without it those methods and routes are not served.
@@ -48,6 +54,7 @@ pub struct Deps {
     pub panels: Option<conn_features::panels::PanelBroker>,
     /// Shared by secret card answers and the agent secret tool.
     pub secrets: Option<conn_features::secrets::SecretRequests>,
+    pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// Annotations (`conn_features::annotations`); without it `annotations.*` is not served.
     pub annotations: Option<conn_features::annotations::Annotations>,
     /// Text generators (`crate::text_generation`); without it `listTextGeneratorModels` is not
@@ -73,13 +80,16 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     preview::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
+    git::register(table, deps);
     files::register(table, deps);
     mcp_apps::register(table, deps);
     terminal::register(table, deps);
     scheduled::register(table, deps);
     secrets::register(table, deps);
+    test_logins::register(table, deps);
     panels::register(table, deps);
     annotations::register(table, deps);
     source_control::register(table, deps);
+    pull_requests::register(table, deps);
     text_generation::register(table, deps);
 }

@@ -17,7 +17,7 @@ import { htmlParity } from "./html-parity.mjs";
 import { toolOutputParity } from "./tool-output-parity.mjs";
 import { checkMcpApps } from "./mcp-apps-parity.mjs";
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
-import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
+import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy, updateSettings } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
 import { canaryEnv, gitEnv, sealedEnv, sealedPath } from "../../../tools/sealed-env.mjs";
 import { GUARD_ARG } from "../../../tools/no-outside-fetch.mjs";
@@ -447,7 +447,8 @@ const steps = [
         "https://GitHub.com/O/R/pull/5",
         "https://github.com/o/r/pull/3",
         "not a url",
-        "https://github.com/g/s/pull/2",
+        // Match input and key order: the servers can assign different millisecond ties.
+        "https://github.com/z/s/pull/2",
       ],
     }),
     undefined,
@@ -577,6 +578,9 @@ const steps = [
   // send_to_user acts as the calling thread; its argument check runs first.
   ["panel_open", () => ({ panel: "files" })],
   ["panel_open", () => ({ panel: "browser", url: "https://example.com" })],
+  ["save_test_login", () => ({url:"http://example.test",username:"tester",password:"fixture-only"})],
+  ["request_credentials", () => ({domain:"example.test"})],
+  ["database_query", () => ({sql:"select 1"})],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check" })],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check", delivery: "file", value: "test-only" })],
   ["send_to_user", () => ({ message: "hi" })],
@@ -678,8 +682,23 @@ if (noModel) {
   const credentials = await Promise.all([tsCredential(servers[0].records),rustCredential(servers[1].capture)]);
   const agents = credentials.map((entry) => new McpSession(new URL(entry.url).origin,entry.headers.Authorization));
   await Promise.all(agents.map((agent) => agent.initialize()));
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
+  const retained = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"not a host"}).then(outcome)));
+  report("browser access captured at session start",retained.every((r) => r.kind === "ok"));
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:true})));
   const state = [{},{}];
   const agentSteps = [
+    ["save_test_login", () => ({url:" https://www.example.test/login ",username:" tester ",password:"fixture-only",label:" Tester ",otpSecret:" TEST "}), (v) => ({...v,id:"<id>",createdAt:"<time>"}), (c,v) => {c.loginId=v.id;}],
+    ["request_credentials", () => ({domain:"http://example.test:8080/login"}), (v) => ({items:v.items.map(item=>({...item,id:"<id>"}))})],
+    ["request_credentials", () => ({domain:"example.test/login?next=https://example.test"}), (v) => ({items:v.items.map(item=>({...item,id:"<id>"}))})],
+    ["request_credentials", () => ({domain:"other.example.test"})],
+    ["request_credentials", () => ({domain:"\ufeffexample.test"})],
+    ["request_credentials", () => ({domain:"\u0085example.test"})],
+    ["request_credentials", () => ({domain:"not a host"})],
+    ["request_credentials", () => ({domain:" "})],
+    ["save_test_login", () => ({url:"example.test",username:"",password:"fixture-only"})],
+    ["database_query", () => ({sql:"select 1"})],
+    ["database_query", () => ({sql:" "})],
     ...[
       ["mcp_call",{tool:" "}], ["mcp_call",{tool:"x".repeat(201)}],
       ["mcp_call",{tool:" weather ",server:" stub "}], ["mcp_call",{tool:"\uFEFFweather\n",server:null}],
@@ -731,6 +750,21 @@ if (noModel) {
   ];
   for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
     if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
+      // Handoff replaces the provider session, so exercise its credentials before release.
+      report("calling thread test login saved on both servers",state.every((c) => typeof c.loginId === "string"));
+      const loginFiles = [NodePath.join(root,"ts","base","userdata","secrets","test-logins.bin"), NodePath.join(root,"rust","state","secrets","test-logins.bin")];
+      const loginBytes = loginFiles.map((file) => NodeFS.readFileSync(file));
+      const storedLogins = loginBytes.map((bytes) => {
+        const value = JSON.parse(bytes);
+        return {...value,logins:value.logins.map((login) => ({...login,id:"<id>",createdAt:"<time>"}))};
+      });
+      report("test login disk format and exact secret bytes",canonical(storedLogins[0]) === canonical(storedLogins[1]) && storedLogins[0].logins[0].password === "fixture-only");
+      for (const file of loginFiles) NodeFS.writeFileSync(file,"invalid fixture store",{mode:0o600});
+      const corruptLoginReplies = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"example.test"})));
+      const corruptLoginResults = corruptLoginReplies.map(outcome);
+      const sameLoginFailure = corruptLoginResults.every((result) => result.kind === "failure") && canonical(corruptLoginResults[0]) === canonical(corruptLoginResults[1]);
+      report(`test login store failure text${sameLoginFailure ? "" : `: T3 ${canonical(corruptLoginReplies[0])} / Conn ${canonical(corruptLoginReplies[1])}`}`,sameLoginFailure);
+      loginFiles.forEach((file,i) => NodeFS.writeFileSync(file,loginBytes[i],{mode:0o600}));
       await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,false,[setupScript])));
       for (const target of [{},{providerInstanceId:"claudeAgent"}]) {
         const denied = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{target}]}).then(outcome)));
@@ -748,6 +782,22 @@ if (noModel) {
       return result;
     }));
     report(`calling thread ${tool}: ${canonical(values[0]) === canonical(values[1]) ? "same outcome" : JSON.stringify(values)}`, canonical(values[0]) === canonical(values[1]));
+  }
+  await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
+  for (const name of NodeFS.readdirSync(servers[0].records).filter((name) => name.endsWith(".json"))) NodeFS.unlinkSync(NodePath.join(servers[0].records,name));
+  NodeFS.rmSync(servers[1].capture,{force:true});
+  const deniedLaunch = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_launch",{
+    projectId:context[i].projectId,title:"Browser access disabled",message:"hang",
+    modelSelection:{instanceId:"claudeAgent",model:"claude-haiku-5-5"},runtimeMode:"auto",
+    workspaceStrategy:{type:"root"},clientRequestId:"browser-access-disabled",
+  }).then(outcome)));
+  if (deniedLaunch.some((r) => r.kind !== "ok")) throw new Error("Could not launch denied browser fixture");
+  const deniedCredentials = await Promise.all([tsCredential(servers[0].records),rustCredential(servers[1].capture)]);
+  const deniedAgents = deniedCredentials.map((entry) => new McpSession(new URL(entry.url).origin,entry.headers.Authorization));
+  await Promise.all(deniedAgents.map((agent) => agent.initialize()));
+  for (const [tool,args] of [["request_credentials",{domain:"example.test"}],["save_test_login",{url:"example.test",username:"denied",password:"fixture-only"}]]) {
+    const results=await Promise.all(deniedAgents.map((agent) => agent.callTool(tool,args).then(outcome)));
+    report(`disabled browser access ${tool}: same refusal`,results.every((r) => r.kind === "failure") && canonical(results[0]) === canonical(results[1]));
   }
   const setup = await Promise.all(state.map(async (c,i) => {
     const text = await fileText(NodePath.join(c.worktreePath,"handoff-setup.txt"));

@@ -16,10 +16,10 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 | `sourceControl.*` (9) | All 9 served: `signInStart`, `signInWait`, `signInCancel`, `appAccess` (as a T3 server without `T3CODE_GITHUB_APP_CLIENT_ID`), `starred`, `star` (GitHub REST, any other host `false`); `lookupRepository`, `cloneRepository`, `publishRepository` for GitHub (see "Repositories") |
 | The host definition registry | Built (part 4): remotes, change request URLs, canonical keys, the project predicates, thread link keys (see "Registry") |
 | Provider detection | Built (part 4), not yet called by a method (see "Provider detection") |
-| GitHub's GraphQL operations | Generated from the monorepo (part 4); no request sends one yet (see "GitHub GraphQL") |
-| `git.*` (3) | Not served |
+| GitHub's GraphQL operations | Generated from the monorepo; panel reads, viewed-file mutations and PR resolution send them. |
+| `git.*` (3) | GitHub PR resolution and checkout; commit-only stacked actions in `conn-server` |
 | `pr` in VCS status | Not served (always `null`) |
-| `pullRequests.*` (35) | Not served |
+| `pullRequests.*` (35) | GitHub: the 20 panel read/refresh methods served; the 15 action/guide methods remain unregistered. |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
 | `/mcp` pull request tools (9) | 5 served (part 4): `link_pull_request(s)`, `unlink_pull_request(s)`, `list_thread_pull_requests`; `watch`/`unwatch` and the 2 guide tools not served |
 
@@ -27,6 +27,7 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 
 | Module | Holds |
 | --- | --- |
+| `checkout.rs` | GitHub PR resolution, local checkout and worktree reuse |
 | `secret.rs` | `Secret`: a token with a redacted `Debug` and `Display` |
 | `http.rs` | One HTTPS request per connection (hyper + rustls), bounded answer, local fake server for tests |
 | `settings.rs` | GitHub's saved fields (`hosts`, `tokens`, `signIns`), secret references |
@@ -197,6 +198,14 @@ own reducers).
 `conn-mcp/src/tools/pull_requests.rs` serves the five link tools (`pullRequestTarget.ts`
 `resolveTarget`, `resolveThreadPullRequestChains`, T3's paging). Proof: 26 `parity.mjs` steps
 against the T3 server, values compared, no differences.
+
+## PR panel differences
+
+- Reads use a bounded memory cache rather than T3's persistent stale reads; entries do not survive restart.
+- Listings read each repository separately. ETag revalidation, credential-token caching, quota reserve and Unix-socket transport remain absent.
+- Withheld whole-diff single-file extraction and automatic PR-link sync/watch reactors remain unbuilt.
+- The 15 actions, stack and guide methods remain unregistered here; the actions branch supplies them.
+- No live macOS/iPhone or signed-in Orbit proof has been run for the panel.
 
 ## What the next steps need
 

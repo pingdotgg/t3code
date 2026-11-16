@@ -232,6 +232,7 @@ pub async fn serve_with_instances(
         preview: Some(preview.clone()),
         panels: Some(conn_features::panels::PanelBroker::default()),
         secrets: Some(secrets),
+        test_logins: Some(conn_features::test_logins::TestLogins::new(&state_dir)),
         engine: Some(engine.clone()),
         scheduled_tasks: Some(scheduled_tasks),
         annotations: Some(conn_features::annotations::Annotations::new(

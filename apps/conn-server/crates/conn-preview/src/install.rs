@@ -119,26 +119,57 @@ fn prune(root: &Path, version: &str) {
     }
 }
 
+/// A configured browser never falls through to the development installer.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ExecutableError {
+    #[error("Configured browser {}: {reason}. No runtime download will be attempted.", path.display())]
+    ConfiguredBrowser { path: PathBuf, reason: String },
+    #[error(transparent)]
+    Install(#[from] Error),
+}
+impl From<ExecutableError> for Error {
+    fn from(error: ExecutableError) -> Self {
+        Self(error.to_string())
+    }
+}
+
 type Completed = Option<Result<PathBuf, Error>>;
 /// One installation per server. No browser or network connection exists until requested.
 #[derive(Debug)]
 pub struct Installer {
     base: PathBuf,
+    browser_path: Option<PathBuf>,
     pending: Mutex<Option<watch::Receiver<Completed>>>,
     downloaded: Arc<AtomicU64>,
     unpacking: Arc<AtomicBool>,
 }
 impl Installer {
     pub fn new(base: PathBuf) -> Self {
+        // Orbit supplies a shared browser; T3 has no host path override.
+        Self::with_browser_path(
+            base,
+            std::env::var_os("CONN_SERVER_BROWSER_PATH").map(PathBuf::from),
+        )
+    }
+    fn with_browser_path(base: PathBuf, browser_path: Option<PathBuf>) -> Self {
         Self {
             base,
+            browser_path,
             pending: Mutex::new(None),
             downloaded: Arc::default(),
             unpacking: Arc::default(),
         }
     }
-    /// The same base/tools/platform/version path as T3; never discovers system Chrome.
-    pub async fn executable(&self) -> Result<PathBuf, Error> {
+    /// Prefers the configured pinned browser; otherwise uses T3's lazy cache, never PATH.
+    pub async fn executable(&self) -> Result<PathBuf, ExecutableError> {
+        if let Some(path) = &self.browser_path {
+            return configured_browser(path.clone()).await;
+        }
+        self.development_executable()
+            .await
+            .map_err(ExecutableError::Install)
+    }
+    async fn development_executable(&self) -> Result<PathBuf, Error> {
         let spec = spec()?;
         let platform = chrome_platform(std::env::consts::OS, std::env::consts::ARCH)?;
         let folder = self
@@ -216,6 +247,70 @@ impl Installer {
             }
         }
     }
+}
+
+async fn configured_browser(path: PathBuf) -> Result<PathBuf, ExecutableError> {
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::AsyncReadExt;
+    let fail = |reason: String| ExecutableError::ConfiguredBrowser {
+        path: path.clone(),
+        reason,
+    };
+    if !path.is_absolute() {
+        return Err(fail("the path must be absolute".into()));
+    }
+    let info = tokio::fs::metadata(&path)
+        .await
+        .map_err(|error| fail(format!("cannot read the executable: {error}")))?;
+    if !info.is_file() || info.permissions().mode() & 0o111 == 0 {
+        return Err(fail("the path is not an executable file".into()));
+    }
+    let mut command = tokio::process::Command::new(&path);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let mut child = tokio::task::spawn_blocking(move || command.spawn())
+        .await
+        .map_err(|error| fail(error.to_string()))?
+        .map_err(|error| fail(format!("cannot start --version: {error}")))?;
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| fail("the version pipe is missing".into()))?;
+        let mut bytes = Vec::new();
+        stdout
+            .take(1025)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|error| fail(error.to_string()))?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|error| fail(error.to_string()))?;
+        Ok::<_, ExecutableError>((status, bytes))
+    })
+    .await;
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+    let (status, bytes) = result.map_err(|_| fail("the --version probe timed out".into()))??;
+    if !status.success() || bytes.len() > 1024 {
+        return Err(fail(
+            "--version failed; check the executable and its shared libraries".into(),
+        ));
+    }
+    let version = &spec()?.version;
+    let reported = String::from_utf8_lossy(&bytes);
+    if reported.split_whitespace().last() != Some(version.as_str()) {
+        return Err(fail(format!(
+            "expected chrome-headless-shell {version}, got {:?}",
+            reported.trim()
+        )));
+    }
+    Ok(path)
 }
 
 fn failure(detail: &str) -> Error {
@@ -421,6 +516,75 @@ fn extract(zip_path: &Path, output: &Path, platform: &str) -> Result<(), Error> 
 mod tests {
     use super::*;
     use std::io::Write;
+    fn installed_fixture(root: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root
+            .join("tools/chrome-headless-shell")
+            .join(chrome_platform(std::env::consts::OS, std::env::consts::ARCH).unwrap())
+            .join(&spec().unwrap().version)
+            .join("chrome-headless-shell");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "fixture browser").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    }
+    fn version_fixture(path: &Path, version: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(
+            path,
+            format!("#!/bin/sh\nprintf '%s\\n' 'Google Chrome for Testing {version}'\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    #[tokio::test]
+    async fn configured_browser_precedes_the_development_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "conn-preview-configured-{}",
+            conn_support::uuid_v4()
+        ));
+        installed_fixture(&root);
+        let browser = root.join("shared browser");
+        version_fixture(&browser, &spec().unwrap().version);
+        let installer = Installer::with_browser_path(root.clone(), Some(browser.clone()));
+        assert_eq!(installer.executable().await.unwrap(), browser);
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+    #[tokio::test]
+    async fn configured_browser_errors_are_typed_and_never_use_a_cached_or_downloaded_browser() {
+        let root = std::env::temp_dir().join(format!(
+            "conn-preview-config-error-{}",
+            conn_support::uuid_v4()
+        ));
+        let cached = installed_fixture(&root);
+        let wrong = root.join("wrong-version");
+        version_fixture(&wrong, "1.2.3.4");
+        for browser in [root.join("missing"), wrong] {
+            let installer = Installer::with_browser_path(root.clone(), Some(browser.clone()));
+            let error = installer.executable().await.unwrap_err();
+            assert!(
+                matches!(&error, ExecutableError::ConfiguredBrowser { path, .. } if path == &browser)
+            );
+            assert!(error.to_string().contains("No runtime download"));
+            assert!(installer.pending.lock().await.is_none());
+        }
+        tokio::fs::remove_dir_all(cached.parent().unwrap())
+            .await
+            .unwrap();
+        let installer = Installer::with_browser_path(root.clone(), Some(root.join("missing")));
+        assert!(matches!(
+            installer.executable().await,
+            Err(ExecutableError::ConfiguredBrowser { .. })
+        ));
+        assert!(
+            !root
+                .join("tools/chrome-headless-shell")
+                .join(chrome_platform(std::env::consts::OS, std::env::consts::ARCH).unwrap())
+                .join(&spec().unwrap().version)
+                .exists()
+        );
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
     #[test]
     fn archive_extraction_rejects_traversal_and_requires_the_pinned_executable() {
         let root =
@@ -473,7 +637,7 @@ mod tests {
         let (_tx, rx) = watch::channel(Some(Err(Error("previous failure".into()))));
         *installer.pending.lock().await = Some(rx);
         assert_ne!(
-            installer.executable().await.unwrap_err().0,
+            installer.executable().await.unwrap_err().to_string(),
             "previous failure"
         );
         let _ = tokio::fs::remove_dir_all(root).await;

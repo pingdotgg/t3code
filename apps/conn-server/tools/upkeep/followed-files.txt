@@ -108,6 +108,7 @@ packages/shared/src/keybindings.ts
 packages/contracts/src/keybindings.ts
 
 [crates/conn-server/src/text_generation]
+apps/server/src/textGeneration/TextGenerationPresets.ts
 apps/server/src/textGeneration/TextGenerators.ts
 apps/server/src/textGeneration/textGeneratorDrivers.ts
 apps/server/src/textGeneration/ThreadTitleLinks.ts
@@ -125,6 +126,9 @@ packages/shared/src/shell.ts
 apps/server/src/sourceControl/SourceControlDiscovery.ts
 
 [crates/conn-vcs]
+packages/shared/src/git.ts
+packages/shared/src/path.ts
+packages/shared/src/serverSettings.ts
 apps/server/src/vcs
 apps/server/src/git
 apps/server/src/review
@@ -194,3 +198,10 @@ packages/shared/src/previewSessionControl.ts
 packages/shared/src/previewViewport.ts
 packages/shared/src/preview.ts
 packages/shared/src/credentialFill.ts
+[crates/conn-features/src/test_logins]
+apps/server/src/credentials/TestLoginStore.ts
+packages/contracts/src/credentials.ts
+
+[crates/conn-mcp/src/tools/test_logins.rs]
+apps/server/src/credentials/credentialOrigin.ts
+apps/server/src/mcp/toolkits/credentials
