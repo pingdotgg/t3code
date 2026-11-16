@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { installPasteSnapshot } from "./pasteSnapshot";
@@ -63,4 +63,46 @@ it("leaves a paste into a native text field to the browser", async () => {
 
   await expect.element(page.getByTestId("field")).toHaveValue("Check this. ");
   expect(getData).not.toHaveBeenCalled();
+});
+
+async function copyImageToClipboard() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 8;
+  canvas.height = 8;
+  const dataUrl = canvas.toDataURL("image/png");
+  await commands.writeClipboardImage(dataUrl.slice(dataUrl.indexOf(",") + 1));
+}
+
+it("later paste handlers get the image after the clipboard changes", async () => {
+  using _snapshot = { [Symbol.dispose]: installPasteSnapshot(window) };
+  let filesReadByEditor: string[] | undefined;
+  await using _screen = await render(
+    <div
+      contentEditable
+      suppressContentEditableWarning
+      data-testid="editor"
+      onPaste={(event) => {
+        filesReadByEditor = Array.from(event.clipboardData.items, (item) => {
+          const file = item.getAsFile();
+          return file === null ? "none" : file.type;
+        });
+        event.preventDefault();
+      }}
+    />,
+    // A bare editable target; the test drives native clipboard dispatch, not navigation.
+    { router: false },
+  );
+  await userEvent.click(page.getByTestId("editor"));
+  await copyImageToClipboard();
+
+  // A dictation tool puts its next item on the clipboard while the paste is dispatched.
+  const replaceDuringPaste = () => copyToClipboard("next item");
+  window.addEventListener("paste", replaceDuringPaste, true);
+  using _listener = {
+    [Symbol.dispose]: () => window.removeEventListener("paste", replaceDuringPaste, true),
+  };
+
+  await userEvent.keyboard("{ControlOrMeta>}v{/ControlOrMeta}");
+
+  await vi.waitFor(() => expect(filesReadByEditor).toEqual(["image/png"]));
 });

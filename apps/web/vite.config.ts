@@ -149,6 +149,15 @@ const browserTestProject = {
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
+        // The test iframe may not write images to the clipboard; the top page may.
+        writeClipboardImage: async ({ page, context }, pngBase64: string) => {
+          await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+          await page.evaluate(async (data) => {
+            const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+            const png = new Blob([bytes], { type: "image/png" });
+            await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+          }, pngBase64);
+        },
       },
     },
   },
