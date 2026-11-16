@@ -167,8 +167,11 @@ export const makeGitHubCheckFailureReader = Effect.gen(function* () {
       failedSteps: failedSteps.slice(0, 20).map((name) => name.slice(0, 300)),
       annotations: annotations
         .filter(
-          // Exit 1 repeats the log's own error line; 137 or 143 may be the only sign of a kill.
-          (annotation) => annotation.message !== "Process completed with exit code 1.",
+          // Only drop exit 1 when the delivered excerpt already contains it.
+          (annotation) =>
+            annotation.message !== "Process completed with exit code 1." ||
+            log._tag !== "excerpt" ||
+            !log.text.includes(annotation.message),
         )
         .slice(0, 20)
         .map((annotation) => ({
