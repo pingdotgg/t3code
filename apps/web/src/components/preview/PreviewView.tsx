@@ -1092,6 +1092,7 @@ export function PreviewView({
                     ? previewPdfAssetUrl(url, environmentHttpBaseUrl)
                     : null
                 }
+                pageUrl={url}
                 visible={visible}
                 onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
                 onControl={(control) =>
@@ -1133,6 +1134,7 @@ export function PreviewView({
           <BrowserDialogCard
             key={`${desktopOverlay.dialog.message}\n${desktopOverlay.dialog.defaultValue}`}
             dialog={desktopOverlay.dialog}
+            url={url}
             canAnswer
             onAnswer={(accept, promptText) =>
               void previewBridge

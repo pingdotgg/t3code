@@ -320,6 +320,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               threadId={threadRef.threadId}
               tabId={tabId}
               pdfUrl={pdfUrl}
+              pageUrl={snapshot.navStatus._tag === "Idle" ? "" : snapshot.navStatus.url}
               visible
               followSize={false}
               controlPosition="bottom"
