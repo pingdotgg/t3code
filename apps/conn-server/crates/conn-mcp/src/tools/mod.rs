@@ -61,6 +61,8 @@ pub(crate) fn fail(code: &'static str, message: impl Into<String>) -> ToolError 
 pub(crate) const HANDLED: &[&str] = &[
     "tool_search",
     "t3_workflow_stop",
+    "mcp_call",
+    "mcp_connect",
     "create_threads",
     "t3_attachment_prepare_upload",
     "t3_attachment_discard",
@@ -158,6 +160,7 @@ pub(crate) async fn call(
         "t3_queue" => manage::queue(&cx, &args).await,
         "t3_thread_configure" => manage::configure(&cx, &args).await,
         "t3_thread_organize" => manage::organize(&cx, &args).await,
+        "mcp_call" | "mcp_connect" => panels::invoke(&cx, name, &args).await,
         "panel_open" => panels::open(&cx, &args).await,
         "request_secret" => secrets::request(&cx, &args).await,
         "send_to_user" => message::send_to_user(&cx, &args).await,

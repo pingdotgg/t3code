@@ -39,6 +39,8 @@ t3_workflow_stop
 tool_search
 request_secret
 panel_open
+mcp_call
+mcp_connect
 
 create_threads
 t3_attachment_prepare_upload

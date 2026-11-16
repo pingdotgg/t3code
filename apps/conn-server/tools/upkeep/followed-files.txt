@@ -12,6 +12,7 @@
 
 [crates/conn-provider-claude]
 apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts
 apps/server/src/orchestration-v2/Adapters/ClaudeTaskOutputTail.ts
 apps/server/src/orchestration-v2/Adapters/claudeWorkflowProgress.ts
 apps/server/src/provider/ClaudeProvider.ts
@@ -21,6 +22,7 @@ apps/server/src/provider/Drivers/ClaudeHome.ts
 
 [crates/conn-provider-codex]
 apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
+apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts
 apps/server/src/provider/CodexProvider.ts
 apps/server/src/provider/codexLaunchArgs.ts
 apps/server/src/provider/CodexInstallation.ts
@@ -54,6 +56,8 @@ packages/provider-core/src/server/orchestrationInstructions.ts
 packages/shared/src/cliArgs.ts
 
 [crates/conn-engine]
+apps/server/src/mcpApps
+packages/contracts/src/mcpApps.ts
 apps/server/src/orchestration-v2
 :(exclude)apps/server/src/orchestration-v2/Adapters
 :(exclude)apps/server/src/orchestration-v2/testkit
@@ -63,6 +67,8 @@ packages/contracts/src/checkpointDiff.ts
 packages/client-runtime/src/state/threadCheckpoints.ts
 
 [crates/conn-mcp]
+apps/server/src/panels/AgentPanelBroker.ts
+packages/contracts/src/agentPanels.ts
 apps/server/src/mcp
 apps/server/src/mcp/McpToolExposure.ts
 apps/server/src/mcp/toolkits/toolSearch/handlers.ts
@@ -126,6 +132,8 @@ packages/source-control-core
 packages/source-control-github
 
 [crates/conn-files]
+apps/server/src/mcpApps/McpAppSnapshot.ts
+packages/shared/src/mcpApp.ts
 apps/server/src/workspace
 apps/server/src/assets
 apps/server/src/attachmentStore.ts

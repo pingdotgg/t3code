@@ -12,11 +12,12 @@
 //! the engine does, condensed into [`ProviderError`]. Added: [`Session::apply_runtime_policy`], so
 //! a permission mode change reaches a running process (Claude `setPermissionMode`); TS passes
 //! the policy per turn only; [`ProviderEvent::ContinuationRequested`], where TS uses a
-//! separate service. Left out until needed: compact, thread unload, subagent stop, MCP apps,
+//! separate service. Left out until needed: compact, thread unload, subagent stop,
 //! feedback upload, prompt suggestions, context-window hooks.
 //!
 //! To add a provider: make a crate that depends on this one and implements both traits.
 
+pub mod mcp_apps;
 mod set;
 
 use std::{future::Future, pin::Pin};
@@ -238,6 +239,30 @@ pub trait Session: Send + Sync {
 
     /// Ends the native process. The event channel closes after it.
     fn close(&self) -> BoxFuture<'_, ()>;
+
+    /// Requests use the existing provider process; they never open a session or a turn.
+    fn mcp_app_request(
+        &self,
+        _input: mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<serde_json::Value>> {
+        unsupported("mcp_app_request")
+    }
+
+    /// Reads a resource just matched against native tool metadata, during a capture.
+    fn read_mcp_app_document(
+        &self,
+        input: mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<serde_json::Value>> {
+        self.mcp_app_request(input)
+    }
+
+    /// Resolves a completed native MCP tool to its UI resource, if one was advertised.
+    fn mcp_app_source(
+        &self,
+        _item: serde_json::Value,
+    ) -> BoxFuture<'_, ProviderResult<Option<mcp_apps::Source>>> {
+        Box::pin(async { Ok(None) })
+    }
 
     /// Sets the MCP servers every later turn of this session can use, replacing the previous
     /// list. A running process picks them up when the provider supports a live change.
@@ -729,6 +754,11 @@ pub enum ProviderEvent {
     MessageUpdated { message: ConversationMessage },
     #[serde(rename = "turn_item.updated")]
     TurnItemUpdated { turn_item: TurnItem },
+    #[serde(rename = "mcp_app.capture")]
+    McpAppCapture {
+        turn_item: TurnItem,
+        source: mcp_apps::Source,
+    },
     /// Not persisted; goes only to clients that show the row.
     #[serde(rename = "command_output.delta")]
     CommandOutputDelta {

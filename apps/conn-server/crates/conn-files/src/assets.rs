@@ -109,6 +109,8 @@ pub enum Claims {
         file_name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mime_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        render_intent: Option<lit::McpApp>,
         expires_at: u64,
     },
     ProjectFavicon {
@@ -158,6 +160,7 @@ pub enum Served {
         download: bool,
         file_name: Option<String>,
         mime_type: Option<String>,
+        render_intent: Option<lit::McpApp>,
         /// Device and inode the open file must still have.
         identity: Option<(u64, u64)>,
     },
@@ -381,6 +384,9 @@ impl Files {
                         download: generic && video_mime.is_none() && inline_mime.is_none(),
                         file_name: attachment.file_name.clone(),
                         mime_type,
+                        render_intent: (inline_mime == Some("text/html"))
+                            .then_some(attachment.render_intent)
+                            .flatten(),
                         expires_at,
                     },
                     file_name: attachment
@@ -698,6 +704,7 @@ impl Files {
             download: false,
             file_name: None,
             mime_type: None,
+            render_intent: None,
             identity: None,
         };
         match claims {
@@ -706,6 +713,7 @@ impl Files {
                 download,
                 file_name,
                 mime_type,
+                render_intent,
                 ..
             } => {
                 let stored = self.attachments.resolve(&attachment_id)?;
@@ -714,6 +722,7 @@ impl Files {
                     download,
                     file_name,
                     mime_type,
+                    render_intent,
                     identity: None,
                 })
             }
@@ -760,6 +769,7 @@ impl Files {
                     path: real,
                     download,
                     mime_type: Some(mime_type.to_owned()),
+                    render_intent: None,
                     identity: Some((device.parse().ok()?, inode.parse().ok()?)),
                 })
             }
@@ -806,6 +816,7 @@ fn favicon_asset(path: PathBuf) -> Option<Served> {
             download: false,
             file_name: None,
             mime_type: None,
+            render_intent: None,
             identity: None,
         });
     }

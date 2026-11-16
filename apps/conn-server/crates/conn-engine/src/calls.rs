@@ -11,6 +11,10 @@ use crate::projects::ProjectFailure;
 use crate::{EngineError, Subscription};
 
 pub(crate) const METHODS: &[&str] = &[
+    "mcpApps.callTool",
+    "mcpApps.toolInfo",
+    "mcpApps.readResource",
+    "mcpApps.updateModelContext",
     "orchestration.getArchivedShellSnapshot",
     "orchestration.getOlderSettledThreads",
     "orchestration.getThreadTitles",
@@ -101,6 +105,10 @@ const SHELL_ERROR: &str = "OrchestrationV2GetShellSnapshotError";
 
 pub(crate) async fn call(inner: Arc<Inner>, method: String, input: Value) -> CallResult {
     match method.as_str() {
+        "mcpApps.callTool"
+        | "mcpApps.toolInfo"
+        | "mcpApps.readResource"
+        | "mcpApps.updateModelContext" => inner.mcp_app_request(&method, input).await,
         "orchestration.getArchivedShellSnapshot" => {
             read(&inner, SHELL_ERROR, |s| s.archived_shell_snapshot()).await
         }

@@ -151,6 +151,7 @@ struct Live {
     /// The mode the CLI reported in its first `init` (T3's `openedPermissionMode`).
     opened_permission_mode: String,
     received_init: bool,
+    mcp_apps_capable: bool,
     model: String,
     effort: Option<String>,
     selection_settings: Map<String, Value>,
@@ -319,6 +320,24 @@ impl Inner {
             result = work => result,
             () = self.until_abandoned(run_id) => Err(abandoned_error()),
         }
+    }
+
+    fn mcp_app_query(&self, thread: &conn_contract::ProviderThread) -> ProviderResult<QueryHandle> {
+        let native = native_thread_id(thread);
+        let state = self.lock();
+        let live = state
+            .live
+            .as_ref()
+            .filter(|live| {
+                native.as_deref() == Some(live.native_thread_id.as_str()) && live.query.is_open()
+            })
+            .ok_or(ProviderError::SessionStopped)?;
+        if !live.mcp_apps_capable {
+            return Err(ProviderError::Protocol {
+                detail: "This Claude process does not support MCP Apps.".into(),
+            });
+        }
+        Ok(live.query.clone())
     }
 
     fn live_query(&self) -> ProviderResult<QueryHandle> {
@@ -530,6 +549,17 @@ fn note_init(state: &mut State, generation: u64, init: &Value) {
         .filter(|l| l.generation == generation && !l.received_init)
     {
         live.received_init = true;
+        live.mcp_apps_capable = [
+            "mcp_tool_ui_meta_v1",
+            "mcp_read_resource_v1",
+            "mcp_call_result_not_for_model_v1",
+        ]
+        .iter()
+        .all(|required| {
+            init.get("capabilities")
+                .and_then(Value::as_array)
+                .is_some_and(|capabilities| capabilities.iter().any(|value| value == required))
+        });
         if let Some(mode) = init["permissionMode"].as_str() {
             live.opened_permission_mode = mode.to_string();
         }
@@ -1383,6 +1413,7 @@ impl ClaudeSession {
                 permission_mode: input.policy.permission_mode.clone(),
                 opened_permission_mode: input.policy.permission_mode.clone(),
                 received_init: false,
+                mcp_apps_capable: false,
                 policy: input.policy.clone(),
                 model: input.model.clone(),
                 effort: input.effort.clone(),
@@ -1535,6 +1566,185 @@ fn new_thread(
 impl Session for ClaudeSession {
     fn provider_session_id(&self) -> &ProviderSessionId {
         &self.id
+    }
+
+    fn mcp_app_request(
+        &self,
+        input: conn_provider::mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            use conn_provider::mcp_apps::{self, Operation};
+            let query = self.inner.mcp_app_query(&input.provider_thread)?;
+            let statuses = query
+                .call_without_timeout("mcpServerStatus", json!([]))
+                .await
+                .map_err(|_| ProviderError::Protocol {
+                    detail: "Failed to list Claude MCP tools.".into(),
+                })?;
+            require_unambiguous_server(&statuses, &input.server)?;
+            let tools = statuses
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|status| {
+                    status.get("name").and_then(Value::as_str) == Some(input.server.as_str())
+                })
+                .and_then(|status| status.get("tools"))
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            match input.operation {
+                Operation::ListTools => {
+                    let rules = query
+                        .call_without_timeout("listPermissionRules", json!([]))
+                        .await
+                        .ok();
+                    Ok(Value::Array(
+                        tools
+                            .iter()
+                            .map(|tool| mcp_apps::claude_tool(tool, rules.as_ref()))
+                            .collect(),
+                    ))
+                }
+                Operation::CallTool { tool, arguments } => {
+                    let name = mcp_apps::claude_name(&input.server, &tool);
+                    let same_name = tools
+                        .iter()
+                        .filter(|t| {
+                            t.get("name")
+                                .and_then(Value::as_str)
+                                .is_some_and(|t| mcp_apps::claude_name(&input.server, t) == name)
+                        })
+                        .count();
+                    if same_name > 1 {
+                        return Err(ProviderError::Protocol {
+                            detail:
+                                "Another tool on this MCP server has the same Claude tool name."
+                                    .into(),
+                        });
+                    }
+                    let rules = query.call_without_timeout("listPermissionRules",json!([])).await.map_err(|_| ProviderError::Protocol {detail:format!("Claude's permission rules could not be read, so {name} was not called.")})?;
+                    if mcp_apps::rules_cover(&rules, &["deny"]) {
+                        return Err(ProviderError::Protocol {
+                            detail: format!(
+                                "A Claude deny rule may cover {name}, so it was not called."
+                            ),
+                        });
+                    }
+                    let result = query
+                        .call_without_timeout(
+                            "callMcpTool",
+                            json!([{"tool":name,"arguments":arguments}]),
+                        )
+                        .await
+                        .map_err(|_| ProviderError::Protocol {
+                            detail: "Claude MCP tool call failed.".into(),
+                        })?;
+                    Ok(mcp_apps::call_result(&result))
+                }
+                Operation::ReadResource { uri } => query
+                    .call_without_timeout("readMcpResource", json!([input.server, uri]))
+                    .await
+                    .map_err(|_| ProviderError::Protocol {
+                        detail: "Claude MCP resource read failed.".into(),
+                    }),
+            }
+        })
+    }
+
+    fn read_mcp_app_document(
+        &self,
+        input: conn_provider::mcp_apps::Request,
+    ) -> BoxFuture<'_, ProviderResult<Value>> {
+        Box::pin(async move {
+            let conn_provider::mcp_apps::Operation::ReadResource { uri } = input.operation else {
+                return Err(ProviderError::Unsupported {
+                    operation: "read_mcp_app_document",
+                });
+            };
+            self.inner
+                .mcp_app_query(&input.provider_thread)?
+                .call(
+                    "readMcpResource",
+                    json!([input.server, uri]),
+                    CONTROL_TIMEOUT,
+                )
+                .await
+        })
+    }
+
+    fn mcp_app_source(
+        &self,
+        item: Value,
+    ) -> BoxFuture<'_, ProviderResult<Option<conn_provider::mcp_apps::Source>>> {
+        Box::pin(async move {
+            use conn_provider::mcp_apps;
+            let Some(name) = item
+                .get("toolName")
+                .and_then(Value::as_str)
+                .filter(|n| n.starts_with("mcp__") && !n.starts_with("mcp__t3-code__"))
+            else {
+                return Ok(None);
+            };
+            if item.get("runId").is_none_or(Value::is_null)
+                || item.get("status").and_then(Value::as_str) != Some("completed")
+            {
+                return Ok(None);
+            }
+            let query = {
+                let state = self.inner.lock();
+                let Some(live) = state
+                    .live
+                    .as_ref()
+                    .filter(|live| live.query.is_open() && live.mcp_apps_capable)
+                else {
+                    return Ok(None);
+                };
+                live.query.clone()
+            };
+            let statuses = query
+                .call("mcpServerStatus", json!([]), CONTROL_TIMEOUT)
+                .await?;
+            let mut found = None;
+            let mut matched = false;
+            for status in statuses.as_array().into_iter().flatten() {
+                if status.get("status").and_then(Value::as_str) != Some("connected") {
+                    continue;
+                }
+                let Some(server) = status.get("name").and_then(Value::as_str) else {
+                    continue;
+                };
+                for tool in status
+                    .get("tools")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    let Some(tool_name) = tool.get("name").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if mcp_apps::claude_name(server, tool_name) != name {
+                        continue;
+                    }
+                    if matched {
+                        return Ok(None);
+                    }
+                    matched = true;
+                    require_unambiguous_server(&statuses, server)?;
+                    let Some(uri) =
+                        mcp_apps::resource_uri(tool.get("_meta").unwrap_or(&Value::Null))
+                    else {
+                        continue;
+                    };
+                    found = Some(mcp_apps::Source {
+                        server: server.into(),
+                        tool: tool_name.into(),
+                        resource_uri: uri.into(),
+                    });
+                }
+            }
+            Ok(found)
+        })
     }
 
     fn ensure_thread(
@@ -2090,6 +2300,27 @@ impl Session for ClaudeSession {
             state.tails.clear();
         })
     }
+}
+
+fn require_unambiguous_server(statuses: &Value, server: &str) -> ProviderResult<()> {
+    let prefix = conn_provider::mcp_apps::claude_prefix(server);
+    if statuses
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.get("name").and_then(Value::as_str))
+        .any(|name| {
+            name != server && {
+                let other = conn_provider::mcp_apps::claude_prefix(name);
+                prefix.starts_with(&other) || other.starts_with(&prefix)
+            }
+        })
+    {
+        return Err(ProviderError::Protocol {
+            detail: "Another MCP server's tool names overlap this app's server.".into(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

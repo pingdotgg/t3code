@@ -64,6 +64,7 @@ control request (`source: "host"`), sent through the Query's `request`.
 
 ## Bounds and failure rules
 
+- At most 1,024 host replies and 32 native MCP App calls per query may wait at once. App callbacks use the SDK's own lifetime rather than a shorter host deadline; cancelling a client request removes its Rust reply slot.
 - A line may hold at most 16 MiB, both ways. The server drops a longer one; the host drops a
   longer command, and in place of a longer frame it writes a `log` line (or an error `reply`).
 - At most 64 queued inputs per session, 256 open sessions.

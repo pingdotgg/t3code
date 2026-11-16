@@ -346,3 +346,8 @@ pinning. No browser capability is advertised and no hidden browser is started.
 one-use project scope, persistence and file retries. `parity.mjs` checks outside callers get
 the same hidden-tool result on both servers. The `url` dependency is already linked through
 source control; it validates the tool's http(s) URL input without a second parser.
+
+`mcp_call` and `mcp_connect` use the same `conn_features::panels::PanelBroker` as
+`panel_open`, through `panels.requests` / `panels.respond`. They retain T3's 90-second action
+timeout and accept the first successful desktop response. Input decoding trims names and
+checks the contract's UTF-16 limits before a request reaches the desktop.
