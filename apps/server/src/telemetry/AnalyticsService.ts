@@ -119,12 +119,13 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 }
 
 /**
- * Whether `T3CODE_TELEMETRY_ENABLED` in `env` turns telemetry off. A value that does not parse counts
- * as off. Reads the live environment, which desktop shell discovery updates after startup.
+ * Whether `T3CODE_TELEMETRY_ENABLED` in `env` turns telemetry off. Blank counts as unset, like the
+ * server config reads it; another value that does not parse counts as off. Reads the live
+ * environment, which desktop shell discovery updates after startup.
  */
 export const environmentOptsOut = (env: NodeJS.ProcessEnv): Effect.Effect<boolean> => {
   const value = env.T3CODE_TELEMETRY_ENABLED;
-  if (value === undefined) return Effect.succeed(false);
+  if (value === undefined || value.trim() === "") return Effect.succeed(false);
   return Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(
     Effect.provideService(
       ConfigProvider.ConfigProvider,

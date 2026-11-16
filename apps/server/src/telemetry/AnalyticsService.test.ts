@@ -358,6 +358,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     }),
   );
 
+  it.effect("reads a blank variable as unset and one that does not parse as an opt-out", () =>
+    Effect.gen(function* () {
+      const optsOut = (value: string) =>
+        AnalyticsService.environmentOptsOut({ T3CODE_TELEMETRY_ENABLED: value });
+      assert.isFalse(yield* optsOut(""));
+      assert.isFalse(yield* optsOut("true"));
+      assert.isTrue(yield* optsOut("false"));
+      assert.isTrue(yield* optsOut("maybe"));
+    }),
+  );
+
   it.effect("the variable overrides the setting", () =>
     Effect.gen(function* () {
       const batches = yield* sendFor(1, respondWithStatus(204), recordTwentyEvents, {
