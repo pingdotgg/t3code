@@ -5,6 +5,7 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ServerProvider,
   RunId,
@@ -945,3 +946,158 @@ it.effect.each(["command", "monitor", "group", "delegated_task"] as const)(
     );
   },
 );
+
+const childDriver = ProviderDriverKind.make("claude");
+
+function delegatedChild(
+  id: string,
+  status: OrchestrationV2TurnItem["status"],
+  result: string | null,
+  ordinal: number,
+): Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }> {
+  return {
+    id: TurnItemId.make(id),
+    threadId,
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal,
+    status,
+    title: "Delegated child",
+    startedAt: at,
+    completedAt: status === "pending" || status === "running" || status === "waiting" ? null : at,
+    updatedAt: at,
+    type: "subagent",
+    subagentId: NodeId.make(id),
+    origin: "app_owned",
+    driver: childDriver,
+    providerInstanceId: instanceId,
+    childThreadId: null,
+    prompt: "Check the export.",
+    result,
+  };
+}
+
+const recordChild = (
+  id: string,
+  status: OrchestrationV2TurnItem["status"],
+  result: string | null,
+  ordinal: number,
+) =>
+  persist({
+    id: EventId.make(`child:${id}:${status}:${ordinal}`),
+    type: "turn-item.updated",
+    threadId,
+    runId,
+    occurredAt: at,
+    payload: delegatedChild(id, status, result, ordinal),
+  });
+
+const packetsWith = (calls: ReadonlyArray<Parameters<Generate>[0]>, token: string) =>
+  calls.filter((call) => JSON.stringify(call.packet).includes(token));
+
+it.effect("scores a delegated child once that child settles", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("running-child", "running", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 0);
+    yield* recordChild("running-child", "completed", "child-result-token", 2);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 1);
+    const report = yield* service.list(scope);
+    assert.equal(report.records.length, 1);
+    assert.equal(report.records[0]?.status, "scored");
+    assert.equal(report.guidance[0]?.sampleCount, 1);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-result-token").length, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("waits to rescore until every delegated child has settled", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("child-a", "running", null, 2);
+    yield* recordChild("child-b", "running", null, 3);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    yield* recordChild("child-a", "completed", "child-a-token", 2);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-a-token").length, 0);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+    yield* recordChild("child-b", "completed", "child-b-token", 3);
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-a-token").length, 1);
+    assert.equal(packetsWith(calls, "child-b-token").length, 1);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("does not rescore a settled child when the exchange itself changed", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    const seeded = yield* seed();
+    yield* recordChild("edited-child", "running", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    yield* recordChild("edited-child", "completed", "child-edit-token", 2);
+    yield* persist({
+      id: EventId.make("edited-final-answer"),
+      type: "message.updated",
+      threadId,
+      runId,
+      occurredAt: at,
+      payload: { ...seeded.messages[1]!, text: "The export was removed after review." },
+    });
+    yield* service.evaluateRun(input);
+    assert.equal(packetsWith(calls, "child-edit-token").length, 0);
+    assert.deepEqual((yield* service.list(scope)).records, []);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
+
+it.effect("scores a turn whose delegated child already ended cancelled", () => {
+  const calls: Array<Parameters<Generate>[0]> = [];
+  return Effect.gen(function* () {
+    yield* seed();
+    yield* recordChild("cancelled-child", "cancelled", null, 2);
+    const service = yield* ModelEvaluations.ModelEvaluations;
+    yield* service.evaluateRun(input);
+    assert.equal(calls.length, 1);
+    assert.equal((yield* service.list(scope)).guidance[0]?.sampleCount, 1);
+  }).pipe(
+    Effect.provide(
+      makeLayer((request) => {
+        calls.push(request);
+        return Effect.succeed(verdict(request.packet));
+      }),
+    ),
+  );
+});
