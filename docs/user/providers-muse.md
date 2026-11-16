@@ -52,8 +52,12 @@ no equivalent of **Auto-accept edits** or **Auto**, so they are not offered.
 Muse can use T3 Code's tools. If Muse cannot reach them, the turn continues
 without them. Switching providers can pass conversation context as a handoff.
 
-Muse skills do not appear in the composer's `$` menu. Muse still loads them
-itself. Manage them with `muse skills` on the host.
+Muse skills appear in the composer's `$` menu. Manage them with `muse skills`
+on the host. Skill changes may take up to five minutes to appear as you type in
+the composer. See [Commands and skills](./composer.md#commands-and-skills) for
+restarting an active agent after changes. When a message mentions several skills,
+T3 Code invokes the first one available in the Muse session with the full message.
+Follow-up steering messages stay as text.
 
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.

@@ -25,6 +25,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -49,8 +50,10 @@ import {
   MuseCompactResult,
   MuseContextUsage,
   MuseDelta,
+  isMuseItem,
   MuseItemEvent,
   MuseSessionResult,
+  MuseSkillList,
   MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
@@ -1419,6 +1422,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const itemEvent = ["item/started", "item/updated", "item/completed"].includes(method)
           ? (yield* decode(MuseItemEvent, params)).item
           : undefined;
+        if (itemEvent && !isMuseItem(itemEvent)) return;
         if (itemEvent) {
           const owner = observedChildren.get(itemEvent.itemId);
           if (owner && owner !== active && itemEvent.turnId === owner.nativeId) {
@@ -2028,8 +2032,27 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           ),
         );
       });
+      const resolveSkillSelector = Effect.fnUntraced(function* (text: string) {
+        const mentions = [...text.matchAll(SKILL_MENTION_PATTERN)];
+        if (!mentions.length) return undefined;
+        // An optional catalog timeout must not close the host needed for the text fallback.
+        return yield* Effect.tryPromise({
+          try: () => host.connection.request("skill/list", { sessionId: nativeSessionId }),
+          catch: (cause) => protocolError("Muse skill/list failed", cause),
+        }).pipe(
+          Effect.flatMap((value) => decode(MuseSkillList, value)),
+          Effect.map(({ skills }) => {
+            const selectors = new Set(skills.map((skill) => skill.selector));
+            return mentions.find((match) => match[2] !== undefined && selectors.has(match[2]))?.[2];
+          }),
+          Effect.timeout(5_000),
+          Effect.orElseSucceed(() => undefined),
+        );
+      });
       const prompt = Effect.fnUntraced(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
+        runtimeInstructions?: string,
+        selector?: string,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = yield* providerMessageTextWithAttachmentPaths({
@@ -2038,7 +2061,19 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           resolveAttachmentPath: providerHost.resolveAttachmentPath,
           resolveExtractedTextPath: providerHost.resolveExtractedTextPath,
         });
-        if (text) parts.push({ type: "text", text });
+        if (!text && !message.attachments.some(isProviderNativeImageAttachment))
+          return yield* protocolError("Muse needs text or an image");
+        if (selector) {
+          // MSP permits one skill plus images, but rejects skill/text mixtures.
+          parts.push({
+            type: "skill",
+            selector,
+            arguments: [runtimeInstructions, text].filter(Boolean).join("\n\n"),
+          });
+        } else {
+          if (runtimeInstructions) parts.push({ type: "text", text: runtimeInstructions });
+          if (text) parts.push({ type: "text", text });
+        }
         for (const attachment of message.attachments)
           if (isProviderNativeImageAttachment(attachment)) {
             const path = providerHost.resolveAttachmentPath(attachment);
@@ -2052,7 +2087,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               mediaType: attachment.mimeType,
             });
           }
-        if (!parts.length) return yield* protocolError("Muse needs text or an image");
         return parts;
       });
       const validateThread = (candidate: OrchestrationV2ProviderThread) =>
@@ -2093,7 +2127,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           turnInput.message.creationSource === "provider";
         const adopted = continuation ? wake : undefined;
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
-        const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
         const targetModel = continuation
           ? undefined
           : yield* resolveModel(turnInput.modelSelection);
@@ -2103,6 +2136,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           });
           session = { ...session, model: targetModel };
         }
+        const parts =
+          compact || continuation
+            ? []
+            : yield* prompt(
+                turnInput.message,
+                buildRuntimeInstructions({
+                  harness: "Muse Code",
+                  model: session.model ?? undefined,
+                  reasoningEffort: effort,
+                }),
+                yield* resolveSkillSelector(turnInput.message.text),
+              );
         const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
         const startedAt = yield* DateTime.now;
         const providerTurn: OrchestrationV2ProviderTurn = {
@@ -2182,17 +2227,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const result = yield* request(
               "turn/start",
               {
-                input: [
-                  {
-                    type: "text",
-                    text: buildRuntimeInstructions({
-                      harness: "Muse Code",
-                      model: session.model ?? undefined,
-                      reasoningEffort: effort,
-                    }),
-                  },
-                  ...parts,
-                ],
+                input: parts,
                 displayText: turnInput.message.text || "Image attachment",
                 // Resumed sessions retain old roots; pin edits to the current checkout.
                 workspaceRoots: [workspaceRoot],
@@ -2232,7 +2267,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         );
         if (result.session.sessionId !== nativeSessionId)
           return yield* protocolError("Muse snapshot belongs to a different session");
-        const items = result.history?.items ?? result.history?.snapshot?.state.items ?? [];
+        const items = (result.history?.items ?? result.history?.snapshot?.state.items ?? []).filter(
+          isMuseItem,
+        );
         const now = yield* DateTime.now;
         return {
           providerThread: current,
