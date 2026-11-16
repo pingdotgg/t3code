@@ -1338,6 +1338,76 @@ describe("handoff delivery", () => {
     }),
   );
 
+  const listCall = `t3_conversation_summary_list({projectId:"project:handoff",threadId:"thread:handoff"})`;
+  it.effect.each([
+    {
+      budget: 6_000,
+      shown: ["item:many-19", "item:many-18", "item:many-17"],
+      line: `17 more summaries hold omitted items; list them with ${listCall}.`,
+    },
+    {
+      budget: 1_400,
+      shown: [],
+      line: `Not shown here: 20 conversation summaries hold omitted items; list them with ${listCall}.`,
+    },
+  ])(
+    "still points at unsent summaries when their lines do not all fit: $budget",
+    ({ budget, shown, line }) =>
+      Effect.gen(function* () {
+        const tools = Array.from({ length: 20 }, (_, index) => ({
+          ...message(
+            `item:many-${index}`,
+            "assistant",
+            `Command: step ${index}\n${"o".repeat(8_000)}`,
+          ),
+          kind: "command_execution" as const,
+        }));
+        const idFor = (index: number) => `summary:${index.toString(16).padStart(64, "0")}`;
+        const source: OrchestrationV2ContextHandoff = {
+          ...handoff,
+          id: ContextHandoffId.make("handoff:many-unsent"),
+          summaryText: "Coverage.",
+          history: {
+            messages: [...tools, message("item:many-kept", "user", "kept")],
+            coverage: "Coverage.",
+            omittedItems: 0,
+          },
+        };
+        let injected = {
+          messages: [] as ReadonlyArray<OrchestrationV2HistoricalMessage>,
+          context: "",
+        };
+        const delivery = yield* deliverContextHandoffs({
+          handoffs: [source],
+          providerThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          summaries: () =>
+            Effect.succeed(
+              tools.toReversed().map((tool, index) => ({
+                id: idFor(19 - index),
+                ...summaryScope,
+                coveredItemIds: [tool.itemId],
+                text: "S".repeat(40_000),
+              })),
+            ),
+          inject: (input) => {
+            injected = input;
+            return Effect.succeed(false);
+          },
+          persist: () => Effect.void,
+        });
+        yield* delivery.delivered;
+        assert.include(injected.context, line);
+        for (const index of [19, 18, 17, 16]) {
+          const named = `${idFor(index)} holds`;
+          if (shown.includes(`item:many-${index}`)) assert.include(injected.context, named);
+          else assert.notInclude(injected.context, named);
+        }
+        assert.isAtMost(historyCost(injected.messages, injected.context), budget);
+      }),
+  );
+
   it.effect(
     "replaces the receipt when the same handoff is delivered again with a different summary",
     () =>
