@@ -560,6 +560,14 @@ it.effect.each([
     change: ({ write }: UntrackedBlobChange) => write(".gitattributes", "*.txt text eol=lf\n"),
   },
   {
+    name: "a clean filter named like an unset attribute now applies to it",
+    reuses: false,
+    change: ({ git, write }: UntrackedBlobChange) =>
+      write(".git/info/attributes", "*.txt filter=unspecified\n").pipe(
+        Effect.andThen(git(["config", "filter.unspecified.clean", "tr a-z A-Z"])),
+      ),
+  },
+  {
     name: "its conversion config changed",
     reuses: false,
     change: ({ git }: UntrackedBlobChange) => git(["config", "core.autocrlf", "true"]),

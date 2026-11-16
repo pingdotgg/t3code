@@ -132,7 +132,12 @@ export const make = (
     execute({
       operation,
       cwd,
-      args: ["config", "--null", "--get-regexp", "^core\\.(autocrlf|eol|filemode)$"],
+      args: [
+        "config",
+        "--null",
+        "--get-regexp",
+        "^(core\\.(autocrlf|eol|filemode)|filter\\.(unspecified|unset)\\..*)$",
+      ],
       allowNonZeroExit: true,
     }).pipe(Effect.map((result) => `${result.exitCode}\0${result.stdout}`));
 
@@ -407,6 +412,8 @@ export const make = (
         ],
         { concurrency: "unbounded" },
       );
+      // check-attr prints a filter driver named "unspecified" or "unset" like no filter at all.
+      if (/\0filter\./.test(config)) return;
       const sameConfig = before !== undefined && config === before.config;
       const admitted = candidates.flatMap((blob, index): UntrackedBlob[] => {
         const value = attributes[index];
