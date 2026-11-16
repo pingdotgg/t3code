@@ -507,13 +507,16 @@ describe("evaluatePullRequestWatch", () => {
         evaluatePullRequestWatch(again.next, detail({ checks: [run(job)] }), noRemarks).changes,
         [],
       );
-    } // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart.
+    }
+    // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart. A stage
+    // told while its pipeline still ran is the same run once the pipeline finishes.
     const pipeline = (finishedAt: string) => ({ ...run(2), finishedAt });
     const told = evaluatePullRequestWatch(
       again.next,
       detail({ checks: [pipeline("00:01")] }),
       noRemarks,
     );
+    assert.deepEqual(told.changes, []);
     assert.deepEqual(
       evaluatePullRequestWatch(told.next, detail({ checks: [pipeline("00:03")] }), noRemarks)
         .changes,

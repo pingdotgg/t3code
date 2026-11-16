@@ -88,13 +88,17 @@ export function evaluatePullRequestWatch(
               ? [check.name, check.url]
               : [check.name, check.url, check.finishedAt],
           );
-    const newlyFailed = failed.filter((check) => {
+    const told = (check: PullRequestCheck) => {
       const run = runOf(check);
+      if (toldRuns === undefined || run === null || toldRuns.includes(run)) return true;
+      // A GitLab stage that failed mid-pipeline gains a finish time later; it is the run told.
       return (
-        !failedChecks.includes(check.name) ||
-        (toldRuns !== undefined && run !== null && !toldRuns.includes(run))
+        check.finishedAt !== undefined && toldRuns.includes(JSON.stringify([check.name, check.url]))
       );
-    });
+    };
+    const newlyFailed = failed.filter(
+      (check) => !failedChecks.includes(check.name) || !told(check),
+    );
     if (!checksBaseline && newlyFailed.length > 0) {
       changes.push({ kind: "checks-failed", failed: newlyFailed });
     }
@@ -104,8 +108,19 @@ export function evaluatePullRequestWatch(
     }
     failedChecks = failed.map((check) => check.name);
     // Runs told stay told for the head: GitHub can show either event's failed run of one check.
+    // A run that gained its finish time stands for its unfinished key, so a later retry is news.
+    const finishedNow = new Set(
+      failed.flatMap((check) =>
+        check.finishedAt === undefined || check.url === null
+          ? []
+          : [JSON.stringify([check.name, check.url])],
+      ),
+    );
     failedRuns = [
-      ...new Set([...(toldRuns ?? []), ...failed.flatMap((check) => runOf(check) ?? [])]),
+      ...new Set([
+        ...(toldRuns ?? []).filter((run) => !finishedNow.has(run)),
+        ...failed.flatMap((check) => runOf(check) ?? []),
+      ]),
     ];
 
     // Approval reads can omit gated runs. Keep each hold until its jobs finish.
