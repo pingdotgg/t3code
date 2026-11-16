@@ -25,11 +25,10 @@ test(
 
     await finishImageCompression(browser);
     await app.screenshot("after-compression");
-    const conversation = screen.getByRole("region", "Conversation");
-    await expect(
-      conversation.getByText("What is in this screenshot?", { exact: false }),
-    ).toBeVisible();
-    await expect(conversation.getByRole("button", "Preview screenshot.png")).toBeVisible();
+    const sentWithImage = browser
+      .locator('[data-message-role="user"]:has([aria-label="Preview screenshot.png"])')
+      .filter({ hasText: "What is in this screenshot?" });
+    await expect(sentWithImage).toBeVisible();
     await expect(composer).not.toContainText("What is in this screenshot?");
     await expect(composer).not.toContainText("screenshot.png");
   },
