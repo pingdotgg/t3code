@@ -726,13 +726,14 @@ function ThreadTerminal(props: {
       message: "This stops the running process and clears its history.",
       confirmText: "Confirm",
       destructive: true,
-      onConfirm: () => {
+      onConfirm: async () => {
         if (!readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)) return;
-        void closeTerminal({
+        const result = await closeTerminal({
           environmentId: selectedThread.environmentId,
           input: { threadId: selectedThread.id, terminalId, deleteHistory: true },
         });
-        exitNavigation.exited();
+        if (result._tag === "Success") exitNavigation.exited();
+        else Dialog.alert("Couldn't close terminal", "Check the connection and try again.");
       },
     });
   };
