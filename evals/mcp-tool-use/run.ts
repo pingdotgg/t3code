@@ -1043,7 +1043,12 @@ export const buildMessages = (sample: Sample) => {
   };
   const { role, context, delegateRole, priorTurns = [] } = testCase.setup;
   const sideChat = testCase.setup.sideChat;
-  if (testCase.prompt === "" && (role !== "top" || sideChat !== undefined)) {
+  const asyncAnswer = testCase.setup.asyncAnswer;
+  const userPrompt =
+    asyncAnswer === undefined
+      ? testCase.prompt
+      : formatAsyncUserInputAnswer(asyncAnswer.question, asyncAnswer.answer);
+  if (userPrompt === "" && (role !== "top" || sideChat !== undefined)) {
     throw new Error(
       `${testCase.id}: Empty-prompt replay requires a top-level thread without side-chat context.`,
     );
@@ -1103,11 +1108,6 @@ export const buildMessages = (sample: Sample) => {
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
-  const asyncAnswer = testCase.setup.asyncAnswer;
-  const userPrompt =
-    asyncAnswer === undefined
-      ? testCase.prompt
-      : formatAsyncUserInputAnswer(asyncAnswer.question, asyncAnswer.answer);
   const userText =
     testCase.promptContext === undefined
       ? userPrompt
