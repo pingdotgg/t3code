@@ -3384,19 +3384,30 @@ describe("AcpAdapterV2", () => {
       yield* replay("user_message_chunk", "u1", "lo");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
-      yield* replay("agent_message_chunk", "a1", " there");
+      yield* replay("agent_message_chunk", "a1", " ");
+      yield* replay("agent_message_chunk", "a1", "there");
+      yield* replay("agent_message_chunk", "a3", "\t");
+      yield* replay("agent_message_chunk", "a3", "code");
+      yield* replay("agent_message_chunk", "a4", "\n\n");
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
-      yield* replay("user_message_chunk", "u2", " one");
+      yield* replay("user_message_chunk", "u2", "\n");
+      yield* replay("user_message_chunk", "u2", "\tone");
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
         snapshot.messages.map((message) => `${message.role}:${message.text}`);
-      assert.deepEqual(texts(first), ["user:hello", "assistant:hi there", "user:next"]);
+      assert.deepEqual(texts(first), [
+        "user:hello",
+        "assistant:hi there",
+        "user:next",
+        "assistant:\tcode",
+      ]);
       assert.deepEqual(texts(second), [
         "user:hello",
         "assistant:hi there",
-        "user:next one",
+        "user:next\n\tone",
+        "assistant:\tcode",
         "assistant:done",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),

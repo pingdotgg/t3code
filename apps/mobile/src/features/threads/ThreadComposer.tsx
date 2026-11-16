@@ -193,6 +193,8 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string, rowWidth:
     return {
       position: "absolute",
       overflow: "hidden",
+      // The compact slot is unknown until its first layout, so the editor would draw over the + button.
+      opacity: isExpanded || editorWidth.value > 0 ? 1 : 0,
       height: editorHeight.value,
       left: interpolate(horizontal, [0, 1], [compact.left, 14]),
       right: interpolate(horizontal, [0, 1], [compact.right, 14]),
