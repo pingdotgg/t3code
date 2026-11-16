@@ -482,6 +482,11 @@ it.effect.each(["clear", "disable", "edit", "move"] as const)(
           yield* (yield* SqlClient.SqlClient)`SELECT run_id FROM model_evaluations`,
           [],
         );
+        assert.deepEqual(
+          yield* (yield* SqlClient.SqlClient)`SELECT effect_id FROM orchestration_v2_effect_outbox
+            WHERE effect_id LIKE ${`effect:model-evaluation.generate:${runId}:subagents:%`}`,
+          [],
+        );
         if (action === "clear") {
           yield* service.evaluateRun(input);
           assert.deepEqual((yield* service.list(scope)).records, []);

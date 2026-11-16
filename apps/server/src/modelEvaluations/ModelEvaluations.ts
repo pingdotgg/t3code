@@ -118,6 +118,20 @@ export const sourceMessageRevised = (sql: SqlClient.SqlClient) => sql`EXISTS (
     AND source.sequence > evaluation.source_sequence
 )`;
 
+const nonSubagentSourceRevised = (sql: SqlClient.SqlClient) => sql`EXISTS (
+  SELECT 1 FROM orchestration_events AS source INDEXED BY model_evaluation_source_revision
+  WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
+    AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
+    AND source.event_type IN ('message.updated', 'turn-item.updated')
+    AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
+    AND (
+      source.event_type = 'message.updated'
+      OR json_extract(source.payload_json, '$.type') IN (
+        'user_message', 'assistant_message', 'command_execution', 'file_change', 'dynamic_tool'
+      )
+    )
+)`;
+
 function summarize(
   records: ReadonlyArray<ModelEvaluationRecord>,
 ): ReadonlyArray<ModelEvaluationGuidance> {
@@ -428,19 +442,7 @@ const make = Effect.gen(function* () {
           WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL AND run.status <> 'rolled_back'
             AND evaluation.evaluated_at >= ${after}
             AND ${runId === undefined ? sql`1 = 1` : sql`evaluation.run_id = ${runId}`}
-            AND NOT EXISTS (
-              SELECT 1 FROM orchestration_events AS source INDEXED BY model_evaluation_source_revision
-              WHERE source.application_event_version = 2 AND source.aggregate_kind = 'thread'
-                AND source.stream_id = evaluation.thread_id AND source.sequence > evaluation.source_sequence
-                AND source.event_type IN ('message.updated', 'turn-item.updated')
-                AND json_extract(source.payload_json, '$.runId') = +evaluation.run_id
-                AND (
-                  source.event_type = 'message.updated'
-                  OR json_extract(source.payload_json, '$.type') IN (
-                    'user_message', 'assistant_message', 'command_execution', 'file_change', 'dynamic_tool'
-                  )
-                )
-            )
+            AND NOT ${nonSubagentSourceRevised(sql)}
             AND NOT ${sourceMessageRevised(sql)}
             AND NOT EXISTS (
               SELECT 1 FROM json_each(evaluation.source_message_ids) AS reference
@@ -656,6 +658,18 @@ const make = Effect.gen(function* () {
                 encodePacket(evidence?.packet ?? null) ||
               modelEvaluationAwaitsSubagents(latest.turnItems, runId) !== awaitsSubagents
             ) {
+              if (
+                encodeIds(latestEvidence?.sourceMessageIds ?? []) !==
+                encodeIds(evidence?.sourceMessageIds ?? [])
+              )
+                return false;
+              const [changes] = yield* sql<{ revised: number }>`
+                WITH evaluation(thread_id, run_id, source_sequence, source_message_ids) AS (
+                  VALUES (${threadId}, ${runId}, ${source.sourceSequence}, ${encodeIds(evidence?.sourceMessageIds ?? [])})
+                )
+                SELECT ${nonSubagentSourceRevised(sql)} OR ${sourceMessageRevised(sql)} AS revised
+                FROM evaluation`;
+              if (changes!.revised !== 0) return false;
               const revision = yield* sequence(threadId);
               const effects = modelEvaluationEffects({
                 settings: current,
