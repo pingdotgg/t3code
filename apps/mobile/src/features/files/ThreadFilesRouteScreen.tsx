@@ -226,7 +226,7 @@ function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
     <SourceFileSurface
       {...props}
       initialLine={selection?.line ?? props.initialLine}
-      selectable={selection?.active === true}
+      selectable={props.selectable === true || selection?.active === true}
       onLongPressLine={
         Platform.OS === "android" ? (line) => setSelection({ line, active: true }) : undefined
       }
@@ -250,6 +250,7 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -351,6 +352,7 @@ function FileContent(props: {
           path={props.relativePath}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
+          selectable={props.selectable}
           onRefresh={props.onRefresh}
         />
       )}
@@ -650,6 +652,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     readonly path: string;
     readonly mode: FileViewMode;
   } | null>(null);
+  const [textSelectionPath, setTextSelectionPath] = useState<string | null>(null);
   const [previewRevision, setPreviewRevision] = useState(0);
   const previewKey = JSON.stringify([environmentId, cwd, relativePath, previewRevision]);
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
@@ -749,6 +752,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  // iOS only: Android lays out a whole-file selectable TextView on the UI thread, which stalls.
+  const canSelectText =
+    Platform.OS === "ios" && resolvedActiveMode === "source" && fileData?.contents != null;
+  const selectingText = canSelectText && textSelectionPath === relativePath;
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -835,6 +842,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             icon: "text.alignleft",
             inline: false,
             onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
+          } as const)
+        : null,
+      canSelectText
+        ? ({
+            id: "select-text",
+            title: selectingText ? "Done selecting" : "Select text",
+            icon: "character.cursor.ibeam",
+            inline: false,
+            onPress: () => setTextSelectionPath(selectingText ? null : relativePath),
           } as const)
         : null,
       ...(mediaSource
@@ -1046,6 +1062,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>

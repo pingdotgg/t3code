@@ -4,7 +4,10 @@ import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
 
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import type { Project } from "../../types";
-import { scopeProjectSettingsGroup } from "./ProjectSettingsPanel.logic";
+import {
+  projectGroupTitleNeedsUpdate,
+  scopeProjectSettingsGroup,
+} from "./ProjectSettingsPanel.logic";
 
 const localEnvironmentId = EnvironmentId.make("local");
 const remoteEnvironmentId = EnvironmentId.make("remote");
@@ -169,5 +172,22 @@ describe("project removal confirmation", () => {
     expect(plan.confirmationMessage).toContain(
       "This removes only the project entries, not the files on disk.",
     );
+  });
+});
+
+describe("projectGroupTitleNeedsUpdate", () => {
+  const folderTitle = { title: "repo" };
+  const renamed = { title: "repo", hasCustomTitle: true };
+
+  // regression: #15049 renaming to the default folder title was never saved
+  it("saves a title that matches the folder default so the rename is recorded", () => {
+    expect(projectGroupTitleNeedsUpdate([folderTitle, folderTitle], "repo", true)).toBe(true);
+  });
+
+  it("skips untouched fields and renames every member already carries", () => {
+    expect(projectGroupTitleNeedsUpdate([folderTitle, { title: "other" }], "repo", false)).toBe(
+      false,
+    );
+    expect(projectGroupTitleNeedsUpdate([renamed, renamed], "repo", true)).toBe(false);
   });
 });

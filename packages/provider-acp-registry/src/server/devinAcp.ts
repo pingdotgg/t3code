@@ -54,3 +54,10 @@ export function extractDevinSubagentUpdate(
     result: typeof completed?.summary === "string" ? completed.summary : null,
   };
 }
+
+// Devin's plan exit offers several allow_once options in no promised order; T3 never answers with bypass.
+export function devinAnswerablePermissionOptions(
+  request: AcpSchema.RequestPermissionRequest,
+): ReadonlyArray<AcpSchema.PermissionOption> {
+  return request.options.filter((option) => option.optionId.trim() !== "plan_bypass");
+}
