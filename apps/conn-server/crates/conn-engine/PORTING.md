@@ -11,7 +11,7 @@ forwarded. There is no additional MCP client dependency.
 | `McpAppSnapshot.snapshot` | `EngineHost::snapshot_mcp_app`, attachment store | engine test captures before terminal; file test covers MIME, URI, CSP, blob, size; differential cases compare actual T3 snapshots |
 | Claude runtime's `mcpApps` | SDK query calls, SDK host control requests | `mcp_apps_use_the_live_query_and_honor_permission_rules`; differential check compares the real SDK host request with T3's request |
 | Codex runtime's `mcpApps` | existing app-server requests; unloaded-thread resume and retry | `mcp_apps_forward_through_the_existing_app_server` records stub requests |
-| panel toolkit and `AgentPanelBroker` | `conn_mcp::panels`, two panel RPCs | broker lifecycle tests; `mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards`; tool parity on both servers |
+| panel toolkit and `AgentPanelBroker` | `conn_features::panels`, shared panel RPCs | broker lifecycle tests; `mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards`; tool parity on both servers |
 
 `mcp-apps-parity.mjs` runs as part of the existing MCP parity check. It executes T3's current
 helpers and snapshot writer on the same inputs as the Rust runner. It also checks generated
@@ -25,8 +25,8 @@ model-only tool are both not callable; resource reads stay on the producing serv
 context can change after the provider stops; a source rollback does not erase a fork's context.
 
 Differences for bounds: 256 context entries per conversation; at most 16,384 fork ancestors;
-32 desktop subscriptions, 128 pending panel calls, 16 queued requests per subscriber, 1 MiB per
-panel request. The SDK host caps pending replies at 1,024 and native App calls at 32 per
+The shared broker caps desktop subscriptions at 16, pending panel calls at 64, and queued
+requests per subscriber at 16. MCP actions use T3’s 90-second timeout. The SDK host caps pending replies at 1,024 and native App calls at 32 per
 query; callback calls keep the SDK's own lifetime. Requests over those limits fail. Document capture waits at most 20 seconds
 per session before falling back to a plain tool row. Codex captures run in the session's event
 pump rather than T3's concurrent capture fibers. Snapshot writes finish before publishing.

@@ -107,6 +107,7 @@ pub(super) async fn invoke(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
         request["mcpCall"] = call;
         "mcpCall"
     };
+    drop(args);
     let broker = cx
         .config()
         .panels

@@ -1,4 +1,4 @@
-//! The App bridge and Mac MCP panel feed, both on the existing environment connection.
+//! Thread MCP App callbacks on the existing environment connection.
 use super::{Deps, orchestration::engine_unary};
 use crate::table::MethodTable;
 use conn_contract::{

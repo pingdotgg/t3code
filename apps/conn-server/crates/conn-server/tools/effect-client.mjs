@@ -283,7 +283,12 @@ function codexStub() {
 const decodeEach = (client) =>
   Effect.gen(function* () {
     const none = "effect-client-none";
-    for (const [tag,extra] of [["mcpApps.callTool",{name:"refresh",arguments:{}}],["mcpApps.readResource",{uri:"ui://stub"}],["mcpApps.toolInfo",{name:"refresh"}],["mcpApps.updateModelContext",{conversationThreadId:"missing"}]]) yield* decodeCall(client,tag,{threadId:"missing",itemId:"app",...extra});
+    for (const [tag, extra] of [
+      ["mcpApps.callTool", { name: "refresh", arguments: {} }],
+      ["mcpApps.readResource", { uri: "ui://stub" }],
+      ["mcpApps.toolInfo", { name: "refresh" }],
+      ["mcpApps.updateModelContext", { conversationThreadId: "missing" }],
+    ]) yield* decodeCall(client, tag, { threadId: "missing", itemId: "app", ...extra });
     const call = (tag, payload) => decodeCall(client, tag, payload);
     yield* call("projects.mutate", {
       type: "project.create",

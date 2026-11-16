@@ -2765,9 +2765,16 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
     }
     let broker = f.service.config.panels.as_ref().unwrap();
     let mut desktop = broker.subscribe().unwrap();
+    let mut obsolete = broker.subscribe().unwrap();
     let connect = agent.ok("mcp_connect",json!({"name":"stub","url":"http://127.0.0.1/mcp","headers":{"X-Test":"stub"},"focusWindow":false}));
     let stub = async {
         let request = conn_contract::to_json(&desktop.recv().await.unwrap());
+        let old_request = obsolete.recv().await.unwrap();
+        assert_eq!(
+            old_request.request_id,
+            request["requestId"].as_str().unwrap()
+        );
+        broker.respond(conn_contract::from_json(json!({"requestId":old_request.request_id,"ok":false,"error":"MCP is unavailable here"})).unwrap());
         assert_eq!(request["threadId"], thread);
         assert_eq!(request["focusWindow"], false);
         assert_eq!(
@@ -2780,6 +2787,7 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
         tokio::join!(connect, stub).0,
         json!({"server":"stub","tools":[{"name":"weather"}],"shownOn":"Test Mac"})
     );
+    drop(obsolete);
     let call = agent.ok(
         "mcp_call",
         json!({"server":"  stub  ","tool":" weather ","arguments":{"city":"Amsterdam"}}),
@@ -2802,5 +2810,58 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
         agent.failure("mcp_call", json!({"tool":"weather"})).await.0,
         "parent_not_active"
     );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn mcp_panel_actions_use_the_ninety_second_action_timeout() {
+    let f = fixture("mcp-action-timeout");
+    let mut outside = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(
+        &mut outside,
+        "MCP timeout",
+        "hang",
+        "full-access",
+        "default",
+    )
+    .await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    for (name, args, key, result) in [
+        (
+            "mcp_connect",
+            json!({"url":"http://localhost/mcp"}),
+            "mcp",
+            json!({"server":"stub","tools":[]}),
+        ),
+        (
+            "mcp_call",
+            json!({"tool":"weather"}),
+            "mcpCall",
+            json!({"server":"stub","tool":"weather","content":[],"isError":false,"truncated":false,"durationMs":0}),
+        ),
+    ] {
+        let pending = agent.ok(name, args.clone());
+        let reply = async {
+            let request = desktop.recv().await.unwrap();
+            tokio::time::advance(Duration::from_secs(89)).await;
+            let mut response =
+                json!({"requestId":request.request_id,"ok":true,"deviceName":"Slow Mac"});
+            response[key] = result;
+            broker.respond(conn_contract::from_json(response).unwrap());
+        };
+        assert_eq!(tokio::join!(pending, reply).0["shownOn"], "Slow Mac");
+        let pending = agent.request("tools/call", json!({"name":name,"arguments":args}));
+        let expire = async {
+            desktop.recv().await.unwrap();
+            tokio::time::advance(Duration::from_secs(90)).await;
+        };
+        let response = tokio::join!(pending, expire).0;
+        assert!(
+            response.to_string().contains("within 90 s."),
+            "{name}: {response}"
+        );
+    }
     f.service.config.engine.shutdown().await;
 }
