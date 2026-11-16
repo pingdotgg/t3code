@@ -12,7 +12,7 @@ export function grokBackgroundBashInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: GROK_BACKGROUND_BASH_PROMPT },
-      { type: "finish_held_run", targetRunIndex: 1, status: "completed" },
+      { type: "await_run_status", targetRunIndex: 1, status: "completed" },
       { type: "release_replay_gate", label: GROK_BACKGROUND_BASH_WAKE_LABEL },
       { type: "finish_held_run", targetRunIndex: 2, status: "completed" },
     ],
