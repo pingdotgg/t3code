@@ -35,6 +35,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../mcp/McpInvocationContext.ts";
 import * as McpToolAccess from "../../mcp/McpToolAccess.ts";
@@ -3162,6 +3163,164 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       "forgotten",
     );
   }).pipe(Effect.provide(layerTest)),
+);
+
+const recallOutcomeFields = (outcome: unknown) =>
+  outcome !== null && typeof outcome === "object" && "_tag" in outcome
+    ? {
+        _tag: outcome._tag,
+        ...("reason" in outcome ? { reason: outcome.reason } : {}),
+      }
+    : outcome;
+
+it.effect(
+  "returns a timed-out outcome when a recall store read is still open after one second",
+  () =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projectId = ProjectId.make("recall-timeout");
+      yield* createProject(projectId);
+      yield* knowledge.mutate(createFact(projectId), { kind: "user" });
+      const blocked = yield* Deferred.make<void>();
+      const stall: Statement.Transformer = (statement) =>
+        Deferred.await(blocked).pipe(Effect.as(statement));
+      const query = "Change cache keys to include tenant IDs.";
+      const pending = yield* knowledge
+        .recall({
+          projectId,
+          threadId: ThreadId.make("recall-timeout"),
+          requestId: CommandId.make("recall-timeout"),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        })
+        .pipe(Effect.provideService(Statement.CurrentTransformer, stall), Effect.forkChild);
+      yield* TestClock.adjust("999 millis");
+      assert.isUndefined(pending.pollUnsafe());
+      yield* TestClock.adjust("1 millis");
+      assert.deepEqual(recallOutcomeFields(yield* Fiber.join(pending)), {
+        _tag: "Omitted",
+        reason: "timed_out",
+      });
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("does not consider a newer fact that shares no term with the recall query", () => {
+  const considered: string[] = [];
+  const scoring = Layer.succeed(HolographicMemory.HolographicMemory, {
+    scoreCandidates: (input) =>
+      Effect.sync(() => {
+        considered.push(...input.candidates.map((candidate) => candidate.id));
+        return input.candidates.map((candidate) => ({
+          id: candidate.id,
+          rawCosine: 1,
+          holographic: 1,
+          decay: 1,
+          reinforcement: 0,
+          score: 1,
+          scoreMillionths: 1_000_000,
+          tokenOverlap: 1,
+          fts: 1,
+          coverage: 1,
+        }));
+      }),
+  });
+  return Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-bounded");
+    yield* createProject(projectId);
+    yield* knowledge.mutate(createFact(projectId, "matching"), { kind: "user" });
+    yield* TestClock.adjust("1 minute");
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "newer-unrelated"),
+        content: "Zephyr quilting marmalade weekday.",
+        entities: [],
+        tags: [],
+      },
+      { kind: "user" },
+    );
+    const query = "Change cache keys to include tenant IDs.";
+    yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-bounded"),
+      requestId: CommandId.make("recall-bounded"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.include(considered, "matching");
+    assert.notInclude(considered, "newer-unrelated");
+    const searched = yield* knowledge.search({
+      projectId,
+      query,
+      requestId: CommandId.make("search-bounded"),
+    });
+    assert.equal(searched.facts.state, "available");
+    if (searched.facts.state !== "available") return;
+    assert.include(
+      searched.facts.matches.map((match) => match.fact.id),
+      ProjectFactId.make("newer-unrelated"),
+    );
+    assert.deepEqual(
+      yield* sql`SELECT id FROM project_knowledge_facts WHERE id = 'newer-unrelated' AND updated_at > (SELECT updated_at FROM project_knowledge_facts WHERE id = 'matching')`,
+      [{ id: "newer-unrelated" }],
+    );
+  }).pipe(Effect.provide(knowledgeTestLayer(scoring)));
+});
+
+it.effect("reads the recall lookup on the reader connection", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-recall-reader-" });
+    const layerFile = ProjectKnowledge.layer.pipe(
+      Layer.provide(HolographicMemory.layer),
+      Layer.provideMerge(
+        Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer, ThreadSearch.layer),
+      ),
+      Layer.provideMerge(SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"))),
+      Layer.provide(
+        Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+          getEnvironmentId: Effect.succeed(environmentId),
+        }),
+      ),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    );
+    const spans: Array<Tracer.Span> = [];
+    const observe: Statement.Transformer = (statement, _sql, _fiber, span) => {
+      spans.push(span);
+      return Effect.succeed(statement);
+    };
+    yield* Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projectId = ProjectId.make("recall-reader");
+      yield* createProject(projectId);
+      yield* knowledge.mutate(createFact(projectId), { kind: "user" });
+      const query = "Change cache keys to include tenant IDs.";
+      yield* knowledge
+        .recall({
+          projectId,
+          threadId: ThreadId.make("recall-reader"),
+          requestId: CommandId.make("recall-reader"),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        })
+        .pipe(
+          Effect.withTracerEnabled(true),
+          Effect.provideService(Statement.CurrentTransformer, observe),
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
+        );
+      const connections = spans.map((span) => span.attributes.get("db.connection"));
+      assert.isAbove(connections.length, 0);
+      assert.isTrue(
+        connections.every((connection) => connection === "reader"),
+        JSON.stringify(connections),
+      );
+    }).pipe(Effect.provide(layerFile));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
