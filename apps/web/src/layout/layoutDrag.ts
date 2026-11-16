@@ -43,6 +43,11 @@ export type LayoutDragSource =
   | { kind: "pull-requests" }
   | { kind: "surface"; threadRef: ScopedThreadRef; surface: LayoutDragSurface };
 
+export type LayoutDragContentSource = Extract<
+  LayoutDragSource,
+  { kind: "pull-requests" | "surface" }
+>;
+
 export type LayoutDropTarget =
   | { kind: "side"; paneId: string; side: LayoutDirection }
   | { kind: "into"; paneId: string; index?: number }
@@ -487,7 +492,7 @@ export function beginLayoutTabDrag(event: ReactPointerEvent, tabId: string): voi
 
 export function beginLayoutContentDrag(
   event: ReactPointerEvent,
-  source: Extract<LayoutDragSource, { kind: "pull-requests" | "surface" }>,
+  source: LayoutDragContentSource,
 ): void {
   beginLayoutDrag(event, source, null);
 }
