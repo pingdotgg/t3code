@@ -27,6 +27,8 @@ export const ru: Messages = {
     downloadForMac: "Скачать для macOS",
     downloadForWindows: "Скачать для Windows",
     downloadForLinux: "Скачать для Linux",
+    downloadForIos: "Скачать для iOS",
+    downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
     screenshotAlt: "T3 Code запускает субагентов Claude, Codex, Muse и Gemini в одном треде",
