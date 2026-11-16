@@ -13,6 +13,7 @@ import {
   type ApplicationProjectEvent,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+// @effect-diagnostics nodeBuiltinImport:off - realpath plus inode identity is how a case variant or a symlink is the same directory
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
