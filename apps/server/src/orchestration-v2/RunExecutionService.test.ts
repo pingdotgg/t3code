@@ -3521,6 +3521,168 @@ it.effect("does not interrupt an ended provider when its terminal write fails", 
   }),
 );
 
+it.effect("ends a running root command when the provider stream fails mid-turn", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "stream-error-running-command",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: (ids) =>
+        Stream.make(
+          {
+            type: "provider_turn.updated" as const,
+            driver,
+            providerTurn: {
+              id: ids.rootProviderTurnId,
+              providerThreadId: ids.providerThreadId,
+              nodeId: ids.rootNodeId,
+              runAttemptId: ids.attemptId,
+              nativeTurnRef: null,
+              ordinal: 1,
+              status: "running" as const,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+        ).pipe(
+          Stream.concat(
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver,
+                providerSessionId: ProviderSessionId.make("session:stream-error-running-command"),
+                cause: "provider process exited",
+              }),
+            ),
+          ),
+        ),
+      // The dead process cannot take the interrupt either.
+      interruptTurn: (input) =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterInterruptError({
+            driver,
+            providerThreadId: input.providerThread.id,
+            providerTurnId: input.providerTurnId,
+            cause: "provider already exited",
+          }),
+        ),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    const ids = backgroundScenarioIds("stream-error-running-command");
+    const endedCommand = written.find(
+      (item) => item.id === ids.itemId && item.status !== "running",
+    );
+    assert.isDefined(endedCommand);
+  }),
+);
+
+it.effect("keeps a running root command open when a write fails under a live provider", () =>
+  Effect.gen(function* () {
+    const key = "write-error-running-command";
+    const ids = backgroundScenarioIds(key);
+    const secondItemId = TurnItemId.make(`${ids.itemId}:second`);
+    const { written, observed } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () =>
+        Stream.make(
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          backgroundTurnItemEvent(ids, "command_execution", "running", 2, secondItemId),
+        ),
+      ingestNormalized: ({ event }) =>
+        event.type === "turn_item.updated" && event.turnItem.id === secondItemId
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+    assert.isUndefined(written.find((item) => item.id === ids.itemId));
+  }),
+);
+
+it.effect.each([
+  { ended: true },
+  // T3 ending the stream proves no dead runtime; Stop settles the work it releases.
+  { ended: false, raisedByT3: true },
+  // A Stop that already settled the subagent keeps its result.
+  { ended: false, stopped: true },
+] as const)(
+  "ends a subagent that outlived its root when the provider stream fails (%o)",
+  ({ ended, raisedByT3, stopped }) =>
+    Effect.gen(function* () {
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const { finalEvents } = yield* captureRootRunTermination({
+        key: "stream-error-outlived-subagent",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.make(
+            {
+              type: "subagent.updated" as const,
+              driver,
+              subagent: makeRunOwnedSubagentFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            {
+              type: "turn_item.updated" as const,
+              driver,
+              turnItem: makeRunOwnedSubagentTurnItemFixture({
+                ids,
+                providerInstanceId,
+                childThreadId: ids.childThreadId,
+                driver,
+                status: "running",
+              }),
+            },
+            rootTerminalEvent(ids, "completed"),
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make(
+                    "session:stream-error-outlived-subagent",
+                  ),
+                  ...(raisedByT3 === undefined ? {} : { raisedByT3 }),
+                  cause: "provider process exited",
+                }),
+              ),
+            ),
+          ),
+        ...(stopped === true
+          ? {
+              settleStored: (work) => ({
+                ...work,
+                subagents: work.subagents.map((row) => ({ ...row, status: "interrupted" })),
+                turnItems: work.turnItems.map((row) => ({ ...row, status: "interrupted" })),
+              }),
+            }
+          : {}),
+      });
+      assert.deepEqual(
+        finalEvents.flatMap((event) =>
+          event.type === "run.updated" ||
+          event.type === "subagent.updated" ||
+          event.type === "turn-item.updated"
+            ? [`${event.type}:${event.payload.status}`]
+            : [],
+        ),
+        ended
+          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:waiting"],
+      );
+    }),
+);
+
 it.effect("does not interrupt a provider when ingestion fails before the root turn is known", () =>
   Effect.gen(function* () {
     const interrupts = yield* Ref.make(0);
@@ -3783,9 +3945,36 @@ function captureRootRunTermination(input: {
   readonly afterStart?: (
     closed: Deferred.Deferred<void>,
   ) => Effect.Effect<void, never, PreviewAgentActivity.PreviewAgentActivity>;
+  /** Changes the stored rows after the provider reported them, as a concurrent Stop does. */
+  readonly settleStored?: (
+    work: RunExecutionService.UnsettledWork,
+  ) => RunExecutionService.UnsettledWork;
 }) {
   return Effect.gen(function* () {
     const ids = backgroundScenarioIds(input.key);
+    // The rows the provider's events stored, which the run reads back when its runtime is lost.
+    const stored = {
+      subagents: new Map<string, OrchestrationV2Subagent>(),
+      nodes: new Map<string, OrchestrationV2ExecutionNode>(),
+      turnItems: new Map<string, OrchestrationV2TurnItem>(),
+    };
+    const store = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+      Effect.sync(() => {
+        if (event.type === "subagent.updated")
+          stored.subagents.set(event.subagent.id, event.subagent);
+        if (event.type === "node.updated") stored.nodes.set(event.node.id, event.node);
+        if (event.type === "turn_item.updated")
+          stored.turnItems.set(event.turnItem.id, event.turnItem);
+      });
+    const loadUnsettledWork = (threadId: ThreadId) =>
+      Effect.sync(() => {
+        const work = {
+          subagents: [...stored.subagents.values()].filter((row) => row.threadId === threadId),
+          nodes: [...stored.nodes.values()].filter((row) => row.threadId === threadId),
+          turnItems: [...stored.turnItems.values()].filter((row) => row.threadId === threadId),
+        };
+        return input.settleStored?.(work) ?? work;
+      });
     const providerInstanceId = ProviderInstanceId.make("codex");
     const runningSubagent = makeRunOwnedSubagentFixture({
       ids,
@@ -3854,11 +4043,27 @@ function captureRootRunTermination(input: {
                 yield* captureFinalEvents(payload.events);
                 return { committed: true, storedEvents: [] };
               }),
+            // Committed only against the row that was read, as the real conditional writes are.
+            writeIfSubagentUnchanged: (payload) =>
+              stored.subagents.get(payload.expected.id) === payload.expected
+                ? captureFinalEvents(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  )
+                : Effect.succeed({ committed: false, storedEvents: [] }),
+            writeIfTurnItemUnchanged: (payload) =>
+              stored.turnItems.get(payload.expected.id) === payload.expected
+                ? captureFinalEvents(payload.events).pipe(
+                    Effect.as({ committed: true, storedEvents: [] }),
+                  )
+                : Effect.succeed({ committed: false, storedEvents: [] }),
           }),
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
-            ingestNormalized: input.ingestNormalized ?? (() => Effect.succeed([])),
+            ingestNormalized: (request) =>
+              store(request.event).pipe(
+                Effect.andThen(input.ingestNormalized?.(request) ?? Effect.succeed([])),
+              ),
           }),
           ServerSettings.layerTest(),
           Layer.succeed(RunFinalizationService.RunFinalizationObserver, {
@@ -3944,6 +4149,7 @@ function captureRootRunTermination(input: {
         attemptId: ids.attemptId,
         providerTurnOrdinal: 1,
         shouldFinalizeRun: input.shouldFinalizeRun,
+        loadUnsettledWork,
         ...(input.loadRunInterruptReason === undefined
           ? {}
           : { loadRunInterruptReason: input.loadRunInterruptReason }),
