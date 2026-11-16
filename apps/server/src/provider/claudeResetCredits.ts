@@ -151,37 +151,42 @@ const BLOCKING_REASONS: Record<string, keyof typeof WAITING_REASONS> = {
   seven_day_sonnet: "blocked_sonnet",
 };
 
+type WaitingReason = keyof typeof WAITING_REASONS;
+
 // Claude Code's own order: the server's stated reason, else a cooldown, what blocks the grant,
 // a limit it can't clear, and last whether it needs a limit at all.
-const waitingReason = (
+const waitingReasonKey = (
   grant: typeof Grant.Type,
   status: typeof CedarEmber.Type,
   nowMs: number,
-): string => {
+): WaitingReason => {
   const stated = grant.unavailable_reason;
-  if (typeof stated === "string" && stated in WAITING_REASONS) {
-    return WAITING_REASONS[stated as keyof typeof WAITING_REASONS];
+  if (typeof stated === "string" && Object.hasOwn(WAITING_REASONS, stated)) {
+    return stated as WaitingReason;
   }
   const cooldown = status.cooldown_until;
-  if (typeof cooldown === "string" && isFutureTimestamp(cooldown, nowMs)) {
-    return WAITING_REASONS.cooldown;
-  }
+  if (typeof cooldown === "string" && isFutureTimestamp(cooldown, nowMs)) return "cooldown";
   const blocking = grant.blocking ?? [];
   for (const limit of blocking) {
-    const reason = typeof limit === "string" ? BLOCKING_REASONS[limit] : undefined;
-    if (reason === "blocked_seven_day" && grant.gives_back_weekly) {
-      return "No Fable usage this week to give back";
-    }
-    if (reason) return WAITING_REASONS[reason];
+    const reason =
+      typeof limit === "string" && Object.hasOwn(BLOCKING_REASONS, limit)
+        ? BLOCKING_REASONS[limit]
+        : undefined;
+    if (reason) return reason;
   }
-  if (blocking.length > 0) return WAITING_REASONS.blocked_other;
+  if (blocking.length > 0) return "blocked_other";
   const exhausted = Array.isArray(status.exhausted) ? status.exhausted : [];
   const clears = (limit: unknown) =>
     (grant.clears ?? []).includes(limit) || (limit === "seven_day" && grant.gives_back_weekly);
-  if (status.at_limit === true && !exhausted.some(clears)) return WAITING_REASONS.cannot_clear;
-  return grant.use_requires_limit === false
-    ? WAITING_REASONS.unavailable
-    : WAITING_REASONS.needs_limit;
+  if (status.at_limit === true && !exhausted.some(clears)) return "cannot_clear";
+  return grant.use_requires_limit === false ? "unavailable" : "needs_limit";
+};
+
+const waitingReason = (grant: typeof Grant.Type, status: typeof CedarEmber.Type, nowMs: number) => {
+  const reason = waitingReasonKey(grant, status, nowMs);
+  return reason === "blocked_seven_day" && grant.gives_back_weekly
+    ? "No Fable usage this week to give back"
+    : WAITING_REASONS[reason];
 };
 
 /** Every reset still banked stays listed; one Claude won't take right now says why instead. */
@@ -307,6 +312,20 @@ export const claudeAccountConfigPath = Effect.fn("claudeAccountConfigPath")(func
     ? path.join(configDir, ".claude.json")
     : path.join(yield* HostProcess.HomeDirectory, ".claude.json");
 });
+
+/** The grant a redeem request names, or the answer when no claim should be sent for it. */
+export const claudeRedeemTarget = (
+  credits: ServerProviderResetCredits | undefined,
+  creditId: string | undefined,
+): { readonly grantId: string } | { readonly outcome: "noCredit" | "nothingToReset" } => {
+  if (creditId === undefined) {
+    return credits?.nextCreditId ? { grantId: credits.nextCreditId } : { outcome: "noCredit" };
+  }
+  const option = credits?.options?.find((candidate) => candidate.creditId === creditId);
+  if (!option) return { outcome: "noCredit" };
+  // Clients older than unavailableReason still offer Use on a waiting reset.
+  return option.unavailableReason ? { outcome: "nothingToReset" } : { grantId: creditId };
+};
 
 const CLAIM_OUTCOMES = {
   reset: "reset",

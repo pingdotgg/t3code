@@ -130,6 +130,11 @@ describe("claudeResetCreditsToContract", () => {
       "Doesn't refill the limit you've reached",
     ],
     [{ unavailable_reason: "cooldown", blocking: ["five_hour"] }, {}, "Try again in a minute"],
+    [
+      { unavailable_reason: "blocked_seven_day", gives_back_weekly: true },
+      {},
+      "No Fable usage this week to give back",
+    ],
   ])(
     "keeps a banked reset that can't be used yet and says why: %j %j",
     (overrides, status, why) => {
@@ -173,6 +178,33 @@ describe("claudeResetCreditsToContract", () => {
       ["fable_a", 2, undefined],
       ["full_a", 1, "Usable once you reach a limit it refills"],
     ]);
+  });
+
+  it("sends no claim for a reset that is waiting or unknown", () => {
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "fable_a",
+        grants: [
+          grant({ id: "full_a", type: "full", usable_now: false }),
+          grant({ id: "fable_a", gives_back_weekly: true }),
+        ],
+      },
+      NOW,
+    );
+    expect(
+      [undefined, "fable_a", "full_a", "gone"].map((creditId) =>
+        ClaudeResetCredits.claudeRedeemTarget(credits, creditId),
+      ),
+    ).toEqual([
+      { grantId: "fable_a" },
+      { grantId: "fable_a" },
+      { outcome: "nothingToReset" },
+      { outcome: "noCredit" },
+    ]);
+    expect(ClaudeResetCredits.claudeRedeemTarget({ availableCount: 1 }, undefined)).toEqual({
+      outcome: "noCredit",
+    });
   });
 
   it("offers nothing to redeem without an eligible account", () => {
