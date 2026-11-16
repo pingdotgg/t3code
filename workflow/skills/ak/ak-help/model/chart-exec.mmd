@@ -1,0 +1,67 @@
+---
+title: "Idea to merged: the skill pipeline"
+---
+stateDiagram-v2
+  state "Legend" as legend {
+    lg0: exec
+    lg1: done
+    lg2: Breaks NoDoubleWork or NoSleepingFrontier in some cases
+    lg3: Path to the NoDoubleWork or NoSleepingFrontier bug
+  }
+  class lg0 teal
+  class lg1 pink
+  class lg2 mayBreak
+  class lg3 bugPath
+  s0: Tickets ready, maestro asleep
+  s1: bcheck working a ticket
+  s2: implement-spec running on an integration branch
+  s3: Maestro dispatching
+  s4: bcheck planning with you
+  s5: Integration PR waiting for you
+  s6: A worker is running
+  s7: bcheck committed, nothing left to do
+  s8: Last ticket merged, closing out
+  s9: needs-help: waiting on the master
+  s10: Merged
+  [*] --> s0
+  s0 --> s1: you run bcheck and it claims a ticket
+  s0 --> s2: you run implement-spec
+  s0 --> s3: someone nudges the maestro
+  s1 --> s2: you run implement-spec
+  s1 --> s4: bcheck judges it needs planning
+  s2 --> s5: implement-spec marks the PR ready
+  s3 --> s1: you run bcheck and it claims a ticket
+  s3 --> s2: you run implement-spec
+  s3 --> s6: maestro claims a ticket and starts a worker
+  s1 --> s7: bcheck implements and commits
+  s4 --> s2: you run implement-spec
+  s5 --> s8: you merge the integration PR or worker merges the PR or master finishes the ticket by hand
+  s6 --> s8: worker merges the PR
+  s6 --> s2: you run implement-spec
+  s6 --> s9: worker labels needs-help
+  s7 --> s2: you run implement-spec
+  s4 --> s1: you approve the plan
+  s8 --> s10: every ticket is merged
+  s2 --> s8: worker merges the PR or master finishes the ticket by hand
+  s9 --> s2: you run implement-spec
+  s9 --> s8: master finishes the ticket by hand
+  s9 --> s3: master removes needs-help
+  s9 --> s0: master removes needs-help
+  classDef mayBreak fill:#fff3e6,stroke:#e8730c,stroke-width:2.5px,color:#b85a06
+  class s0 teal
+  class s0 mayBreak
+  class s0 bugPath
+  class s1 teal
+  class s2 teal
+  class s2 mayBreak
+  class s2 bugPath
+  class s3 teal
+  class s3 bugPath
+  class s4 teal
+  class s5 teal
+  class s6 teal
+  class s6 bugPath
+  class s7 teal
+  class s8 teal
+  class s9 teal
+  class s10 pink
