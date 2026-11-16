@@ -670,3 +670,5 @@ export default defineConfig({
     },
   },
 });
+
+# Automated fix for issue #37411: [Bug]: Codex used a feature that ChatGPT sharing does not support. Use another provider for this request.
