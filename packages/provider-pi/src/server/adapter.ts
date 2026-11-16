@@ -3076,11 +3076,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Confirm cached selections against Pi before skipping them.
         const modelCached =
           modelSelection.model !== PI_INHERIT_MODEL_SLUG && modelSelection.model === appliedModel;
+        let modelDrifted = false;
         if (modelCached || (thinking !== undefined && thinking === appliedThinking)) {
           const state = yield* request({ type: "get_state" });
           const stateModel = recordField(state, "model");
           const piModel = `${recordString(stateModel, "provider")}/${recordString(stateModel, "id")}`;
-          if (modelCached && piModel !== appliedModel) appliedModel = null;
+          modelDrifted = modelCached && piModel !== appliedModel;
           appliedThinking = recordString(state, "thinkingLevel") ?? null;
         }
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
@@ -3105,7 +3106,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = baselineThinking;
           }
-        } else if (modelSelection.model !== appliedModel) {
+        } else if (modelDrifted || modelSelection.model !== appliedModel) {
           // Extensions and models.json edits can add providers after the first discovery.
           if (findReportedPiModel(modelSelection.model, discoveredModels) === undefined) {
             yield* discoverModels();
