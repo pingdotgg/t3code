@@ -1,3 +1,6 @@
+import { createElement, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron, isSecretsFeatureEnabled } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
@@ -1332,10 +1335,19 @@ export function isSettingsSearchScopeAvailable(
 
 export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
-  readonly title: string;
+  readonly title: ReactNode;
 } {
   const item = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: item.id, title: searchItemTitle(item) };
+  // The title renders through a subscribed component: React Compiler caches this
+  // call's result per instance (constant arguments), so a translated string would
+  // stay in the mount-time language until remount.
+  return { id: item.id, title: createElement(SearchableSettingTitle, { item }) };
+}
+
+function SearchableSettingTitle({ item }: { item: SettingsSearchItem }) {
+  const { t } = useTranslation("settings");
+  // The key comes from data, so it sits outside t's literal key union.
+  return t(item.title as never, item.titleValues as never) as unknown as ReactNode;
 }
 
 export function filterAvailableSettingsSearchItems(

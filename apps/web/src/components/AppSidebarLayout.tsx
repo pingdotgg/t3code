@@ -1,4 +1,4 @@
-import { i18n } from "../i18nCore";
+import { useTranslation } from "react-i18next";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -314,6 +314,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
+  const { t } = useTranslation("sidebar");
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -393,12 +394,12 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                   "pointer-events-auto",
                   isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 )}
-                aria-label={i18n.t("sidebar:header.toggleSidebar")}
+                aria-label={t("header.toggleSidebar")}
               />
             }
           />
           <TooltipPopup side="bottom">
-            {i18n.t("sidebar:header.toggleSidebar")}
+            {t("header.toggleSidebar")}
             {shortcutLabel ? ` (${shortcutLabel})` : ""}
           </TooltipPopup>
         </Tooltip>
@@ -414,6 +415,7 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
+  const { t } = useTranslation("sidebar");
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -471,7 +473,7 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label={i18n.t("sidebar:header.threads")}
+              aria-label={t("header.threads")}
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,

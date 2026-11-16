@@ -6,7 +6,7 @@ import * as React from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 
-import { translateDynamic } from "../../i18nCore";
+import { useTranslation } from "react-i18next";
 import { Input, type InputProps } from "~/components/ui/input";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import {
@@ -400,6 +400,7 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
+  const { t } = useTranslation("ui");
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
 
@@ -421,7 +422,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       {...props}
     >
       {isOpen ? <PanelLeftCloseIcon className="size-4" /> : <PanelLeftIcon className="size-4" />}
-      <span className="sr-only">{translateDynamic("ui:toggleSidebar")}</span>
+      <span className="sr-only">{t("toggleSidebar")}</span>
     </Button>
   );
 }
