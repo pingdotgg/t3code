@@ -3,6 +3,7 @@ import * as NodeUtil from "node:util";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { readToolOutputImage } from "@t3tools/shared/toolOutput";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as Predicate from "effect/Predicate";
 import {
   ProviderDriverKind,
@@ -377,7 +378,8 @@ interface ActivePiTurn {
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
-  sawCompaction: boolean;
+  /** Pi fails a cancelled compact's response too; that is a stop, not a turn failure. */
+  compactionCancelled: boolean;
   manualCompactInFlight: boolean;
   activeCompaction: PiCompactionState | null;
   activeProviderRetry: PiProviderRetryState | null;
@@ -430,7 +432,13 @@ interface PiPromptSend {
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
+  /** Files an extension moved this thread off (ctx.newSession); queued turns may still name them. */
+  readonly supersededSessionFiles: Set<string>;
 }
+
+const isLiveSessionOf = (state: PiThreadState, nativeId: string | null | undefined) =>
+  nativeId === state.providerThread.nativeThreadRef?.nativeId ||
+  (nativeId != null && state.supersededSessionFiles.has(nativeId));
 
 interface PiWake {
   readonly state: PiThreadState;
@@ -1409,6 +1417,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
         }
         const output = piToolOutput(resultRecord, toolName);
+        const readPath =
+          toolName === "read"
+            ? (recordString(args, "path") ?? recordString(args, "file_path"))?.trim()
+            : undefined;
+        const viewedImagePath =
+          readPath &&
+          readPath.length <= 4096 &&
+          !/[\r\n]/.test(readPath) &&
+          isWorkspaceImagePreviewPath(readPath)
+            ? readPath
+            : undefined;
         yield* emit({
           type: "turn_item.updated",
           driver: PI_PROVIDER,
@@ -1420,6 +1439,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             toolName,
             input: args ?? {},
             ...(output === undefined ? {} : { output }),
+            ...(viewedImagePath === undefined ? {} : { viewedImagePath }),
           },
         });
         if (toolName === "subagent") {
@@ -2295,7 +2315,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           case "compaction_start": {
             if (turn === null) return;
             turn.settleProbeGeneration += 1;
-            turn.sawCompaction = true;
             if (turn.activeCompaction !== null) {
               yield* emitCompaction(turn, turn.activeCompaction, "cancelled");
             }
@@ -2316,6 +2335,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt: observedAt,
             };
             turn.activeCompaction = null;
+            turn.compactionCancelled = event["aborted"] === true;
             const result = event["result"];
             if (result === null || result === undefined) {
               if (event["aborted"] === true) {
@@ -2495,7 +2515,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }
                 return;
               }
-              if (!compactTurn.sawCompaction) {
+              if (!compactTurn.compactionCancelled) {
                 compactTurn.failure = makeProviderFailure({
                   message: recordString(event, "error") ?? "Pi compact failed.",
                   class: "provider_error",
@@ -2676,7 +2696,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               (recordNumber(data, "pendingMessageCount") ?? 0) === 0
             ) {
               turn.settleWhenIdle = false;
-              if (state !== null) yield* finalizeTurn(state);
+              if (state === null) return;
+              // Extensions can move Pi to another session file (ctx.newSession); resume that one.
+              const sessionFile = recordString(data, "sessionFile");
+              const previousFile = state.providerThread.nativeThreadRef?.nativeId;
+              if (sessionFile !== undefined && sessionFile !== previousFile) {
+                if (previousFile != null) state.supersededSessionFiles.add(previousFile);
+                state.supersededSessionFiles.delete(sessionFile);
+                state.providerThread = {
+                  ...state.providerThread,
+                  nativeThreadRef: providerRef(sessionFile),
+                };
+                lastNativeThreadId = sessionFile;
+              }
+              yield* finalizeTurn(state);
             }
             return;
           }
@@ -3007,7 +3040,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 "Cannot switch Pi threads while native work is awaiting a turn",
               );
             }
-            threadState = { providerThread, activeTurn: null };
+            threadState = { providerThread, activeTurn: null, supersededSessionFiles: new Set() };
           }
           const baselineEntries = yield* request({ type: "get_entries" }).pipe(
             Effect.orElseSucceed(() => undefined),
@@ -3040,6 +3073,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+        // pi.setModel and /preset can change the model without an RPC event.
+        // Confirm cached selections against Pi before skipping them.
+        const modelCached =
+          modelSelection.model !== PI_INHERIT_MODEL_SLUG && modelSelection.model === appliedModel;
+        let modelDrifted = false;
+        if (modelCached || (thinking !== undefined && thinking === appliedThinking)) {
+          const state = yield* request({ type: "get_state" });
+          const stateModel = recordField(state, "model");
+          const piModel = `${recordString(stateModel, "provider")}/${recordString(stateModel, "id")}`;
+          modelDrifted = modelCached && piModel !== appliedModel;
+          appliedThinking = recordString(state, "thinkingLevel") ?? null;
+        }
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
@@ -3062,7 +3107,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = baselineThinking;
           }
-        } else if (modelSelection.model !== appliedModel) {
+        } else if (modelDrifted || modelSelection.model !== appliedModel) {
           // Extensions and models.json edits can add providers after the first discovery.
           if (findReportedPiModel(modelSelection.model, discoveredModels) === undefined) {
             yield* discoverModels();
@@ -3224,10 +3269,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               if (pendingPromptResponsesDrained === null) break;
               yield* Deferred.await(pendingPromptResponsesDrained);
             }
-            if (
-              state.providerThread.nativeThreadRef?.nativeId !==
-              turnInput.providerThread.nativeThreadRef?.nativeId
-            ) {
+            if (!isLiveSessionOf(state, turnInput.providerThread.nativeThreadRef?.nativeId)) {
               return yield* protocolError("Pi turn requested for a different native session");
             }
             // Fork adoption uses the orchestrator-allocated row; preserve that identity in later updates.
@@ -3292,7 +3334,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               lastLiveUsedTokens: null,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
-              sawCompaction: false,
+              compactionCancelled: false,
               manualCompactInFlight: compactCommand !== null,
               activeCompaction: null,
               activeProviderRetry: null,
@@ -3310,8 +3352,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   closed ||
                   stopRequested ||
                   rollbackBarrier !== null ||
-                  state.providerThread.nativeThreadRef?.nativeId !==
-                    turnInput.providerThread.nativeThreadRef?.nativeId
+                  !isLiveSessionOf(state, turnInput.providerThread.nativeThreadRef?.nativeId)
                 ) {
                   return yield* protocolError("Pi turn ownership changed before it could start");
                 }
@@ -3321,7 +3362,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   return yield* protocolError("Pi native wake belongs to a different app thread");
                 }
                 pendingWake = null;
-                state.providerThread = turnInput.providerThread;
+                state.providerThread = {
+                  ...turnInput.providerThread,
+                  nativeThreadRef: state.providerThread.nativeThreadRef,
+                };
                 state.activeTurn = activeTurn;
                 activeTurn.adoptedWake = wake !== null && !continuation;
                 if (compactCommand !== null) {
