@@ -35,6 +35,7 @@ import {
   resolveSpawnCommand,
   resolveWindowsEnvironment,
   runsGitWithoutConsole,
+  windowsEnvironmentValueCommand,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
   withPathDirectoryListings,
@@ -257,6 +258,26 @@ describe("mergePathEntries", () => {
   });
 });
 
+describe("windowsEnvironmentValueCommand", () => {
+  it("reads PATH from Machine, User, and Process so a stale Electron PATH still sees User installs", () => {
+    expect(windowsEnvironmentValueCommand("PATH")).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH','Machine')",
+    );
+    expect(windowsEnvironmentValueCommand("PATH")).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH','User')",
+    );
+    expect(windowsEnvironmentValueCommand("PATH")).toContain(
+      "[Environment]::GetEnvironmentVariable('PATH','Process')",
+    );
+  });
+
+  it("leaves non-PATH names on the process scope", () => {
+    expect(windowsEnvironmentValueCommand("FNM_DIR")).toBe(
+      "$value = [Environment]::GetEnvironmentVariable('FNM_DIR')",
+    );
+  });
+});
+
 describe("readEnvironmentFromWindowsShell", () => {
   effectIt.effect("yields while the native shell probe is pending", () =>
     Effect.gen(function* () {
@@ -400,6 +421,12 @@ describe("readEnvironmentFromWindowsShell", () => {
         "pwsh.exe",
         expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
         { encoding: "utf8", timeout: 5000 },
+      );
+      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+        "[Environment]::GetEnvironmentVariable('PATH','User')",
+      );
+      expect(execFile.mock.calls[0]?.[1].at(-1)).toContain(
+        "[Environment]::GetEnvironmentVariable('PATH','Machine')",
       );
     }),
   );
