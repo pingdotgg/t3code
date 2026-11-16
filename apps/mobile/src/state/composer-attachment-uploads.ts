@@ -16,9 +16,9 @@ import {
   composerDraftEnvironmentId,
   canUploadComposerAttachment,
   createComposerAttachmentUploadQueue,
+  type ComposerAttachmentUploadState,
 } from "../lib/composerAttachmentUploadQueue";
 import { appAtomRegistry } from "./atom-registry";
-import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
 import { environmentServerConfigsAtom } from "./server";
 import {
   flattenQueuedThreadMessages,
@@ -46,7 +46,9 @@ export {
   composerAttachmentsStillUploading,
 } from "../lib/composerAttachmentUploadQueue";
 
-export { composerAttachmentUploadsAtom };
+export const composerAttachmentUploadsAtom = Atom.make<
+  Readonly<Record<string, ComposerAttachmentUploadState>>
+>({}).pipe(Atom.keepAlive);
 const uploadStateAtom = Atom.family((key: string) =>
   Atom.map(composerAttachmentUploadsAtom, (states) => states[key]),
 );
