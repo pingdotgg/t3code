@@ -1426,7 +1426,6 @@ const program = Effect.gen(function* () {
             rawInput: { command: "git status" },
           },
         });
-        // With T3_ACP_FAIL_PROMPT the prompt fails below instead of hanging.
         if (!failPrompt) return yield* Effect.never;
       }
 
