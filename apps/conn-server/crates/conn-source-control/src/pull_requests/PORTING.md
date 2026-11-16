@@ -50,6 +50,9 @@ and fixed the shared helper's missing `operationName`, discarded API error messa
 overly broad GraphQL not-found classification. `tools/check.sh` checks both recordings for drift.
 The reaction cases come from the contract's literals; a new one must be implemented too.
 Panel capabilities are compared with T3's provider, with explicit omissions for unserved features.
+The 13 added RPC payloads also use generated limits. The shared checker now handles trimmed
+strings, array bounds and review-position unions; 28 PR cases are recorded from the contract.
+The first Rust run accepted an oversized comment that T3 refused; the generated guard fixes it.
 
 `pr-guide-recordings.mjs` writes and reads a guide through T3's actual SQLite repository. It
 records the table definition, stored JSON and decoded guide. The Rust RPC reads that row from

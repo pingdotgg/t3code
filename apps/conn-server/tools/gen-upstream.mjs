@@ -405,10 +405,13 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  ...["comment","replyToThread","updateComment","setReaction","setThreadResolution","submitReview","requestReviewers","reviewerCandidates","labelCandidates","setLabels","update","stack","reviewGuide"].map(method=>`pullRequests.${method}`),
   "server.listTextGeneratorModels",
   "terminal.attach",
   "terminal.open",
 ];
+const {TrimmedString}=await importSource("packages/contracts/src/baseSchemas.ts");
+const trimTransformation=TrimmedString.ast.encoding[0].transformation;
 const rpcGroups = [rpc.OfficialWsRpcGroup, rpc.ForkWsRpcGroup];
 const payloadOf = (tag) => {
   for (const group of rpcGroups) {
@@ -424,21 +427,32 @@ function limitNode(ast) {
   if (ast._tag === "Union") {
     const members = ast.types.filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
     const flat = members.flatMap((t) => (t._tag === "Union" ? t.types : [t])).filter((t) => t._tag !== "Undefined" && t._tag !== "Null");
-    const tagOf = (t) => t._tag === "Objects" && t.propertySignatures.find((p) => p.name === "_tag")?.type.literal;
-    if (flat.length > 1 && flat.every((t) => typeof tagOf(t) === "string")) {
+    const tagOf = (t,key) => t._tag === "Objects" && t.propertySignatures.find((p) => p.name === key)?.type.literal;
+    const discriminator=["_tag","kind"].find(key=>flat.length>1&&flat.every(t=>typeof tagOf(t,key)==="string"));
+    if (discriminator !== undefined) {
       const variants = {};
       for (const t of flat) {
         const node = limitNode(t);
-        if (node) variants[tagOf(t)] = node;
+        if (node) variants[tagOf(t,discriminator)] = node;
       }
-      return Object.keys(variants).length ? { variants } : null;
+      return Object.keys(variants).length ? { variants, discriminator } : null;
     }
     return members.length === 1 ? limitNode(members[0]) : null;
   }
   const node = {};
+  if(ast._tag==="String" && ast.encoding?.some(link=>link.transformation===trimTransformation)) {
+    node.trim=true;
+    for(const check of ast.checks ?? []) {
+      if(check.annotations?.representation===undefined && check.annotations?.toJsonSchema) {
+        const json=check.annotations.toJsonSchema()[0];
+        if(typeof json?.minLength==="number") node.minLength=json.minLength;
+      }
+    }
+  }
   for (const r of representations(ast)) {
     const p = r.payload;
     if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    else if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
     else if (r.id === "effect/schema/isPattern") {
       // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
       const flags = p.flags.replace("u", "");
@@ -448,6 +462,11 @@ function limitNode(ast) {
     else if (r.id === "effect/schema/isInt") node.int = true;
     else if (r.id === "effect/schema/isGreaterThanOrEqualTo") node.minimum = p.minimum;
     else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
+  }
+  if(ast._tag==="Arrays") {
+    if(ast.elements.length!==0 || ast.rest.length!==1) throw new Error("Payload limits need a tuple handler");
+    const value=limitNode(ast.rest[0]);
+    if(value) node.values=value;
   }
   if (ast._tag === "Objects") {
     const fields = {};
@@ -473,8 +492,8 @@ const limitsRs = rustfmt(
     "// Source: the payload schemas of packages/contracts/src/rpc.ts, by reflection.",
     "",
     "/// The payload limits of each listed method, as JSON: `fields`, `keys`, `values`,",
-    "/// `variants` (by `_tag`), `maxLength`, `pattern`, `maxProperties`, `int`, `minimum`,",
-    "/// `maximum`.",
+    "/// `variants` (by `discriminator`, default `_tag`), `trim`, `minLength`, `maxLength`,",
+    "/// `pattern`, `maxProperties`, `int`, `minimum`, `maximum`.",
     `pub(super) const LIMITS: &str = r#"${JSON.stringify(limits)}"#;`,
     "",
   ].join("\n"),

@@ -1,5 +1,5 @@
 //! Payload limits that the contract's schemas check and the generated Rust types do not: a
-//! string's length and pattern, a number's range, a record's number of entries. The table is
+//! string's length and pattern, a number's range, array bounds and record entry counts. The table is
 //! generated (`limits/generated.rs`, by `tools/gen-upstream.mjs`) from the payload schemas in
 //! `packages/contracts/src/rpc.ts`, for the methods it lists.
 //!
@@ -10,8 +10,8 @@
 //! `tools/limits-cases.json` holds the cases; `tools/limits-diff.mjs` runs them through the T3
 //! contract's own decode and a test here through [`check`].
 //!
-//! A length counts UTF-16 code units, as JavaScript's `length` does. The T3 server checks a
-//! trimmed string's length after it trims; this check reads the string as sent.
+//! A string length counts UTF-16 code units, as JavaScript's `length` does. Fields with the
+//! contract's `TrimmedString` transform are trimmed before their limits are checked.
 
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -33,6 +33,10 @@ struct RawLimit {
     values: Option<Box<RawLimit>>,
     #[serde(default)]
     variants: HashMap<String, RawLimit>,
+    discriminator: Option<String>,
+    #[serde(default)]
+    trim: bool,
+    min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<String>,
     max_properties: Option<usize>,
@@ -47,6 +51,9 @@ struct Limit {
     keys: Option<Box<Limit>>,
     values: Option<Box<Limit>>,
     variants: Vec<(String, Limit)>,
+    discriminator: Option<String>,
+    trim: bool,
+    min_length: Option<usize>,
     max_length: Option<usize>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
@@ -79,6 +86,9 @@ impl Limit {
             .collect();
         variants.sort_by(|a, b| a.0.cmp(&b.0));
         Self {
+            discriminator: raw.discriminator,
+            trim: raw.trim,
+            min_length: raw.min_length,
             fields,
             keys: raw.keys.map(|k| Box::new(Self::build(*k))),
             values: raw.values.map(|v| Box::new(Self::build(*v))),
@@ -100,10 +110,22 @@ impl Limit {
     /// is checked after that, as Effect checks it on the decoded record.
     fn problem(&self, value: &mut Value, path: &mut Vec<String>) -> Option<String> {
         match value {
-            Value::String(text) => self.text_problem(text, path),
+            Value::String(text) => {
+                if self.trim {
+                    // ECMAScript trims BOM but keeps NEXT LINE.
+                    let trimmed = text.trim_matches(|c: char| {
+                        (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}'
+                    });
+                    if trimmed.len() != text.len() {
+                        *text = trimmed.to_owned();
+                    }
+                }
+                self.text_problem(text, path)
+            }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
             Value::Object(map) => {
-                if let Some(Value::String(tag)) = map.get("_tag")
+                if let Some(Value::String(tag)) =
+                    map.get(self.discriminator.as_deref().unwrap_or("_tag"))
                     && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
                 {
                     return variant.problem(value, path);
@@ -139,11 +161,55 @@ impl Limit {
                     _ => None,
                 }
             }
+            Value::Array(values) => {
+                if let Some(min) = self.min_length
+                    && values.len() < min
+                {
+                    return Some(at(
+                        format!(
+                            "a value with a length of at least {min}, got {}",
+                            values.len()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(max) = self.max_length
+                    && values.len() > max
+                {
+                    return Some(at(
+                        format!(
+                            "a value with a length of at most {max}, got {}",
+                            values.len()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(limit) = &self.values {
+                    for (index, value) in values.iter_mut().enumerate() {
+                        path.push(index.to_string());
+                        let problem = limit.problem(value, path);
+                        path.pop();
+                        if problem.is_some() {
+                            return problem;
+                        }
+                    }
+                }
+                None
+            }
             _ => None,
         }
     }
 
     fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
+        if let Some(min) = self.min_length {
+            let length = text.encode_utf16().count();
+            if length < min {
+                return Some(at(
+                    format!("a value with a length of at least {min}, got {length}"),
+                    path,
+                ));
+            }
+        }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();
             if length > max {
@@ -261,8 +327,12 @@ mod tests {
         struct Cases {
             cases: Vec<Case>,
         }
-        let Cases { cases } =
+        let Cases { mut cases } =
             serde_json::from_str(include_str!("../tools/limits-cases.json")).expect("cases parse");
+        let Cases { cases: pr_cases } =
+            serde_json::from_str(include_str!("../tools/pr-limit-cases.json"))
+                .expect("PR cases parse");
+        cases.extend(pr_cases);
         assert!(cases.len() > 30);
         for mut case in cases {
             let result = check(&case.tag, &mut case.payload);

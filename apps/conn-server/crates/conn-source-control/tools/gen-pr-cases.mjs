@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { importSource } from "../../../tools/monorepo.mjs";
 import { recordActions, recordCapabilities } from "./pr-action-recordings.mjs";
 import { recordGuide } from "../../conn-server/tools/pr-guide-recordings.mjs";
+import { recordPrLimits } from "../../conn-server/tools/pr-limit-recordings.mjs";
 const pure = await importSource("packages/source-control-github/src/server/gitHubPullRequestJson.ts");
 const { loginAvatarUrl } = await importSource("packages/source-control-github/src/server/GitHubPullRequestProvider.ts");
 const { toChangeBreakdown } = await importSource("apps/server/src/pullRequest/pullRequestChangeBreakdown.ts");
@@ -100,10 +101,13 @@ const guidePath = new URL("../../conn-server/src/methods/pull_requests/guide-fix
 const guideOut = JSON.stringify(await recordGuide(),null,2)+"\n";
 const capabilitiesPath = new URL("../src/pull_requests/capabilities.json",import.meta.url);
 const capabilitiesOut = JSON.stringify(await recordCapabilities(),null,2)+"\n";
+const limitsPath = new URL("../../conn-server/tools/pr-limit-cases.json",import.meta.url);
+const limitsOut = JSON.stringify(await recordPrLimits(),null,2)+"\n";
 if (process.argv.includes("--check")) {
   if (fs.readFileSync(path,"utf8") !== out) throw new Error("PR characterizations changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(actionPath,"utf8") !== actionOut) throw new Error("PR action requests changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(guidePath,"utf8") !== guideOut) throw new Error("PR guide storage changed; run gen-pr-cases.mjs and port the difference");
   if (fs.readFileSync(capabilitiesPath,"utf8") !== capabilitiesOut) throw new Error("GitHub PR capabilities changed; run gen-pr-cases.mjs and port the difference");
+  if (fs.readFileSync(limitsPath,"utf8") !== limitsOut) throw new Error("PR payload limits changed; run gen-pr-cases.mjs and port the difference");
   console.log(`PR characterizations: ${cases.length} T3 cases and ${actionCases.length} action traces current`);
-} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities and T3's stored guide`); }
+} else { fs.writeFileSync(path,out); fs.writeFileSync(actionPath,actionOut); fs.writeFileSync(guidePath,guideOut); fs.writeFileSync(capabilitiesPath,capabilitiesOut); fs.writeFileSync(limitsPath,limitsOut); console.log(`recorded ${cases.length} PR characterizations, ${actionCases.length} API action traces, capabilities, limits and T3's stored guide`); }
