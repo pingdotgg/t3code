@@ -89,6 +89,13 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
       ids: ["ledger-labs"],
     },
     {
+      name: "a narrow fact covers too little of a broad message",
+      message: {
+        text: `${Array.from({ length: 300 }, (_, index) => `orchard${index}`).join(" ")} Enable the ledger labs toggle before billing changes.`,
+      },
+      ids: [],
+    },
+    {
       name: "continue with remaining work",
       message: { text: "continue with remaining work" },
       ids: [],
