@@ -4,6 +4,7 @@ import {
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthTerminalOperateScope,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -47,6 +48,10 @@ const state = vi.hoisted(() => ({
   refreshLinkState: vi.fn(),
   scanError: null as string | null,
   scanPending: false,
+  runningTerminalIds: null as unknown,
+  openTerminal: vi.fn(),
+  writeTerminal: vi.fn(),
+  closeTerminal: vi.fn(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -148,10 +153,41 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => {
     },
   };
 });
+vi.mock(import("../../state/terminal"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    terminalEnvironment: {
+      ...actual.terminalEnvironment,
+      open: "openTerminal",
+      write: "writeTerminal",
+      close: "closeTerminal",
+    } as never,
+  };
+});
+vi.mock(import("../../state/terminalSessions"), async (original) => {
+  const { useAtomValue } = await import("@effect/atom-react");
+  return {
+    ...(await original()),
+    useThreadRunningTerminalIds: (() =>
+      useAtomValue(state.runningTerminalIds as Atom.Atom<ReadonlyArray<string>>)) as never,
+  };
+});
+vi.mock(import("../ThreadTerminalDrawer"), async (original) => ({
+  ...(await original()),
+  TerminalViewport: () => <div />,
+}));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: ((command: "createProject" | "importThreads" | "refreshProviders") =>
-    state[command]) as never,
+  useAtomCommand: ((
+    command:
+      | "createProject"
+      | "importThreads"
+      | "refreshProviders"
+      | "openTerminal"
+      | "writeTerminal"
+      | "closeTerminal",
+  ) => state[command]) as never,
 }));
 
 import { welcomeImportSelectionKey } from "../../onboarding/welcomeState";
@@ -327,6 +363,10 @@ function setup() {
   state.refreshLinkState.mockReset();
   state.scanError = null;
   state.scanPending = false;
+  state.runningTerminalIds = Atom.make<ReadonlyArray<string>>([]).pipe(Atom.keepAlive);
+  for (const command of [state.openTerminal, state.writeTerminal, state.closeTerminal]) {
+    command.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  }
   localStorage.removeItem(welcomeImportSelectionKey(primaryId));
   return now;
 }
@@ -623,6 +663,37 @@ it("offers Update for a signed-in agent whose version is broken, and keeps Start
   );
   expect(update?.getAttribute("href")).toContain("/settings/providers");
   expect(button("Import 2 projects and start").disabled).toBe(true);
+});
+
+it("checks an agent again once its install command finishes in the setup terminal", async () => {
+  using _now = setup();
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(session([AuthOrchestrationOperateScope, AuthTerminalOperateScope])),
+  );
+  appAtomRegistry.set(state.config as Atom.Writable<unknown>, {
+    cwd: "/Users/dev",
+    environment: { platform: { os: "darwin" } },
+    keybindings: [],
+    settings: { providerInstances: {}, projectSettingsOverrides: {} },
+  });
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+    { ...readyClaude, installed: false, status: "error", auth: { status: "unknown" } },
+  ]);
+  await using _screen = await mountWelcome();
+  await vi.waitFor(() => button("Install"));
+  await click("Install");
+  await vi.waitFor(() => expect(state.writeTerminal).toHaveBeenCalledOnce());
+  const { terminalId } = state.openTerminal.mock.calls[0]![0].input;
+  const runningTerminalIds = state.runningTerminalIds as Atom.Writable<ReadonlyArray<string>>;
+  const recheck = { environmentId: primaryId, input: { instanceId: readyClaude.instanceId } };
+
+  await act(async () => appAtomRegistry.set(runningTerminalIds, [terminalId]));
+  expect(state.refreshProviders).not.toHaveBeenCalledWith(recheck);
+  // The shell stays open at its prompt after the install, so only the command exits.
+  await act(async () => appAtomRegistry.set(runningTerminalIds, []));
+  expect(state.refreshProviders).toHaveBeenCalledWith(recheck);
+  expect(state.closeTerminal).not.toHaveBeenCalled();
 });
 
 it("keeps an import opt-out on the page when storage cannot save it", async () => {

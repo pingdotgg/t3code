@@ -1,5 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
-import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
+import {
+  createEnvironmentSessionAtoms,
+  sessionDeniesScope,
+} from "@t3tools/client-runtime/state/session";
 import {
   type AuthEnvironmentScope,
   type AuthSessionState,
@@ -36,17 +39,20 @@ export function sessionHasScope(
   return sessionScopeAccess(result, scope) === "granted";
 }
 
+function sessionStateAtomFor(environmentId: EnvironmentId | null) {
+  return environmentId === null
+    ? EMPTY_SESSION_STATE_ATOM
+    : environmentSession.sessionStateAtom(environmentId);
+}
+
 /** Separates a grant the session lacks from expired credentials and a session that never loaded. */
 export function useEnvironmentScopeAccess(
   environmentId: EnvironmentId | null,
   scope: AuthEnvironmentScope,
 ): EnvironmentScopeAccess {
   // Select the access: every revalidation emits a new result, and most consumers are list rows.
-  return useAtomValue(
-    environmentId === null
-      ? EMPTY_SESSION_STATE_ATOM
-      : environmentSession.sessionStateAtom(environmentId),
-    (result) => sessionScopeAccess(result, scope),
+  return useAtomValue(sessionStateAtomFor(environmentId), (result) =>
+    sessionScopeAccess(result, scope),
   );
 }
 
@@ -55,6 +61,16 @@ export function useEnvironmentScope(
   scope: AuthEnvironmentScope,
 ): boolean {
   return useEnvironmentScopeAccess(environmentId, scope) === "granted";
+}
+
+/** Unlike `!useEnvironmentScope`, stays false until the host has answered without the scope. */
+export function useEnvironmentScopeDenied(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return useAtomValue(sessionStateAtomFor(environmentId), (result) =>
+    sessionDeniesScope(result, scope),
+  );
 }
 
 export function useEnvironmentsWithScope(
