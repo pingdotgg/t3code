@@ -297,6 +297,8 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
       if (navigationKeys.onKey(inputView, keyCode, event)) return@setOnKeyListener true
       if (event.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
       when {
+        // A composing word is still in the input; deleting it there sends the DEL.
+        keyCode == KeyEvent.KEYCODE_DEL && inputView.text.isNotEmpty() -> false
         keyCode == KeyEvent.KEYCODE_DEL -> {
           sentText.removeCodePoints(1)
           onInput(mapOf("data" to "\u007F"))
