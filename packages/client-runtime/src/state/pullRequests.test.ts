@@ -2516,7 +2516,7 @@ it.effect("does not read a list ahead again after the host refused it", () =>
         undefined,
         false,
         {},
-        { load: () => Effect.succeed(Option.none()), save: () => Effect.void },
+        { load: () => Effect.succeedNone, save: () => Effect.void },
       );
       const target = { environmentId: TARGET.environmentId, input: { state: "open" } } as const;
       const warm = atoms.warmList(target);
