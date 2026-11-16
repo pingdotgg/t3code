@@ -49,6 +49,7 @@ import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { readPeerSpeakers } from "./readPeerSpeakers.ts";
 import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
@@ -2930,6 +2931,32 @@ const messageOrdinalsReadThroughTheirIndex = Effect.gen(function* () {
 
 it.effect("reads message ordinals through their index", () =>
   messageOrdinalsReadThroughTheirIndex.pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads peer speakers through the message index when messages are named", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:peer-speakers");
+    const named = traceSqlStatements();
+    yield* readPeerSpeakers(sql, threadId, [MessageId.make("message:peer")]).pipe(
+      Effect.withTracer(named.tracer),
+    );
+    yield* assertReadsThroughMessageOrdinalIndex(
+      named.statements.find((statement) => statement.includes("$.speaker.label")),
+      ["thread_id=?", "<expr>=?"],
+    );
+    const open = traceSqlStatements();
+    yield* readPeerSpeakers(sql, threadId).pipe(Effect.withTracer(open.tracer));
+    const plan = yield* queryPlan(
+      open.statements.find((statement) => statement.includes("$.speaker.label")),
+    );
+    const search = plan.find((detail) =>
+      detail.includes("orchestration_v2_projection_turn_items_thread_type_idx"),
+    );
+    assert.isDefined(search, plan.join("\n"));
+    assert.include(search, "thread_id=?");
+    assert.include(search, "type=?");
+  }).pipe(Effect.provide(layerTest)),
 );
 
 const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(function* (
