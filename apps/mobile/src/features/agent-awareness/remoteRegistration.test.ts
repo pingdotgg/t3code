@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
@@ -632,6 +633,60 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       Effect.provide(layerRelayTest),
     );
   });
+
+  it.effect(
+    "keeps a card whose registration is still in flight when the app goes to the background",
+    () => {
+      const registrations = stubLiveActivityRelay();
+      let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
+      const activity = {
+        getId: () => "activity-1",
+        getPushToken: vi.fn((): Promise<string | null> => Promise.resolve(null)),
+        addPushTokenListener: vi.fn((listener: typeof tokenListener) => {
+          tokenListener = listener;
+        }),
+        end: vi.fn(() => Promise.resolve()),
+      };
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      return Effect.gen(function* () {
+        yield* armCardOnSend(activity);
+
+        const relayReply = yield* Deferred.make<void>();
+        const client = yield* ManagedRelay.ManagedRelayClient;
+        const register = client.registerLiveActivity;
+        vi.spyOn(client, "registerLiveActivity").mockImplementationOnce((...args) =>
+          Deferred.await(relayReply).pipe(Effect.andThen(register(...args))),
+        );
+        tokenListener?.({ pushToken: "activity-token" });
+        const listenerRegistration = backgroundRuntime.pending.shift()!;
+        const inFlight = yield* Effect.forkChild(
+          listenerRegistration.operation as Effect.Effect<
+            unknown,
+            AgentAwarenessRegistrationError,
+            ManagedRelay.ManagedRelayClient
+          >,
+        );
+
+        appStateMock.currentState = "background";
+        for (const listener of appStateMock.listeners) listener("background");
+        const cleanup = yield* Effect.forkChild(runBackgroundOperations());
+        yield* TestClock.adjust("3 seconds");
+        yield* Fiber.join(cleanup);
+        expect(activity.end).not.toHaveBeenCalled();
+
+        yield* Deferred.succeed(relayReply, undefined);
+        yield* Fiber.join(inFlight);
+        expect(registrations).toEqual([
+          { deviceId: "device-1", activityPushToken: "activity-token" },
+        ]);
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
+        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+        Effect.provide(layerRelayTest),
+      );
+    },
+  );
 
   it("ends local Live Activities and stops foreground reconciliation on cloud sign-out", () => {
     const end = vi.fn(() => Promise.resolve());

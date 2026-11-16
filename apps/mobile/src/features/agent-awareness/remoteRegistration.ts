@@ -8,6 +8,7 @@ import * as Notifications from "expo-notifications";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -965,26 +966,31 @@ export const registerLiveActivityPushToken = Effect.fn(
   }
 
   const lock = observeLiveActivityPushTokens(input.activity);
-  return yield* lock.withPermit(
-    Effect.gen(function* () {
-      const activityPushToken = yield* Effect.tryPromise({
-        try: () => input.activity.getPushToken(),
-        catch: (cause) =>
-          new AgentAwarenessOperationError({
-            operation: "read-live-activity-push-token",
-            cause,
-          }),
-      });
-      if (!activityPushToken) {
-        return false;
-      }
+  return yield* lock.withPermit(registerCurrentLiveActivityPushToken(input.activity));
+});
 
-      return yield* registerLiveActivityPushTokenValue({
-        activityId: input.activity.getId(),
-        activityPushToken,
-      });
-    }),
-  );
+// Callers hold the activity's token lock.
+const registerCurrentLiveActivityPushToken = Effect.fn(
+  "remoteRegistration.registerCurrentLiveActivityPushToken",
+)(function* (
+  activity: LiveActivity<AgentActivityProps>,
+): Effect.fn.Return<boolean, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
+  const activityPushToken = yield* Effect.tryPromise({
+    try: () => activity.getPushToken(),
+    catch: (cause) =>
+      new AgentAwarenessOperationError({
+        operation: "read-live-activity-push-token",
+        cause,
+      }),
+  });
+  if (!activityPushToken) {
+    return false;
+  }
+
+  return yield* registerLiveActivityPushTokenValue({
+    activityId: activity.getId(),
+    activityPushToken,
+  });
 });
 
 // Observe every token replacement: the relay otherwise keeps pushing to the old token until APNs rejects it.
@@ -1013,7 +1019,28 @@ const endUnregisteredStartedLiveActivities = Effect.fn(
   "remoteRegistration.endUnregisteredStartedLiveActivities",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
   for (const [activityId, activity] of unregisteredStartedLiveActivities) {
-    yield* registerLiveActivityPushToken({ activity }).pipe(
+    yield* Effect.scoped(endUnregisteredStartedLiveActivity(activityId, activity));
+  }
+});
+
+// The relay keeps one token per device, so ending a card while its registration is in flight
+// would let that late token replace a newer card's. The card ends only under its token lock.
+const endUnregisteredStartedLiveActivity = Effect.fn(
+  "remoteRegistration.endUnregisteredStartedLiveActivity",
+)(function* (
+  activityId: string,
+  activity: LiveActivity<AgentActivityProps>,
+): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient | Scope.Scope> {
+  let locked = false;
+  yield* observeLiveActivityPushTokens(activity)
+    .takeScoped(1)
+    .pipe(
+      Effect.andThen(() => {
+        locked = true;
+        return canRegisterRemoteLiveActivities()
+          ? registerCurrentLiveActivityPushToken(activity)
+          : Effect.void;
+      }),
       Effect.timeout(BACKGROUND_ACTIVITY_REGISTRATION_TIMEOUT),
       Effect.catch((error) =>
         Effect.sync(() => {
@@ -1021,25 +1048,28 @@ const endUnregisteredStartedLiveActivities = Effect.fn(
         }),
       ),
     );
-    // Back in the foreground the refresh keeps registering the card instead.
-    if (!unregisteredStartedLiveActivities.has(activityId) || AppState.currentState === "active") {
-      continue;
-    }
-    yield* Effect.tryPromise({
-      try: () => activity.end("immediate"),
-      catch: (cause) =>
-        new AgentAwarenessOperationError({ operation: "end-unregistered-live-activity", cause }),
-    }).pipe(
-      Effect.match({
-        onFailure: (error) => {
-          logRegistrationError("unregistered live activity cleanup failed", error);
-        },
-        onSuccess: () => {
-          unregisteredStartedLiveActivities.delete(activityId);
-        },
-      }),
-    );
+  // Back in the foreground the refresh keeps registering the card instead.
+  if (
+    !locked ||
+    !unregisteredStartedLiveActivities.has(activityId) ||
+    AppState.currentState === "active"
+  ) {
+    return;
   }
+  yield* Effect.tryPromise({
+    try: () => activity.end("immediate"),
+    catch: (cause) =>
+      new AgentAwarenessOperationError({ operation: "end-unregistered-live-activity", cause }),
+  }).pipe(
+    Effect.match({
+      onFailure: (error) => {
+        logRegistrationError("unregistered live activity cleanup failed", error);
+      },
+      onSuccess: () => {
+        unregisteredStartedLiveActivities.delete(activityId);
+      },
+    }),
+  );
 });
 
 const registerLiveActivityPushTokenValue = Effect.fn(
