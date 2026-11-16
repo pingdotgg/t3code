@@ -480,8 +480,9 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
             if (!pending.has(id) || pool.retiring >= MAX_RETIRING_READERS) return;
             pool.retiring++;
             worker.once("exit", () => pool.retiring--);
-            stop(`${label} abandoned a running statement`);
+            // terminate() references the worker again, so stop must unref it afterward.
             void worker.terminate();
+            stop(`${label} abandoned a running statement`);
           });
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock

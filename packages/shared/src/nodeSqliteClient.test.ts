@@ -624,8 +624,12 @@ it.effect("gives the next read a new reader when a read is abandoned mid-stateme
   withReaderClient((sql) =>
     Effect.gen(function* () {
       const startedBefore = startedWorkers.length;
+      const referencedPorts = () =>
+        process.getActiveResourcesInfo().filter((resource) => resource === "MessagePort").length;
+      const referencedBefore = referencedPorts();
       yield* Fiber.interrupt(yield* startSlowRead((slow) => slow, sql));
 
+      assert.equal(referencedPorts(), referencedBefore);
       assert.equal(yield* countEntries(sql).pipe(SqliteClient.readOnly), 1);
       assert.equal(startedWorkers.length, startedBefore + 2);
     }),
