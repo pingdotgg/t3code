@@ -78,6 +78,7 @@ import { threadCanArchive } from "../home/threadArchive";
 import { useCanShareWithGuest } from "./useCanShareWithGuest";
 import {
   threadListV2ShowMoreAccessibilityLabel,
+  canMarkThreadUnread,
   resolveThreadListV2SnoozeGateExpiryMs,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozePresets,
@@ -913,11 +914,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
-  const canMarkUnread =
-    status === "ready" &&
-    thread.lastVisitedAt !== undefined &&
-    thread.latestRun?.completedAt != null &&
-    !threadHasUnseenCompletion(thread);
+  const canMarkUnread = canMarkThreadUnread(thread, status);
   const handleMarkUnread = useCallback(async () => {
     if (!canMarkUnread) return;
     const result = await markThreadUnread({

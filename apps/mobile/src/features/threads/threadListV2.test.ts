@@ -47,6 +47,7 @@ import {
   threadListV2RowAccessibilityLabel,
   threadListV2ShowMoreAccessibilityLabel,
   threadHasUnseenCompletion,
+  canMarkThreadUnread,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -253,6 +254,53 @@ describe("threadListV2ShowMoreAccessibilityLabel", () => {
     [26, "Show 25 more settled threads"],
   ])("announces the next page for %i hidden settled threads", (hiddenCount, expected) => {
     expect(threadListV2ShowMoreAccessibilityLabel(hiddenCount)).toBe(expected);
+  });
+});
+
+describe("canMarkThreadUnread", () => {
+  const completed = { status: "completed", completedAt: NOW } as const;
+  it.each([
+    {
+      name: "a read completed run",
+      latestRun: completed,
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: true,
+    },
+    {
+      name: "an unread completed run",
+      latestRun: completed,
+      lastVisitedAt: "2026-06-01T00:00:00.000Z",
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "no completed run",
+      latestRun: undefined,
+      lastVisitedAt: NOW,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "a server without visit tracking",
+      latestRun: completed,
+      lastVisitedAt: undefined,
+      status: "ready",
+      can: false,
+    },
+    {
+      name: "a working thread",
+      latestRun: completed,
+      lastVisitedAt: NOW,
+      status: "working",
+      can: false,
+    },
+  ] as const)("is $can for $name", ({ latestRun, lastVisitedAt, status, can }) => {
+    const thread = { latestRun, lastVisitedAt } as Pick<
+      EnvironmentThreadShell,
+      "latestRun" | "lastVisitedAt"
+    >;
+    expect(canMarkThreadUnread(thread, status)).toBe(can);
   });
 });
 
