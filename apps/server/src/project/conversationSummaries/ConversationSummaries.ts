@@ -85,7 +85,8 @@ const MAX_SUMMARIES_PER_PASS = 3;
 // One empty or invalid reply can be a cold start. The second is the chunk, and retrying it
 // again only rehashes the thread.
 const CHUNK_FAILURES_BEFORE_SKIP = 2;
-// Live keys only survive a pass, so this bounds a thread with many failing stretches.
+// Live keys only survive a pass, so this bounds a thread with many failing stretches. Trimming
+// drops other failures before skips, which are never re-recorded and would otherwise age out.
 const MAX_CHUNK_FAILURES = 64;
 // Measured as delivery measures it, so a few roll-ups fit beside the verbatim tail of a 16 KB
 // handoff in any script. The prompt asks for fewer characters, so this cut is a backstop.
@@ -898,7 +899,9 @@ const make = Effect.gen(function* () {
         cleanupSuperseded(superseded()).pipe(
           Effect.andThen(DateTime.now),
           Effect.flatMap((now) => {
-            const stored = [...chunkFailures.values()].slice(-MAX_CHUNK_FAILURES);
+            const stored = [...chunkFailures.values()]
+              .toSorted((a, b) => Number(a.skipped === true) - Number(b.skipped === true))
+              .slice(-MAX_CHUNK_FAILURES);
             return recordPass(projectId, threadId, {
               runId,
               result,
