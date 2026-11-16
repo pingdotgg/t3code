@@ -2774,6 +2774,30 @@ async fn test_logins_save_find_and_hide_secrets() {
     ] {
         assert_eq!(rpc_error(&mut agent, tool, args).await.0, -32602);
     }
+    let file = f.dir.join("secrets/test-logins.bin");
+    let saved_bytes = std::fs::read(&file).unwrap();
+    std::fs::write(&file, "invalid fixture store").unwrap();
+    for (tool, args) in [
+        ("request_credentials", json!({"domain":"example.test"})),
+        (
+            "save_test_login",
+            json!({"url":"example.test","username":"u","password":"p"}),
+        ),
+    ] {
+        let reply = agent
+            .request("tools/call", json!({"name":tool,"arguments":args}))
+            .await;
+        assert_eq!(
+            reply["result"],
+            json!({
+                "content":[{"type":"text","text":"T3 Code could not read or save its test logins."}],
+                "isError":true,
+            }),
+            "{tool}: {reply}"
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"invalid fixture store");
+    }
+    std::fs::write(&file, saved_bytes).unwrap();
     let projection = f
         .service
         .config

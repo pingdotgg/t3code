@@ -733,6 +733,21 @@ if (noModel) {
   ];
   for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
     if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
+      // Handoff replaces the provider session, so exercise its credentials before release.
+      report("calling thread test login saved on both servers",state.every((c) => typeof c.loginId === "string"));
+      const loginFiles = [NodePath.join(root,"ts","base","userdata","secrets","test-logins.bin"), NodePath.join(root,"rust","state","secrets","test-logins.bin")];
+      const loginBytes = loginFiles.map((file) => NodeFS.readFileSync(file));
+      const storedLogins = loginBytes.map((bytes) => {
+        const value = JSON.parse(bytes);
+        return {...value,logins:value.logins.map((login) => ({...login,id:"<id>",createdAt:"<time>"}))};
+      });
+      report("test login disk format and exact secret bytes",canonical(storedLogins[0]) === canonical(storedLogins[1]) && storedLogins[0].logins[0].password === "fixture-only");
+      for (const file of loginFiles) NodeFS.writeFileSync(file,"invalid fixture store",{mode:0o600});
+      const corruptLoginReplies = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"example.test"})));
+      const corruptLoginResults = corruptLoginReplies.map(outcome);
+      const sameLoginFailure = corruptLoginResults.every((result) => result.kind === "failure") && canonical(corruptLoginResults[0]) === canonical(corruptLoginResults[1]);
+      report(`test login store failure text${sameLoginFailure ? "" : `: T3 ${canonical(corruptLoginReplies[0])} / Conn ${canonical(corruptLoginReplies[1])}`}`,sameLoginFailure);
+      loginFiles.forEach((file,i) => NodeFS.writeFileSync(file,loginBytes[i],{mode:0o600}));
       await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,false,[setupScript])));
       for (const target of [{},{providerInstanceId:"claudeAgent"}]) {
         const denied = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{target}]}).then(outcome)));
@@ -751,16 +766,6 @@ if (noModel) {
     }));
     report(`calling thread ${tool}: ${canonical(values[0]) === canonical(values[1]) ? "same outcome" : JSON.stringify(values)}`, canonical(values[0]) === canonical(values[1]));
   }
-  report("calling thread test login saved on both servers",state.every((c) => typeof c.loginId === "string"));
-  const loginFiles = [NodePath.join(root,"ts","base","userdata","secrets","test-logins.bin"), NodePath.join(root,"rust","state","secrets","test-logins.bin")];
-  const storedLogins = loginFiles.map((file) => {
-    const value = JSON.parse(NodeFS.readFileSync(file,"utf8"));
-    return {...value,logins:value.logins.map((login) => ({...login,id:"<id>",createdAt:"<time>"}))};
-  });
-  report("test login disk format and exact secret bytes",canonical(storedLogins[0]) === canonical(storedLogins[1]) && storedLogins[0].logins[0].password === "fixture-only");
-  for (const file of loginFiles) NodeFS.writeFileSync(file,"invalid fixture store",{mode:0o600});
-  const corruptLoginResults = await Promise.all(agents.map((agent) => agent.callTool("request_credentials",{domain:"example.test"}).then(outcome)));
-  report("test login store failure text",corruptLoginResults.every((result) => result.kind === "failure") && canonical(corruptLoginResults[0]) === canonical(corruptLoginResults[1]));
   await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
   for (const name of NodeFS.readdirSync(servers[0].records).filter((name) => name.endsWith(".json"))) NodeFS.unlinkSync(NodePath.join(servers[0].records,name));
   NodeFS.rmSync(servers[1].capture,{force:true});
