@@ -95,7 +95,7 @@ import {
   type HomeProjectSortOrder,
   sortHomeProjectScopes,
 } from "./homeThreadList";
-import { createScrollActivationScheduler, createSwipeRowActivation } from "./swipe-row-activation";
+import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
@@ -284,13 +284,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
-    swipeRowActivation.activate(
-      rows.slice(Math.max(0, state.start - 2), state.end + 3).map((row) => row.key),
-    );
+    swipeRowActivation.activateAround(rows, state.start, state.end);
   };
-  const [scrollActivation] = useState(createScrollActivationScheduler);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the row activation timer on unmount
-  useEffect(() => scrollActivation.dispose, [scrollActivation]);
   const handleListScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     onFabScroll?.(event);
     if (workspace)
@@ -298,7 +293,9 @@ export function HomeScreen(props: HomeScreenProps) {
         "threads",
         Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
       );
-    scrollActivation.onScroll(() => activateVisibleRows(listRef.current?.getState().data ?? []));
+    const state = listRef.current?.getState();
+    if (state !== undefined && state.end >= 0)
+      swipeRowActivation.followScroll(state.data, state.start, state.end);
   };
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;

@@ -1,34 +1,23 @@
-import { describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
-import { createScrollActivationScheduler, createSwipeRowActivation } from "./swipe-row-activation";
-
-describe("createScrollActivationScheduler", () => {
-  it("wakes rows scrolled into view before a fling settles, then the final range", () => {
-    vi.useFakeTimers();
-    try {
-      const activation = createSwipeRowActivation();
-      const scheduler = createScrollActivationScheduler();
-      let visible = ["a"];
-      const onScroll = () => scheduler.onScroll(() => activation.activate(visible));
-
-      for (let frame = 0; frame < 20; frame += 1) {
-        visible = [`row-${frame}`];
-        onScroll();
-        vi.advanceTimersByTime(16);
-      }
-      expect(activation.isActive("row-19")).toBe(false);
-      expect(activation.isActive("row-10")).toBe(true);
-
-      vi.advanceTimersByTime(200);
-      expect(activation.isActive("row-19")).toBe(true);
-      scheduler.dispose();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
+import { createSwipeRowActivation } from "./swipe-row-activation";
 
 describe("createSwipeRowActivation", () => {
+  it("keeps rows awake ahead of a glide, rendering only when the window moves", () => {
+    const activation = createSwipeRowActivation();
+    let renders = 0;
+    activation.subscribe(() => (renders += 1));
+    const rows = Array.from({ length: 100 }, (_, index) => ({ key: `row-${index}` }));
+
+    for (let start = 0; start < 60; start += 1) {
+      activation.followScroll(rows, start, start + 9);
+      for (let index = start; index <= start + 9; index += 1) {
+        expect(activation.isActive(`row-${index}`)).toBe(true);
+      }
+    }
+    expect(renders).toBeLessThan(25);
+  });
+
   it("defers changes while a finger is on the list so a press is never remounted", () => {
     const activation = createSwipeRowActivation();
     activation.activate(["a"]);
