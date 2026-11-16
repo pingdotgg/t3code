@@ -572,8 +572,8 @@ function useSidebarThreads(input: {
       ? activeThreads
       : projectFolders.flatMap((folder) => folder.threads)),
     ...(settledShelfFixed ? [] : renderedSettledThreads),
-    ...visibleInputThreads,
-    ...visibleWorkingThreads,
+    ...(inputShelfExpanded ? inputThreads : routeThreadOnly(inputThreads, routeRowThreadKey)),
+    ...(workingShelfExpanded ? workingThreads : routeThreadOnly(workingThreads, routeRowThreadKey)),
     ...visibleSnoozedThreads,
     ...(settledShelfFixed ? renderedSettledThreads : []),
   ];
@@ -2030,7 +2030,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   if (sidebarListItemsKeyState !== sidebarListItemsKey) {
     setSidebarListItemsKeyState(sidebarListItemsKey);
     setSidebarListItems(sidebarListItemsFresh);
-    // Update the local list too; threadByKey already omits rows moved into collapsed shelves.
     sidebarListItems = sidebarListItemsFresh;
   }
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the dnd-kit drag sensor when the dragged row leaves the list

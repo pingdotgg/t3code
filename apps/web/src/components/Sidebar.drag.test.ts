@@ -217,9 +217,9 @@ describe("sidebar collision detection", () => {
     const input = {
       ...args,
       droppableContainers: containers,
-      collisionRect: target,
       pointerCoordinates: { x: 100, y: target.top + 10 },
     };
+    expect(closestCenter(input)[0]?.id).toBe("blocked");
     const detector = createSidebarCollisionDetection(() => true, { independentShelves: true });
     expect(detector(input)[0]?.id).toBe(sidebarMarkerId("settled-header"));
   });

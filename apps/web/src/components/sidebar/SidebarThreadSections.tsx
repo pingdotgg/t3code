@@ -25,7 +25,9 @@ export function SidebarThreadSections({
 }) {
   const [settledHeader, ...settledRows] = shelves.settled;
   const fixedShelves = settledFixed ? [...shelfNames, "settled" as const] : shelfNames;
-  const crowded = fixedShelves.filter((name) => shelves[name][0]).length > 3;
+  const shelfCount = fixedShelves.filter((name) => shelves[name][0]).length;
+  // AnimatedHeight rounds each panel up, so leave a pixel per panel for rounding.
+  const shelfMaxHeight = `max(0px, min(calc(${shelfCount > 3 ? 20 : 28}cqh - 2rem), calc((100cqh - 4rem - ${shelfCount * 2}rem) / ${Math.max(1, shelfCount)} - 1px)))`;
   return (
     <div
       ref={ref}
@@ -72,12 +74,8 @@ export function SidebarThreadSections({
               <ScrollArea
                 hideScrollbars
                 viewportTabIndex={-1}
-                className={cn(
-                  "h-auto",
-                  crowded
-                    ? "max-h-[max(0px,calc(20cqh-2rem))]"
-                    : "max-h-[max(0px,calc(28cqh-2rem))]",
-                )}
+                className="h-auto"
+                style={{ maxHeight: shelfMaxHeight }}
               >
                 <ul
                   data-sidebar-list={name}

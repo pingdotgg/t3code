@@ -467,7 +467,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "fixed-settled-shelf",
-    title: "Keep Settled at bottom",
+    title: msg("Keep Settled at bottom"),
     to: "/settings/general",
     searchTerms: ["sidebar settled section fixed working below end scroll list"],
   },

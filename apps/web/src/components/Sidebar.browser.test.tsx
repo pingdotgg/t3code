@@ -50,6 +50,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -166,7 +167,13 @@ describe("sidebar status shelf collapse", () => {
       });
       const routeThreadRef = { environmentId: thread.environmentId, threadId: thread.id };
       vi.mocked(useProjects).mockReturnValue([activeProject]);
-      vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+      const adjacentThread = makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make("adjacent-thread"),
+        title: "Adjacent active thread",
+      });
+      vi.mocked(useQuietThreadShells).mockReturnValue([adjacentThread, thread]);
       vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
       vi.mocked(useThreadRouteTarget).mockReturnValue({
         kind: "server",
@@ -189,6 +196,7 @@ describe("sidebar status shelf collapse", () => {
           <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
         </SidebarProvider>,
       );
+      using navigation = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
       const toggle = screen.getByTestId(`sidebar-${section}-shelf-toggle`);
       toggle.element().focus();
       await userEvent.keyboard("{ArrowRight}");
@@ -198,6 +206,16 @@ describe("sidebar status shelf collapse", () => {
       await userEvent.keyboard("{ArrowLeft}");
       await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
       await expect.element(row).not.toBeInTheDocument();
+      await userEvent.keyboard(
+        isMacPlatform(navigator.platform)
+          ? "{Meta>}{Shift>}[[{/Shift}{/Meta}"
+          : "{Control>}{Shift>}[[{/Shift}{/Control}",
+      );
+      expect(navigation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: { environmentId: adjacentThread.environmentId, threadId: adjacentThread.id },
+        }),
+      );
       await userEvent.keyboard("{ArrowRight}");
       await expect.element(row).toBeInTheDocument();
       await expect.element(toggle).toHaveAttribute("aria-expanded", "true");

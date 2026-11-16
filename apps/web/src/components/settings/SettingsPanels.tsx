@@ -935,8 +935,10 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("fixed-settled-shelf")}
-          description="Keep Settled below Working and Snoozed instead of at the end of the main list."
+          {...setting("fixed-settled-shelf")}
+          description={
+            <T>Keep Settled below Working and Snoozed instead of at the end of the main list.</T>
+          }
           resetAction={
             settings.sidebarSettledShelfFixed !==
             DEFAULT_UNIFIED_SETTINGS.sidebarSettledShelfFixed ? (
@@ -956,7 +958,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarSettledShelfFixed: Boolean(checked) })
               }
-              aria-label="Keep Settled at bottom"
+              aria-label={gt("Keep Settled at bottom")}
             />
           }
         />
