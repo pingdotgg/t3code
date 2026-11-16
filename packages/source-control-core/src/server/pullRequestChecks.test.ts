@@ -266,17 +266,14 @@ describe("check log excerpts", () => {
       text: "##[error]The action has timed out.\n##[end-action id=build;outcome=failure;conclusion=failure;duration_ms=1250]",
       lines: 5,
     },
-  ])(
-    "strips formatting and counts lines across chunks %#",
-    ({ chunks, text, lines, truncated = false }) => {
-      expect(excerptCheckLog(chunks)).toEqual({
-        _tag: "excerpt",
-        text,
-        totalLines: lines,
-        truncated,
-      });
-    },
-  );
+  ])("strips formatting and counts lines across chunks %#", ({ chunks, text, lines }) => {
+    expect(excerptCheckLog(chunks)).toEqual({
+      _tag: "excerpt",
+      text,
+      totalLines: lines,
+      truncated: false,
+    });
+  });
 
   it("does not let noise consume error context or tail slots", () => {
     const noise = [
