@@ -680,8 +680,8 @@ jobs:
           echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
   # Off unless the MOBILE_IOS_LOCAL_BUILDS repository variable is `true`; the
-  # production job only sets ios_build then. Store binaries need the final
-  # Xcode 27.1; MOBILE_IOS_ALLOW_XCODE_RC=true accepts the release candidate.
+  # production job only sets ios_build then. Xcode 27.1 matches the EAS build
+  # image in eas.json.
   # No sticky disk: it mounts ext4 and only works on Linux runners.
   ios:
     name: iOS store build
@@ -701,7 +701,6 @@ jobs:
       EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
       PROFILE: ${{ needs.production.outputs.ios_profile }}
       BUILD_TAG: mobile-ios-build/${{ needs.production.outputs.ios_profile }}/${{ needs.production.outputs.ios_version }}/${{ needs.production.outputs.ios_fingerprint }}
-      ALLOW_XCODE_RC: ${{ vars.MOBILE_IOS_ALLOW_XCODE_RC == 'true' }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -739,12 +738,9 @@ jobs:
         if: steps.record.outputs.built != 'true'
         run: |
           xcode=/Applications/Xcode_27.1.app
-          if [ ! -d "$xcode" ] && [ "$ALLOW_XCODE_RC" = "true" ]; then
-            xcode=/Applications/Xcode_27.1_Release_Candidate.app
-          fi
           if [ ! -d "$xcode" ]; then
             ls -d /Applications/Xcode*.app
-            echo "::error::Xcode 27.1 (final) is not on this runner. Set the MOBILE_IOS_ALLOW_XCODE_RC repository variable to true to build store binaries with the release candidate."
+            echo "::error::Xcode 27.1 is not on this runner."
             exit 1
           fi
           sudo xcode-select -s "$xcode/Contents/Developer"
