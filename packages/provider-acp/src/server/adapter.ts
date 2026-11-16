@@ -4814,6 +4814,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const messageId = providerMessageId(nativeItemId);
               const key = String(messageId);
               const previous = current.messages.get(key);
+              // Whitespace belongs to the message it continues; alone it would be a blank message.
+              if (previous === undefined && !replace && text.trim().length === 0) return current;
               if (previous === undefined) current.order.push(key);
               current.messages.set(key, {
                 createdBy: previous?.createdBy ?? (role === "user" ? "user" : "agent"),
@@ -5539,11 +5541,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const lateMonitorChatter =
                 /<monitor-event\b/i.test(text) ||
                 /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
-              if (
-                text.trim().length > 0 &&
-                lateBackgroundMutations.length === 0 &&
-                !lateMonitorChatter
-              ) {
+              if (lateBackgroundMutations.length === 0 && !lateMonitorChatter) {
                 yield* appendLoadedHistory(
                   notification,
                   update.sessionUpdate === "user_message_chunk"

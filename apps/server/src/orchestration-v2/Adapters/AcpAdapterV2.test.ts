@@ -3384,10 +3384,13 @@ describe("AcpAdapterV2", () => {
       yield* replay("user_message_chunk", "u1", "lo");
       yield* replay("agent_message_chunk", "a1", "hi");
       yield* replay("user_message_chunk", "u2", "next");
-      yield* replay("agent_message_chunk", "a1", " there");
+      yield* replay("agent_message_chunk", "a1", " ");
+      yield* replay("agent_message_chunk", "a1", "there");
+      yield* replay("agent_message_chunk", "a3", " ");
       const first = yield* runtime.readThreadSnapshot({ providerThread });
       yield* replay("agent_message_chunk", "a2", "done");
-      yield* replay("user_message_chunk", "u2", " one");
+      yield* replay("user_message_chunk", "u2", "\n");
+      yield* replay("user_message_chunk", "u2", "\tone");
       const second = yield* runtime.readThreadSnapshot({ providerThread });
 
       const texts = (snapshot: typeof first) =>
@@ -3396,7 +3399,7 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(texts(second), [
         "user:hello",
         "assistant:hi there",
-        "user:next one",
+        "user:next\n\tone",
         "assistant:done",
       ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
