@@ -67,7 +67,7 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 
 it.layer(layerTest)("CursorDriver", (it) => {
   it.effect(
-    "persists browser credentials, uses them for chat, and closes the SDK session on logout",
+    "keeps browser credentials across unavailable verification and clears rejected credentials",
     () =>
       Effect.gen(function* () {
         const login = vi.spyOn(Cursor.auth, "login").mockImplementation(async (options) => {
@@ -82,9 +82,21 @@ it.layer(layerTest)("CursorDriver", (it) => {
           });
           return { apiKey: "instance-browser-key", apiKeyExpiresAtMs: 4_000_000_000_000 };
         });
+        let catalogStatus = 503;
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
         const client = HttpClient.make((request) => {
           requests.push({ url: request.url, authorization: request.headers.authorization });
+          if (catalogStatus !== 200) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  { error: { message: "Catalog unavailable" } },
+                  { status: catalogStatus },
+                ),
+              ),
+            );
+          }
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
@@ -134,11 +146,20 @@ it.layer(layerTest)("CursorDriver", (it) => {
         );
         expect((yield* instance.snapshot.refresh).auth.status).toBe("unauthenticated");
         yield* instance.auth!.start("client");
-        yield* instance.auth!.subscribe("client").pipe(
-          Stream.filter((state) => state.phase === "succeeded"),
+        const signedIn = yield* instance.auth!.subscribe("client").pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
           Stream.runHead,
           Effect.map(Option.getOrThrow),
         );
+        expect(signedIn.phase).toBe("succeeded");
+        expect(signedIn.message).toContain("saved");
+        expect(yield* instance.snapshot.getSnapshot).toMatchObject({
+          status: "error",
+          auth: { status: "unknown" },
+        });
+        catalogStatus = 200;
+        yield* instance.snapshot.refresh;
+        expect(login).toHaveBeenCalledTimes(1);
         expect(requests).toContainEqual({
           url: "https://api.cursor.com/v1/me",
           authorization: "Bearer instance-browser-key",
@@ -183,6 +204,17 @@ it.layer(layerTest)("CursorDriver", (it) => {
         ).toBe("Failure");
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(1);
+        catalogStatus = 401;
+        yield* instance.auth!.start("client");
+        const rejected = yield* instance.auth!.subscribe("client").pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect(rejected.phase).toBe("failed");
+        const requestsAfterRejection = requests.length;
+        expect((yield* instance.snapshot.refresh).auth.status).toBe("unauthenticated");
+        expect(requests).toHaveLength(requestsAfterRejection);
       }),
   );
 
