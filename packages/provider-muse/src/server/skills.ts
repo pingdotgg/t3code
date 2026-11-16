@@ -10,6 +10,7 @@ import type { MuseSettings } from "../settings.ts";
 import {
   DEFAULT_TIMEOUT_MS,
   nonEmptyTrimmed,
+  resolveProviderProbeTimeoutMs,
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { makeMuseEnvironment } from "./sdk.ts";
@@ -62,7 +63,9 @@ export const discoverMuseSkills = Effect.fn("discoverMuseSkills")(function* (
         shell: spawnCommand.shell,
       }),
     );
-  }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS));
+  }).pipe(
+    Effect.timeout(resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, probeEnvironment)),
+  );
   if (output.code !== 0) return yield* new MuseSkillsExitError({ exitCode: output.code });
   const catalog = yield* decodeSkills(output.stdout);
   const home =
