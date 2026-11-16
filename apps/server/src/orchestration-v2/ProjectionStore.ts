@@ -1726,8 +1726,12 @@ export function threadShellFromProjection(
       )[0] ?? null,
   );
 
+  // An FYI is an agent's note, not activity: it neither keeps a thread active nor reorders it.
   const userMessages = projection.messages
-    .filter((message) => message.role === "user" && idleCompactionOf(message) === undefined)
+    .filter(
+      (message) =>
+        message.role === "user" && idleCompactionOf(message) === undefined && message.fyi !== true,
+    )
     .toSorted(
       (left, right) =>
         DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
@@ -1905,7 +1909,7 @@ function isSilentRunForShell(
   );
 }
 
-const BACKGROUND_WAKE_SOURCE_KINDS = new Set(["background_task", "command", "monitor"]);
+const BACKGROUND_WAKE_SOURCE_KINDS = new Set(["background_task", "command", "monitor", "fyi"]);
 
 function isBackgroundWakeRunForShell(
   run: OrchestrationV2ThreadProjection["runs"][number],
@@ -7662,7 +7666,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT 1 FROM orchestration_v2_projection_messages wake
         WHERE wake.message_id = json_extract(${run}.payload_json, '$.userMessageId')
           AND json_extract(wake.payload_json, '$.notification.source.kind')
-            IN ('background_task', 'background_command', 'command', 'monitor')
+            IN ('background_task', 'background_command', 'command', 'monitor', 'fyi')
           AND json_extract(wake.payload_json, '$.notification.source.work') IS NULL
           AND json_extract(wake.payload_json, '$.notification.outcome') = 'updated'
           AND json_extract(wake.payload_json, '$.delegatedCompletion') IS NULL
@@ -7815,6 +7819,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE message.thread_id = t.thread_id
                   AND message.role = 'user'
                   AND NOT ${isIdleCompactionMessage("message")}
+                  AND json_extract(message.payload_json, '$.fyi') IS NULL
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,
@@ -8112,6 +8117,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_messages message
                 WHERE message.thread_id = t.thread_id AND message.role = 'user'
                   AND NOT ${isIdleCompactionMessage("message")}
+                  AND json_extract(message.payload_json, '$.fyi') IS NULL
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_message_at,

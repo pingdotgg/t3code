@@ -49,7 +49,7 @@ function latestUserMessageAt(
 ): OrchestrationV2ThreadShell["latestUserMessageAt"] {
   for (let index = projection.messages.length - 1; index >= 0; index -= 1) {
     const message = projection.messages[index];
-    if (message?.role === "user") {
+    if (message?.role === "user" && message.fyi !== true) {
       return message.createdAt;
     }
   }

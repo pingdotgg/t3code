@@ -47,6 +47,7 @@ import type {
   UsageLimitsReport,
   RunId,
 } from "@t3tools/contracts";
+import type { FyiCarrierRun } from "@t3tools/client-runtime/fork/fyi-marker";
 import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
@@ -239,6 +240,8 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  /** The runs FYI messages name, for their badges. */
+  readonly fyiRuns?: ReadonlyMap<RunId, FyiCarrierRun>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
@@ -1489,6 +1492,7 @@ function ThreadDetailBody(
                   detailRef={props.selectedThreadDetailRef}
                   workspaceRoot={props.threadCwd}
                   feed={props.selectedThreadFeed}
+                  fyiRuns={props.fyiRuns}
                   pendingHandoff={props.pendingHandoff}
                   worktreeSetup={props.worktreeSetup}
                   setupWorkingStartedAt={props.setupWorkingStartedAt}

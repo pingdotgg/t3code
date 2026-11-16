@@ -380,6 +380,11 @@ const layerBase: Layer.Layer<
                 .normalize(
                   event.payload,
                   event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  event.payload.type === "user_message" &&
+                    event.payload.fyi === true &&
+                    event.payload.runId === null
+                    ? "latest_run"
+                    : undefined,
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),

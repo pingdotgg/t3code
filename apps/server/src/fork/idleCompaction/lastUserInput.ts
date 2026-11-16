@@ -33,6 +33,7 @@ const make = Effect.gen(function* () {
               json_extract(payload_json, '$.createdBy') = 'user'
               OR json_extract(payload_json, '$.creationSource') = 'mcp'
             )
+            AND json_extract(payload_json, '$.fyi') IS NULL
           UNION ALL
           SELECT resolved_at AS at
           FROM orchestration_v2_projection_runtime_requests

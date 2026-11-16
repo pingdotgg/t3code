@@ -169,6 +169,18 @@ export interface ThreadManagementSendResult {
   readonly delivery: "started" | "queued" | "steered" | "restarted";
 }
 
+export interface ThreadManagementFyiInput {
+  readonly projectId: ProjectId;
+  readonly commandId: CommandId;
+  readonly threadId: ThreadId;
+  readonly messageId: MessageId;
+  readonly senderThreadId?: ThreadId;
+  readonly linkedSender?: OrchestrationV2LinkedSender;
+  readonly text: string;
+  readonly createdBy: OrchestrationV2Actor;
+  readonly creationSource: OrchestrationV2CreationSource;
+}
+
 export interface ThreadManagementWaitInput {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
@@ -455,6 +467,10 @@ export interface ThreadManagementServiceShape {
   readonly sendToThread: (
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
+  /** Starts no turn, so it neither restores the worktree nor needs the provider enabled. */
+  readonly postFyi: (
+    input: ThreadManagementFyiInput,
+  ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, ThreadManagementFailure>;
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
     readonly commandId: CommandId;
@@ -981,6 +997,31 @@ const make = Effect.gen(function* () {
     return { dispatch: dispatched, projection, message, run, turnItem, delivery };
   });
 
+  const postFyi: ThreadManagementServiceShape["postFyi"] = Effect.fn(
+    "ThreadManagementService.postFyi",
+  )(function* (input) {
+    const target = yield* getProjectThreadRecords(input, []);
+    if (target.thread.archivedAt !== null) {
+      return yield* new ThreadManagementThreadArchivedError({ threadId: input.threadId });
+    }
+    const command = {
+      type: "message.dispatch",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      messageId: input.messageId,
+      ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+      ...(input.linkedSender === undefined ? {} : { linkedSender: input.linkedSender }),
+      text: input.text,
+      attachments: [],
+      dispatchMode: { type: "fyi" },
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    } satisfies OrchestrationV2Command;
+    return yield* ensureCommandTranscripts(command).pipe(
+      Effect.andThen(orchestrator.dispatch(command)),
+    );
+  });
+
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = Effect.fn(
     "ThreadManagementService.waitForThread",
   )(function* (input) {
@@ -1153,7 +1194,10 @@ const make = Effect.gen(function* () {
             .map((message) => message.id),
         );
         if (
-          messages.some((message) => !automaticMessageIds.has(message.id)) ||
+          // An FYI another agent sent is no user input, even once a follow-up carries it.
+          messages.some(
+            (message) => message.fyi !== true && !automaticMessageIds.has(message.id),
+          ) ||
           following.some((candidate) => !automaticMessageIds.has(candidate.userMessageId))
         ) {
           return true;
@@ -1741,6 +1785,7 @@ const make = Effect.gen(function* () {
     getThreadLinkMetadata: orchestrator.getThreadLinkMetadata,
     listProjectThreads,
     sendToThread,
+    postFyi,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
     hasReceipt,

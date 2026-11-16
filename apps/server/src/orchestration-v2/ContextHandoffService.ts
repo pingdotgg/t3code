@@ -1,4 +1,5 @@
 import {
+  fyiElement,
   type OrchestrationV2AppThread,
   OrchestrationV2ContextHandoff,
   type OrchestrationV2TurnItem,
@@ -213,7 +214,10 @@ function summarizeDeltaItem(
 ): string | null {
   switch (item.type) {
     case "user_message":
-      return `- User: ${compactText(item.text)}`;
+      if (item.fyi !== true) return `- User: ${compactText(item.text)}`;
+      return item.runId === null
+        ? null
+        : `- ${fyiElement({ ...item, text: compactText(item.text) }).replaceAll("\n", " ")}`;
     case "assistant_message":
       return `- Assistant: ${compactText(item.text)}`;
     case "command_execution":

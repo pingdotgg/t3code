@@ -132,6 +132,7 @@ import {
   taskPrompt,
 } from "./delegatedTaskModes.ts";
 import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import { fyiRunsByThread, fyiTimelineFields, sendFyi } from "../fork/fyi/FyiMcp.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -1076,6 +1077,8 @@ function timelineItem(input: {
   readonly maxChars: number;
   readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
+  /** The runs FYI rows name, by the thread each row comes from. */
+  readonly runsByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["runs"]>;
 }): OrchestratorMcpThreadTimelineItem {
   const text = turnItemText(input.row.item);
   const offset = input.textOffset ?? 0;
@@ -1102,6 +1105,7 @@ function timelineItem(input: {
     createdBy: message?.createdBy ?? null,
     creationSource: message?.creationSource ?? null,
     ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+    ...fyiTimelineFields(input.row, input.runsByThreadId),
     type: input.row.item.type,
     status: input.row.item.status,
     title: input.row.item.title,
@@ -3210,6 +3214,11 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       );
       const messagesByThreadId = new Map(sourceMessages);
+      const runsByThreadId = yield* fyiRunsByThread(
+        timeline.items,
+        threadManagement,
+        threadManagementFailure,
+      );
       const thread = threadDetail(
         scope,
         target,
@@ -3230,6 +3239,7 @@ const make = Effect.gen(function* () {
           row,
           maxChars,
           messagesByThreadId,
+          runsByThreadId,
           ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
         })),
         newestFirst,
@@ -3301,6 +3311,24 @@ const make = Effect.gen(function* () {
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);
 
       const mode = input.mode ?? "auto";
+      if (mode === "fyi") {
+        return yield* sendFyi({
+          scope,
+          send: input,
+          thread: target.thread,
+          senderThreadId: parent?.thread.id,
+          ids: Effect.map(requestKey(input.clientRequestId), (key) => ({
+            messageId: stableOperationMessageId({
+              scope,
+              requestKey: key,
+              operation: "thread-send",
+            }),
+            commandId: stableCommandId({ scope, requestKey: key, operation: "thread-send" }),
+          })),
+          threadManagement,
+          threadManagementFailure,
+        });
+      }
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,

@@ -55,6 +55,7 @@ import * as ProviderSessionManager from "../ProviderSessionManager.ts";
 import * as CommandOutputRecorder from "./CommandOutputRecorder.ts";
 import * as ProviderSwitchService from "../ProviderSwitchService.ts";
 import * as ProviderTurnControlService from "../ProviderTurnControlService.ts";
+import * as FyiDelivery from "../../fork/fyi/FyiDelivery.ts";
 import * as ProviderTurnStartService from "../ProviderTurnStartService.ts";
 import * as ProviderTurnStartServiceTestkit from "../ProviderTurnStartService.testkit.ts";
 import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
@@ -273,7 +274,7 @@ export function layerWithRegistry<Error>(
   registryLayer: Layer.Layer<
     ProviderAdapterRegistry.ProviderAdapterRegistryV2,
     Error,
-    McpProviderSessions.McpProviderSessions
+    McpProviderSessions.McpProviderSessions | FyiDelivery.FyiDelivery
   >,
   options: {
     readonly databaseLayer?: Layer.Layer<
@@ -316,9 +317,7 @@ export function layerWithRegistry<Error>(
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
   const layerContinuationRequests =
     options.runContinuationWorker === true ? ProviderContinuationRequests.layer : Layer.empty;
-  const layerProvidedRegistry = registryLayer.pipe(
-    Layer.provide(Layer.merge(layerContinuationRequests, McpProviderSessions.layer)),
-  );
+
   const layerServerSettings = Layer.unwrap(
     Effect.map(ManagedPolicy.fromDocument("/test/policy.json", options.managedPolicy), (policy) =>
       ServerSettings.layerTest(
@@ -354,6 +353,19 @@ export function layerWithRegistry<Error>(
   const layerEventSinkProvided = EventSink.layerFromStores.pipe(
     Layer.provide(Layer.mergeAll(layerStores, layerDatabase)),
   );
+  // Adapters share the turn start's FYI delivery, as in production.
+  const layerFyiDeliveryProvided = FyiDelivery.layer.pipe(
+    Layer.provide(Layer.merge(layerEventSinkProvided, layerDatabase)),
+  );
+  const layerProvidedRegistry = registryLayer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerContinuationRequests,
+        McpProviderSessions.layer,
+        layerFyiDeliveryProvided,
+      ),
+    ),
+  );
   const layerRuntime = RuntimePolicy.layerEnforcingCeiling.pipe(
     Layer.provide(Layer.merge(layerRuntimeBase, layerServerSettings)),
   );
@@ -368,6 +380,7 @@ export function layerWithRegistry<Error>(
         }),
         layerStores,
         layerEventSinkProvided,
+        layerFyiDeliveryProvided,
         IdAllocator.layer,
         ThreadCommandExecutor.layer,
         GitVcsDriver.layer.pipe(
@@ -442,6 +455,7 @@ export function layerWithRegistry<Error>(
   const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerFyiDeliveryProvided,
         layerContextHandoffServiceProvided,
         layerEventSinkProvided,
         IdAllocator.layer,
@@ -470,6 +484,7 @@ export function layerWithRegistry<Error>(
       Layer.mergeAll(
         layerCheckpointServiceProvided,
         layerEventSinkProvided,
+        layerFyiDeliveryProvided,
         IdAllocator.layer,
         layerStores,
         layerProviderSessionManagerProvided,

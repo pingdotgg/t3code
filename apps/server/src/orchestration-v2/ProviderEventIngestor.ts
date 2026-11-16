@@ -32,6 +32,7 @@ import {
 } from "../telemetry/ProviderUsageAnalytics.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as DisplayModeWrap from "../fork/displayModeWrap/DisplayModeWrap.ts";
+import * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import { UsageLimitResetFallback } from "../usage/UsageLimitSources.ts";
 import * as EventSink from "./EventSink.ts";
@@ -259,6 +260,7 @@ export const layer: Layer.Layer<
     const usageLimitResets = yield* UsageLimitResetFallback;
     const scope = yield* Effect.scope;
     const displayModeWrap = yield* DisplayModeWrap.orUnchanged;
+    const fyiDelivery = yield* FyiDelivery.orNone;
     const completedTurnAnalytics = new Set<string>();
 
     const makeDomainEvent =
@@ -456,7 +458,10 @@ export const layer: Layer.Layer<
           });
         }
       }
-      return events;
+      return [
+        ...events,
+        ...(yield* fyiDelivery.unbind({ threadId: rewind.threadId, runIds: [...runIds] })),
+      ];
     });
 
     const normalize: ProviderEventIngestorV2Shape["normalize"] =

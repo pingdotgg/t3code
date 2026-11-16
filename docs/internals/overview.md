@@ -58,6 +58,12 @@ therefore means the intent committed, not that the provider, checkpoint, or othe
 finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
 a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
+A thread's effects run in outbox order: a pending effect, even one whose `available_at` is hours
+away, blocks every later effect of its thread (title generation has its own lane). A long timer is
+therefore a [Scheduler](../../apps/server/src/scheduling/Scheduler.ts) sweep, as in
+[UsageLimitRecoveryWorker](../../apps/server/src/orchestration-v2/UsageLimitRecoveryWorker.ts), not
+a delayed outbox effect.
+
 The event log only keeps what live readers need: about a day of history for reconnect replay and
 command-id retries.
 [ProjectionMaintenance](../../apps/server/src/orchestration-v2/ProjectionMaintenance.ts) deletes

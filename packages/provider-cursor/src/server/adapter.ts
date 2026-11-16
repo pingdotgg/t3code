@@ -2441,12 +2441,16 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           if (rawText.trim() === "/compress" && turnInput.message.attachments.length === 0) {
             return { message: "/compress", prompt: undefined };
           }
+          // Mentions in inline context (handoff history, FYI messages) are not this turn's skills.
+          const contextLength = turnInput.inlineContextLength ?? 0;
           const newText = t3OrchestrationPrompt({
             prompt: yield* providerMessageTextWithAttachmentPaths({
-              text: yield* resolveCursorSkillText(
-                rawText,
-                turnInput.runtimePolicy.cwd ?? undefined,
-              ),
+              text:
+                rawText.slice(0, contextLength) +
+                (yield* resolveCursorSkillText(
+                  rawText.slice(contextLength),
+                  turnInput.runtimePolicy.cwd ?? undefined,
+                )),
               attachments: turnInput.message.attachments,
               resolveAttachmentPath: host.resolveAttachmentPath,
               resolveExtractedTextPath: host.resolveExtractedTextPath,

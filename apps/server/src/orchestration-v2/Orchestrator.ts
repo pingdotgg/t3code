@@ -180,6 +180,7 @@ import {
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import type { ShownKey } from "../fork/shownHistory/ShownHistory.ts";
+import { fyiAlreadyPosted, fyiPostRefusal, fyiWakeGate, waitingFyi } from "../fork/fyi/Fyi.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -301,6 +302,16 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+/** Recorded as no receipt, so a later sweep can send the same wake once it is due. */
+export class OrchestratorFyiWakeNotDueError extends Schema.TaggedError<OrchestratorFyiWakeNotDueError>()(
+  "OrchestratorFyiWakeNotDueError",
+  { commandId: CommandId, threadId: ThreadId, reason: Schema.String },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} needs no FYI wake now (${this.reason}).`;
+  }
+}
+
 export class OrchestratorProviderSelectionBusyError extends Schema.TaggedError<OrchestratorProviderSelectionBusyError>()(
   "OrchestratorProviderSelectionBusyError",
   { commandId: CommandId, threadId: ThreadId },
@@ -376,6 +387,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAboveModeLimitError,
   OrchestratorProviderSelectionBusyError,
   OrchestratorRuntimeModeAboveCeilingError,
+  OrchestratorFyiWakeNotDueError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -804,7 +816,12 @@ function metadataUpdateContinuation(
 function mayStartSubagentFollowup(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
 ): boolean {
-  if (command.scheduledTaskId !== undefined || command.restartContinuationOfRunId !== undefined)
+  if (
+    command.scheduledTaskId !== undefined ||
+    command.restartContinuationOfRunId !== undefined ||
+    command.dispatchMode.type === "fyi" ||
+    command.fyiWake === true
+  )
     return false;
   if (command.notification !== undefined)
     return (
@@ -6605,6 +6622,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return thread;
   });
 
+  /** An FYI starts no turn: it waits, where it was sent, for the thread's next turn. */
+  const dispatchFyi = Effect.fn("Orchestrator.dispatchFyi")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    projection: OrchestrationV2ThreadProjection,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const refusal = fyiPostRefusal(command);
+    if (refusal !== undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: refusal,
+      });
+    }
+    const itemId = idAllocator.derive.userTurnItem({ messageId: command.messageId });
+    if (fyiAlreadyPosted(projection, command.messageId, itemId)) return;
+    const now = yield* DateTime.now;
+    const { message, item } = waitingFyi({
+      command,
+      itemId,
+      ordinal: yield* nextTurnItemOrdinal(projection),
+      now,
+    });
+    const emitEvent = emit(events, command);
+    yield* emitEvent({
+      type: "message.updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: message,
+    });
+    yield* emitEvent({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      occurredAt: now,
+      payload: item,
+    });
+  });
+
   const dispatchMessage = Effect.fn("Orchestrator.dispatchMessage")(function* (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -6667,6 +6722,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: projection.thread,
       });
       return;
+    }
+    // An FYI starts no turn, so it skips the visit, settle, snooze and title steps below.
+    if (command.dispatchMode.type === "fyi") {
+      return yield* dispatchFyi(command, projection, events);
+    }
+    if (command.fyiWake === true) {
+      const decision = fyiWakeGate({
+        projection,
+        settings: yield* serverSettings.getSettings.pipe(Effect.orDie),
+        now: yield* DateTime.now,
+      });
+      if (!decision.due) {
+        return yield* new OrchestratorFyiWakeNotDueError({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          reason: decision.reason,
+        });
+      }
     }
     const activeProviderInstanceId = projection.providerThreads.find(
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
@@ -15205,6 +15278,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // A read can answer a watch again before a push's reopen lands; nothing is left to clear.
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
+          // An FYI posted again after its receipt is gone changes nothing.
+          (command.type === "message.dispatch" && command.dispatchMode.type === "fyi") ||
           command.type === "thread.stop" ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
@@ -15220,9 +15295,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       Effect.catch((cause) =>
         Effect.gen(function* () {
           // Refusals depend on modes the user can change; a recorded rejection would block the retry.
+          // A failed FYI wake made no run, so a later sweep may send it; one that commits replays.
           if (
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
-            cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
+            cause._tag === "OrchestratorRuntimeModeAboveCeilingError" ||
+            (command.type === "message.dispatch" && command.fyiWake === true)
           ) {
             return yield* cause;
           }

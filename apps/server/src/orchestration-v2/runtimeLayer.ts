@@ -60,6 +60,8 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as DisplayModeWrap from "../fork/displayModeWrap/DisplayModeWrap.ts";
+import * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
+import * as FyiWakeWorker from "../fork/fyi/FyiWakeWorker.ts";
 import * as ThreadDashboard from "../fork/threadDashboard/ThreadDashboard.ts";
 import * as UserView from "../fork/userView/UserView.ts";
 import * as SubThreads from "../fork/subThreads/SubThreads.ts";
@@ -91,6 +93,8 @@ const layerStores = Layer.mergeAll(
 );
 
 export const layerEventSink = EventSink.layerFromStores.pipe(Layer.provide(layerStores));
+// Claude's adapter shares it through layer memoization, so its writes go through the one event sink.
+export const layerFyiDelivery = FyiDelivery.layer.pipe(Layer.provide(layerEventSink));
 const layerProjectionMaintenanceProvided = ProjectionMaintenance.layer.pipe(
   Layer.provide(layerStores),
 );
@@ -114,6 +118,7 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerEventSink,
+      layerFyiDelivery,
       IdAllocator.layer,
       ProjectionStore.layer,
       ThreadCommandExecutor.layer,
@@ -173,6 +178,7 @@ const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerFyiDelivery,
       layerContextHandoffServiceProvided,
       layerEventSink,
       IdAllocator.layer,
@@ -200,6 +206,7 @@ const layerCheckpointRollbackServiceProvided = CheckpointRollbackService.layer.p
       ProjectStore.layer,
       layerCheckpointServiceProvided,
       layerEventSink,
+      layerFyiDelivery,
       IdAllocator.layer,
       ProjectionStore.layer,
       layerProviderSessionManagerProvided,
@@ -411,6 +418,7 @@ export const layerProduction = Layer.mergeAll(
       ),
     ),
   ),
+  FyiWakeWorker.layer.pipe(Layer.provide(layerThreadManagementProvided)),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionScannerProvided,
   layerAgentSessionImporterProvided,

@@ -4527,7 +4527,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
         }
       }
-      const mentions = skillMentions(text);
+      // Mentions in inline context (handoff history, FYI messages) are not this turn's skills.
+      const mentions = skillMentions(
+        turnInput.message.text.slice(turnInput.inlineContextLength ?? 0),
+      );
       const skills = mentions.length === 0 ? [] : yield* skillsMentioned(location, mentions);
       const files = yield* promptFiles(turnInput.message.attachments);
       const messageText = yield* promptText(turnInput);

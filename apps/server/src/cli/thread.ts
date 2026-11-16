@@ -880,7 +880,7 @@ const threadSendCommand = Command.make("send", {
             { threadId, message, mode: "queue" },
             OrchestratorMcpThreadSendResult,
           );
-          if (flags.wait) {
+          if (flags.wait && "runId" in sent) {
             return yield* finishRun(tools, {
               threadId,
               runId: sent.runId,

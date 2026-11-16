@@ -1436,7 +1436,8 @@ export function presentThreadShellFromProjection(
       pendingRuntimeRequest,
       latestVisibleMessage: null,
       latestUserMessageAt:
-        projection.messages.findLast((message) => message.role === "user")?.updatedAt ?? null,
+        projection.messages.findLast((message) => message.role === "user" && message.fyi !== true)
+          ?.updatedAt ?? null,
       hasActionableProposedPlan: projection.plans.some(
         (plan) => plan.kind === "proposed_plan" && plan.status === "active",
       ),

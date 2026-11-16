@@ -8,6 +8,7 @@ import { findRevealRef } from "./markdownFindContext";
 import {
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2TurnItem,
   type ScheduledTaskId,
   type ServerProviderSkill,
   ThreadId,
@@ -87,6 +88,7 @@ import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../times
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { useTallEnoughToFold } from "./useTallEnoughToFold";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
+import { FyiIntentMarker, useFyiMarker } from "../../fork/fyi/FyiIntentMarker";
 import {
   MESSAGE_HEADING_LEVEL,
   MessageAuthorHeading,
@@ -306,6 +308,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <UserMessageIntentMarker
           intent={row.message.inputIntent}
           unread={row.projectedItem?.item.status === "pending"}
+          item={row.projectedItem?.item}
         />
       ) : null}
       <div
@@ -870,6 +873,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <UserMessageIntentMarker
           intent={row.message.inputIntent}
           unread={row.projectedItem?.item.status === "pending"}
+          item={row.projectedItem?.item}
         />
       ) : null}
       {mediaAboveText ? (
@@ -1076,10 +1080,14 @@ const ACTIONS_REVEAL_CLASS_NAME =
 function UserMessageIntentMarker({
   intent,
   unread,
+  item,
 }: {
   readonly intent: "steer" | "promoted_queued_to_steer";
   readonly unread: boolean;
+  readonly item: OrchestrationV2TurnItem | undefined;
 }) {
+  const fyi = useFyiMarker(item);
+  if (fyi !== null) return <FyiIntentMarker marker={fyi} />;
   return (
     <Tooltip>
       <TooltipTrigger

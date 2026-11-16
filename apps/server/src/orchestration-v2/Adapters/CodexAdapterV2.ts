@@ -482,10 +482,14 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
 
 /**
  * The composers let a skill be typed with any currency sigil (`€review`), but
- * Codex only parses `$name` as a skill mention.
+ * Codex only parses `$name` as a skill mention. Mentions in inline context
+ * (handoff history, FYI messages) are not this turn's skills.
  */
-function codexSkillMentionText(text: string): string {
-  return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
+function codexSkillMentionText(text: string, inlineContextLength = 0): string {
+  return (
+    text.slice(0, inlineContextLength) +
+    text.slice(inlineContextLength).replace(SKILL_MENTION_PATTERN, "$1$$$2")
+  );
 }
 
 const BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH = 200;
@@ -3624,11 +3628,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             | ProviderAdapter.ProviderAdapterV2TurnInput
             | ProviderAdapter.ProviderAdapterV2SteerInput,
             "message"
-          >,
+          > &
+            Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "inlineContextLength">,
         ) {
           const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
           const text = yield* providerMessageTextWithAttachmentPaths({
-            text: codexSkillMentionText(turnInput.message.text),
+            text: codexSkillMentionText(turnInput.message.text, turnInput.inlineContextLength),
             attachments: turnInput.message.attachments,
             resolveExtractedTextPath: (path) =>
               DocumentText.resolveExtractedTextPath(path).pipe(
@@ -7579,7 +7584,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               threadId,
               command.type === "set"
                 ? toCodexInput({
-                    ...turnInput,
                     message: {
                       ...turnInput.message,
                       text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,

@@ -36,6 +36,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DisplayModeWrap from "../fork/displayModeWrap/DisplayModeWrap.ts";
+import * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -164,6 +165,7 @@ export const layer: Layer.Layer<
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const displayModeWrap = yield* DisplayModeWrap.orUnchanged;
+    const fyiDelivery = yield* FyiDelivery.orNone;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
 
@@ -779,6 +781,12 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      const turnFyi = yield* fyiDelivery.forTurn({
+        threadId: run.threadId,
+        message,
+        goalCommand,
+        resumesNatively: run.restartContinuationOfRunId !== undefined && !noteContinuation,
+      });
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -943,7 +951,9 @@ export const layer: Layer.Layer<
             return handoffBudget({
               tokenCap,
               modelContextWindow,
-              userText: restartNote === "" ? userText : `${restartNote}\n\n${userText}`,
+              userText: [restartNote, turnFyi.text, userText]
+                .filter((part) => part !== "")
+                .join("\n\n"),
               attachments: message.attachments,
               providerThread: budgetProviderThread,
               nativeContextEstimate:
@@ -1657,13 +1667,19 @@ export const layer: Layer.Layer<
             persist: persistHandoff,
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          // A tool call of this attempt then finds the FYIs its prompt holds already taken.
+          yield* turnFyi.carry({
+            runId: run.id,
+            nodeId: runningRootNode.id,
+            providerThreadId: runningProviderThread.id,
+          });
           const start = compact ? session.compactThread! : acceptingSession.startTurn;
           // Like history, the side chat context waits for a turn that sends a prompt.
           const sideChatContext =
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
-          const context = [delivery.context, sideChatContext, restartNote]
+          const context = [delivery.context, sideChatContext, restartNote, turnFyi.text]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -1730,6 +1746,7 @@ export const layer: Layer.Layer<
         retryHandoff.length === 0 &&
         sideChatHandoff === undefined &&
         restartNote === "" &&
+        turnFyi.text === "" &&
         !noteContinuation
           ? acceptingSession
           : makeDeliverySession(acceptingSession, startWithHandoffs);

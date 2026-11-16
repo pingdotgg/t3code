@@ -18,6 +18,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as DisplayModeWrap from "../fork/displayModeWrap/DisplayModeWrap.ts";
+import * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import type * as ServerConfig from "../config.ts";
 import type * as ServerSettings from "../serverSettings.ts";
@@ -141,6 +142,7 @@ export const layer: Layer.Layer<
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
     const displayModeWrap = yield* DisplayModeWrap.orUnchanged;
+    const fyiDelivery = yield* FyiDelivery.orNone;
 
     const execute = Effect.fn("orchestrationV2.checkpointRollback.execute")(function* (input: {
       readonly threadId: ThreadId;
@@ -416,6 +418,12 @@ export const layer: Layer.Layer<
               );
             }
           }
+          events.push(
+            ...(yield* fyiDelivery.unbind({
+              threadId: input.threadId,
+              runIds: runsToRollback.map((run) => run.id),
+            })),
+          );
           yield* eventSink.write({ events });
         }),
       );

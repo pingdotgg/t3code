@@ -87,7 +87,9 @@ const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDeleg
 const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
   OrchestratorMcpThreadInterruptResult,
 );
-const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
+const decodeThreadSendResult = Schema.decodeUnknownEffect(
+  OrchestratorMcpThreadSendResult.members[0],
+);
 
 const codexSelection = {
   instanceId: codexInstanceId,

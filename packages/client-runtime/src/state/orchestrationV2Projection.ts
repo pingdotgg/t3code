@@ -150,9 +150,14 @@ function shouldDropMissingPartialTurnItem(
   if (projection.visibleTurnItems.some((row) => row.sourceItemId === item.id)) {
     return false;
   }
-  if (item.runId === null) {
-    return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
+  if (item.type === "user_message" && item.fyi === true) {
+    // A new FYI takes a slot in the latest started run, below a queued run's items. A bound one,
+    // or one a rollback made runless, keeps where it was sent, which can be older than the window.
+    return item.runId === null
+      ? isOlderThanWindow(projection, item)
+      : isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
   }
+  if (item.runId === null) return isBelowPartialWindow(projection, item, latestLocalTurnOrdinal);
   // A queued run keeps the ordinal it got when queued, so a steer sent later
   // can raise the watermark past it. Items of a run that has not finished are
   // new, not unloaded history: the first lands while the run is still queued,
@@ -187,6 +192,13 @@ function isBelowPartialWindow(
   ) {
     return true;
   }
+  return isOlderThanWindow(projection, item);
+}
+
+function isOlderThanWindow(
+  projection: OrchestrationV2ThreadProjection,
+  item: OrchestrationV2TurnItem,
+): boolean {
   const oldest = oldestLocalTurnOrdinal(projection.visibleTurnItems);
   return oldest !== null && item.ordinal < oldest;
 }

@@ -58,6 +58,7 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
+import { useStableFyiRuns } from "../fork/fyi/useStableFyiRuns";
 import {
   acknowledgedThreadMessagesAtom,
   pruneCaughtUpAcknowledgedThreadMessages,
@@ -299,6 +300,11 @@ export function useThreadComposerState(input: {
       entry.pendingMessage ? { ...entry, acknowledged: true } : entry,
     );
   })();
+
+  const fyiRuns = useStableFyiRuns(
+    selectedThreadFeed,
+    selectedThreadProjection?.projection.runs ?? [],
+  );
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)
@@ -897,6 +903,7 @@ export function useThreadComposerState(input: {
     feedbackSubmissions,
     dismissFeedback,
     selectedThreadFeed,
+    fyiRuns,
     selectedThreadActivityRun,
     selectedThreadAnnouncedRun,
     selectedThreadDetailBehindShell,

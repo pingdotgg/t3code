@@ -161,6 +161,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
       case "background_task":
         return "zap";
       case "system":
+      case "fyi":
         return "t3-code";
       default:
         source satisfies never;

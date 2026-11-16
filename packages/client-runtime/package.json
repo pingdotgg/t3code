@@ -71,6 +71,10 @@
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
     },
+    "./fork/fyi-marker": {
+      "types": "./src/fork/fyiMarker.ts",
+      "default": "./src/fork/fyiMarker.ts"
+    },
     "./prompt-links": {
       "types": "./src/promptLinks.ts",
       "default": "./src/promptLinks.ts"

@@ -1,12 +1,13 @@
-import type {
-  ChatAttachment,
-  ModelSelection,
-  OrchestrationV2ThreadProjection,
-  ThreadTokenUsageSnapshot,
-  OrchestrationV2ContextHandoff,
-  OrchestrationV2HistoricalMessage,
-  OrchestrationV2ProviderThread,
-  OrchestrationV2TurnItem,
+import {
+  fyiElement,
+  type ChatAttachment,
+  type ModelSelection,
+  type OrchestrationV2ThreadProjection,
+  type ThreadTokenUsageSnapshot,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2HistoricalMessage,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 
 import { sentMessageText } from "@t3tools/shared/displayModes";
@@ -138,6 +139,14 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
+      if (item.fyi !== true) {
+        text = item.text;
+        break;
+      }
+      // A runless FYI waits for a turn's FYI block; a carried one is history whatever its turn's outcome.
+      if (item.runId === null) return null;
+      text = fyiElement(item);
+      break;
     case "assistant_message":
       text = item.text;
       break;

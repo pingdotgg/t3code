@@ -514,6 +514,8 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
   senderThreadId: Schema.optional(ThreadId),
+  /** An FYI: waiting for a turn, sent with a running one, delivered by a finished one, or unknown. */
+  fyi: Schema.optional(Schema.Literals(["waiting", "sent", "delivered", "unknown"])),
   type: Schema.String,
   status: OrchestrationV2TurnItemStatus,
   title: Schema.NullOr(Schema.String),
@@ -539,7 +541,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
   message: OrchestratorMcpPrompt,
-  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  mode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart", "fyi"])),
   freshContext: Schema.optional(
     Schema.Boolean.annotate({
       description:
@@ -550,7 +552,7 @@ export const OrchestratorMcpThreadSendInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadSendInput = typeof OrchestratorMcpThreadSendInput.Type;
 
-export const OrchestratorMcpThreadSendResult = Schema.Struct({
+const OrchestratorMcpThreadSendRunResult = Schema.Struct({
   threadId: ThreadId,
   link: Schema.optional(Schema.String),
   messageId: MessageId,
@@ -559,6 +561,19 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   status: OrchestrationV2RunStatus,
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });
+
+/** An FYI that waits for the thread's next turn; no run exists yet. */
+const OrchestratorMcpThreadSendHeldResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  messageId: MessageId,
+  delivery: Schema.Literal("held"),
+});
+
+export const OrchestratorMcpThreadSendResult = Schema.Union([
+  OrchestratorMcpThreadSendRunResult,
+  OrchestratorMcpThreadSendHeldResult,
+]);
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({

@@ -9,6 +9,8 @@ import * as CursorSdk from "@t3tools/provider-cursor/server/CursorSdk";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as DisplayModeCompactionNote from "../fork/displayModeWrap/DisplayModeCompactionNote.ts";
+import type * as FyiDelivery from "../fork/fyi/FyiDelivery.ts";
+import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 
 export type ProviderOrchestrationAdapterInfrastructure =
   | ClaudeAdapterV2.ClaudeAgentSdkQueryRunner
@@ -16,6 +18,7 @@ export type ProviderOrchestrationAdapterInfrastructure =
   | CursorAgentSdk.CursorAgentSdkRunner
   | CursorSdk.CursorSdk
   | DisplayModeCompactionNote.DisplayModeCompactionNote
+  | FyiDelivery.FyiDelivery
   | IdAllocator.IdAllocatorV2;
 
 // Subagent threads created before short ids keep their stored id when an adapter resumes them.
@@ -42,6 +45,7 @@ export const layer = Layer.mergeAll(
   CodexAdapterV2.layerAppServerClientFactory,
   CursorAgentSdk.layer.pipe(Layer.provideMerge(CursorSdk.layer)),
   DisplayModeCompactionNote.layer,
+  RuntimeLayer.layerFyiDelivery,
   layerIdAllocator,
   ProviderContinuationRequests.layer,
 );

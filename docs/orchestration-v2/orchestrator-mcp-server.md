@@ -464,14 +464,32 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `auto` starts an idle thread, steers a fully active turn, or queues behind a
   turn that is not yet steerable;
 - `queue` creates a separate follow-up run after active work;
-- `steer` requires a steerable active provider turn; and
+- `steer` requires a steerable active provider turn;
 - `restart` requires an active provider turn and uses the orchestrator's
   interrupt-and-restart path. On a provider that can stop a turn and queue
   messages but not restart a turn with new input, it stops the turn and queues
   the message ahead of other queued messages; an unheld delegated-task result
   that survives the stop still runs first. It is rejected when neither path
   applies: the provider cannot stop a turn, Stop has already reached the turn,
-  or the turn or the new message is `/compact` or `/logout`.
+  or the turn or the new message is `/compact` or `/logout`; and
+- `fyi` starts no turn and returns `delivery: "held"` with no run. The
+  thread's next turn start adds the waiting FYI messages to that turn's input,
+  and a running Claude Code turn also gets them as context once its tool calls
+  resolve, before its next model request. An FYI counts as delivered only when
+  the turn that carries it completes; a turn that fails, is interrupted,
+  restarts or is rolled back gives it back, so the agent may see it twice. A
+  thread with a waiting FYI gets a quiet wake turn once it has been idle 6
+  hours, counted from the latest of its creation, its runs' last activity, and
+  the reset of a usage limit that failed its latest run on the provider the
+  thread still uses (or that limit's snooze end, when later), and not before
+  its snooze ends. No wake reaches a thread that is settled or archived, has a
+  run that has not ended (a queued one included), has a runtime request that
+  waits for an answer, or whose provider is disabled. A wake carries waiting
+  FYIs up to the 16,000-character turn budget; FYIs it does not carry, or gives
+  back because it failed or was stopped, get another wake after 6 more idle
+  hours. `fyi` with `freshContext`, or with more than 16,000 characters, is
+  rejected. `t3_thread_read` marks each FYI item `fyi: "waiting"`, `"sent"`,
+  `"delivered"`, or `"unknown"` when its run cannot be found.
 
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for

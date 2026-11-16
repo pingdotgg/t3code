@@ -40,6 +40,7 @@ import {
   resolveUserMessageFileCards,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
+import type { FyiCarrierRun } from "@t3tools/client-runtime/fork/fyi-marker";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -330,6 +331,8 @@ export interface ThreadFeedProps {
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
+  /** The runs FYI messages name, for their badges. */
+  readonly fyiRuns?: ReadonlyMap<RunId, FyiCarrierRun>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
   readonly latestRun: ThreadFeedLatestRun | null;
@@ -1661,6 +1664,7 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "fyiRuns"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1989,6 +1993,8 @@ function renderFeedEntry(
         : resolveUserMessageIntentBadge(
             message.inputIntent,
             message.projectedItem?.item.status === "pending",
+            message.projectedItem?.item,
+            props.fyiRuns,
           );
       const referenceIds = new Set(
         collectComposerContextReferences(message.text).map((reference) => reference.contextId),
@@ -2224,7 +2230,11 @@ function renderFeedEntry(
                   accessibilityLabel={intentBadge.accessibilityLabel}
                   className="flex-row items-center gap-1"
                 >
-                  <SymbolView name="arrow.uturn.forward" size={12} tintColor={iconSubtleColor} />
+                  <SymbolView
+                    name={intentBadge.symbol ?? "arrow.uturn.forward"}
+                    size={12}
+                    tintColor={iconSubtleColor}
+                  />
                   <Text className="font-t3-medium text-xs text-foreground-secondary">
                     {intentBadge.label}
                   </Text>
@@ -3340,6 +3350,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setupWorkingStartedAt: props.setupWorkingStartedAt,
     dispatchingMessageId: props.dispatchingMessageId,
     unsettledTurnId,
+    fyiRuns: props.fyiRuns,
     copiedRowId,
     expandedWorkGroups,
     expandedWorkRows,
@@ -3747,6 +3758,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
             environmentId: props.environmentId,
+            fyiRuns: props.fyiRuns,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
             onUseArtifactTemplate: props.onUseArtifactTemplate,

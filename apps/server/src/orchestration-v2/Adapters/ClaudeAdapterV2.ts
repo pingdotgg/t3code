@@ -187,6 +187,8 @@ import {
   type DisplayModeCompactionNoteShape,
   providedCompactionNote,
 } from "../../fork/displayModeWrap/DisplayModeCompactionNote.ts";
+import { claudeFyiHooks } from "../../fork/fyi/ClaudeFyiHook.ts";
+import * as FyiDelivery from "../../fork/fyi/FyiDelivery.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -5306,6 +5308,8 @@ export interface ClaudeAdapterV2Options {
   };
   /** Omitting this sends no display mode note after a compaction or beside a slash command. */
   readonly displayModeCompactionNote?: DisplayModeCompactionNoteShape | undefined;
+  /** Omitting this leaves waiting FYI messages for the next turn, not the next tool call. */
+  readonly fyiDelivery?: FyiDelivery.FyiDeliveryShape | undefined;
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
 }
 
@@ -12312,13 +12316,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { mcpServers: mcpOverrides.mcpServers }),
             deviceToolsAvailable: mcpSession?.capabilities?.has("device") === true,
             sendToUserInstructions: sendToUserSection === undefined,
-            hooks: claudeDisplayModeHooks({
-              notes: adapterOptions.displayModeCompactionNote,
-              threadId: turnInput.appThread.id,
-              activeTurn: Ref.get(activeTurn).pipe(Effect.map((turn) => turn?.input)),
-              runPromise,
-              ...(sendToUserSection === undefined ? {} : { sendToUserSection }),
-            }),
+            hooks: {
+              ...claudeDisplayModeHooks({
+                notes: adapterOptions.displayModeCompactionNote,
+                threadId: turnInput.appThread.id,
+                activeTurn: Ref.get(activeTurn).pipe(Effect.map((turn) => turn?.input)),
+                runPromise,
+                ...(sendToUserSection === undefined ? {} : { sendToUserSection }),
+              }),
+              ...claudeFyiHooks({
+                fyi: adapterOptions.fyiDelivery,
+                threadId: turnInput.appThread.id,
+                activeTurn: Ref.get(activeTurn).pipe(Effect.map((turn) => turn?.input)),
+                runPromise,
+              }),
+            },
             permissionMode: queryPolicy.permissionMode,
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
@@ -13907,6 +13919,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const displayModeCompactionNote = yield* providedCompactionNote;
+    const fyiDelivery = yield* FyiDelivery.provided;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
@@ -13932,6 +13945,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       queryRunner,
       continuationRequests,
       displayModeCompactionNote,
+      fyiDelivery,
       installationGate,
       ...hooks,
     });
