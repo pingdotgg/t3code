@@ -200,7 +200,7 @@ index d1d045ed41..dc72ee21da 100644
 +  filterSidebarV2VisibleThreads,
    getFallbackThreadIdAfterDelete,
    hasUnseenCompletion,
-   resolveSidebarRowThreadId,
+   orderItemsByPreferredIds,
 @@ -621,6 +622,37 @@ function makeThread(overrides: ThreadFixtureOverrides = {}): Thread {
    });
  }

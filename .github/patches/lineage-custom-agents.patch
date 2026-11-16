@@ -1431,8 +1431,8 @@ index eb07bb1de1..d2feb8991a 100644
  import * as ThreadManagement from "./ThreadManagementService.ts";
 +import { getAgentDefinition, resolveModelForAgent } from "../agent/AgentService.ts";
  
- export type ThreadLaunchWorkspaceStrategy =
-   | { readonly type: "root"; readonly branch?: string | undefined }
+ // The agent waits for its branch name; a rate-limited provider would hold it for minutes.
+ const BRANCH_NAME_TIMEOUT = "20 seconds";
 @@ -80,6 +85,7 @@ export interface ThreadLaunchInitialMessage {
    readonly text: string;
    readonly attachments: ReadonlyArray<ChatAttachment>;
