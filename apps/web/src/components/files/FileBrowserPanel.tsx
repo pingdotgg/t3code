@@ -533,13 +533,11 @@ export default function FileBrowserPanel({
           onClick={handleRefresh}
           className="p-4 text-left text-xs leading-relaxed text-destructive"
         >
-          {error ?? pathSearch.error} Click to retry.
+          {error ?? pathSearch.error} {td("clickToRetry")}
         </button>
       ) : null}
       {query.trim() && pathSearch.truncated && !pathSearch.isPending ? (
-        <div className="px-3 py-1 text-xs text-muted-foreground">
-          More matches available. Refine your search.
-        </div>
+        <div className="px-3 py-1 text-xs text-muted-foreground">{td("moreMatches")}</div>
       ) : null}
       {(!ready || pathSearch.isPending) && (
         <div
@@ -550,13 +548,13 @@ export default function FileBrowserPanel({
               : "px-3 py-1 text-xs text-muted-foreground"
           }
         >
-          Loading files…
+          {td("loadingFiles")}
         </div>
       )}
       {hasNoSearchMatches ? (
         ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
           <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
-            No matching files.
+            {td("noMatchingFiles")}
           </div>
         ) : null
       ) : (

@@ -22,6 +22,7 @@
     "searchPlaceholder": "搜索引用...",
     "showingOf": "已显示 {{count}} / {{total}} 个引用",
     "showingOf_other": "已显示 {{count}} / {{total}} 个引用",
+    "startFromRemote": "从远端开始",
     "workspace": "工作区"
   },
   "commit": {

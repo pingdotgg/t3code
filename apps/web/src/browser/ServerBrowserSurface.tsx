@@ -834,7 +834,9 @@ export function ServerBrowserSurface(props: {
             aria-label={td("page.chooseFiles")}
           >
             <p className="text-sm">
-              The page asks for {fileChooser.multiple ? "files" : "a file"}.
+              {td("page.asksFor", {
+                what: fileChooser.multiple ? td("page.files") : td("page.aFile"),
+              })}
             </p>
             <input
               ref={fileInputRef}
@@ -850,10 +852,12 @@ export function ServerBrowserSurface(props: {
             />
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => answerFileChooser([])}>
-                Cancel
+                {td("page.cancel")}
               </Button>
               <Button size="sm" onClick={() => fileInputRef.current?.click()}>
-                Choose {fileChooser.multiple ? "files" : "file"}
+                {td("page.chooseCount", {
+                  what: fileChooser.multiple ? td("page.files") : td("page.file"),
+                })}
               </Button>
             </div>
           </div>
@@ -880,7 +884,7 @@ export function ServerBrowserSurface(props: {
                     size="sm"
                     onClick={() => send({ type: "dialog", accept: false })}
                   >
-                    Dismiss
+                    {td("page.dismiss")}
                   </Button>
                   <Button
                     size="sm"
@@ -892,7 +896,7 @@ export function ServerBrowserSurface(props: {
                       })
                     }
                   >
-                    Accept
+                    {td("page.accept")}
                   </Button>
                 </div>
               </>
@@ -909,7 +913,7 @@ export function ServerBrowserSurface(props: {
           </p>
           <CommandBlock command={hostSetup.command} className="w-full max-w-md text-left" />
           <Button variant="outline" size="sm" onClick={() => setHostSetup(null)}>
-            Try again
+            {td("tryAgain")}
           </Button>
         </div>
       ) : null}
@@ -917,7 +921,7 @@ export function ServerBrowserSurface(props: {
         // The page can be invisible beneath an empty or unreachable state; reconnect must remain reachable.
         <div className="visible absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-background p-3 text-center">
           <p role="alert" className="text-xs text-muted-foreground">
-            Browser connection was refused.
+            {td("connectionRefused")}
           </p>
           <Button
             variant="outline"
@@ -928,7 +932,7 @@ export function ServerBrowserSurface(props: {
               refreshPreviewStreamAccess(environmentId);
             }}
           >
-            Reconnect
+            {td("reconnect")}
           </Button>
         </div>
       ) : null}

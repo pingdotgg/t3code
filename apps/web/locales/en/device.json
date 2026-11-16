@@ -7,14 +7,21 @@
     "showBorders": "Show Borders",
     "voiceOver": "VoiceOver"
   },
+  "agentControlOffNote": "Leave this off to keep manual device controls without giving agents access.",
+  "agentToolsReady": "Agent tools are ready.",
   "alertTextPlaceholder": "Alert text",
+  "allowAgentControl": "Allow agent control",
+  "androidFoldControls": "Android fold controls",
   "appearance": {
     "dark": "Dark",
     "light": "Light"
   },
   "appIdPlaceholder": "App ID",
   "appUrlPlaceholder": "https://… or myapp://",
+  "back": "Back",
   "bundleIdPlaceholder": "Bundle ID to launch",
+  "checkSimulatorSupport": "Check simulator support",
+  "clearLocation": "Clear",
   "closeTools": "Close tools",
   "colorFilter": {
     "blueYellow": "Blue / yellow (tritanopia)",
@@ -22,6 +29,20 @@
     "greenRed": "Green / red (deuteranopia)",
     "redGreen": "Red / green (protanopia)"
   },
+  "connectionRefused": "Browser connection was refused.",
+  "continueLabel": "Continue",
+  "deviceStance": "Device stance",
+  "dimensionsLabel": "Dimensions",
+  "dismissDeviceError": "Dismiss device error",
+  "eitherPlatformNote": "You can use either platform. Fixing a missing platform does not block the other one.",
+  "enableDeviceHub": "Enable the device hub",
+  "foldDevice": "Fold device",
+  "foldShape": "Fold shape",
+  "grant": "Grant",
+  "hostRetryHint": "Check the host connection and network access, then retry. Your device settings are saved.",
+  "inputDisconnected": "Input disconnected{{detail}}, reconnecting…",
+  "installedVersion": "Installed",
+  "iphoneDuoStands": "iPhone Duo stands",
   "latitude": "Latitude",
   "launch": "Launch",
   "liquidGlass": {
@@ -30,6 +51,7 @@
   },
   "locationPreset": "Location preset",
   "longitude": "Longitude",
+  "noAndroidDevices": "No Android virtual devices found. Create one in Android Studio's Device Manager, then refresh.",
   "noEvents": "No events yet.",
   "openAppFirst": "Open an app first.",
   "orientation": {
@@ -52,6 +74,14 @@
     "takeControlToRespond": "Take control to respond.",
     "title": "Browser page"
   },
+  "page.accept": "Accept",
+  "page.aFile": "a file",
+  "page.asksFor": "The page asks for {{what}}.",
+  "page.cancel": "Cancel",
+  "page.chooseCount": "Choose {{what}}",
+  "page.dismiss": "Dismiss",
+  "page.file": "file",
+  "page.files": "files",
   "permission": {
     "calendar": "Calendar",
     "camera": "Camera",
@@ -87,6 +117,14 @@
     "view3d": "3D view",
     "viewFlat": "Flat view"
   },
+  "readingSettings": "Reading device settings…",
+  "reconnect": "Reconnect",
+  "refreshDevices": "Refresh devices",
+  "relaunch": "Relaunch",
+  "requiredVersion": "Required",
+  "resetPermission": "Reset",
+  "retry": "Retry",
+  "revoke": "Revoke",
   "rotateTo": "Rotate to…",
   "row": {
     "appearance": "Appearance",
@@ -97,6 +135,7 @@
     "orientation": "Orientation",
     "textSize": "Text size"
   },
+  "runningVersion": "Running",
   "section": {
     "accessibility": "Accessibility",
     "app": "App",
@@ -107,6 +146,9 @@
     "pushNotification": "Push notification",
     "simulator": "Simulator"
   },
+  "setLocation": "Set",
+  "startingDevices": "Starting {{names}}… This can take a minute.",
+  "terminate": "Terminate",
   "textSize": {
     "default": "Default",
     "extraLarge": "Extra large",
@@ -127,5 +169,12 @@
     "width": "Viewport width"
   },
   "tools": "Tools",
-  "unknown": "Unknown"
+  "toolsAutoUpdate": "Tools update automatically on this host when needed.",
+  "tryAgain": "Try again",
+  "unfoldDevice": "Unfold device",
+  "unknown": "Unknown",
+  "versionsNotChecked": "Versions have not been checked.",
+  "view3dShort": "3D",
+  "viewFlatShort": "Flat",
+  "waitingForVideo": "Waiting for device video…"
 }

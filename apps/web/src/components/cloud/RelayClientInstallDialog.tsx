@@ -85,7 +85,7 @@ export function RelayClientInstallDialog() {
                   {activeStep ? td(activeStep.label) : null}
                 </p>
                 <p className="shrink-0 tabular-nums text-muted-foreground">
-                  {activeStepIndex + 1} of {installSteps.length}
+                  {td("stepOf", { current: activeStepIndex + 1, total: installSteps.length })}
                 </p>
               </div>
               <progress
@@ -95,15 +95,15 @@ export function RelayClientInstallDialog() {
                 value={activeStepIndex + 1}
               />
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Keep T3 Code open while the relay client is installed.
+                {td("keepOpenWhileInstalling")}
               </p>
             </div>
           ) : (
             <div className="rounded-xl border border-border/70 bg-muted/35 p-3">
               <p className="text-sm font-medium text-foreground">{td("managedRelayClient")}</p>
               <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                T3 Code will download and install version{" "}
-                {view.status === "confirming" ? view.version : ""} locally.
+                {td("willInstallVersionPrefix")} {view.status === "confirming" ? view.version : ""}
+                {td("willInstallVersionSuffix")}
               </p>
             </div>
           )}
@@ -114,10 +114,10 @@ export function RelayClientInstallDialog() {
               variant="outline"
               onClick={() => respondToRelayClientInstallConfirmation(false)}
             >
-              Cancel
+              {td("cancel")}
             </Button>
             <DialogAction onClick={() => respondToRelayClientInstallConfirmation(true)}>
-              Download and install
+              {td("downloadAndInstall")}
             </DialogAction>
           </DialogFooter>
         ) : null}

@@ -17,5 +17,9 @@
     "expandAll": "Expand all folders",
     "files": "Files"
   },
-  "loading": "Loading diff…"
+  "loading": "Loading diff…",
+  "noCompletedTurns": "No completed turns yet.",
+  "selectThreadForTurnDiffs": "Select a thread to inspect turn diffs.",
+  "turnLabel": "Turn {{count}}",
+  "turnsUnavailable": "Turn diffs are unavailable because this project is not a git repository."
 }

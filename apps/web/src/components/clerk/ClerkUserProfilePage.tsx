@@ -5,6 +5,11 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`clerk:${key}`, options);
+
 export function ClerkUserProfilePage({
   action,
   children,
@@ -57,7 +62,7 @@ export function ClerkUserProfileRefreshButton({
       onClick={onClick}
     >
       <RefreshIcon aria-hidden="true" size="sm" refreshing={isPending} />
-      Refresh
+      {td("refresh")}
     </Button>
   );
 }

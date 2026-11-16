@@ -17,6 +17,11 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
 
+import { translateDynamic } from "../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`ui:${key}`, options);
+
 /** Home screen for the hosted app before any computer is added. */
 export function HostedEmptyState() {
   const cloudEnabled = hasCloudPublicConfig();
@@ -49,7 +54,7 @@ export function HostedEmptyState() {
           <EmptyContent>
             {localEnvironmentOff ? (
               <Button render={<Link to="/settings/connections" />} size="sm">
-                Open Environments
+                {td("openEnvironments")}
               </Button>
             ) : (
               <ol className="w-full space-y-4 text-left">
@@ -79,11 +84,11 @@ function T3ConnectSteps() {
         {isSignedIn ? (
           <p className="flex items-center gap-1.5 text-muted-foreground">
             <CheckIcon className="size-4" />
-            Signed in
+            {td("signedIn")}
           </p>
         ) : (
           <Button size="sm" disabled={!isLoaded} onClick={openAuthPrompt}>
-            Sign in
+            {td("signIn")}
           </Button>
         )}
       </SetupStep>
@@ -106,7 +111,7 @@ function T3ConnectSteps() {
                     return next;
                   }),
               }}
-              empty={<p className="text-xs text-muted-foreground">Waiting for your computer…</p>}
+              empty={<p className="text-xs text-muted-foreground">{td("waitingForComputer")}</p>}
             />
           </div>
         ) : null}
@@ -123,7 +128,7 @@ function PairingSteps() {
       </SetupStep>
       <SetupStep number={2}>
         <Button render={<Link to="/settings/connections" />} size="sm">
-          Add pairing link
+          {td("addPairingLink")}
         </Button>
       </SetupStep>
     </>
@@ -148,7 +153,7 @@ function SetupStep({
 function RunOnComputer({ command }: { readonly command: string }) {
   return (
     <>
-      <p>Run on your computer:</p>
+      <p>{td("runOnYourComputer")}</p>
       <InstallT3Commands command={command} className="mt-2" />
       <a
         className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
@@ -156,7 +161,7 @@ function RunOnComputer({ command }: { readonly command: string }) {
         target="_blank"
         rel="noreferrer noopener"
       >
-        Or download the desktop app
+        {td("orDownloadDesktopApp")}
       </a>
     </>
   );

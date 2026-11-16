@@ -25,6 +25,11 @@ import {
 import type { DeviceHardwareButton, DeviceScreenSize } from "@t3tools/client-runtime/device/stream";
 import { observeResize } from "~/lib/observeResize";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`device:${key}`, options);
+
 const NO_SESSION_ATOM = Atom.make<DeviceStreamSession | null>(null).pipe(
   Atom.withLabel("device-stream:none"),
 );
@@ -446,7 +451,7 @@ export function DeviceStreamView(props: {
               title={phoneUnavailableReason ?? "Show 3D phone"}
               onClick={() => setPresentation("phone")}
             >
-              3D
+              {td("view3dShort")}
             </Button>
             <Button
               variant={!showPhone ? "secondary" : "ghost"}
@@ -454,14 +459,16 @@ export function DeviceStreamView(props: {
               aria-pressed={!showPhone}
               onClick={() => setPresentation("flat")}
             >
-              Flat
+              {td("viewFlatShort")}
             </Button>
           </div>
         ) : null}
         {status === "streaming" && !inputState.connected ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Input disconnected{inputState.detail ? ` (${inputState.detail})` : ""}, reconnecting…
+              {td("inputDisconnected", {
+                detail: inputState.detail ? ` (${inputState.detail})` : "",
+              })}
             </span>
           </div>
         ) : null}
@@ -469,7 +476,7 @@ export function DeviceStreamView(props: {
           // Shown only once the device has been silent for two seconds.
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2 transition-opacity delay-2000 duration-0 starting:opacity-0">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
-              Waiting for device video…
+              {td("waitingForVideo")}
             </span>
           </div>
         ) : null}
@@ -492,7 +499,7 @@ export function DeviceStreamView(props: {
                     session?.reconnect();
                   }}
                 >
-                  Reconnect
+                  {td("reconnect")}
                 </Button>
               ) : null}
             </DeviceLoadingView>

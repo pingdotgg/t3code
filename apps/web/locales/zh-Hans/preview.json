@@ -21,14 +21,17 @@
   },
   "checkConnection": "正在检查你的连接",
   "checkProxyFirewall": "正在检查代理和防火墙",
+  "closeFloatingPreview": "关闭悬浮预览",
   "confirmDevServer": "正在确认开发服务器是否在运行",
   "copied": "已复制！",
   "copyImage": "复制图片",
   "copyPath": "复制路径",
+  "desktopTabNotice": "此标签页已在 T3 Code 桌面应用中打开。",
   "details": "详情",
   "device": {
     "hostFallback": "设备主机"
   },
+  "download": "下载",
   "empty": {
     "title": "还没有预览"
   },
@@ -51,6 +54,8 @@
     "stopRecording": "无法停止录制",
     "updatePopup": "无法更新已弹出的预览"
   },
+  "fileDownloadedInstead": "（来自{{host}}）已改为直接下载。",
+  "fileNotShown": "此文件无法在这里显示",
   "find": {
     "close": "关闭页内查找",
     "findInPage": "在页面中查找",
@@ -60,6 +65,7 @@
   },
   "hideDetails": "隐藏详情",
   "listening": "监听中",
+  "localServers": "本地服务器",
   "menu": {
     "appearance": "外观",
     "clearCache": "清除缓存",
@@ -91,20 +97,31 @@
     "refresh": "刷新",
     "stop": "停止"
   },
+  "openInBrowser": "在浏览器中打开",
   "openInEnvironmentBrowser": "在 {{label}} 的浏览器中打开",
+  "openInRightPanel": "在右侧面板中打开",
   "openOnThisComputer": "在这台电脑上打开",
+  "openPreviewInRightPanel": "在右侧面板中打开预览",
   "pip": {
     "close": "关闭悬浮预览",
     "float": "把预览悬浮在对话上方"
   },
+  "profileLabel": "配置：{{name}}",
+  "recentlyUsed": "最近使用",
+  "reconnectingPreview": "正在重新连接预览…",
   "recording": {
     "saved": "录制已保存"
   },
+  "reload": "重新加载",
   "removedProfile": "已移除的配置",
   "revealInFileExplorer": "在文件资源管理器中显示",
   "revealInFiles": "在文件中显示",
   "revealInFinder": "在 Finder 中显示",
   "screenshot": {
     "saved": "截屏已保存"
-  }
+  },
+  "selectLocalServer": "选择一个正在运行的本地服务器，即可在此浏览器标签页中打开。",
+  "siteUnreachable": "无法访问此网站",
+  "tryEnvBrowser": "在环境的浏览器中打开它，它能访问环境的网络",
+  "tryThese": "请尝试："
 }

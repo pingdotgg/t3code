@@ -2,6 +2,11 @@ import { cn } from "~/lib/utils";
 
 import { CommandBlock } from "./CommandBlock";
 
+import { translateDynamic } from "../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`ui:${key}`, options);
+
 /**
  * Setup steps for another computer: install `t3`, then run `command`. Both installers are shown
  * because the browser showing this is often not the computer being set up.
@@ -15,16 +20,16 @@ export function InstallT3Commands({
 }) {
   return (
     <div className={cn("space-y-2", className)}>
-      <p className="text-xs text-muted-foreground">macOS, Linux</p>
+      <p className="text-xs text-muted-foreground">{td("macosLinux")}</p>
       <CommandBlock command="curl -fsSL https://t3.codes/install.sh | sh" />
-      <p className="text-xs text-muted-foreground">Windows (PowerShell)</p>
+      <p className="text-xs text-muted-foreground">{td("windowsPowerShell")}</p>
       <CommandBlock command="irm https://t3.codes/install.ps1 | iex" />
-      <p className="text-xs text-muted-foreground">Then</p>
+      <p className="text-xs text-muted-foreground">{td("thenRun")}</p>
       <CommandBlock command={command} />
       <p className="text-xs text-muted-foreground">
-        Skip the install if you already have <code className="font-mono">t3</code>. If{" "}
-        <code className="font-mono">t3</code> is not found after installing, add the folder the
-        installer names to your PATH.
+        {td("skipInstallAlreadyHave")} <code className="font-mono">t3</code>
+        {td("skipInstallIfSeparator")} <code className="font-mono">t3</code>{" "}
+        {td("pathInstructionSuffix")}
       </p>
     </div>
   );

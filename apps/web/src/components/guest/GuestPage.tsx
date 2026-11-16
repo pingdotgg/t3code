@@ -369,7 +369,7 @@ function NameForm({
     <form className="m-auto flex w-full max-w-xs flex-col gap-3 p-6" onSubmit={submit}>
       <h1 className="text-base font-medium">{td("joinTitle")}</h1>
       <label className="flex flex-col gap-1.5 text-sm" htmlFor="guest-name">
-        Your name
+        {td("yourName")}
         <Input
           id="guest-name"
           autoFocus
@@ -385,11 +385,9 @@ function NameForm({
         </p>
       ) : null}
       <Button type="submit" disabled={submitting || name.trim() === ""}>
-        Join
+        {td("join")}
       </Button>
-      <p className="text-xs text-muted-foreground">
-        The owner sees your name and approves each message before the agent gets it.
-      </p>
+      <p className="text-xs text-muted-foreground">{td("joinPrivacyNote")}</p>
     </form>
   );
 }
@@ -791,7 +789,7 @@ function GuestComposer({
           </p>
         ) : (
           <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-            The owner approves each message
+            {td("ownerApprovesEachMessage")}
           </p>
         )}
         <button

@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+import { translateDynamic } from "../i18nCore";
+
 /**
  * A control an administrator's policy turns off: shown inert, with the policy's reason on hover
  * and focus. Without a reason it renders the control untouched.
@@ -62,7 +64,7 @@ export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary
             rel="noreferrer"
             className="text-foreground underline underline-offset-2"
           >
-            Get help
+            {translateDynamic("ui:getHelp")}
           </a>
         </>
       ) : null}

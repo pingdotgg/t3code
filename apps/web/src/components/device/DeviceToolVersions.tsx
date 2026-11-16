@@ -3,6 +3,11 @@ import type { DeviceToolVersions as ToolVersions } from "@t3tools/contracts";
 import { InlineButton } from "~/components/ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "~/components/ui/popover";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`device:${key}`, options);
+
 export function DeviceToolVersions({
   tools,
   action,
@@ -60,11 +65,11 @@ export function DeviceToolVersions({
                 <div key={name} className="space-y-2 py-3 first:pt-0 last:pb-0">
                   {!kind ? <p className="text-xs font-medium">{name}</p> : null}
                   <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-xs">
-                    <dt className="text-muted-foreground">Running</dt>
+                    <dt className="text-muted-foreground">{td("runningVersion")}</dt>
                     <dd className="text-right font-mono">{tool.runningVersion ?? "Not running"}</dd>
-                    <dt className="text-muted-foreground">Required</dt>
+                    <dt className="text-muted-foreground">{td("requiredVersion")}</dt>
                     <dd className="text-right font-mono">{tool.requiredVersion}</dd>
-                    <dt className="text-muted-foreground">Installed</dt>
+                    <dt className="text-muted-foreground">{td("installedVersion")}</dt>
                     <dd className="text-right font-mono break-words">
                       {tool.installedVersions.join(", ") || "None"}
                     </dd>
@@ -73,10 +78,11 @@ export function DeviceToolVersions({
               ))}
           </div>
         ) : (
-          <p className="mt-3 text-xs text-muted-foreground">Versions have not been checked.</p>
+          <p className="mt-3 text-xs text-muted-foreground">{td("versionsNotChecked")}</p>
         )}
         <p className="mt-4 border-t border-border/50 pt-3 text-xs text-muted-foreground">
-          {owner ? `Managed by ${owner}. ` : ""}Tools update automatically on this host when needed.
+          {owner ? `Managed by ${owner}. ` : ""}
+          {td("toolsAutoUpdate")}
         </p>
         {error ? (
           <p role="status" className="mt-2 text-xs text-destructive">

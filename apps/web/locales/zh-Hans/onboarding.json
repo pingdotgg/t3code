@@ -90,6 +90,7 @@
     "whatItMayDo": "它可以做什么",
     "whoeverRunsIt": "· 运行它的任何人都会获得此访问权"
   },
+  "continueHere": "在这里继续",
   "firstRun": {
     "couldNotReadSettings": "无法读取设置",
     "couldNotReadSettingsDescription": "已保存的设置无法加载。",
@@ -98,6 +99,7 @@
     "stillConnecting": "仍在连接中",
     "stillConnectingDescription": "T3 Code 无法确认此工作区。"
   },
+  "getT3Code": "获取 T3 Code",
   "importWarning": {
     "couldNotImport": "无法导入线程历史。",
     "notImportedThreads_one": "{{count}} 条线程未能导入。",
@@ -179,6 +181,7 @@
     "chatgptFailedReturn": "请返回提供商并重试。",
     "chatgptFailedTitle": "ChatGPT 登录未能完成"
   },
+  "rememberMyChoice": "记住我的选择",
   "telemetry": {
     "notice": "T3 Code 会收集匿名使用数据以改进应用。",
     "optOut": "如需关闭，请参阅<0>隐私政策</1>。",

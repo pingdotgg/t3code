@@ -12,9 +12,14 @@ import {
 } from "./ClerkUserProfilePage";
 import { useT3ChatLink } from "./useT3ChatLink";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`clerk:${key}`, options);
+
 const upgradeLink = (
   <a className="underline" href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer">
-    Upgrade on T3 Chat
+    {td("upgradeOnT3Chat")}
   </a>
 );
 
@@ -56,13 +61,11 @@ export function T3ChatUserProfilePage() {
     >
       {linkState.error ? (
         <div className="border-t py-3 text-xs" role="alert">
-          <p className="font-medium text-destructive-foreground">Could not load T3 Chat link</p>
+          <p className="font-medium text-destructive-foreground">{td("loadLinkFailed")}</p>
           <p className="mt-0.5 text-muted-foreground">{linkState.error}</p>
         </div>
       ) : data === null ? null : !data.available ? (
-        <p className="border-t py-4 text-xs text-muted-foreground">
-          This T3 Connect server does not support T3 Chat linking.
-        </p>
+        <p className="border-t py-4 text-xs text-muted-foreground">{td("linkingUnsupported")}</p>
       ) : (
         <ul className="border-t">
           <ClerkUserProfileRow icon={<MessageSquareIcon className="size-4" />}>
@@ -76,16 +79,16 @@ export function T3ChatUserProfilePage() {
                     planLabel(link)
                   ) : linkUrl ? (
                     <>
-                      Confirm on{" "}
+                      {td("confirmPrefix")}{" "}
                       <a
                         className="underline"
                         href={linkUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                       >
-                        t3.chat
+                        {td("t3ChatSite")}
                       </a>
-                      , then select Refresh.
+                      {td("confirmSuffix")}
                     </>
                   ) : (
                     "You confirm the link on t3.chat."

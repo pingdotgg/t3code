@@ -59,7 +59,7 @@ export function PreviewEmptyState({
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <History className="size-4 shrink-0" />
-              <h2 className="font-medium">Recently used</h2>
+              <h2 className="font-medium">{td("recentlyUsed")}</h2>
             </div>
             <DiscoveryList>
               {recents.map((entry) => (
@@ -78,7 +78,7 @@ export function PreviewEmptyState({
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <RadioTower className="size-4 shrink-0" />
-              <h2 className="font-medium">Local servers</h2>
+              <h2 className="font-medium">{td("localServers")}</h2>
             </div>
             <DiscoveryList>
               {servers.map((server) => (
@@ -90,9 +90,7 @@ export function PreviewEmptyState({
                 />
               ))}
             </DiscoveryList>
-            <p className="px-1 text-xs text-muted-foreground">
-              Select a live local server to open it in this browser tab.
-            </p>
+            <p className="px-1 text-xs text-muted-foreground">{td("selectLocalServer")}</p>
           </div>
         ) : null}
       </div>

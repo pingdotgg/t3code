@@ -4,6 +4,11 @@ import { Button } from "~/components/ui/button";
 import { deviceEnvironment } from "~/state/device";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`device:${key}`, options);
+
 export function DeviceHostUpdates({
   state,
   environmentId,
@@ -36,12 +41,7 @@ export function DeviceHostUpdates({
                       ? "Installing device tools…"
                       : "Starting device tools…")}
               </p>
-              {failed ? (
-                <p className="mt-1 text-muted-foreground">
-                  Check the host connection and network access, then retry. Your device settings are
-                  saved.
-                </p>
-              ) : null}
+              {failed ? <p className="mt-1 text-muted-foreground">{td("hostRetryHint")}</p> : null}
             </div>
             {failed && state.supportsHostRetry ? (
               <Button

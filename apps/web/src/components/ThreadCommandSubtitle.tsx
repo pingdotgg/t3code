@@ -6,6 +6,8 @@ import { cn } from "~/lib/utils";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 
+import { translateDynamic } from "../i18nCore";
+
 export type ThreadCommandSubtitleVariant =
   | "favicon-workspace-harness"
   | "favicon-workspace"
@@ -103,7 +105,7 @@ export function ThreadCommandSubtitle(props: {
       {props.isCurrent ? (
         <>
           {projectLabel || branchLabel || showHarness ? <CommandPaletteMetaDot /> : null}
-          <span className="shrink-0">Current thread</span>
+          <span className="shrink-0">{translateDynamic("palette:labels.currentThread")}</span>
         </>
       ) : null}
     </span>

@@ -39,6 +39,11 @@ import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { WizardSteps, WizardPopup, WizardHeader, WizardPanel, WizardFooter } from "../ui/wizard";
 
+import { translateDynamic } from "../../i18nCore";
+
+const td = (key: string, options?: Record<string, unknown>) =>
+  translateDynamic(`cloud:${key}`, options);
+
 export function ConnectOnboardingDialog() {
   if (!hasCloudPublicConfig()) return null;
 
@@ -278,14 +283,14 @@ function ConfiguredConnectOnboardingDialog() {
                 checked={dontShowAgain}
                 onCheckedChange={(checked) => setDontShowAgain(checked === true)}
               />
-              Don&apos;t show this again
+              {td("dontShowAgain")}
             </label>
           }
         >
           {step === "publish" ? (
             <>
               <Button variant="ghost" disabled={isApplying} onClick={() => setStep("devices")}>
-                Not now
+                {td("notNow")}
               </Button>
               <Button
                 disabled={isApplying || !canManageRelay || linkStateData === null}
@@ -296,7 +301,7 @@ function ConfiguredConnectOnboardingDialog() {
             </>
           ) : (
             <Button disabled={isApplying} onClick={complete}>
-              Done
+              {td("done")}
             </Button>
           )}
         </WizardFooter>
@@ -416,8 +421,7 @@ function DevicesStep() {
         showSavedEnvironments
         empty={
           <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-            No other environments are published to your account yet. Publish one from another device
-            and it will show up here.
+            {td("noPublishedEnvironments")}
           </p>
         }
       />

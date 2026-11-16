@@ -1,0 +1,11 @@
+{
+  "confirmPrefix": "Confirm on",
+  "confirmSuffix": ", then select Refresh.",
+  "linkingUnsupported": "This T3 Connect server does not support T3 Chat linking.",
+  "loadLinkFailed": "Could not load T3 Chat link",
+  "refresh": "Refresh",
+  "removeFromDevice": "Remove from this device",
+  "signInToT3Connect": "Sign in to T3 Connect",
+  "t3ChatSite": "t3.chat",
+  "upgradeOnT3Chat": "Upgrade on T3 Chat"
+}

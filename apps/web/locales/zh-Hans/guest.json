@@ -4,12 +4,15 @@
   "connecting": "连接中…",
   "filesToAttach": "要附加的文件",
   "historyFailed": "无法加载更早的对话。请重试。",
+  "join": "加入",
+  "joinPrivacyNote": "所有者能看到你的名字，并在代理收到每条消息前进行审核。",
   "joinTitle": "加入共享线程",
   "linkEndedDetail": "所有者已停止共享此线程。",
   "linkEndedTitle": "此链接已结束",
   "linkInvalidDetail": "请向所有者索取新链接。每个链接只能在一个浏览器中使用。",
   "linkInvalidTitle": "此链接已失效或不有效",
   "message": "消息",
+  "ownerApprovesEachMessage": "所有者会审核每条消息",
   "send": "发送",
   "serverUnreachable": "无法连接服务器。",
   "somethingWrong": "出了点问题。请重试。",
@@ -17,5 +20,6 @@
     "dismissed": "未发送",
     "pending": "等待批准",
     "sent": "已发送"
-  }
+  },
+  "yourName": "你的名字"
 }

@@ -366,7 +366,7 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
               setState({ status: "opening" });
             }}
           >
-            Open it again
+            {td("openItAgain")}
           </Button>
         </LinkPage>
       );
@@ -377,10 +377,10 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
       return (
         <LinkPage title={`You don't have ${name}`} description={td("cloneOrStart")}>
           <Button size="sm" onClick={() => void cloneRepository(state.repository)}>
-            Clone {name}
+            {td("cloneNamed", { name })}
           </Button>
           <Button size="sm" variant="outline" onClick={openWithoutProject}>
-            Use without project
+            {td("useWithoutProject")}
           </Button>
         </LinkPage>
       );

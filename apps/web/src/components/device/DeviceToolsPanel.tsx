@@ -119,7 +119,7 @@ export function DeviceToolsPanel(props: {
         ) : null}
         {detail === null && !error ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">
-            <Spinner size="sm" /> Reading device settings…
+            <Spinner size="sm" /> {td("readingSettings")}
           </div>
         ) : null}
 
@@ -143,7 +143,7 @@ export function DeviceToolsPanel(props: {
                 disabled={disabled}
                 onClick={() => void act({ type: "terminateApp", appId: foregroundApp.id })}
               >
-                Terminate
+                {td("terminate")}
               </Button>
               <Button
                 size="xs"
@@ -151,7 +151,7 @@ export function DeviceToolsPanel(props: {
                 disabled={disabled}
                 onClick={() => void act({ type: "launchApp", appId: foregroundApp.id })}
               >
-                Relaunch
+                {td("relaunch")}
               </Button>
             </div>
           ) : null}
@@ -518,7 +518,7 @@ function LocationSection(props: {
           disabled={props.disabled || !valid}
           onClick={() => void props.onSet(parsed.latitude, parsed.longitude)}
         >
-          Set
+          {td("setLocation")}
         </Button>
         {props.canClear ? (
           <Button
@@ -531,7 +531,7 @@ function LocationSection(props: {
               void props.onClear();
             }}
           >
-            Clear
+            {td("clearLocation")}
           </Button>
         ) : null}
       </div>
@@ -582,7 +582,7 @@ function PermissionsSection(props: {
           disabled={props.disabled || !resolvedAppId}
           onClick={() => decide("grant")}
         >
-          Grant
+          {td("grant")}
         </Button>
         <Button
           size="xs"
@@ -590,7 +590,7 @@ function PermissionsSection(props: {
           disabled={props.disabled || !resolvedAppId}
           onClick={() => decide("revoke")}
         >
-          Revoke
+          {td("revoke")}
         </Button>
         {props.canReset ? (
           <Button
@@ -599,7 +599,7 @@ function PermissionsSection(props: {
             disabled={props.disabled || !resolvedAppId}
             onClick={() => decide("reset")}
           >
-            Reset
+            {td("resetPermission")}
           </Button>
         ) : null}
       </div>
