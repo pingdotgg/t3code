@@ -46,7 +46,10 @@ export function resolveProviderIconUrl(icon: string | null | undefined): string 
   if (!icon || icon.length > 2048) return null;
   try {
     const url = new URL(icon);
-    return url.protocol === "https:" && url.username === "" && url.password === ""
+    return url.protocol === "https:" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.href.length <= 2048
       ? url.href
       : null;
   } catch {
