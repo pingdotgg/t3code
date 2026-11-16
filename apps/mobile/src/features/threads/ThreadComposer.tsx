@@ -148,7 +148,11 @@ function collapsedEditorInset(text: ScaledTextRole): number {
   return Math.max(0, Math.round(COLLAPSED_EDITOR_DEFAULT_INSET - shift));
 }
 
-function useCompactComposerEditor(text: ScaledTextRole, value: string) {
+const EXPANDED_EDITOR_INSET = 14;
+// Room under the expanded editor for the toolbar row.
+const EXPANDED_EDITOR_BOTTOM = 52;
+
+function useCompactComposerEditor(text: ScaledTextRole, value: string, animate: boolean) {
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [compactWidth, setCompactWidth] = useState(0);
   const contentHeight = contentSize.height;
@@ -169,25 +173,55 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
     (contentHeight > text.lineHeight * 1.5 ||
       (compactWidth > 0 && contentSize.width > compactWidth));
   const compactRowHeight = Math.max(44, minimum);
+  const compactBottom = (compactRowHeight - minimum) / 2;
   const isRTL = I18nManager.isRTL;
-  const editorStyle = useAnimatedStyle(() => ({
-    position: "absolute",
-    overflow: "hidden",
-    height,
-    ...(isExpanded
-      ? { left: 14, right: 14 }
-      : compactEditorInsets({
-          slotX: editorX.value,
-          slotWidth: editorWidth.value,
-          rowWidth: rowWidth.value,
-          isRTL,
-        })),
-    // The full-width editor must move above the controls in the same frame it widens.
-    bottom: isExpanded ? 52 : (compactRowHeight - minimum) / 2,
+  const expandedRowHeight = height + EXPANDED_EDITOR_BOTTOM;
+  const expansion = useDerivedValue(() => {
+    const target = isExpanded ? 1 : 0;
+    return animate
+      ? withTiming(target, {
+          duration: COMPOSER_TRANSITION_DURATION_MS,
+          reduceMotion: ReduceMotion.System,
+        })
+      : target;
+  });
+  const editorStyle = useAnimatedStyle(() => {
+    const compactInsets = compactEditorInsets({
+      slotX: editorX.value,
+      slotWidth: editorWidth.value,
+      rowWidth: rowWidth.value,
+      isRTL,
+    });
+    const progress = expansion.value;
+    // Hanging from the row top lets the text ride the growing edge and ignore the stale
+    // height measured while it still wrapped in the compact slot. Layout props only:
+    // Reanimated applies transforms frames ahead of layout, which tore the text from its frame.
+    return {
+      position: "absolute",
+      overflow: "hidden",
+      // The compact slot is unknown until its first layout, so the editor would draw over the + button.
+      opacity: isExpanded || editorWidth.value > 0 ? 1 : 0,
+      height,
+      top: compactBottom * (1 - progress),
+      left: compactInsets.left + (EXPANDED_EDITOR_INSET - compactInsets.left) * progress,
+      // Snapping the far edge keeps the line from rewrapping while the near edge moves.
+      right: isExpanded ? EXPANDED_EDITOR_INSET : compactInsets.right,
+    };
+  });
+  const containerStyle = useAnimatedStyle(() => ({
+    height: compactRowHeight + (expandedRowHeight - compactRowHeight) * expansion.value,
   }));
   return {
     isExpanded,
-    containerStyle: { height: isExpanded ? height + 52 : compactRowHeight },
+    containerStyle,
+    // The expanded toolbar takes the row the text is leaving; reveal it once the text has lifted.
+    // An entering animation hides it from its first frame, which a shared-value opacity cannot.
+    toolbarControlsEntering:
+      animate && isExpanded
+        ? FadeIn.delay(COMPOSER_TRANSITION_DURATION_MS / 2)
+            .duration(COMPOSER_TRANSITION_DURATION_MS / 2)
+            .reduceMotion(ReduceMotion.System)
+        : undefined,
     editorStyle,
     onRowLayout: (event: { nativeEvent: { layout: { width: number } } }) => {
       rowWidth.set(event.nativeEvent.layout.width);
@@ -621,7 +655,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
-  const compactEditor = useCompactComposerEditor(bodyText, draftMessage);
+  // Animate only while typing; a thread switch or restored draft lands in place.
+  const compactEditor = useCompactComposerEditor(
+    bodyText,
+    draftMessage,
+    Platform.OS === "ios" && isFocused,
+  );
   const showsCompactDictation = isVoiceInputPresented;
   const isToolbarVisible = isVoiceInputPresented;
   const hasEditingAttachments =
@@ -1143,8 +1182,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   compactEditor.isExpanded ? { flex: 1, justifyContent: "flex-end" } : undefined
                 }
               >
-                {compactControl}
-                {modelControl}
+                <Animated.View
+                  key={compactEditor.isExpanded ? "expanded" : "compact"}
+                  className="min-w-0 shrink flex-row items-center"
+                  entering={compactEditor.toolbarControlsEntering}
+                >
+                  {compactControl}
+                  {modelControl}
+                </Animated.View>
                 <ComposerDictationStartAction
                   size={usesLargeControls ? "large" : "regular"}
                   state={voiceInput.state}
