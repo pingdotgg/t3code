@@ -50,6 +50,21 @@ it("leaves a text selection in the timeline alone on window return", async () =>
   ).toBe(false);
 });
 
+it("keeps focus in a region with its own keys on window return", async () => {
+  const region = document.createElement("div");
+  region.tabIndex = -1;
+  region.setAttribute("aria-keyshortcuts", "J K");
+  region.textContent = "Guide prose";
+  document.body.append(region);
+  using _region = { [Symbol.dispose]: () => region.remove() };
+
+  await userEvent.click(region);
+  expect(document.activeElement).toBe(region);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    false,
+  );
+});
+
 it("refocuses the composer on window return from a clicked area after a bare key press", async () => {
   const controller = createWorkspaceFocusController(document);
   const root = document.createElement("div");
