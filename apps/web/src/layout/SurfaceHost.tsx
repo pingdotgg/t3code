@@ -364,7 +364,7 @@ interface StripSpan {
 }
 
 /** Preserve screen positions when the strip edge shifts, except at its start. Reveal focused panes
- * after resizing without exposing trailing chrome. */
+ * after its end moves without exposing trailing chrome. */
 function useStripResizeScroll(
   scrollerRef: React.RefObject<HTMLDivElement | null>,
   focusedSpanRef: React.RefObject<StripSpan | null>,
@@ -377,26 +377,30 @@ function useStripResizeScroll(
     // The scroll from before the latest resize, as the observer last left it.
     let scrollLeft = scroller.scrollLeft;
     let width = scroller.clientWidth;
-    let left = scroller.getBoundingClientRect().left;
+    let { left, right } = scroller.getBoundingClientRect();
     const onScroll = () => {
       // The clamp of a resize the observer has not seen yet: it starts from before it.
       if (scroller.clientWidth !== width) return;
-      scrollLeft = scroller.scrollLeft;
+      if (Math.abs(scroller.scrollLeft - scrollLeft) >= 1) scrollLeft = scroller.scrollLeft;
     };
     // Runs after layout and before paint.
     const stopObserving = observeResize(scroller, () => {
       if (scroller.clientWidth === width) return;
       const grew = scroller.clientWidth > width;
       width = scroller.clientWidth;
-      const nextLeft = scroller.getBoundingClientRect().left;
-      const shift = nextLeft - left;
-      left = nextLeft;
+      const box = scroller.getBoundingClientRect();
+      const shift = box.left - left;
+      const endMoved = Math.abs(box.right - right) >= 0.5;
+      left = box.left;
+      right = box.right;
       // Grown past the strip's end, the browser clamped the scroll before this ran.
       const clamped = grew && scroller.scrollLeft + width >= scroller.scrollWidth - 1;
-      const from = clamped ? scrollLeft : scroller.scrollLeft;
-      let target =
-        Math.abs(shift) < 0.5 ? scroller.scrollLeft : from > 0 ? Math.max(0, from + shift) : 0;
-      const focused = focusedSpanRef.current;
+      const from =
+        clamped || Math.abs(scroller.scrollLeft - scrollLeft) < 1
+          ? scrollLeft
+          : scroller.scrollLeft;
+      let target = from > 0 ? Math.min(Math.max(0, from + shift), scroller.scrollWidth - width) : 0;
+      const focused = endMoved ? focusedSpanRef.current : null;
       if (focused && focused.left < target - 1) target = focused.left;
       else if (focused && focused.left + focused.width > target + width + 1) {
         target = Math.min(focused.left, focused.left + focused.width - width);
@@ -814,19 +818,26 @@ export function LayoutSurfaceHost({
   // still at 0 that it would spring sideways.
   useOverviewStage(overviewPhase, stage, scrollerRef, stageRef);
 
+  const revealedSpan = useRef<string | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Reveal the committed focused pane with an imperative camera move after measuring its DOM.
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     const element = stageRef.current;
-    if (!scroller || !element || staged || stacked || dragging) return;
-    if (focusedPaneId === null || focusedLeft === null || focusedWidth === null) return;
+    const span = `${focusedPaneId}:${focusedLeft}:${focusedWidth}`;
+    if (!scroller || !element || staged || stacked || dragging || focusedPaneId === null) {
+      revealedSpan.current = null;
+      return;
+    }
+    if (focusedLeft === null || focusedWidth === null) return;
     // The first render sizes the strip for the window's width, before the
     // scroller is measured, and a scroll then clamps short of the pane. The
     // render with the measured width reveals it.
     if (scroller.clientWidth !== viewportWidth) return;
+    if (revealedSpan.current === span) return;
     const left = focusedLeft;
     const right = left + focusedWidth;
     return afterPressRelease(() => {
+      revealedSpan.current = span;
       const viewLeft = scroller.scrollLeft;
       const viewRight = viewLeft + scroller.clientWidth;
       let target: number | null = null;

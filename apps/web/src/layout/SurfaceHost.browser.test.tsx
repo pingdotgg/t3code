@@ -5,8 +5,17 @@ import "~/index.css";
 import { render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
-import { createLayoutLauncherContent, createLayoutState, selectFocusedTab } from "./layoutModel";
-import { useLayoutStore } from "./layoutStore";
+import {
+  createLayoutLauncherContent,
+  createLayoutState,
+  LAYOUT_READABLE_COLUMN_PX,
+  selectFocusedTab,
+} from "./layoutModel";
+import {
+  readableLayoutColumnShare,
+  setLayoutStripViewportWidth,
+  useLayoutStore,
+} from "./layoutStore";
 import { LayoutSurfaceHost } from "./SurfaceHost";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
@@ -59,6 +68,10 @@ async function renderHost({ insetSidebar = false } = {}) {
   return render(
     <>
       {sidebar}
+      <div
+        data-sidebar-gap=""
+        style={{ flex: "none", width: 0, transition: "width 150ms ease-out" }}
+      />
       <Host />
     </>,
     { container },
@@ -91,6 +104,51 @@ it("shows a tab in an unfocused pane that runs off screen with one click on it",
   await using _screen = await renderHost();
   await clickHeld(inSecondPane(`[data-layout-pane-tab="${tabs.second.id}"]`));
   await vi.waitFor(() => expect(focusedTabId()).toBe(tabs.second.id));
+});
+
+it.each([
+  ["at the strip's end", 1],
+  ["midway along the strip", 0.5],
+])("keeps the panes in place on screen while the sidebar opens and closes %s", async (_, along) => {
+  setLayoutStripViewportWidth(900);
+  using _tabs = setup();
+  await using screen = await renderHost();
+  const strip = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
+  const gap = screen.container.querySelector<HTMLElement>("[data-sidebar-gap]")!;
+  const published = (width: number) =>
+    expect(readableLayoutColumnShare()).toBeCloseTo(LAYOUT_READABLE_COLUMN_PX / width);
+  await vi.waitFor(() => published(900));
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth + 100));
+  const start = Math.round((strip.scrollWidth - strip.clientWidth) * along);
+  strip.scrollLeft = start;
+  await vi.waitFor(() => expect(strip.scrollLeft).toBe(start));
+  const pane = inSecondPane("[data-pane-header]").closest<HTMLElement>("[data-layout-pane-id]")!;
+  const right = () => Math.round(pane.getBoundingClientRect().right);
+  const placed = () =>
+    Math.round(
+      strip.getBoundingClientRect().left + pane.offsetLeft + pane.offsetWidth - strip.scrollLeft,
+    );
+  await vi.waitFor(() => expect(right()).toBe(placed()));
+  const resting = right();
+  const seen: number[] = [];
+  const onScroll = () => seen.push(strip.scrollLeft);
+  strip.addEventListener("scroll", onScroll);
+  try {
+    gap.style.width = "256px";
+    await vi.waitFor(() => published(900 - 256));
+    await vi.waitFor(() => expect(strip.scrollLeft).toBe(start + 256));
+    expect(right()).toBe(resting);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(start);
+
+    seen.length = 0;
+    gap.style.width = "0px";
+    await vi.waitFor(() => published(900));
+    await vi.waitFor(() => expect(strip.scrollLeft).toBe(start));
+    expect(right()).toBe(resting);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(start);
+  } finally {
+    strip.removeEventListener("scroll", onScroll);
+  }
 });
 
 const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
