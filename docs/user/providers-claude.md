@@ -102,6 +102,9 @@ still be started by you. Invoke those one per message: Claude directly runs only
 the last named skill and may try to start earlier ones through its Skill tool,
 which refuses skills reserved for manual invocation.
 
+A plugin you install, enable, or update while a thread is open loads with that
+thread's next message, without restarting the session.
+
 ## Task lists
 
 To show Claude task lists in the web and desktop apps, add

@@ -1135,6 +1135,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
@@ -1258,6 +1259,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              reloadPlugins: Effect.succeed([]),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
@@ -1547,6 +1549,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
@@ -1735,6 +1738,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
             callMcpTool: () => Effect.die("unexpected MCP tool call"),
             listPermissionRules: Effect.die("unexpected permission rules read"),
+            reloadPlugins: Effect.succeed([]),
             stopTask: () => Effect.void,
             interrupt: Effect.void,
             close: Effect.void,
@@ -1929,6 +1933,7 @@ describe("ClaudeAdapterV2 resume compaction", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
@@ -2314,6 +2319,7 @@ describe("ClaudeAdapterV2 attachments", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(messages),
@@ -2856,6 +2862,7 @@ describe("ClaudeAdapterV2 native fork", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.void,
@@ -3205,6 +3212,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Effect.void,
@@ -3550,7 +3558,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     > &
       Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
     readonly environment?: NodeJS.ProcessEnv;
-    readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
+    readonly onWorkspaceSkillsChanged?: (cwd: string) => Effect.Effect<void>;
+    readonly reloadPlugins?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["reloadPlugins"];
     readonly subagentLaunchToolUseId?: string;
     readonly subagentModel?: string;
     readonly nativeSessionId?: string;
@@ -3626,7 +3635,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         path: yield* Path.Path,
         random: yield* SecureRandom.SecureRandom,
         idAllocator,
-        ...(options?.onSessionInit ? { onSessionInit: options.onSessionInit } : {}),
+        ...(options?.onWorkspaceSkillsChanged
+          ? { onWorkspaceSkillsChanged: options.onWorkspaceSkillsChanged }
+          : {}),
         ...(options?.routeModelCatalog ? { routeModelCatalog: options.routeModelCatalog } : {}),
         continuationRequests: {
           offer: (request) =>
@@ -3689,6 +3700,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: options?.stopTask ?? (() => Effect.void),
                   interrupt: Effect.void,
                   close: Queue.shutdown(processMessages),
@@ -3732,6 +3744,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
+                reloadPlugins: options?.reloadPlugins ?? Effect.succeed([]),
                 stopTask: options?.stopTask ?? (() => Effect.void),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
@@ -4175,7 +4188,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const harness = yield* makeWakeHarnessWithOptions({
         freshQueueOnReopen: true,
         close: (queue) => Queue.shutdown(queue),
-        onSessionInit: (cwd) =>
+        onWorkspaceSkillsChanged: (cwd) =>
           Effect.sync(() => {
             initCwds.push(cwd);
           }),
@@ -4230,6 +4243,100 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(harness.processQueues.length, 2);
       yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000704"));
       assert.deepEqual(initCwds, ["/workspace", "/workspace"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("reloads a live session's plugins when plugin files change between turns", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-plugins-" });
+      const plugin = (name: string) => ({ name, path: `/plugins/${name}` });
+      let reloadedPlugins = [plugin("first")];
+      let reloads = 0;
+      let failNextReload = true;
+      const rescans: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, homePath: configDir },
+        reloadPlugins: Effect.suspend(() => {
+          reloads += 1;
+          if (!failNextReload) return Effect.succeed(reloadedPlugins);
+          failNextReload = false;
+          return Effect.fail(
+            new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+              method: "reloadPlugins",
+              cause: new Error("reload failed"),
+            }),
+          );
+        }),
+        onWorkspaceSkillsChanged: (cwd) =>
+          Effect.sync(() => {
+            rescans.push(cwd);
+          }),
+      });
+      const runTurn = Effect.fnUntraced(function* (ordinal: number) {
+        const event = harness.events.findLast(
+          (candidate) => candidate.type === "provider_thread.updated",
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread:
+              event?.type === "provider_thread.updated"
+                ? event.providerThread
+                : harness.providerThread,
+            now: DateTime.makeUnsafe(0),
+            attemptId: RunAttemptId.make(`plugin-reload-${ordinal}`),
+            text: `Turn ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            session_id: WAKE_NATIVE_SESSION,
+            plugins: [plugin("first")],
+            uuid: `00000000-0000-4000-8000-00000000080${ordinal}`,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: `00000000-0000-4000-8000-00000000090${ordinal}`,
+            result: "Done.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+      });
+
+      yield* runTurn(1);
+      yield* runTurn(2);
+      assert.deepEqual({ reloads, rescans }, { reloads: 0, rescans: ["/workspace"] });
+
+      yield* fileSystem.makeDirectory(`${configDir}/plugins`);
+      yield* fileSystem.writeFileString(`${configDir}/plugins/installed_plugins.json`, "{}");
+      reloadedPlugins = [plugin("first"), plugin("second")];
+      yield* runTurn(3);
+      assert.deepEqual({ reloads, rescans }, { reloads: 1, rescans: ["/workspace"] });
+      // The failed reload is retried on the next turn.
+      yield* runTurn(4);
+      assert.deepEqual({ reloads, rescans }, { reloads: 2, rescans: ["/workspace", "/workspace"] });
+
+      // A settings edit that leaves the plugins as they were reloads without a rescan.
+      yield* fileSystem.writeFileString(`${configDir}/settings.json`, "{}");
+      yield* runTurn(5);
+      yield* runTurn(6);
+      assert.deepEqual({ reloads, rescans }, { reloads: 3, rescans: ["/workspace", "/workspace"] });
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -13811,6 +13918,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: isFirstProcess
@@ -14013,6 +14121,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              reloadPlugins: Effect.succeed([]),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Queue.shutdown(sdkMessages),
@@ -14225,6 +14334,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(queue),
@@ -17486,6 +17596,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 setPermissionMode: () => Effect.void,
                 renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 mcpServerStatus: Effect.die("unexpected MCP server status"),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -20786,6 +20897,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(sdkMessages),
@@ -20964,6 +21076,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -21142,6 +21255,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Queue.shutdown(sdkMessages),
@@ -21341,6 +21455,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),
                 callMcpTool: () => Effect.die("unexpected MCP tool call"),
                 listPermissionRules: Effect.die("unexpected permission rules read"),
+                reloadPlugins: Effect.succeed([]),
                 stopTask: () => Effect.void,
                 interrupt: Effect.void,
                 close: Effect.sync(() => {
@@ -21488,6 +21603,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
+                  reloadPlugins: Effect.succeed([]),
                   stopTask: () => Effect.void,
                   interrupt: Effect.void,
                   close: Queue.shutdown(sdkMessages),
@@ -21610,6 +21726,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
               callMcpTool: () => Effect.die("unexpected MCP tool call"),
               listPermissionRules: Effect.die("unexpected permission rules read"),
+              reloadPlugins: Effect.succeed([]),
               stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Queue.shutdown(sdkMessages),

@@ -172,6 +172,7 @@ import {
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import {
   claudeLaunchArgDirectories,
+  claudePluginStatePaths,
   customClaudeApiEndpointHost,
   discoverClaudeSkills,
   readClaudeSettingsEnv,
@@ -362,6 +363,8 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK has no control-request deadline; the CLI waits up to 30 s per MCP server.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const CLAUDE_BOOT_TIMEOUT = "5 minutes";
+// Bounds the wait a plugin reload adds before a turn's prompt; the turn proceeds without it.
+const CLAUDE_PLUGIN_RELOAD_TIMEOUT = "30 seconds";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -674,6 +677,8 @@ export interface ClaudeAgentSdkQuerySession {
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly renameSession: (title: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Reloads plugins from disk and returns the plugins the session now has. */
+  readonly reloadPlugins: Effect.Effect<ClaudeLoadedPlugins, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly backgroundTasks: (
     toolUseId: string,
@@ -703,6 +708,26 @@ export interface ClaudeAgentSdkQuerySession {
 }
 
 type ClaudeQueryStreamExit = Exit.Exit<void, ClaudeAgentSdkQueryRunnerError>;
+
+type ClaudeLoadedPlugins = Awaited<ReturnType<ClaudeQuery["reloadPlugins"]>>["plugins"];
+
+const claudeLoadedPluginsKey = (plugins: ClaudeLoadedPlugins): string =>
+  plugins
+    .map((plugin) => `${plugin.name}\0${plugin.path}\0${plugin.version ?? ""}`)
+    .sort()
+    .join("\n");
+
+/** Stats only: compared on every reused turn, so it must not read file contents. */
+const readClaudePluginState = (fileSystem: FileSystem.FileSystem, paths: ReadonlyArray<string>) =>
+  Effect.forEach(
+    paths,
+    (filePath) =>
+      fileSystem.stat(filePath).pipe(
+        Effect.map((info) => `${Option.getOrUndefined(info.mtime)?.getTime()}:${info.size}`),
+        Effect.orElseSucceed(() => "-"),
+      ),
+    { concurrency: "unbounded" },
+  ).pipe(Effect.map((states) => states.join("|")));
 
 export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAgentSdkQueryRunnerError>()(
   "ClaudeAgentSdkQueryRunnerError",
@@ -1099,6 +1124,11 @@ export type ClaudeAgentSdkProtocolLogEvent =
         readonly type: "query.apply_flag_settings";
         readonly settings: ClaudeFlagSettings;
       };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: { readonly type: "query.reload_plugins" };
     }
   | {
       readonly direction: "outgoing";
@@ -1836,6 +1866,19 @@ export const layerQueryRunner: Layer.Layer<
                   }),
                 ),
               ),
+            reloadPlugins: Effect.tryPromise({
+              try: () => queryRuntime.reloadPlugins(),
+              catch: (cause) => queryRunnerError(cause, "reloadPlugins"),
+            }).pipe(
+              Effect.map((result) => result.plugins),
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: { type: "query.reload_plugins" },
+                }),
+              ),
+            ),
             stopTask: (taskId) =>
               Effect.tryPromise({
                 try: () => queryRuntime.stopTask(taskId),
@@ -5100,6 +5143,10 @@ interface ClaudeLiveQueryContext {
   // From system/init; feature-detects control requests such as MCP Apps.
   capabilities: ReadonlySet<string>;
   claudeCodeVersion: string | undefined;
+  readonly pluginStatePaths: ReadonlyArray<string>;
+  // Stats of pluginStatePaths when the session last loaded plugins.
+  pluginState: string;
+  loadedPlugins: ClaudeLoadedPlugins | undefined;
   permissionMode: PermissionMode;
   stopping: boolean;
   // A turn that had not attached when the CLI exited fails its start with this cause.
@@ -5517,10 +5564,11 @@ export interface ClaudeAdapterV2Options {
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /**
-   * Called with the requested cwd on a process's first init message, after its synchronous
-   * SessionStart hooks have run, so cwd-keyed workspace scans can be refreshed.
+   * Called with the requested cwd when a session's skills may have changed, so cwd-keyed
+   * workspace scans can be refreshed: on a process's first init message, after its synchronous
+   * SessionStart hooks have run, and after a plugin reload changed the session's plugins.
    */
-  readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
+  readonly onWorkspaceSkillsChanged?: (cwd: string) => Effect.Effect<void>;
   /**
    * Applies Claude Code's reported model ids for a turn's cwd, so turns send ids its backend
    * accepts. Defaults to the catalog unchanged.
@@ -12603,6 +12651,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           live.selection = selection;
         });
 
+        // The CLI loads plugins only at startup, so a live process misses ones installed since.
+        const reloadChangedPlugins = Effect.fn("ClaudeAdapterV2.reloadChangedPlugins")(function* (
+          live: ClaudeLiveQueryContext,
+          cwd: string | null,
+        ) {
+          const state = yield* readClaudePluginState(fileSystem, live.pluginStatePaths);
+          if (state === live.pluginState) return;
+          const plugins = yield* live.query.reloadPlugins.pipe(
+            Effect.timeout(CLAUDE_PLUGIN_RELOAD_TIMEOUT),
+            Effect.tapError((cause) =>
+              Effect.logWarning("orchestration-v2.claude-plugin-reload-failed", {
+                nativeThreadId: live.nativeThreadId,
+                cause,
+              }),
+            ),
+            Effect.option,
+          );
+          // A failed reload keeps the old state, so the next turn retries it.
+          if (Option.isNone(plugins)) return;
+          live.pluginState = state;
+          const unchanged =
+            live.loadedPlugins !== undefined &&
+            claudeLoadedPluginsKey(plugins.value) === claudeLoadedPluginsKey(live.loadedPlugins);
+          live.loadedPlugins = plugins.value;
+          if (unchanged) return;
+          if (cwd !== null && adapterOptions.onWorkspaceSkillsChanged) {
+            yield* adapterOptions.onWorkspaceSkillsChanged(cwd);
+          }
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -12697,6 +12775,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 );
             }
+            yield* reloadChangedPlugins(existing, turnInput.runtimePolicy.cwd);
             return existing;
           }
 
@@ -12801,6 +12880,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
+          const pluginStatePaths = yield* Effect.gen(function* () {
+            const cwd = turnInput.runtimePolicy.cwd;
+            return yield* claudePluginStatePaths(
+              adapterOptions.settings,
+              cwd,
+              cwd === null ? null : yield* claudeLocalSettingsDirectory(cwd),
+              adapterOptions.environment,
+            );
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+          // Read before the CLI loads plugins, so a change during startup reloads on the next turn.
+          const pluginState = yield* readClaudePluginState(fileSystem, pluginStatePaths);
           const openQueryRuntime = queryRunner.open({
             threadId: turnInput.threadId,
             providerSessionId: input.providerSessionId,
@@ -12857,6 +12950,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             receivedInit: false,
             capabilities: new Set(),
             claudeCodeVersion: undefined,
+            pluginStatePaths,
+            pluginState,
+            loadedPlugins: undefined,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             exitCause: undefined,
@@ -12901,6 +12997,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     context.receivedInit = true;
                     context.capabilities = new Set(message.capabilities ?? []);
                     context.claudeCodeVersion = message.claude_code_version;
+                    context.loadedPlugins = message.plugins;
                   }
                   if (
                     message.type === "system" &&
@@ -12936,10 +13033,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }
                   const handled = handleSdkMessage({ query: querySession, message });
                   const reportedCwd = turnInput.runtimePolicy.cwd;
-                  if (!firstInit || reportedCwd === null || !adapterOptions.onSessionInit) {
+                  if (
+                    !firstInit ||
+                    reportedCwd === null ||
+                    !adapterOptions.onWorkspaceSkillsChanged
+                  ) {
                     return handled;
                   }
-                  return adapterOptions.onSessionInit(reportedCwd).pipe(Effect.andThen(handled));
+                  return adapterOptions
+                    .onWorkspaceSkillsChanged(reportedCwd)
+                    .pipe(Effect.andThen(handled));
                 }),
               ),
             ),
@@ -14477,7 +14580,11 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
     hooks: Pick<
       ClaudeAdapterV2Options,
-      "scopedLimitNames" | "onUsageLimits" | "onSessionInit" | "modelCatalog" | "routeModelCatalog"
+      | "scopedLimitNames"
+      | "onUsageLimits"
+      | "onWorkspaceSkillsChanged"
+      | "modelCatalog"
+      | "routeModelCatalog"
     > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
