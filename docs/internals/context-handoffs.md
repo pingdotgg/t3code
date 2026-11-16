@@ -19,6 +19,10 @@ Within a provider handoff payload, selected evidence is stored in `history.messa
 `summaryText` field carries a compact coverage and recovery receipt, which also appears in the
 handoff activity item. It does not repeat the selected message or tool-output bodies. Delivery
 reads the intact evidence from `history`, preserving the same selection and context budget.
+The receipt names the summaries a delivery used, for people; the prompt does not repeat it, because
+a delivered summary's own header carries its expand call. The prompt adds a line only for a summary
+that did not fit but holds omitted items, with the full expand call, since agents are not told their
+project id. The `context-handoffs` mcp-tool-use eval measures both choices.
 
 Fork merge-back and side-chat fallback text use `compactText` for compact item descriptions. Its
 240-character prefix is a property of those fallback descriptions, not the provider handoff history

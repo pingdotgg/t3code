@@ -1,6 +1,7 @@
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  ProjectId,
   ContextHandoffId,
   NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -39,6 +40,7 @@ const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
 
 const now = DateTime.makeUnsafe("2026-09-17T00:00:00Z");
 const threadId = ThreadId.make("thread:handoff");
+const summaryScope = { projectId: ProjectId.make("project:handoff"), threadId };
 const providerThread: OrchestrationV2ProviderThread = {
   id: ProviderThreadId.make("provider-thread:target"),
   driver: ProviderDriverKind.make("codex"),
@@ -621,6 +623,7 @@ describe("handoff delivery", () => {
               Effect.succeed([
                 {
                   id: `summary:${"a".repeat(64)}`,
+                  ...summaryScope,
                   coveredItemIds,
                   text: `Generated conversation summary with as-sent project evidence: ${"x".repeat(14_000)}`,
                 },
@@ -705,6 +708,8 @@ describe("handoff delivery", () => {
         const deliver = Effect.fn("test.deliverWithSummaries")(function* (
           summaries: ReadonlyArray<{
             readonly id: `summary:${string}`;
+            readonly projectId: ProjectId;
+            readonly threadId: ThreadId;
             readonly coveredItemIds: ReadonlyArray<TurnItemId>;
             readonly text: string;
             readonly knowledgeFactIds?: ReadonlyArray<ProjectFactId>;
@@ -748,6 +753,7 @@ describe("handoff delivery", () => {
         const baseline = yield* deliver([]);
         const old = {
           id: `summary:${"a".repeat(64)}` as const,
+          ...summaryScope,
           coveredItemIds: ids(1, 8),
           text: `OLD ${"o".repeat(8_000)}`,
           knowledgeFactIds: [ProjectFactId.make("fact:old")],
@@ -760,6 +766,7 @@ describe("handoff delivery", () => {
         );
         const recent = {
           id: `summary:${"b".repeat(64)}` as const,
+          ...summaryScope,
           coveredItemIds: ids(16, 23),
           text: `RECENT ${"r".repeat(1_200)}`,
           knowledgeFactIds: [ProjectFactId.make("fact:recent")],
@@ -781,7 +788,7 @@ describe("handoff delivery", () => {
       }),
   );
 
-  it.effect("keeps the newest messages ahead of tool results when a summary needs room", () =>
+  it.effect("keeps the newest messages ahead of tool results, with or without a summary", () =>
     Effect.gen(function* () {
       const tool = (id: string): OrchestrationV2HistoricalMessage => ({
         ...message(id, "assistant", "t".repeat(1_500)),
@@ -824,6 +831,7 @@ describe("handoff delivery", () => {
           Effect.succeed([
             {
               id: `summary:${"c".repeat(64)}` as const,
+              ...summaryScope,
               coveredItemIds: older.slice(1).map((entry) => entry.itemId),
               text: `OLDER ${"s".repeat(1_600)}`,
             },
@@ -839,6 +847,23 @@ describe("handoff delivery", () => {
       });
       assert.includeMembers([...verbatim], newest, "the six newest messages");
       assert.lengthOf(summarized, 19, "the summary of older history is delivered");
+
+      // Without a summary to offer, the tool result next to the oldest tail message gives way.
+      const unsummarized = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread: { ...providerThread, nativeThreadRef: null },
+        budget: historyCost(
+          [older[0]!, ...tail.filter((entry) => entry !== tail[1])],
+          "c".repeat(600),
+        ),
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.void,
+      });
+      assert.includeMembers(
+        unsummarized.messages.map((entry) => entry.itemId),
+        newest,
+        "the six newest messages without a summary",
+      );
     }),
   );
 
@@ -1205,7 +1230,7 @@ describe("handoff delivery", () => {
   const summaryId = `summary:${"a".repeat(64)}` as const;
   const summaryTools = "t3_conversation_summary_list and t3_conversation_summary_expand";
 
-  it.effect("names the summaries a delivery sent and how to read one", () =>
+  it.effect("names the summaries a delivery sent in the receipt, not in the prompt", () =>
     Effect.gen(function* () {
       const history = Array.from({ length: 30 }, (_, index) =>
         message(`item:receipt-${index}`, index % 2 === 0 ? "user" : "assistant", "x".repeat(700)),
@@ -1216,7 +1241,7 @@ describe("handoff delivery", () => {
         id: ContextHandoffId.make("handoff:summary-receipt"),
         summaryText: [
           "Coverage.",
-          `Omitted items have conversation summaries; read one with ${summaryTools}.`,
+          `Some omitted items have conversation summaries; read one with ${summaryTools}.`,
         ].join("\n"),
         history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
       };
@@ -1231,6 +1256,7 @@ describe("handoff delivery", () => {
           Effect.succeed([
             {
               id: summaryId,
+              ...summaryScope,
               coveredItemIds: covered,
               text: `RECENT ${"r".repeat(1_200)}`,
             },
@@ -1249,14 +1275,19 @@ describe("handoff delivery", () => {
       assert.deepEqual(durable.delivery?.summaryIds, [summaryId]);
       assert.equal(durable.summaryText, `Coverage.\n${line}`);
       assert.notInclude(durable.summaryText, "RECENT");
-      assert.include(context, line);
-      assert.equal(context.split(line).length - 1, 1);
+      // The delivered summary's own header names it and how to expand it.
+      assert.include(context, "RECENT");
+      assert.notInclude(context, "Replaced earlier spans");
+      assert.notInclude(context, "Not shown here");
     }),
   );
 
-  it.effect("names the summary tools when an omitted item has a summary that was not sent", () =>
+  it.effect("points at the summary holding an omitted tool result that was not sent", () =>
     Effect.gen(function* () {
-      const omitted = message("item:receipt-omitted", "assistant", "o".repeat(20_000));
+      const omitted: OrchestrationV2HistoricalMessage = {
+        ...message("item:receipt-omitted", "assistant", `Command: vp test\n${"o".repeat(20_000)}`),
+        kind: "command_execution",
+      };
       const kept = message("item:receipt-kept", "user", "kept");
       const source: OrchestrationV2ContextHandoff = {
         ...handoff,
@@ -1279,6 +1310,7 @@ describe("handoff delivery", () => {
           Effect.succeed([
             {
               id: summaryId,
+              ...summaryScope,
               coveredItemIds: [omitted.itemId],
               text: "S".repeat(40_000),
             },
@@ -1298,7 +1330,10 @@ describe("handoff delivery", () => {
       assert.isAbove(delivery.uncoveredItems, 0);
       assert.equal(durable.summaryText, `Coverage.\n${line}`);
       assert.notInclude(durable.summaryText, summaryId);
-      assert.include(context, line);
+      assert.include(
+        context,
+        `Not shown here: item:receipt-omitted (command_execution: Command: vp test). ${summaryId} holds the original text; read it with t3_conversation_summary_expand({projectId:"project:handoff",threadId:"thread:handoff",summaryId:"${summaryId}"}).`,
+      );
       assert.notInclude(context, "SSSS");
     }),
   );
@@ -1344,6 +1379,7 @@ describe("handoff delivery", () => {
                 Effect.succeed([
                   {
                     id: summaryId,
+                    ...summaryScope,
                     coveredItemIds: covered,
                     text: `OFFER ${"r".repeat(1_200)}`,
                   },

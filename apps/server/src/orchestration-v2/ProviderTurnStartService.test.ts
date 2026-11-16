@@ -4616,6 +4616,7 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
     const projection = harness.projection();
     const targetRun = projection.runs.at(-1)!;
     const sourceRunId = RunId.make("peer-run");
+    const interruptedRunId = RunId.make("interrupted-run");
     const peerThreadId = ProviderThreadId.make("peer-thread");
     const now = targetRun.requestedAt;
     const summaryId = `summary:${"c".repeat(64)}`;
@@ -4636,7 +4637,7 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
       id: ContextHandoffId.make("receipt-handoff"),
       transferId: null,
       threadId: projection.thread.id,
-      targetRunId: targetRun.id,
+      targetRunId: interruptedRunId,
       fromProviderThreadIds: [peerThreadId],
       toProviderThreadId: targetRun.providerThreadId!,
       coveredRunOrdinals: { from: 2, to: 2 },
@@ -4652,7 +4653,7 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
     const activity = {
       id: TurnItemId.make("receipt-activity"),
       threadId: projection.thread.id,
-      runId: targetRun.id,
+      runId: interruptedRunId,
       nodeId: targetRun.rootNodeId,
       providerThreadId: targetRun.providerThreadId,
       providerTurnId: null,
@@ -4684,11 +4685,22 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
           providerThreadId: peerThreadId,
           providerInstanceId: harness.oldInstanceId,
         },
-        { ...targetRun, ordinal: 3 },
+        { ...targetRun, id: interruptedRunId, ordinal: 3, status: "interrupted" },
+        { ...targetRun, ordinal: 4 },
       ],
       contextHandoffs: [handoff],
       turnItems: [activity],
     });
+    // The handoff was first shown in an interrupted run; turn start reads only its own run's items.
+    const read = harness.getTurnStartContext.getMockImplementation()!;
+    harness.getTurnStartContext.mockImplementation(() =>
+      read().pipe(
+        Effect.map((context) => ({
+          ...context,
+          turnItems: context.turnItems.filter((item) => item.runId === targetRun.id),
+        })),
+      ),
+    );
     yield* harness.start.pipe(
       Effect.provideService(ConversationSummaryRuntime, {
         hasPendingPass: () => Effect.succeed(false),
@@ -4697,6 +4709,8 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
           Effect.succeed([
             {
               id: summaryId,
+              projectId: projection.thread.projectId,
+              threadId: projection.thread.id,
               coveredItemIds: messages.slice(16, 24).map((entry) => entry.itemId),
               text: `RECENT ${"r".repeat(1_200)}`,
             },
@@ -4723,6 +4737,8 @@ effectIt.effect("copies the delivered summary receipt onto the handoff activity 
     expect(stored?.summaryText).toBe(`Coverage.\n${line}`);
     expect(stored?.summaryText).not.toContain("RECENT");
     expect(shown && shown.type === "handoff" ? shown.summary : undefined).toBe(stored?.summaryText);
-    expect(harness.nativeStart.mock.calls.at(-1)?.[0].message.text).toContain(line);
+    const sent = harness.nativeStart.mock.calls.at(-1)?.[0].message.text;
+    expect(sent).toContain("RECENT");
+    expect(sent).not.toContain(line);
   }),
 );
