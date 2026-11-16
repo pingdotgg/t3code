@@ -369,7 +369,8 @@ it("keeps an unexpected draft flush error blocking Send", async () => {
   expect(composerAttachmentUploadBlockReason(sendInput())).toBe(
     "Retry or remove the failed attachment",
   );
-  expect(native.deleted).toEqual(["pending-1"]);
+  // The server sweeps pending uploads nothing claims; a retry uploads again.
+  expect(native.deleted).toEqual([]);
 });
 
 it("uploads draft attachments for threads whose ids contain colons", () => {

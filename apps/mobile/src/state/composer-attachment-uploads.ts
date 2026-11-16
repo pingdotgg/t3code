@@ -1,16 +1,17 @@
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope, type EnvironmentId } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { Atom } from "effect/reactivity";
 
-import { prepareTurnAttachments } from "../lib/attachmentUpload";
+import { uploadComposerAttachment } from "../lib/attachmentUpload";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import {
   isFileBackedComposerAttachment,
   type DraftComposerAttachment,
 } from "../lib/composerImages";
 import {
+  uploadError,
   composerAttachmentUploadKey,
   composerDraftEnvironmentId,
   canUploadComposerAttachment,
@@ -22,8 +23,7 @@ import { environmentServerConfigsAtom } from "./server";
 import {
   flattenQueuedThreadMessages,
   threadOutboxManager,
-  threadOutboxRevision,
-  updateThreadOutboxMessage,
+  modifyThreadOutboxMessage,
   type QueuedThreadMessage,
 } from "./thread-outbox";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
@@ -136,33 +136,35 @@ function withUploadedAttachment(
   };
 }
 
-async function recordQueuedAttachmentUpload(
+const recordQueuedAttachmentUpload = Effect.fn("ComposerAttachments.recordQueuedUpload")(function* (
   environmentId: EnvironmentId,
   uploaded: DraftComposerAttachment,
-): Promise<boolean> {
-  const awaiting = () => {
-    const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
-    return flattenQueuedThreadMessages(
-      appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-    ).flatMap((message) => {
-      if (message.environmentId !== environmentId || editing[message.messageId]) return [];
-      const updated = withUploadedAttachment(message, uploaded);
-      return updated === null
-        ? []
-        : [{ updated, revision: threadOutboxRevision(message.messageId) }];
-    });
-  };
-  let recorded = false;
-  // A sibling attachment finishing at the same time bumps the revision; reread and retry.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const pending = awaiting();
-    if (pending.length === 0) break;
-    for (const { updated, revision } of pending) {
-      recorded = (await updateThreadOutboxMessage(updated, revision)) || recorded;
-    }
-  }
-  return recorded;
-}
+) {
+  const editing = appAtomRegistry.get(editingQueuedMessageIdsAtom);
+  const holders = flattenQueuedThreadMessages(
+    appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+  ).filter(
+    (message) =>
+      message.environmentId === environmentId &&
+      !editing[message.messageId] &&
+      withUploadedAttachment(message, uploaded) !== null,
+  );
+  yield* Effect.forEach(
+    holders,
+    (message) =>
+      Effect.tryPromise({
+        // An editor that opened meanwhile owns the message; its draft records the upload.
+        try: () =>
+          modifyThreadOutboxMessage(message.messageId, (current) =>
+            appAtomRegistry.get(editingQueuedMessageIdsAtom)[current.messageId]
+              ? null
+              : withUploadedAttachment(current, uploaded),
+          ),
+        catch: uploadError,
+      }),
+    { concurrency: "unbounded", discard: true },
+  );
+});
 
 // Each connected environment's session is read here so a granted or revoked
 // operate scope re-syncs the queue.
@@ -193,8 +195,73 @@ const composerAttachmentUploadRequestsAtom = Atom.make((get) => {
   });
 }).pipe(Atom.withLabel("mobile:composer-attachment-upload-requests"));
 
+/** Saves a finished upload's id on every draft and queued message holding the attachment. */
+const recordComposerAttachmentUpload = Effect.fn("ComposerAttachments.recordUpload")(function* (
+  request: ComposerAttachmentUploadRequest,
+  uploadedId: string,
+) {
+  const { environmentId, attachment } = request;
+  const uploaded: DraftComposerAttachment = {
+    ...attachment,
+    uploadedAttachmentId: uploadedId,
+    uploadEnvironmentId: environmentId,
+  };
+  const queued = flattenQueuedThreadMessages(
+    appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
+  );
+  const knownEnvironmentIds = appAtomRegistry
+    .get(workspaceConnections.environmentsAtom)
+    .map((environment) => environment.environmentId);
+  let draftsChanged = false;
+  for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
+    if (
+      composerDraftEnvironmentId(key, knownEnvironmentIds, queued, draft) === environmentId &&
+      draft.attachments.some((candidate) => candidate.id === attachment.id)
+    ) {
+      draftsChanged = setComposerDraftAttachmentUpload(key, uploaded) || draftsChanged;
+    }
+  }
+  yield* recordQueuedAttachmentUpload(environmentId, uploaded);
+  if (!draftsChanged) return;
+  // A failed draft save only costs a re-upload after restart; the outbox saves its own references.
+  yield* Effect.tryPromise({ try: () => flushComposerDrafts(), catch: uploadError }).pipe(
+    Effect.catchIf(
+      (error) => isComposerDraftPersistenceError(error.cause),
+      (error) =>
+        Effect.logWarning(
+          "[composer-attachments] could not save the uploaded reference",
+          error.cause,
+        ),
+    ),
+  );
+});
+
+function composerAttachmentUploads() {
+  uploadQueue ??= createComposerAttachmentUploadQueue({
+    onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
+    upload: ({ environmentId, attachment }, signal, onProgress) => {
+      const release = isFileBackedComposerAttachment(attachment)
+        ? retainComposerAttachmentFileForPreview(attachment)
+        : undefined;
+      return uploadComposerAttachment(environmentId, attachment, signal, onProgress).finally(() =>
+        release?.(),
+      );
+    },
+    onUploaded: recordComposerAttachmentUpload,
+  });
+  return uploadQueue;
+}
+
+/** Every send uploads through here, so it joins the composer's upload of the same attachment. */
+export function uploadComposerAttachmentShared(
+  environmentId: EnvironmentId,
+  attachment: DraftComposerAttachment,
+) {
+  return composerAttachmentUploads().upload({ environmentId, attachment });
+}
+
 /**
- * Uploads draft attachments to their environment as soon as it is connected and
+ * Uploads draft and queued attachments to their environment as soon as it is connected and
  * operable. The queue follows the requests atom for its whole lifetime.
  */
 export function createComposerAttachmentUploadWorker(
@@ -203,54 +270,7 @@ export function createComposerAttachmentUploadWorker(
   > = composerAttachmentUploadRequestsAtom,
 ) {
   ensureComposerDraftsLoaded();
-  const queue = createComposerAttachmentUploadQueue({
-    onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
-    upload: async ({ environmentId, attachment }, signal, onProgress) => {
-      const release = isFileBackedComposerAttachment(attachment)
-        ? retainComposerAttachmentFileForPreview(attachment)
-        : undefined;
-      const prepared = await settlePromise(() =>
-        prepareTurnAttachments({
-          environmentId,
-          attachments: [attachment],
-          supportsImageUploads: true,
-          signal,
-          onUploadProgress: (_, progress) => onProgress(progress),
-          persistUploadedReferences: async ([uploaded]) => {
-            if (signal.aborted || !uploaded) return "abandon";
-            const queued = flattenQueuedThreadMessages(
-              appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
-            );
-            const knownEnvironmentIds = appAtomRegistry
-              .get(workspaceConnections.environmentsAtom)
-              .map((environment) => environment.environmentId);
-            let retained = false;
-            for (const [key, draft] of Object.entries(appAtomRegistry.get(composerDraftsAtom))) {
-              if (
-                composerDraftEnvironmentId(key, knownEnvironmentIds, queued, draft) ===
-                  environmentId &&
-                draft.attachments.some((candidate) => candidate.id === attachment.id)
-              ) {
-                retained = setComposerDraftAttachmentUpload(key, uploaded) || retained;
-              }
-            }
-            retained = (await recordQueuedAttachmentUpload(environmentId, uploaded)) || retained;
-            if (!retained) return "abandon";
-            // Draft-save failure only costs re-upload after restart; the outbox saves references independently, so preserve accepted uploads.
-            await flushComposerDrafts().catch((error: unknown) => {
-              if (!isComposerDraftPersistenceError(error)) throw error;
-              console.warn("[composer-attachments] could not save the uploaded reference", error);
-            });
-            return "persisted";
-          },
-        }),
-      );
-      release?.();
-      if (AsyncResult.isFailure(prepared)) throw squashAtomCommandFailure(prepared);
-      return prepared.value.status === "ready";
-    },
-  });
-  uploadQueue = queue;
+  const queue = composerAttachmentUploads();
   const unsubscribe = appAtomRegistry.subscribe(requestsAtom, (requests) => queue.sync(requests), {
     immediate: true,
   });
