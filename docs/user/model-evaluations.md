@@ -36,9 +36,9 @@ of becoming poor performance scores for the evaluated model.
 Choose a project under **Learned guidance** to see its recent evaluations and accumulated strengths,
 limitations, and prompting advice. Results stay within that project and environment. T3 keeps
 separate groups for different task categories, top-level versus subagent tasks, judges, scoring
-rubrics, and model options that can change the answer, such as reasoning effort or agent mode, so a
-change of judge does not silently mix two scales. Options that only change speed, cost, or context
-size, such as fast mode, share one group.
+rubrics, and model options that can change the answer, such as reasoning effort or agent mode. A
+change of judge or rubric starts a new group, so two scoring scales are never mixed. Options that only
+change speed, cost, or context size, such as fast mode, share one group.
 
 Guidance reflects up to 200 observations from the past 90 days. The displayed sample counts show
 how much evidence supports each score. Small samples remain provisional, and all guidance is an
