@@ -28,6 +28,11 @@ const HIDDEN = new Set([
   "delInstrText",
   "tracked-changes",
   "pPr",
+  "positionH",
+  "positionV",
+  "sizeRelH",
+  "sizeRelV",
+  "fldData",
 ]);
 
 // @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
@@ -109,7 +114,7 @@ function xml(source: string, extension: string): XmlNode {
       parent.children.pop();
       return;
     }
-    if (!node.hasText && node.name !== "noBreakHyphen") return;
+    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
   });
