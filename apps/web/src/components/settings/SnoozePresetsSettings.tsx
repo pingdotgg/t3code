@@ -78,14 +78,25 @@ function translateSnoozeLabel(label: string, m: ReturnType<typeof useMessages>):
   }
   const labelMessages = {
     Today: msg("Today"),
+    "This morning": msg("This morning"),
+    "This afternoon": msg("This afternoon"),
+    "This evening": msg("This evening"),
     Tomorrow: msg("Tomorrow"),
+    "Next week": msg("Next week"),
     Monday: msg("Monday"),
+    "Next Monday": msg("Next Monday"),
     Tuesday: msg("Tuesday"),
+    "Next Tuesday": msg("Next Tuesday"),
     Wednesday: msg("Wednesday"),
+    "Next Wednesday": msg("Next Wednesday"),
     Thursday: msg("Thursday"),
+    "Next Thursday": msg("Next Thursday"),
     Friday: msg("Friday"),
+    "Next Friday": msg("Next Friday"),
     Saturday: msg("Saturday"),
+    "Next Saturday": msg("Next Saturday"),
     Sunday: msg("Sunday"),
+    "Next Sunday": msg("Next Sunday"),
   } as const;
   return label in labelMessages ? m(labelMessages[label as keyof typeof labelMessages]) : label;
 }

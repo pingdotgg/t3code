@@ -18,16 +18,11 @@ import {
   type DesktopBridge,
   type DesktopServerExposureState,
   type DesktopSshEnvironmentTarget,
-  type DesktopUpdateState,
   type DesktopWslState,
   type EnvironmentId,
   type ServerAuthPolicy,
   type ServerDirectEndpoint,
 } from "@t3tools/contracts";
-import {
-  getDesktopUpdateDownloadedVersion,
-  resolveDesktopUpdateButtonAction,
-} from "../desktopUpdate.logic";
 
 /** Keep terminal:read with terminal:operate to avoid creating unseen shells on every script run. */
 export function togglePairingScopeSelection(
@@ -93,34 +88,6 @@ export function isWslSettingsRowVisible(input: {
 }): boolean {
   const { state, error } = input;
   return state ? state.available || state.enabled || state.wslOnly : error !== null;
-}
-
-/**
- * Once client/server versions match, this passive Version label follows the sidebar update action,
- * including retryable failures. Rechecks retain downloaded-update labels; `state` is null outside desktop.
- */
-export function resolveLocalVersionStatusLabel(state: DesktopUpdateState | null): string {
-  if (!state) return "Up to date";
-  if (state.status === "downloading") {
-    return state.availableVersion
-      ? `Downloading update ${state.availableVersion}`
-      : "Downloading update";
-  }
-  const action = resolveDesktopUpdateButtonAction(state);
-  if (
-    action === "install" ||
-    state.status === "downloaded" ||
-    (state.status === "checking" && state.downloadedVersion !== null)
-  ) {
-    const version = getDesktopUpdateDownloadedVersion(state);
-    return version ? `Update ${version} downloaded` : "Update downloaded";
-  }
-  if (action === "download") {
-    return state.availableVersion
-      ? `Update ${state.availableVersion} available`
-      : "Update available";
-  }
-  return "Up to date";
 }
 
 export type QrEndpointOption = {
