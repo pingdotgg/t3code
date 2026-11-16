@@ -1649,6 +1649,24 @@ describe("sameUsageLimitCommandCoverage", () => {
 });
 
 describe("external usage settings", () => {
+  it("shows ACP sign-in problems in the limits view", () => {
+    const kimi = provider({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported", message: "Sign in to Kimi Code." },
+      },
+    });
+    const presentations = new Map([
+      [
+        EnvironmentId.make("a"),
+        { entry: { target: { label: "Host" } }, serverConfig: { providers: [kimi] } },
+      ],
+    ]);
+    expect(collectLimitNotices(presentations)).toEqual(["acpRegistry: Sign in to Kimi Code."]);
+  });
+
   it("deduplicates destinations across accounts and environments without inventing quota pools", () => {
     const managed = provider({
       usageLimits: {

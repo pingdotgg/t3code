@@ -1,601 +1,536 @@
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
-import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
-import * as Digest from "effect/crypto/Digest";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Context from "effect/Context";
-import * as FileSystem from "effect/FileSystem";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
-
 import {
   clampPercent,
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
-import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
+import * as Layer from "effect/Layer";
+import * as Digest from "effect/crypto/Digest";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import type { PlatformError } from "effect/PlatformError";
+import * as Schema from "effect/Schema";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
+
 import * as Toml from "smol-toml";
 
-/** Kimi Code reports limits from `{base_url}/usages` with its stored OAuth token. */
-const DEFAULT_KIMI_CODE_BASE_URL = "https://api.kimi.com/coding/v1";
-const DEFAULT_KIMI_OAUTH_HOST = "https://auth.kimi.com";
-const KIMI_CODE_OAUTH_KEY = "kimi-code";
-const KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX = "kimi-code-env-";
-// Kimi's device-code flow client, shared by every CLI install.
-const KIMI_CODE_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
-// Kimi's default shared deployments all store credentials in the unscoped slot.
-const DEFAULT_MANAGED_ENVIRONMENTS: ReadonlyArray<{
-  readonly oauthHost: string;
-  readonly baseUrl: string;
-}> = [
-  { oauthHost: "https://auth.kimi.com", baseUrl: "https://api.kimi.com/coding/v1" },
-  { oauthHost: "https://auth.kimi.com", baseUrl: "https://api.kimi.ai/coding/v1" },
-];
-// Access tokens live 15 minutes; refresh just before the boundary like the CLI.
-const REFRESH_THRESHOLD_MS = 60 * 1_000;
-const REQUEST_TIMEOUT = "10 seconds";
-const SESSION_MINS = 5 * 60;
-// The CLI's OAuthManager serializes credential rotation with a lock file next
-// to the credential; the reader is a guest and must not hang the quota lookup
-// on it, so acquisition is bounded and best-effort.
-const CREDENTIAL_LOCK_RETRY_COUNT = 5;
-const CREDENTIAL_LOCK_RETRY_DELAY = "20 millis";
-// A lock older than this belongs to a dead process; break it once and retry.
-// It must exceed the longest hold (the 10s REQUEST_TIMEOUT refresh) or a live
-// reader could break a live peer's lock and double-refresh the same token.
-const CREDENTIAL_LOCK_STALE_MS = 15 * 1_000;
+import type { AcpRegistrySettings } from "../settings.ts";
 
-const KimiStoredCredential = Schema.Struct({
-  access_token: Schema.String,
-  refresh_token: Schema.String,
-  expires_at: Schema.Number,
-  scope: Schema.optional(Schema.String),
-  token_type: Schema.optional(Schema.String),
-  expires_in: Schema.optional(Schema.Number),
-});
-type KimiStoredCredential = typeof KimiStoredCredential.Type;
-const decodeStoredCredential = Schema.decodeEffect(Schema.fromJsonString(KimiStoredCredential));
+// Mirrors Kimi Code 2.x and the archived kimi-cli 1.x. Their refresh tokens are single-use,
+// so a refresh whose answer is lost would sign the CLI out. T3 never refreshes or writes
+// Kimi's credentials; it only reads the access token the CLI keeps fresh.
 
-/** Kimi reports counts as strings; `remaining` present but redundant. */
-const KimiUsageDetail = Schema.Struct({
-  limit: Schema.String,
-  used: Schema.String,
-  resetTime: Schema.optional(Schema.String),
-});
-const KimiUsageWindow = Schema.Struct({
-  duration: Schema.Number,
-  timeUnit: Schema.Literals([
-    "TIME_UNIT_MINUTE",
-    "TIME_UNIT_HOUR",
-    "TIME_UNIT_DAY",
-    "TIME_UNIT_WEEK",
-  ]),
-});
-const KimiUsageLimitRow = Schema.Struct({
-  window: Schema.optional(KimiUsageWindow),
-  detail: KimiUsageDetail,
-});
-const KimiUsageRatio = Schema.Struct({
-  used_ratio: Schema.Number,
-  reset_time: Schema.optional(Schema.String),
-});
-const KimiUsagesResponse = Schema.Struct({
-  limits: Schema.optional(Schema.Array(KimiUsageLimitRow)),
-  usages: Schema.optional(Schema.Record(Schema.String, KimiUsageRatio)),
-});
-type KimiUsagesResponse = typeof KimiUsagesResponse.Type;
-const decodeUsagesResponse = Schema.decodeUnknownOption(KimiUsagesResponse);
+const DEFAULT_OAUTH_HOST = "https://auth.kimi.com";
+const DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1";
+/** A token this close to expiry could lapse mid-read, so it counts as expired. */
+const EXPIRY_MARGIN_SECONDS = 30;
 
-const KimiTokenRefresh = Schema.Struct({
-  access_token: Schema.String,
-  refresh_token: Schema.optional(Schema.String),
-  expires_at: Schema.optional(Schema.Number),
-  expires_in: Schema.optional(Schema.Number),
-});
-const decodeTokenRefresh = Schema.decodeUnknownOption(KimiTokenRefresh);
-/** The scoped-credential hash input is the CLI's exact JSON shape. */
-const encodeEnvironmentJson = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Struct({ oauthHost: Schema.String, baseUrl: Schema.String })),
-);
+export type KimiCli = "kimi-code" | "kimi-legacy";
 
-const textEncoder = new TextEncoder();
-
-const MANAGED_KIMI_CODE_PROVIDER_KEY = "managed:kimi-code";
-
-/**
- * Reads `providers["managed:kimi-code"]` (and its `oauth` sub-table) from the
- * CLI's config.toml as real TOML, so both single- and double-quoted spellings
- * count. Malformed config behaves like a missing section, never a crash.
- */
-function managedKimiCodeConfig(config: string): {
-  readonly baseUrl: string | undefined;
-  readonly oauthHost: string | undefined;
-  readonly key: string | undefined;
-  readonly apiKey: string | undefined;
-  readonly apiKeyEnv: string | undefined;
-} {
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = Toml.parse(config) as Record<string, unknown>;
-  } catch {
-    return {
-      baseUrl: undefined,
-      oauthHost: undefined,
-      key: undefined,
-      apiKey: undefined,
-      apiKeyEnv: undefined,
-    };
+/** Which Kimi CLI an ACP Registry instance runs, or undefined for other agents. */
+export function kimiCliCandidates(
+  settings: Pick<AcpRegistrySettings, "source" | "agentId" | "commandPath" | "commandArgs">,
+): ReadonlyArray<KimiCli> | undefined {
+  if (settings.source === "registry") {
+    if (settings.agentId === "kimi-code") return ["kimi-code"];
+    if (settings.agentId === "kimi") return ["kimi-legacy"];
+    return undefined;
   }
-  const providers = readRecord(parsed["providers"]);
-  const provider = readRecord(providers[MANAGED_KIMI_CODE_PROVIDER_KEY]);
-  const oauth = readRecord(provider["oauth"]);
-  return {
-    baseUrl: readString(provider["base_url"]),
-    oauthHost: readString(oauth["oauth_host"]),
-    key: readString(oauth["key"]),
-    apiKey: readString(provider["api_key"]),
-    apiKeyEnv: readString(provider["api_key_env"]),
-  };
+  // Package launchers such as `npx @moonshot-ai/kimi-code acp` or `uvx kimi-cli acp`.
+  if (settings.commandArgs.some((arg) => /^@moonshot-ai\/kimi-code(?:@|$)/.test(arg))) {
+    return ["kimi-code"];
+  }
+  if (settings.commandArgs.some((arg) => /^kimi-cli(?:[@=<>~]|$)/.test(arg))) {
+    return ["kimi-legacy"];
+  }
+  const name = settings.commandPath
+    .split(/[\\/]/)
+    .at(-1)
+    ?.replace(/\.(exe|cmd|bat|mjs|js)$/i, "")
+    .toLowerCase();
+  // A local `kimi` is either generation; the 2.x home wins when both are signed in.
+  return name === "kimi" || name === "kimi-code" ? ["kimi-code", "kimi-legacy"] : undefined;
 }
 
-function readRecord(value: unknown): Record<string, unknown> {
+const QuotaEntry = Schema.Struct({
+  used_ratio: Schema.optional(Schema.Union([Schema.Number, Schema.String])),
+  reset_time: Schema.optional(Schema.NullOr(Schema.String)),
+});
+const CountedQuota = Schema.Struct({
+  window: Schema.Struct({ duration: Schema.Number, timeUnit: Schema.String }),
+  detail: Schema.Struct({
+    used: Schema.Union([Schema.Number, Schema.String]),
+    limit: Schema.Union([Schema.Number, Schema.String]),
+    resetTime: Schema.optional(Schema.String),
+  }),
+});
+const UsagePayload = Schema.Struct({
+  usages: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  limits: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+const decodeQuota = Schema.decodeUnknownOption(QuotaEntry);
+const decodeCountedQuota = Schema.decodeUnknownOption(CountedQuota);
+const UserInfo = Schema.Struct({ user_id: Schema.NonEmptyString });
+/** Only what the probe reads; the refresh token is never decoded. */
+const TokenFile = Schema.Struct({
+  access_token: Schema.optional(Schema.String),
+  expires_at: Schema.optional(Schema.Number),
+});
+type TokenFile = typeof TokenFile.Type;
+const decodeUsagePayload = Schema.decodeUnknownEffect(UsagePayload);
+const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
+const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
+
+const WINDOWS = [
+  { key: "limit_5h", label: "5-hour", kind: "session", windowDurationMins: 5 * 60 },
+  { key: "limit_7d", label: "Weekly", kind: "weekly", windowDurationMins: 7 * 24 * 60 },
+  { key: "limit_month_total", label: "Monthly", kind: "monthly" },
+] as const;
+
+function nonnegativeNumber(value: unknown): number | undefined {
+  if (typeof value !== "number" && typeof value !== "string") return undefined;
+  if (typeof value === "string" && value.trim() === "") return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : undefined;
+}
+
+function resetTimestamp(value: string | null | undefined) {
+  const instant = value ? DateTime.make(value) : Option.none();
+  return Option.isSome(instant) ? { resetsAt: DateTime.formatIso(instant.value) } : {};
+}
+
+const MINUTES_PER_UNIT: Readonly<Record<string, number>> = {
+  TIME_UNIT_MINUTE: 1,
+  TIME_UNIT_HOUR: 60,
+  TIME_UNIT_DAY: 1440,
+  TIME_UNIT_WEEK: 10080,
+};
+
+/** Kimi Code 2.5.1 managed-usage/usage-format: month_code is a breakdown, not another quota. */
+export const kimiUsageWindows = (payload: unknown) =>
+  decodeUsagePayload(payload).pipe(
+    Effect.map(({ usages, limits }) => {
+      const windows = new Map<string, ServerProviderUsageWindow>();
+      for (const window of WINDOWS) {
+        const decoded = decodeQuota(usages?.[window.key]);
+        if (Option.isNone(decoded)) continue;
+        const entry = decoded.value;
+        const ratio = nonnegativeNumber(entry.used_ratio);
+        if (ratio === undefined) continue;
+        windows.set(window.key, {
+          id: window.key,
+          label: window.label,
+          kind: window.kind,
+          usedPercent: clampPercent(Math.round(ratio * 1e6) / 1e4),
+          ...resetTimestamp(entry.reset_time),
+          ...("windowDurationMins" in window
+            ? { windowDurationMins: window.windowDurationMins }
+            : {}),
+        });
+      }
+      // Count-based responses are a fallback; preserve the CLI's named ratios when both exist.
+      for (const raw of limits ?? []) {
+        const decoded = decodeCountedQuota(raw);
+        if (Option.isNone(decoded)) continue;
+        const { window, detail } = decoded.value;
+        const used = nonnegativeNumber(detail.used);
+        const limit = nonnegativeNumber(detail.limit);
+        const minutes = window.duration * (MINUTES_PER_UNIT[window.timeUnit] ?? 0);
+        if (
+          used === undefined ||
+          limit === undefined ||
+          limit <= 0 ||
+          !Number.isFinite(minutes) ||
+          minutes <= 0
+        )
+          continue;
+        const known =
+          minutes === 300
+            ? WINDOWS[0]
+            : minutes === 10080
+              ? WINDOWS[1]
+              : minutes === 43200
+                ? WINDOWS[2]
+                : undefined;
+        const id = known?.key ?? `kimi-window-${minutes}`;
+        if (windows.has(id)) continue;
+        windows.set(id, {
+          id,
+          label: known?.label ?? `${minutes}-minute`,
+          kind: known?.kind ?? "other",
+          usedPercent: clampPercent(Math.round((used / limit) * 1e6) / 1e4),
+          windowDurationMins: minutes,
+          ...resetTimestamp(detail.resetTime),
+        });
+      }
+      return [...windows.values()];
+    }),
+  );
+
+export interface KimiManagedProviderConfig {
+  readonly baseUrl?: string;
+  readonly oauthHost?: string;
+  readonly oauthStorage?: string;
+  readonly hasOAuth: boolean;
+  readonly hasApiKey?: boolean;
+}
+
+function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
 }
 
-function normalizeEndpoint(value: string | undefined, fallback: string): string {
-  return (value ?? fallback).trim().replace(/\/+$/, "");
+export function readKimiManagedProviderConfig(source: string): KimiManagedProviderConfig {
+  const root = Toml.parse(source);
+  const provider = record(record(root.providers)["managed:kimi-code"]);
+  const oauth = record(provider.oauth);
+  const baseUrl = text(provider.base_url);
+  const oauthHost = text(oauth.oauth_host);
+  const oauthStorage = text(oauth.storage);
+  const hasApiKey = Boolean(
+    text(provider.api_key) || text(provider.api_key_env) || text(record(provider.env).KIMI_API_KEY),
+  );
+  return {
+    hasOAuth: provider.oauth !== undefined,
+    ...(hasApiKey ? { hasApiKey } : {}),
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(oauthHost ? { oauthHost } : {}),
+    ...(oauthStorage ? { oauthStorage } : {}),
+  };
 }
 
-function isoFromInstant(value: string | undefined): string | undefined {
-  if (value === undefined || value.length === 0) return undefined;
-  const parsed = DateTime.make(value);
-  return Option.isSome(parsed) ? DateTime.formatIso(parsed.value) : undefined;
-}
+const trimEndpoint = (value: string) => value.trim().replace(/\/+$/, "");
 
-/**
- * Kimi's scoped credential filename is the first 16 hex characters of
- * sha256(JSON.stringify({ oauthHost, baseUrl })), mirroring the CLI exactly.
- */
-export function kimiOAuthKey(input: {
+/** The CLI hashes `JSON.stringify({ oauthHost, baseUrl })`; key order matters. */
+const slotSeed = (oauthHost: string, baseUrl: string) => JSON.stringify({ oauthHost, baseUrl });
+
+export interface KimiCodeAuthTarget {
+  /** Credential slot: `<home>/credentials/<slot>.json`. */
+  readonly slot: string;
   readonly oauthHost: string;
   readonly baseUrl: string;
-  readonly sha256Hex: string;
-}): string {
-  for (const managed of DEFAULT_MANAGED_ENVIRONMENTS) {
-    if (managed.oauthHost === input.oauthHost && managed.baseUrl === input.baseUrl) {
-      return KIMI_CODE_OAUTH_KEY;
-    }
-  }
-  return `${KIMI_CODE_SCOPED_OAUTH_KEY_PREFIX}${input.sha256Hex.slice(0, 16)}`;
-}
-
-function percentFromCounts(used: string, limit: string): number | undefined {
-  const usedCount = Number(used);
-  const limitCount = Number(limit);
-  if (
-    !Number.isFinite(usedCount) ||
-    !Number.isFinite(limitCount) ||
-    usedCount < 0 ||
-    limitCount <= 0
-  ) {
-    return undefined;
-  }
-  return clampPercent((usedCount / limitCount) * 100);
-}
-
-const MINUTES_PER_UNIT: Record<string, number> = {
-  TIME_UNIT_MINUTE: 1,
-  TIME_UNIT_HOUR: 60,
-  TIME_UNIT_DAY: 24 * 60,
-  TIME_UNIT_WEEK: 7 * 24 * 60,
-};
-
-function minutesFromWindow(window: typeof KimiUsageWindow.Type): number | undefined {
-  const multiplier = MINUTES_PER_UNIT[window.timeUnit];
-  if (multiplier === undefined || !Number.isFinite(window.duration) || window.duration <= 0) {
-    return undefined;
-  }
-  return Math.round(window.duration * multiplier);
 }
 
 /**
- * Kimi names its ratio rows `limit_5h`, `limit_7d`, and `limit_month_total`;
- * other `limit_month_*` rows are breakdowns, not quota windows.
+ * Kimi Code's `resolveKimiCodeRuntimeAuth`: environment overrides win over
+ * `config.toml`, and each (OAuth host, API base) pair has its own credential slot.
  */
-function kindFromUsageName(name: string): ServerProviderUsageWindow["kind"] | undefined {
-  if (name.startsWith("limit_month")) {
-    return name === "limit_month_total" ? "monthly" : undefined;
-  }
-  if (name.startsWith("limit_7d")) return "weekly";
-  if (name.includes("5h")) return "session";
-  return "other";
-}
-
-/** Kimi sends one `limits[]` row per active subscription window. */
-function kindFromWindowMinutes(minutes: number | undefined): ServerProviderUsageWindow["kind"] {
-  if (minutes === undefined) return "other";
-  if (minutes <= SESSION_MINS) return "session";
-  if (minutes % (7 * 24 * 60) === 0) return "weekly";
-  if (minutes % (24 * 60) === 0) return "monthly";
-  return "other";
-}
-
-function labelFromKind(kind: ServerProviderUsageWindow["kind"]): string {
-  return kind === "session"
-    ? "Session"
-    : kind === "weekly"
-      ? "Weekly"
-      : kind === "monthly"
-        ? "Monthly"
-        : "Limit";
-}
-
-/** One row per window; `limits[]` counts win over same-kind `usages` ratios. */
-export function kimiUsageResponseToLimits(
-  response: KimiUsagesResponse,
-  checkedAt: string,
-): ServerProviderUsageLimits {
-  const windows = new Map<string, ServerProviderUsageWindow>();
-  const push = (
-    kind: ServerProviderUsageWindow["kind"],
-    usedPercent: number,
-    resetsAt: string | undefined,
-    windowDurationMins: number | undefined,
-  ) => {
-    if (windows.has(kind)) return;
-    windows.set(kind, {
-      id: kind,
-      kind,
-      label: labelFromKind(kind),
-      usedPercent,
-      ...(resetsAt === undefined ? {} : { resetsAt }),
-      ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
-    });
-  };
-  for (const row of response.limits ?? []) {
-    const usedPercent = percentFromCounts(row.detail.used, row.detail.limit);
-    if (usedPercent === undefined) continue;
-    const minutes = row.window === undefined ? undefined : minutesFromWindow(row.window);
-    push(
-      kindFromWindowMinutes(minutes),
-      usedPercent,
-      isoFromInstant(row.detail.resetTime),
-      minutes,
-    );
-  }
-  for (const [name, ratio] of Object.entries(response.usages ?? {})) {
-    if (!Number.isFinite(ratio.used_ratio)) continue;
-    const kind = kindFromUsageName(name);
-    if (kind === undefined) continue;
-    const minutes =
-      kind === "session"
-        ? SESSION_MINS
-        : kind === "weekly"
-          ? 7 * 24 * 60
-          : kind === "monthly"
-            ? 30 * 24 * 60
-            : undefined;
-    // Ratios carry float noise (0.3616 * 100 === 36.199999999999996).
-    const usedPercent = Math.round(ratio.used_ratio * 100 * 100) / 100;
-    push(kind, clampPercent(usedPercent), isoFromInstant(ratio.reset_time?.trim()), minutes);
-  }
-  return makeUsageLimits({ checkedAt, windows: windows.values() });
-}
-
-export interface KimiUsageInput {
-  readonly environment: NodeJS.ProcessEnv;
-  /** Test seam for the clock; defaults to the real wall clock. */
-  readonly nowMs?: number;
-}
-
-export type KimiUsageEnvironment =
-  | FileSystem.FileSystem
-  | Path.Path
-  | HttpClient.HttpClient
-  | Digest.Digest
-  | typeof HostProcess.HomeDirectory
-  | typeof HostProcess.Platform;
-
-/** Wire format matches the CLI's own credential files, snake_case included. */
-const encodeStoredCredential = Schema.encodeSync(Schema.fromJsonString(KimiStoredCredential));
-function serializeStoredCredential(
-  stored: KimiStoredCredential,
-  refresh: typeof KimiTokenRefresh.Type,
-  expiresAtSeconds: number,
-): string {
-  return `${encodeStoredCredential({
-    access_token: refresh.access_token,
-    refresh_token: refresh.refresh_token ?? stored.refresh_token,
-    expires_at: expiresAtSeconds,
-    scope: stored.scope ?? "kimi-code",
-    token_type: stored.token_type ?? "Bearer",
-    expires_in: refresh.expires_in ?? 900,
-  })}\n`;
-}
-
-/** Compares the fields a rotation can change; extras like `expires_in` never differ in practice. */
-function storedCredentialFingerprint(value: KimiStoredCredential): string {
-  return `${value.access_token}\u{0}${value.refresh_token}\u{0}${value.expires_at}`;
-}
-
-/**
- * Best-effort cross-process lock matching the CLI's `{configDir}/oauth/{name}.lock`
- * protocol. The callback receives `acquired`; without it the caller skips
- * writes — the unverifiable protocol means concurrency is declined, not raced.
- */
-const withCredentialLock = Effect.fn("kimiUsageLimits.withCredentialLock")(function* <A, E, R>(
-  lockPath: string,
-  use: (acquired: boolean) => Effect.Effect<A, E, R>,
+export const resolveKimiCodeAuthTarget = Effect.fn("resolveKimiCodeAuthTarget")(function* (
+  config: KimiManagedProviderConfig,
+  environment: NodeJS.ProcessEnv,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const owner = `${process.pid}-${yield* Clock.currentTimeMillis}`;
-  for (let attempt = 0; attempt <= CREDENTIAL_LOCK_RETRY_COUNT; attempt += 1) {
-    const acquired = yield* fileSystem.writeFileString(lockPath, owner, { flag: "wx" }).pipe(
-      Effect.as(true),
-      // A held lock loses with AlreadyExists; any other failure (unwritable
-      // directory, permissions) also means "no lock" rather than a failed probe.
-      Effect.orElseSucceed(() => false),
-    );
-    if (acquired) {
-      return yield* Effect.scoped(
-        Effect.acquireRelease(Effect.succeed(lockPath), (locked) =>
-          fileSystem.remove(locked, { force: true }).pipe(Effect.ignore({ log: true })),
-        ).pipe(Effect.andThen(use(true))),
-      );
-    }
-    if (attempt === CREDENTIAL_LOCK_RETRY_COUNT) break;
-    // Prior process died holding it: break the stale lock once and retry.
-    const stale = yield* fileSystem.stat(lockPath).pipe(
-      Effect.flatMap((info) =>
-        Clock.currentTimeMillis.pipe(
-          Effect.map(
-            (now) =>
-              Option.isSome(info.mtime) &&
-              now - info.mtime.value.getTime() > CREDENTIAL_LOCK_STALE_MS,
-          ),
-        ),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
-    if (stale) {
-      yield* fileSystem.remove(lockPath, { force: true }).pipe(Effect.ignore({ log: true }));
-    }
-    yield* Effect.sleep(CREDENTIAL_LOCK_RETRY_DELAY);
+  const envBaseUrl = environment.KIMI_CODE_BASE_URL;
+  const envOAuthHost = environment.KIMI_CODE_OAUTH_HOST ?? environment.KIMI_OAUTH_HOST;
+  const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
+  const configuredBaseUrl =
+    envBaseUrl !== undefined ? envBaseUrl.replace(/\/+$/, "") : config.baseUrl;
+  const configuredOAuthHost = hasEnvOverride ? envOAuthHost : config.oauthHost;
+  const oauthHost = trimEndpoint(configuredOAuthHost ?? DEFAULT_OAUTH_HOST);
+  const baseUrl = trimEndpoint(configuredBaseUrl ?? envBaseUrl ?? DEFAULT_BASE_URL);
+  if (oauthHost === DEFAULT_OAUTH_HOST && baseUrl === DEFAULT_BASE_URL) {
+    return { slot: "kimi-code", oauthHost, baseUrl } satisfies KimiCodeAuthTarget;
   }
-  // Unverifiable protocol: without the lock the refresh is declined, not raced.
-  return yield* use(false);
+  const digest = yield* Digest.Digest;
+  const hash = yield* digest
+    .digest(Digest.sha256, new TextEncoder().encode(slotSeed(oauthHost, baseUrl)))
+    .pipe(Effect.map(Hex.encode), Effect.orDie);
+  return {
+    slot: `kimi-code-env-${hash.slice(0, 16)}`,
+    oauthHost,
+    baseUrl,
+  } satisfies KimiCodeAuthTarget;
 });
 
-/**
- * Writes the refreshed credential back after re-reading the file. The CLI owns
- * the credential: a mid-flight rotation or removal (sign-out) means the reader
- * has lost the file and writes nothing — mixing tokens from two sessions onto
- * disk would strand the CLI until they expired.
- */
-const persistRefreshedCredential = Effect.fn("kimiUsageLimits.persistRefreshedCredential")(
-  function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly credentialsPath: string;
-    readonly stored: KimiStoredCredential;
-    readonly token: typeof KimiTokenRefresh.Type;
-    readonly nowMs: number;
-  }) {
-    const latestContents = yield* input.fileSystem.readFileString(input.credentialsPath).pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
-      }),
-    );
-    const latest = Option.getOrUndefined(
-      yield* decodeStoredCredential(latestContents).pipe(Effect.option),
-    );
-    // A missing or undecodable file means the CLI removed or replaced it; the
-    // reader recreating it would sign the CLI back into an account it left.
-    if (latest === undefined) return;
-    // A changed fingerprint means the CLI rotated while this request was in
-    // flight. The fingerprint cannot tell a rotation from an account change,
-    // so the whole write is dropped rather than persisting a mixed pair. The
-    // fresh access token still serves this lookup from memory.
-    if (storedCredentialFingerprint(latest) !== storedCredentialFingerprint(input.stored)) {
-      return;
-    }
-    const expiresAt =
-      input.token.expires_at ?? Math.floor(input.nowMs / 1000) + (input.token.expires_in ?? 900);
-    // Atomic like the config writer: a truncated credential file would sign the
-    // CLI itself out. The CLI re-refreshes fine either way. Secrets stay
-    // owner-only, like the CLI writes them.
-    yield* writeFileStringAtomically({
-      filePath: input.credentialsPath,
-      contents: serializeStoredCredential(latest, input.token, expiresAt),
-      mode: 0o600,
-    }).pipe(Effect.catchTags({ PlatformError: () => Effect.void }));
-  },
-);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
- * Reads Kimi Code subscription usage limits from the CLI's own credential
- * store. `undefined` means no managed credential applies (custom auth keeps
- * usage limits out of scope); reachable-but-failing probes surface as
- * probeFailed bars that keep earlier windows visible.
+ * The API base a Kimi access token may be sent to: an HTTPS URL with no user info, query, or
+ * fragment, without a trailing slash. Plain HTTP is accepted only for loopback hosts and only
+ * when `allowLoopbackHttp` is set, which tests do and the driver never does.
  */
+export function kimiApiBaseUrl(
+  raw: string,
+  options: { readonly allowLoopbackHttp?: boolean } = {},
+): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password || url.search || url.hash) return undefined;
+  const secure =
+    url.protocol === "https:" ||
+    (url.protocol === "http:" &&
+      options.allowLoopbackHttp === true &&
+      LOOPBACK_HOSTS.has(url.hostname));
+  if (!secure) return undefined;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+type Unavailable = {
+  readonly unavailable: "unsupported";
+  readonly message: string;
+};
+const unsupported = (message: string): Unavailable => ({ unavailable: "unsupported", message });
+
+// A sign-in problem is "unsupported", never "probeFailed": the provider keeps the last good
+// reading over a failed probe, which would show limits T3 can no longer confirm as current.
+const SIGN_IN = unsupported("Sign in to Kimi Code to see its limits.");
+const SIGNED_OUT = unsupported(
+  "Kimi's sign-in has ended. Sign in to Kimi again to see its limits.",
+);
+const REJECTED = unsupported(
+  "Kimi rejected its stored sign-in. Use Kimi once or sign in again, then refresh provider status.",
+);
+const NO_EXPIRY = unsupported(
+  "Kimi's stored sign-in has no expiry time. Use Kimi once, then refresh provider status.",
+);
+const INVALID_CONFIG = unsupported(
+  "Could not parse Kimi's config.toml. Fix it and refresh provider status.",
+);
+const FILE_STORAGE = unsupported("Kimi limits need Kimi Code's file-based sign-in.");
+const INSECURE_ENDPOINT = unsupported("Kimi limits are read only from an HTTPS Kimi endpoint.");
+const LEGACY_CUSTOM_ENDPOINT = unsupported(
+  "Limits for the legacy Kimi CLI are read only from Kimi's default endpoint.",
+);
+const NO_LIMITS = unsupported("This Kimi endpoint does not report plan limits.");
+const UNREADABLE = unsupported("Could not read Kimi limits. Refresh provider status to retry.");
+
+const expiredSignIn = (expiresAt: number, now: number) => {
+  const at = Option.match(DateTime.make(expiresAt * 1000), {
+    onNone: () => "",
+    onSome: (time) => ` at ${DateTime.formatIso(time)}`,
+  });
+  return unsupported(
+    `Kimi's sign-in ${expiresAt <= now ? "expired" : "is about to expire"}${at}. Kimi renews it while you use it: use Kimi once, then refresh provider status.`,
+  );
+};
+
+interface Credentials {
+  readonly accessToken: string;
+  readonly baseUrl: string;
+}
+
+export interface KimiUsageProbeInput {
+  readonly candidates: ReadonlyArray<KimiCli>;
+  readonly environment: NodeJS.ProcessEnv;
+  /** Tests only: let tokens go to `http://` loopback endpoints. */
+  readonly allowLoopbackHttp?: boolean;
+}
+
+/**
+ * Reads Kimi plan limits with the access token a Kimi CLI keeps on disk. The probe only reads
+ * the CLI's files; an expired token is reported, not refreshed.
+ */
+export const makeKimiUsageProbe = Effect.fn("makeKimiUsageProbe")(function* (
+  input: KimiUsageProbeInput,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const digest = yield* Digest.Digest;
+  const client = yield* HttpClient.HttpClient;
+  const env = input.environment;
+  const home = env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory);
+  const endpointOptions = { allowLoopbackHttp: input.allowLoopbackHttp === true };
+
+  const readOptional = (file: string) =>
+    fs.readFileString(file).pipe(
+      Effect.asSome,
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeedNone : Effect.fail(error),
+      }),
+    );
+  const readToken = (file: string): Effect.Effect<Option.Option<TokenFile>, PlatformError> =>
+    readOptional(file).pipe(
+      Effect.flatMap((text) =>
+        Option.isNone(text)
+          ? Effect.succeedNone
+          : // The CLI treats a corrupt file as "no token stored".
+            decodeTokenFile(text.value).pipe(
+              Effect.asSome,
+              Effect.orElseSucceed(() => Option.none<TokenFile>()),
+            ),
+      ),
+    );
+
+  /** The stored access token, or why it cannot be used right now. */
+  const currentAccessToken = Effect.fn("KimiUsage.currentAccessToken")(function* (
+    token: TokenFile,
+  ) {
+    // An empty access token is the CLI's tombstone for a rejected refresh token.
+    if (!token.access_token) return SIGNED_OUT;
+    const expiresAt = token.expires_at;
+    if (expiresAt === undefined || !Number.isFinite(expiresAt)) return NO_EXPIRY;
+    const now = Math.floor((yield* Clock.currentTimeMillis) / 1000);
+    if (expiresAt - now <= EXPIRY_MARGIN_SECONDS) return expiredSignIn(expiresAt, now);
+    return token.access_token;
+  });
+
+  const kimiCodeCredentials = Effect.fn("KimiUsage.kimiCodeCredentials")(function* () {
+    const kimiHome = env.KIMI_CODE_HOME || path.join(home, ".kimi-code");
+    if (!path.isAbsolute(kimiHome))
+      return unsupported("Set KIMI_CODE_HOME to an absolute path to read Kimi limits.");
+    const source = Option.getOrElse(
+      yield* readOptional(path.join(kimiHome, "config.toml")),
+      () => "",
+    );
+    const parsed = yield* Effect.try({
+      try: () => readKimiManagedProviderConfig(source),
+      catch: () => INVALID_CONFIG,
+    }).pipe(Effect.option);
+    if (Option.isNone(parsed)) return INVALID_CONFIG;
+    const config = parsed.value;
+    if (config.hasApiKey)
+      return unsupported("Kimi API-key configurations do not report subscription limits.");
+    if (config.oauthStorage !== undefined && config.oauthStorage !== "file") return FILE_STORAGE;
+    const target = yield* resolveKimiCodeAuthTarget(config, env).pipe(
+      Effect.provideService(Digest.Digest, digest),
+    );
+    const stored = yield* readToken(path.join(kimiHome, "credentials", `${target.slot}.json`));
+    if (Option.isNone(stored)) return config.hasOAuth ? SIGNED_OUT : SIGN_IN;
+    const accessToken = yield* currentAccessToken(stored.value);
+    if (typeof accessToken !== "string") return accessToken;
+    // The slot's token was issued for this base URL, but only ever leaves over HTTPS.
+    const baseUrl = kimiApiBaseUrl(target.baseUrl, endpointOptions);
+    if (baseUrl === undefined) return INSECURE_ENDPOINT;
+    return { accessToken, baseUrl } satisfies Credentials;
+  });
+
+  /** The 1.x CLI's single credential belongs to Kimi's own endpoint, so it is never sent elsewhere. */
+  const legacyCredentials = Effect.fn("KimiUsage.legacyCredentials")(function* () {
+    const shareDir = env.KIMI_SHARE_DIR || path.join(home, ".kimi");
+    if (!path.isAbsolute(shareDir))
+      return unsupported("Set KIMI_SHARE_DIR to an absolute path to read Kimi limits.");
+    const stored = yield* readToken(path.join(shareDir, "credentials", "kimi-code.json"));
+    if (Option.isNone(stored)) return SIGN_IN;
+    const accessToken = yield* currentAccessToken(stored.value);
+    if (typeof accessToken !== "string") return accessToken;
+    const override = env.KIMI_CODE_BASE_URL;
+    if (override !== undefined && trimEndpoint(override) !== DEFAULT_BASE_URL) {
+      return LEGACY_CUSTOM_ENDPOINT;
+    }
+    return { accessToken, baseUrl: DEFAULT_BASE_URL } satisfies Credentials;
+  });
+
+  const credentials = Effect.gen(function* () {
+    let reported: Unavailable | undefined;
+    for (const cli of input.candidates) {
+      const result =
+        cli === "kimi-code" ? yield* kimiCodeCredentials() : yield* legacyCredentials();
+      if ("accessToken" in result) return result;
+      // A configured modern account must not fall back to an unrelated legacy sign-in.
+      if (result !== SIGN_IN) return result;
+      reported = result;
+    }
+    return reported ?? SIGN_IN;
+  });
+
+  const get = (credentials: Credentials, resource: string) =>
+    client
+      .execute(
+        HttpClientRequest.get(`${credentials.baseUrl}/${resource}`).pipe(
+          HttpClientRequest.acceptJson,
+          HttpClientRequest.bearerToken(credentials.accessToken),
+        ),
+      )
+      // A redirect must not carry the token to another URL; a 3xx answer fails the read.
+      .pipe(Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }));
+
+  const read = Effect.gen(function* () {
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    const resolved = yield* credentials;
+    if ("unavailable" in resolved) {
+      return makeUnavailableUsageLimits({ checkedAt, ...asLimits(resolved) });
+    }
+    const [usage, account] = yield* Effect.all(
+      [
+        get(resolved, "usages"),
+        // The account ID merges one Kimi account across instances and environments.
+        get(resolved, "me").pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap((response) => response.json),
+          Effect.flatMap(decodeUserInfo),
+          Effect.flatMap((info) =>
+            digest.digest(
+              Digest.sha256,
+              new TextEncoder().encode(
+                `kimi-code\0${new URL(resolved.baseUrl).origin}\0${info.user_id}`,
+              ),
+            ),
+          ),
+          Effect.map(Hex.encode),
+          Effect.option,
+        ),
+      ],
+      { concurrency: "unbounded" },
+    );
+    if (usage.status === 401 || usage.status === 403) {
+      return makeUnavailableUsageLimits({ checkedAt, ...asLimits(REJECTED) });
+    }
+    if (usage.status === 404) {
+      return makeUnavailableUsageLimits({ checkedAt, ...asLimits(NO_LIMITS) });
+    }
+    const windows = yield* HttpClientResponse.filterStatusOk(usage).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.flatMap(kimiUsageWindows),
+    );
+    if (windows.length === 0) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Kimi did not return usable quota information.",
+      });
+    }
+    return {
+      ...makeUsageLimits({ checkedAt, windows }),
+      ...(Option.isSome(account) ? { credentialFingerprint: account.value } : {}),
+    } satisfies ServerProviderUsageLimits;
+  });
+
+  return read.pipe(
+    Effect.timeout("30 seconds"),
+    Effect.catch(() =>
+      Effect.map(DateTime.now, (now) =>
+        makeUnavailableUsageLimits({
+          checkedAt: DateTime.formatIso(now),
+          ...asLimits(UNREADABLE),
+        }),
+      ),
+    ),
+  );
+});
+
+function asLimits(value: Unavailable) {
+  return { reason: value.unavailable, message: value.message };
+}
+
+export type KimiUsageInput = KimiUsageProbeInput;
+
 export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (
   input: KimiUsageInput,
 ) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const client = yield* HttpClient.HttpClient;
-  const digest = yield* Digest.Digest;
-  const nowMs = input.nowMs ?? (yield* DateTime.now).epochMilliseconds;
-  const checkedAt = DateTime.formatIso(DateTime.makeUnsafe(nowMs));
-
-  const homeDirectory =
-    input.environment.KIMI_CODE_HOME?.trim() ||
-    path.join(
-      input.environment.HOME || input.environment.USERPROFILE || (yield* HostProcess.HomeDirectory),
-      ".kimi-code",
-    );
-
-  // The managed provider's config names its endpoints and may pin the
-  // credential slot explicitly (`key = "oauth/..."`).
-  const config = yield* fileSystem.readFileString(path.join(homeDirectory, "config.toml")).pipe(
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
-    }),
-  );
-  const managedConfig = managedKimiCodeConfig(config);
-  // An `api_key`/`api_key_env` override replaces OAuth entirely, so a stored
-  // OAuth credential belongs to a different account and is out of scope.
-  if (managedConfig.apiKey !== undefined || managedConfig.apiKeyEnv !== undefined) {
-    return undefined;
-  }
-  // The CLI's own resolution order: `KIMI_CODE_BASE_URL` and
-  // `KIMI_CODE_OAUTH_HOST`/`KIMI_OAUTH_HOST` override the config file, and the
-  // credential slot is derived from the resolved endpoints.
-  const baseUrl = normalizeEndpoint(
-    input.environment.KIMI_CODE_BASE_URL ?? managedConfig.baseUrl,
-    DEFAULT_KIMI_CODE_BASE_URL,
-  );
-  const oauthHost = normalizeEndpoint(
-    input.environment.KIMI_CODE_OAUTH_HOST ??
-      input.environment.KIMI_OAUTH_HOST ??
-      managedConfig.oauthHost,
-    DEFAULT_KIMI_OAUTH_HOST,
-  );
-  const configuredKey = managedConfig.key;
-  // An env override re-derives the slot even where the config pins one, exactly
-  // like the CLI's runtime auth resolution.
-  const hasEnvOverride =
-    input.environment.KIMI_CODE_BASE_URL !== undefined ||
-    input.environment.KIMI_CODE_OAUTH_HOST !== undefined ||
-    input.environment.KIMI_OAUTH_HOST !== undefined;
-  const oauthKey =
-    configuredKey !== undefined && !hasEnvOverride
-      ? configuredKey.replace(/^oauth\//, "")
-      : kimiOAuthKey({
-          oauthHost,
-          baseUrl,
-          sha256Hex: yield* digest.digestHex(
-            Digest.sha256,
-            textEncoder.encode(encodeEnvironmentJson({ oauthHost, baseUrl })),
-          ),
-        });
-
-  const credentialsPath = path.join(homeDirectory, "credentials", `${oauthKey}.json`);
-  // A lock file next to the credential, matching the CLI's OAuthManager
-  // (`{configDir}/oauth/{name}.lock`), so a concurrent CLI refresh and this
-  // reader's writeback do not clobber each other's rotated tokens.
-  const lockPath = path.join(path.dirname(credentialsPath), `${oauthKey}.lock`);
-  const contents = yield* fileSystem.readFileString(credentialsPath).pipe(
-    Effect.catchTags({
-      PlatformError: (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.fail(error),
-    }),
-  );
-  // No managed credential means the usage endpoint does not apply, not that it failed.
-  const stored = Option.getOrUndefined(yield* decodeStoredCredential(contents).pipe(Effect.option));
-  if (stored === undefined) return undefined;
-
-  // Kimi mints 15-minute access tokens; refresh proactively and persist the
-  // result so the CLI's next run reuses it too. Without the lock neither the
-  // refresh request nor the writeback runs: the contended credential is
-  // left to its owner rather than raced.
-  let accessToken = stored.access_token;
-  if (stored.expires_at * 1_000 - nowMs <= REFRESH_THRESHOLD_MS) {
-    const refreshed: Option.Option<string> = yield* withCredentialLock(lockPath, (acquired) =>
-      Effect.gen(function* () {
-        if (!acquired) return Option.none();
-        const request = HttpClientRequest.post(`${oauthHost}/api/oauth/token`).pipe(
-          HttpClientRequest.bodyUrlParams({
-            client_id: KIMI_CODE_CLIENT_ID,
-            grant_type: "refresh_token",
-            refresh_token: stored.refresh_token,
-          }),
-        );
-        // A rejected status or stall decodes to no token instead of failing the probe.
-        const body = yield* client.execute(request).pipe(
-          Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.flatMap((response) => response.json),
-          Effect.timeout(REQUEST_TIMEOUT),
-          Effect.option,
-        );
-        // The flattened shape stays Option<Option<token>> for this gen's union.
-        return Option.some(Option.flatMap(body, decodeTokenRefresh));
-      }).pipe(
-        Effect.map(Option.flatten),
-        Effect.flatMap((decoded) =>
-          Option.isNone(decoded)
-            ? Effect.succeed(Option.none<string>())
-            : persistRefreshedCredential({
-                fileSystem,
-                credentialsPath,
-                stored,
-                token: decoded.value,
-                nowMs,
-              }).pipe(Effect.as(Option.some(decoded.value.access_token))),
-        ),
-      ),
-    );
-    const freshAccessToken = Option.getOrUndefined(refreshed);
-    if (freshAccessToken === undefined) {
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "probeFailed",
-        message: "Kimi Code usage limits could not be read. Try `kimi login` again.",
-      });
-    }
-    accessToken = freshAccessToken;
-  }
-
-  const response = yield* Effect.gen(function* () {
-    const request = HttpClientRequest.get(`${baseUrl}/usages`).pipe(
-      HttpClientRequest.bearerToken(accessToken),
-    );
-    const body: unknown = yield* client.execute(request).pipe(
-      // Kimi answers a signed-out or non-managed account with 401/403, and a
-      // non-Kimi base URL with 404; other error statuses must follow the same
-      // path instead of decoding an error body as empty limits.
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((executed) => executed.json),
-      // Headers and body arrive separately; a stalled body must not hang the probe.
-      Effect.timeout(REQUEST_TIMEOUT),
-    );
-    return decodeUsagesResponse(body);
-  }).pipe(Effect.option);
-  const parsed = Option.isSome(response) ? Option.getOrUndefined(response.value) : undefined;
-  if (parsed === undefined) {
-    return makeUnavailableUsageLimits({
-      checkedAt,
-      reason: "probeFailed",
-      message: "Kimi Code did not report usage limits. Try `kimi login` again.",
-    });
-  }
-  return kimiUsageResponseToLimits(parsed, checkedAt);
+  return yield* yield* makeKimiUsageProbe(input);
 });
-/**
- * The Kimi usage probe as a context service; without its layer the default
- * reports no limits rather than failing the driver.
- */
+
 export class KimiUsageLimits extends Context.Reference<{
-  /** The live layer closes over the static deps, so `read` needs no context. */
-  readonly read: (
-    input: KimiUsageInput,
-  ) => Effect.Effect<
-    Effect.Success<ReturnType<typeof readKimiUsageLimits>>,
-    Effect.Error<ReturnType<typeof readKimiUsageLimits>>
-  >;
+  readonly read: (input: KimiUsageInput) => Effect.Effect<ServerProviderUsageLimits | undefined>;
 }>("@t3tools/provider-acp-registry/server/KimiUsageLimits", {
   defaultValue: () => ({ read: () => Effect.undefined }),
 }) {}
@@ -603,15 +538,11 @@ export class KimiUsageLimits extends Context.Reference<{
 export const KimiUsageLimitsLive = Layer.effect(
   KimiUsageLimits,
   Effect.gen(function* () {
-    // Acquire the static dependencies once in the layer so the service's read
-    // is self-contained; callers only supply the per-call provider
-    // environment.
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const client = yield* HttpClient.HttpClient;
     const digest = yield* Digest.Digest;
     const homeDirectory = yield* HostProcess.HomeDirectory;
-    const platform = yield* HostProcess.Platform;
     return {
       read: Effect.fn("KimiUsageLimits.read")((input: KimiUsageInput) =>
         readKimiUsageLimits(input).pipe(
@@ -620,14 +551,8 @@ export const KimiUsageLimitsLive = Layer.effect(
           Effect.provideService(HttpClient.HttpClient, client),
           Effect.provideService(Digest.Digest, digest),
           Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
-          Effect.provideService(HostProcess.Platform, platform),
         ),
-      ) as (
-        input: KimiUsageInput,
-      ) => Effect.Effect<
-        Effect.Success<ReturnType<typeof readKimiUsageLimits>>,
-        Effect.Error<ReturnType<typeof readKimiUsageLimits>>
-      >,
+      ),
     };
   }),
 );

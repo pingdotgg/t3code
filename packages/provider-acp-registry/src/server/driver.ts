@@ -26,7 +26,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
-import { KimiUsageLimits } from "./kimiUsageLimits.ts";
+import { kimiCliCandidates, KimiUsageLimits } from "./kimiUsageLimits.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -637,32 +637,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // readiness probe like the CLI's own `.user-menu-usage` display. Snapshot
     // publication overwrites enrichment's usage limits with the managed
     // provider's authoritative value, so the probe is where they must flow.
-    const isKimiRegistryAgent =
-      effectiveConfig.source === "registry" &&
-      (effectiveConfig.agentId === "kimi" || effectiveConfig.agentId === "kimi-code");
+    const kimiCandidates = kimiCliCandidates(effectiveConfig);
+    const kimiUsageLimits = yield* KimiUsageLimits;
     const withKimiUsageLimits = Effect.fn("AcpRegistryDriver.withKimiUsageLimits")(function* (
       provider: ServerProvider,
     ) {
       if (
-        !isKimiRegistryAgent ||
+        kimiCandidates === undefined ||
         !provider.enabled ||
         !provider.installed ||
         provider.status !== "ready"
       ) {
         return provider;
       }
-      const kimiUsageLimits = yield* KimiUsageLimits;
       const usageLimits = yield* Effect.option(
-        kimiUsageLimits.read({ environment: processEnvironment }),
+        kimiUsageLimits.read({ candidates: kimiCandidates, environment: processEnvironment }),
       );
       if (Option.isNone(usageLimits) || usageLimits.value === undefined) return provider;
       return { ...provider, usageLimits: usageLimits.value };
     });
-    const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
+    const checkReadiness = checkAcpRegistryProviderReadiness(readinessInput).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.flatMap(withLiveRuntimeState),
-      Effect.flatMap(withKimiUsageLimits),
     );
+    const checkProvider = checkReadiness.pipe(Effect.flatMap(withKimiUsageLimits));
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
@@ -726,7 +724,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
-      initialSnapshot: () => checkProvider,
+      initialSnapshot: () => checkReadiness,
       checkProvider,
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
@@ -892,6 +890,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       snapshot: {
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
+        ...(kimiCandidates === undefined
+          ? {}
+          : { refreshUsage: snapshot.refresh.pipe(Effect.asVoid) }),
       },
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
