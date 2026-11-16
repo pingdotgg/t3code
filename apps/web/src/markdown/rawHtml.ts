@@ -365,7 +365,8 @@ function applyToken(token: Token, raw: RawNode, scope: Scope) {
       return;
     case "start": {
       const { name } = token;
-      if (UNSUPPORTED.has(name) || name.includes(":")) throw BAIL;
+      // hastscript would read `.` and `#` in a name as a class and an id.
+      if (UNSUPPORTED.has(name) || /[:.#]/.test(name)) throw BAIL;
       if (CLOSES_P.has(name)) {
         if (scope.inParagraph) throw BAIL;
         closeParagraph(scope);
