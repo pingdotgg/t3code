@@ -6,36 +6,39 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.1-sol
-  at: 2026-11-16T18:12:49+00:00
+  at: 2026-11-16T18:15:36+00:00
 verified:
   - by: opencode/gpt-6.1-sol
-    at: 2026-11-16T18:12:49+00:00
+    at: 2026-11-16T18:15:36+00:00
 snapshot:
-  at: 2026-11-16T18:12:49+00:00
-  fork_main: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
+  at: 2026-11-16T18:15:36+00:00
+  fork_main: eda7ca8f3ffac9a7d46b68815c9603193db80eae
   upstream_main: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
-  shared_baseline: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
-  last_main_integration: 4e3eaf41faf1a967fd293715b34841ae69589ac2
-  last_main_upstream: 286eeea19f8b9b06f84c61c6a2f46fba65c52313
-  missing_upstream_on_main: 967
+  shared_baseline: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
+  last_main_integration: b20d057b87353167849d02e1031a334a91298dd7
+  last_main_upstream: c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
+  missing_upstream_on_main: 0
   missing_upstream_at_integrated_tip: 0
   branch_integration: b20d057b87353167849d02e1031a334a91298dd7
   branch_parent: 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1
   branch_code_tip: 85f0a6c418ecdfe82fdbe713055a706c9a782ca3
   missing_upstream_on_branch: 0
 sources:
+  - id: november-16-main-git
+    resource: "Local main verification at 2026-11-16T18:15:36+00:00: fetched origin/main equals eda7ca8f3ffac9a7d46b68815c9603193db80eae, with parents fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and PR tip 05785227d98f6ed0c5c2a71a4a5d71ad47fc66e3. Initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411, follow-up integration b20d057b87353167849d02e1031a334a91298dd7, final code tip 85f0a6c418ecdfe82fdbe713055a706c9a782ca3 and pinned upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541 are ancestors of main. All 967 incoming commits are incorporated, the shared baseline equals pinned upstream and zero upstream commits are missing on main. PR 81 merged at 2026-11-16T18:15:25Z without registered checks, workflow runs, reviews or pending reviewers. Local verification and reproduced baseline failures are recorded on the PR. No live deployment occurred."
+    title: Completed November 16 main ancestry and merge verification
   - id: november-16-candidate
     resource: "Local candidate verification at 2026-11-16T18:12:49+00:00: initial merge 933b5c5f2907d7c1ca9f4d4ca21086e4c0f22411 has parents freshly fetched fork main 863c2620ff34abe9cd6f4ccb47aa7f21ea33b7f1 and upstream 6f5838f9bcdaf31864b93694c5935c93f9532e06. Follow-up merge b20d057b87353167849d02e1031a334a91298dd7 retains it and incorporates upstream c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541. Code tip 85f0a6c418ecdfe82fdbe713055a706c9a782ca3 retains both merges and all 967 incoming commits, with zero branch gap; fork main still lacks them. Of 1763 incoming paths without prior fork changes, 1760 match upstream exactly. ThreadFeed passes Jujutsu terminology to the preparing header; two composer/shortcut fixtures supply retained fork dependencies and registration scopes. All reference repositories match upstream. PR 81 is open; the candidate has not reached main and no live deployment has occurred."
-    title: Validated November 16 candidate, distinct from unchanged fork main
+    title: Validated November 16 candidate, subsequently incorporated into main
   - id: november-16-verification
     resource: "Verification at 2026-11-16T18:12:49+00:00: production web/server/desktop builds pass 5/5; all 41 affected-package typechecks and final scoped server/OpenCode checks pass. Changed-file static checks, frozen dependency/patch checks, 515 selected React Compiler cases and seven Node script cases pass. Partitioning the timed-out 838-file selection and adding fork regressions yields 17582 passing tests after fixture repairs, with 16 inherited skips. All 17 remaining browser failures reproduce on pristine upstream c8c51af4e3 with frozen dependencies; both SSH launch-process timeouts reproduce on fork main 863c2620ff with frozen baseline dependencies. The final repair check passes format, lint, both knip passes, GraphQL generation, four package typechecks and all 162 selected tests. No tests were weakened or newly skipped. The real isolated web client completes free Replay approval, persists/inserts saved prompts, finds settings and supports Vim delete/undo. Android boot and its suggested diagnostic fail; iOS is unavailable. GitHub has no checks, workflow runs or pending reviewers; Actions is enabled and CI is active, but no runs were created. Paid model evals, signed native packaging and live deployment were not performed."
-    title: Final candidate verification and reproduced baseline limitations
+    title: Verified candidate, now incorporated into main, and baseline limitations
   - id: november-16-pr
     resource: https://github.com/NicholasZolton/t3code/pull/81
-    title: November 16 integration PR and client evidence
+    title: Completed November 16 integration PR and client evidence
   - id: november-16-upstream
     resource: https://github.com/pingdotgg/t3code/commit/c8c51af4e3f67ec9d121b3fb10b4cfd17adfd541
-    title: Pinned upstream tip for the November 16 candidate
+    title: Pinned upstream tip for the completed November 16 sync
   - id: opencode-permissions-retirement
     resource: ../packages/provider-opencode/src/server/v2/adapter.ts
     title: Upstream thread-controlled OpenCode permissions
@@ -409,16 +412,15 @@ sources:
 
 # Upstream integration
 
-Fork `main` at `863c2620ff` incorporates upstream through `286eeea19f`.
-The November 16 candidate incorporates all 967 newer upstream commits through
-`c8c51af4e3`, but has not yet reached `main`. Remote deployment remains separate.
-[^november-16-candidate]
+Fork `main` at `eda7ca8f3f` incorporates upstream through `c8c51af4e3`.
+PR #81 merged all 967 incoming commits with ancestry preserved and zero main gap.
+Remote deployment remains separate.[^november-16-main-git]
 
 This is a revision-pinned snapshot, not a claim about newer upstream work.
 Refresh it after the next review or integration using the
 [maintenance guidance](maintenance.md).
 
-## November 16 candidate
+## Completed November 16 sync
 
 Merge `933b5c5f29` combines fresh fork `main` `863c2620ff` and upstream
 `6f5838f9bc`; follow-up merge `b20d057b87` adds the two upstream fixes fetched
@@ -441,6 +443,10 @@ remaining browser failures reproduce on pristine pinned upstream, and the two
 SSH process timeouts reproduce on fork `main`. The final repair check passes all
 162 cases. Native verification remains blocked; no live deployment occurred.
 [^november-16-verification][^november-16-pr]
+
+PR #81 incorporates the merge and compatibility repairs into fork `main`.
+The shared baseline now equals the pinned upstream tip, with all 967 incoming
+commits retained and zero remaining ancestry gap.[^november-16-main-git]
 
 ## Completed November 13 sync
 
@@ -1168,6 +1174,8 @@ git log --reverse --oneline origin/main..upstream/main
 ```
 
 [^november-16-candidate]: Local November 16 ancestry and incoming-path verification, recorded in frontmatter.
+
+[^november-16-main-git]: Completed main integration and preserved ancestry verified against the pinned upstream tip.
 
 [^november-16-upstream]: Pinned upstream revision for the November 16 integration.
 
