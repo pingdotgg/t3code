@@ -31,6 +31,7 @@ const NativeControls = requireNativeModule<{
   ): Promise<void>;
   updateFile(identifier: string, index: number, uri: string | null): Promise<void>;
   dismissFile(identifier: string): Promise<void>;
+  isFilePreviewFinished(identifier: string): boolean;
 }>("T3NativeControls");
 
 // Null tells the viewer an image failed; undefined means its URL has not arrived yet.
@@ -38,10 +39,11 @@ const nativeUri = (image: FilePreviewImage) => (image.failed ? null : image.uri)
 
 function NativeFilePreview(props: FilePreviewViewerProps) {
   const identifier = useId();
-  // Later URLs reach the open viewer through updateFile instead of presenting again.
+  // Later URLs reach the native presentation through updateFile instead of presenting again.
   const [presented] = useState(props.source);
   const delivered = useRef<(string | null | undefined)[]>([]);
   const onRequestClose = useEffectEvent(props.onRequestClose);
+  const onPresent = useEffectEvent((isFinished: () => boolean) => props.onPresent?.(isFinished));
   const onOpenError = useEffectEvent((error: unknown) => {
     if (props.onOpenError) props.onOpenError(error);
     else Dialog.alert("Could not open preview", "The file could not be loaded. Please try again.");
@@ -51,7 +53,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
   useEffect(() => {
     let canceled = false;
     let presentation: Promise<void>;
-    // Images open while still loading; other files must download first so Quick Look can refuse them.
+    // Images hand over before every URL resolves; other files must download first so Quick Look can refuse them.
     if (presented.kind === "image") {
       const { images, selectedIndex } = presented;
       delivered.current = images.map((image) => image.uri);
@@ -71,6 +73,7 @@ function NativeFilePreview(props: FilePreviewViewerProps) {
         identifier,
       );
     }
+    onPresent(() => NativeControls.isFilePreviewFinished(identifier));
     void presentation
       .catch((error: unknown) => {
         if (!canceled) onOpenError(error);
