@@ -95,7 +95,16 @@ jobs:
           --arch x64
           --build-version "${{ needs.version.outputs.version }}"
           --output-dir release
+          --keep-stage
           --verbose
+
+      - name: List packaged files
+        if: failure() && matrix.platform == 'win'
+        shell: bash
+        run: |
+          dir="$(find "$RUNNER_TEMP" "${TEMP:-/tmp}" -type d -name win-unpacked 2>/dev/null | head -1)"
+          echo "$dir"
+          (cd "$dir" && find . -type f -printf '%s\t%p\n' | sort -k2)
 
       - uses: actions/upload-artifact@v4
         with:
