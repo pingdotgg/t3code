@@ -18,36 +18,66 @@ const known = vi.hoisted(
       author: { login: "octocat" },
     }) as PullRequestSummary,
 );
+interface Read {
+  data: unknown;
+  error: string | null;
+}
 const state = vi.hoisted(() => ({
-  restoredPreview: null as unknown,
-  error: null as string | null,
+  preview: { data: null, error: null } as Read,
+  activity: { data: null, error: null } as Read,
 }));
+function setup(preview: Partial<Read>, activity: Partial<Read> = {}) {
+  state.preview = { data: null, error: null, ...preview };
+  state.activity = { data: null, error: null, ...activity };
+}
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
-  // The host has not answered the preview read yet.
-  useEnvironmentQuery: ((atom: unknown) => ({
-    data: state.restoredPreview,
-    dataUpdatedAt: 0,
-    error: state.error,
-    failure: null,
-    isPending: atom !== null,
-    isSuccess: false,
-    refresh: () => undefined,
-  })) as never,
+  useEnvironmentQuery: ((atom: unknown) => {
+    const read = atom === null ? { data: null, error: null } : state[atom as keyof typeof state];
+    return {
+      data: read.data,
+      dataUpdatedAt: 0,
+      error: read.error,
+      failure: null,
+      isPending: atom !== null && read.data === null && read.error === null,
+      isSuccess: false,
+      refresh: () => undefined,
+    };
+  }) as never,
 }));
-vi.mock(import("~/state/pullRequests"), async (original) => ({
-  ...(await original()),
-  useSharedPullRequestSummary: (() => known) as never,
-}));
+vi.mock(import("~/state/pullRequests"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    pullRequestEnvironment: {
+      ...actual.pullRequestEnvironment,
+      previewCard: () => "preview",
+      activity: () => "activity",
+    } as never,
+    useSharedPullRequestSummary: (() => known) as never,
+  };
+});
 
 import { render } from "../../../test/render";
 import { PullRequestLinkPreview } from "./PullRequestLinkPreview";
 
-function renderPreview() {
+const loadedPreview = {
+  projectId: "project",
+  repository: "owner/repo",
+  number: 1,
+  title: "Known title",
+  url: known.url,
+  author: { login: "octocat" },
+  state: "open",
+  isDraft: false,
+  createdAt: "2026-08-01T00:00:00Z",
+};
+
+function renderPreview(url = known.url) {
   return render(
     <PullRequestLinkPreview
-      link={<a href={known.url}>#1</a>}
-      originalUrl={known.url}
+      link={<a href={url}>#1</a>}
+      originalUrl={url}
       target={{
         environmentId: EnvironmentId.make("environment"),
         input: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
@@ -57,18 +87,7 @@ function renderPreview() {
 }
 
 it("keeps a refreshing preview's state and title over an older known summary", async () => {
-  state.error = null;
-  state.restoredPreview = {
-    projectId: "project",
-    repository: "owner/repo",
-    number: 1,
-    title: "Renamed title",
-    url: known.url,
-    author: { login: "octocat" },
-    state: "closed",
-    isDraft: false,
-    createdAt: "2026-08-01T00:00:00Z",
-  };
+  setup({ data: { ...loadedPreview, title: "Renamed title", state: "closed" } });
   await using screen = await renderPreview();
 
   await userEvent.hover(screen.getByRole("link"));
@@ -79,18 +98,8 @@ it("keeps a refreshing preview's state and title over an older known summary", a
 });
 
 it("shows the known summary while the preview loads", async () => {
-  state.restoredPreview = null;
-  state.error = null;
-  await using screen = await render(
-    <PullRequestLinkPreview
-      link={<a href={known.url}>#1</a>}
-      originalUrl={known.url}
-      target={{
-        environmentId: EnvironmentId.make("environment"),
-        input: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
-      }}
-    />,
-  );
+  setup({});
+  await using screen = await renderPreview();
 
   await userEvent.hover(screen.getByRole("link"));
 
@@ -99,9 +108,33 @@ it("shows the known summary while the preview loads", async () => {
 });
 
 it("drops the opened placeholder when the preview fails", async () => {
-  state.restoredPreview = null;
-  state.error = "Preview failed";
+  setup({ error: "Preview failed" });
   await using screen = await renderPreview();
+
+  await userEvent.hover(screen.getByRole("link"));
+
+  await expect.element(page.getByText("Known title")).toBeVisible();
+  expect(document.querySelector('[data-slot="skeleton"]')).toBeNull();
+});
+
+it.each([
+  [`${known.url}#issuecomment-1`, true],
+  [`${known.url}/commits/${"a".repeat(40)}`, true],
+  [`${known.url}#event-1`, false],
+])("holds the place of the comment or commit %s links to while it loads", async (url, held) => {
+  setup({ data: loadedPreview });
+  await using screen = await renderPreview(url);
+
+  await userEvent.hover(screen.getByRole("link"));
+
+  await expect.element(page.getByText("owner/repo")).toBeVisible();
+  expect(page.getByText("Known title").query() === null).toBe(held);
+  expect(document.querySelector('[data-slot="skeleton"]') !== null).toBe(held);
+});
+
+it("falls back to the pull request when the linked comment fails to load", async () => {
+  setup({ data: loadedPreview }, { error: "Activity failed" });
+  await using screen = await renderPreview(`${known.url}#issuecomment-1`);
 
   await userEvent.hover(screen.getByRole("link"));
 
