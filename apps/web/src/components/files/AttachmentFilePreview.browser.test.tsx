@@ -831,6 +831,33 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
+  it("keeps a row's height while scrolling sideways onto a tall column", async () => {
+    const header = Array.from({ length: 12 }, (_, i) => "C" + i);
+    const row = header.map((_, i) => (i === 11 ? "long wrapped description ".repeat(40) : "x"));
+    await using screen = await render(
+      <div style={{ display: "flex", height: 400, width: 400 }}>
+        <VirtualTablePreview
+          name="mixed.csv"
+          count={3}
+          columns={12}
+          header={header}
+          getRows={() => [header, row, row]}
+        />
+      </div>,
+    );
+    const outer = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+    const first = () => screen.container.querySelector<HTMLElement>('[data-preview-row="1"]')!;
+    const lastCell = () => first().querySelector('[role="cell"][aria-colindex="12"]');
+    await vi.waitFor(() => expect(first()).not.toBeNull());
+    const before = first().offsetHeight;
+    await act(() => {
+      outer().scrollLeft = outer().scrollWidth;
+      outer().dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await vi.waitFor(() => expect(lastCell()).not.toBeNull());
+    expect(first().offsetHeight).toBe(before);
+  });
+
   it("reveals and highlights requested source lines again for a new request", async () => {
     const view = (line: number, request: number, loaded = true) => (
       <div style={{ display: "flex", height: 400, width: 600 }}>
