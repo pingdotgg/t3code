@@ -138,7 +138,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
 import { composerCodeBlockHighlight } from "./composerCodeBlockHighlight";
-import { importPastedComposerText, readPastedPlainText } from "./composerInlineTokenPaste";
+import {
+  importPastedComposerText,
+  readPastedComposerContext,
+  readPastedPlainText,
+} from "./composerInlineTokenPaste";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
   captureComposerAttachmentInsertion,
@@ -1404,7 +1408,12 @@ function ComposerPromptEditorTiptapInner(
         },
         handlePaste: (view, event) => {
           const clipboardData = event.clipboardData;
-          if (!clipboardData || clipboardData.files.length > 0) return false;
+          if (!clipboardData) return false;
+          if (
+            clipboardData.files.length > 0 &&
+            (literalText || !readPastedComposerContext(clipboardData)?.records.length)
+          )
+            return false;
           const pastedText = readPastedPlainText(clipboardData);
           if (!pastedText) return false;
           event.preventDefault();
