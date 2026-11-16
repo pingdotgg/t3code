@@ -14,6 +14,7 @@ import {
   buildSelectOptionDescriptor,
   buildServerProvider,
   providerModelsFromSettings,
+  resolveProviderProbeTimeoutMs,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import type { AccountView, ConfigView } from "@t3tools/vibe-app-server/client";
@@ -197,7 +198,7 @@ const probeVibeAppServer = Effect.fn("VibeStatus.probeVibeAppServer")(function* 
         }),
     ),
   ).pipe(
-    Effect.timeoutOption(PROBE_TIMEOUT_MS),
+    Effect.timeoutOption(resolveProviderProbeTimeoutMs("vibe", PROBE_TIMEOUT_MS, environment)),
     Effect.map((option) =>
       option._tag === "None"
         ? ({

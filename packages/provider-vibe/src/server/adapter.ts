@@ -1221,11 +1221,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: VIBE_PROVIDER,
-    getCapabilities: Effect.fn("VibeAdapterV2.getCapabilities")(function* () {
-      return VibeProviderCapabilitiesV2;
+    getCapabilities: Effect.fn("VibeAdapterV2.getCapabilities")(function () {
+      return Effect.succeed(VibeProviderCapabilitiesV2);
     }),
-    planSelectionTransition: Effect.fn("VibeAdapterV2.planSelectionTransition")(function* () {
-      return turnScopedSelectionTransition();
+    planSelectionTransition: Effect.fn("VibeAdapterV2.planSelectionTransition")(function () {
+      return Effect.succeed(turnScopedSelectionTransition());
     }),
     openSession: Effect.fn("VibeAdapterV2.openSession")(function* (input) {
       return yield* Effect.provideService(
