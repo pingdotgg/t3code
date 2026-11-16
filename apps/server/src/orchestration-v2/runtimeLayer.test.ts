@@ -7585,9 +7585,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         modelSelection: pickedSelection,
       });
-      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      // A message queued after the pick without its own model takes the pick, not the older queue tail.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:implicit`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:implicit`),
+        text: "implicit",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const [active, queued, implicit] = (yield* orchestrator.getThreadProjection(threadId)).runs;
       assert.isDefined(active);
       assert.isDefined(queued);
+      assert.deepEqual(implicit?.modelSelection, pickedSelection);
       const now = yield* DateTime.now;
       yield* eventSink.write({
         events: [

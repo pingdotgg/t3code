@@ -906,6 +906,7 @@ function queueTailModelSelection(
   return (
     queuedRunsInDeliveryOrder(projection).findLast(
       (run) =>
+        run.threadPickSuperseded !== true &&
         !followsCurrentConversation(
           projection.messages.find((message) => message.id === run.userMessageId),
         ),
