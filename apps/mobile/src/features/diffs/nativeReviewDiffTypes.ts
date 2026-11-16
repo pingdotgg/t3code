@@ -11,4 +11,6 @@ export interface NativeReviewDiffFile {
   readonly additions: number;
   readonly deletions: number;
   readonly loadContents?: (signal?: AbortSignal) => Promise<NativeReviewDiffSource | null>;
+  /** Colour from the patch alone, not plain text, when `loadContents` yields no usable source. */
+  readonly patchTokensWhenUnavailable?: boolean;
 }

@@ -324,8 +324,9 @@ export async function highlightNativeReviewDiffVisibleRows(
     if (fileRows) fileRows.push(row);
     else sourceFiles.set(row.fileId, [row]);
   }
-  const emitFileChunk = (fileRows: ReadonlyArray<NativeReviewDiffLineRow>) => {
-    if (!input.onChunk || input.signal?.aborted) return;
+  const emitFileChunk = (allFileRows: ReadonlyArray<NativeReviewDiffLineRow>) => {
+    const fileRows = allFileRows.filter((row) => tokensByRowId[row.id]);
+    if (!input.onChunk || input.signal?.aborted || fileRows.length === 0) return;
     const rowIds = new Set(fileRows.map((row) => row.id));
     input.onChunk({
       tokensByRowId: Object.fromEntries(fileRows.map((row) => [row.id, tokensByRowId[row.id]!])),
@@ -345,6 +346,7 @@ export async function highlightNativeReviewDiffVisibleRows(
       source = await file.loadContents!(input.signal);
     } catch {
       traceDiffHighlight("highlight-source-error", { request, file: fileTraceId });
+      if (file.patchTokensWhenUnavailable) continue;
       for (const row of fileRows) {
         selectedRowIds.delete(row.id);
         tokensByRowId[row.id] = makePlainTokenFallback(row);
@@ -374,6 +376,7 @@ export async function highlightNativeReviewDiffVisibleRows(
       const matchingRows: { row: NativeReviewDiffLineRow; lineIndex: number }[] = [];
       for (const row of fileRows) {
         if (displaySide(row) !== side) continue;
+        if (!context && file.patchTokensWhenUnavailable) continue;
         selectedRowIds.delete(row.id);
         const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
         const lineIndex = typeof lineNumber === "number" ? lineNumber - 1 : -1;

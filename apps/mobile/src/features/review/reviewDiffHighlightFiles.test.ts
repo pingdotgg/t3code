@@ -94,20 +94,32 @@ it("colours a hunk inside a docstring from the whole file, and leaves files that
   );
 });
 
-it("stops asking for a file the server cannot read", async () => {
+it("keeps patch colours and stops asking for a file the server cannot read", async () => {
   const { parsed, data } = setup();
   const error = new GitCommandError({
     operation: "read",
     command: "git",
     cwd: "/repo",
-    detail: "Cannot expand binary file 'settings.py'.",
+    detail: "Git output exceeded the size limit.",
   });
   const fetch = vi.fn(async () =>
     AsyncResult.failure<ReviewDiffFileContentsResult, GitCommandError>(Cause.fail(error)),
   );
   const files = createReviewDiffHighlightFiles(source, parsed, data.files, fetch);
 
-  expect(await files[0]!.loadContents!()).toBeNull();
+  const highlight = (withFiles: typeof files) =>
+    highlightNativeReviewDiffVisibleRows({
+      rows: data.rows,
+      files: withFiles,
+      scheme: "dark",
+      firstRowIndex: 0,
+      lastRowIndex: data.rows.length - 1,
+      overscanRows: 0,
+    });
+
+  expect((await highlight(files)).tokensByRowId).toEqual(
+    (await highlight(data.files)).tokensByRowId,
+  );
   expect(await files[0]!.loadContents!()).toBeNull();
   expect(fetch).toHaveBeenCalledTimes(1);
 });

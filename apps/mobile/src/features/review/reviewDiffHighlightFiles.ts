@@ -37,8 +37,7 @@ const isServerAnswer = Schema.is(
   Schema.Union([ReviewDiffPreviewError, EnvironmentAuthorizationError]),
 );
 
-// A file that loads its contents shows plain text when they are unavailable, so only files the
-// patch alone colours wrongly, with lines hidden above a hunk, get a loader.
+// Only a hunk with lines hidden above it can open inside a docstring or script block.
 function hidesLinesAboveAHunk(file: ReviewRenderableFile): boolean {
   let hunkStart = true;
   for (const row of file.rows) {
@@ -87,5 +86,7 @@ export function createReviewDiffHighlightFiles<E>(
     },
     cache,
   );
-  return loaded.map((file, index) => (needsContents.has(file.id) ? file : files[index]!));
+  return loaded.map((file, index) =>
+    needsContents.has(file.id) ? { ...file, patchTokensWhenUnavailable: true } : files[index]!,
+  );
 }
