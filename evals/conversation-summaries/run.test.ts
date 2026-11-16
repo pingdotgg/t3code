@@ -1,13 +1,15 @@
 import { expect, it } from "vite-plus/test";
-import { condensedCases, leafCases } from "./cases.ts";
-import { gradeCondensed, gradeLeaf } from "./grade.ts";
+import { condensedCases, knowledgeCases, leafCases } from "./cases.ts";
+import { gradeCondensed, gradeKnowledge, gradeLeaf } from "./grade.ts";
 
 const [reversal, control] = condensedCases;
 const [peerLeaf, ordinaryLeaf] = leafCases;
-const userAcceptedPostgres =
-  "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b";
-const agentProposedPostgres =
-  "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b";
+const [peerKnowledge, conventionKnowledge] = knowledgeCases;
+/** The grader's misattribution failures for one statement, ignoring what it leaves out. */
+const misattributions = (text: string) =>
+  gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }]).filter((failure) =>
+    peerLeaf!.mustNot.some((pattern) => failure.startsWith(`${pattern}: `)),
+  );
 
 it("passes a roll-up that keeps the reversal, the attribution and the open item", () => {
   expect(
@@ -60,18 +62,30 @@ it("passes a leaf that names the peer and leaves the choice open", () => {
   ).toEqual([]);
 });
 
-it("fails a leaf that records the peer proposal as the user's decision", () => {
-  const text = "The user decided to use Postgres for sessions.";
-  expect(
-    gradeLeaf(peerLeaf!, [
-      { text, citations: ["M2"] },
-      { text: "The agent wants to keep Redis.", citations: ["M3"] },
-    ]),
-  ).toEqual([
-    "missing Astra",
-    `[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis): ${text}`,
-    `${userAcceptedPostgres}: ${text}`,
-  ]);
+it.each([
+  "Astra proposed dropping Redis and using Postgres for sessions.",
+  "The user has not decided.",
+  "The user has not chosen between Redis and Postgres; the agent prefers Redis.",
+  "The user has yet to decide between Redis and Postgres.",
+  "The user hasn't decided whether to use Postgres.",
+  "The user is still deciding between Redis and Postgres.",
+  "The user never agreed to Postgres.",
+  "The agent rejected the proposal to use Postgres.",
+])("leaves an open choice open: %s", (text) => {
+  expect(misattributions(text)).toEqual([]);
+});
+
+it.each([
+  "The user decided to use Postgres for sessions.",
+  "Astra proposed Postgres and the user agreed to use Postgres.",
+  "The user chose Postgres for sessions, following Astra.",
+  "The user accepted Astra's proposal, so sessions move to Postgres.",
+  "The user went with Postgres.",
+  "The user approved Postgres.",
+  "Sessions will move to Postgres, per the user.",
+  "The agent proposed moving sessions to Postgres; Astra wants to keep Redis.",
+])("fails a statement that hands the proposal to the user or the agent: %s", (text) => {
+  expect(misattributions(text)).not.toEqual([]);
 });
 
 it("does not treat an open Postgres choice as the peer's proposal", () => {
@@ -85,27 +99,6 @@ it("does not treat an open Postgres choice as the peer's proposal", () => {
   ).toEqual(["missing Astra"]);
 });
 
-it("fails a leaf where the user agrees to Postgres", () => {
-  const text = "Astra proposed Postgres and the user agreed to use Postgres.";
-  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }])).toEqual([
-    `${userAcceptedPostgres}: ${text}`,
-  ]);
-});
-
-it("fails a leaf where the user chooses Postgres", () => {
-  const text = "The user chose Postgres for sessions, following Astra.";
-  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }])).toEqual([
-    `${userAcceptedPostgres}: ${text}`,
-  ]);
-});
-
-it("fails a leaf that gives the peer's Postgres proposal to the agent", () => {
-  const text = "The agent proposed moving sessions to Postgres; Astra wants to keep Redis.";
-  expect(gradeLeaf(peerLeaf!, [{ text, citations: ["M2", "M3"] }])).toEqual([
-    `${agentProposedPostgres}: ${text}`,
-  ]);
-});
-
 it("passes an ordinary leaf with no peer", () => {
   expect(
     gradeLeaf(ordinaryLeaf!, [
@@ -114,6 +107,29 @@ it("passes an ordinary leaf with no peer", () => {
         citations: ["M1", "M2"],
       },
       { text: "The link checker has not run yet.", citations: ["M2"] },
+    ]),
+  ).toEqual([]);
+});
+
+it("fails a fact candidate that saves the peer's proposal as a decision", () => {
+  const content = "Sessions are stored in Postgres instead of Redis.";
+  const failures = gradeKnowledge(peerKnowledge!, [
+    { kind: "decision", content, citations: ["M2"] },
+  ]);
+  expect(failures[0]).toBe(`decision: ${content}`);
+  expect(failures.length).toBeGreaterThan(1);
+  expect(
+    gradeKnowledge(peerKnowledge!, [
+      { kind: "convention", content: "Session storage is undecided.", citations: ["M1"] },
+    ]),
+  ).toEqual([]);
+});
+
+it("requires the control's plain user convention", () => {
+  expect(gradeKnowledge(conventionKnowledge!, [])).toEqual(["missing snake_case"]);
+  expect(
+    gradeKnowledge(conventionKnowledge!, [
+      { kind: "convention", content: "API responses use snake_case keys.", citations: ["M1"] },
     ]),
   ).toEqual([]);
 });

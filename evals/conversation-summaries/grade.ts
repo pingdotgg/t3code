@@ -1,4 +1,4 @@
-import type { CondensedCase, LeafCase } from "./cases.ts";
+import type { CondensedCase, KnowledgeCase, LeafCase } from "./cases.ts";
 
 const MAX_CHARS = 1_200;
 
@@ -57,4 +57,29 @@ export function gradeLeaf(
     fixture,
     undefined,
   );
+}
+
+type Candidate = {
+  readonly kind: string;
+  readonly content: string;
+  readonly citations: ReadonlyArray<string>;
+};
+
+/** Every way a fact-candidate reply breaks the case's rules; empty when it passes. */
+export function gradeKnowledge(
+  fixture: KnowledgeCase,
+  candidates: ReadonlyArray<Candidate>,
+): ReadonlyArray<string> {
+  const failures: Array<string> = [];
+  for (const candidate of candidates)
+    if ((fixture.forbiddenKinds as ReadonlyArray<string>).includes(candidate.kind))
+      failures.push(`${candidate.kind}: ${candidate.content}`);
+  for (const pattern of fixture.mustMention)
+    if (!candidates.some((candidate) => new RegExp(pattern).test(candidate.content)))
+      failures.push(`missing ${pattern}`);
+  for (const pattern of fixture.mustNot)
+    for (const candidate of candidates)
+      if (new RegExp(pattern, "i").test(candidate.content))
+        failures.push(`${pattern}: ${candidate.content}`);
+  return failures;
 }

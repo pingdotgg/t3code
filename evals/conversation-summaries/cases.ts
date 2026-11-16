@@ -20,24 +20,39 @@ export interface LeafCase {
   readonly mustNot: ReadonlyArray<string>;
 }
 
+/** Statements that hand the peer's Postgres proposal to the user or to the thread's agent. */
+const misattributed = [
+  String.raw`\buser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis)`,
+  String.raw`\buser's decision to (drop Redis|use Postgres|keep Redis)`,
+  // The verb must follow the user directly, so "has yet to decide" and "never agreed" stay open.
+  String.raw`\buser\s+(?:(?:has|had|then|also|finally|ultimately|eventually|now)\s+)*(?:decided|chose|chosen|picked|selected|opted|went with|goes with|settled on|agreed|accepted|approved|adopted|endorsed|signed off)\b(?:(?!\b(?:not|never|against|between|whether)\b)[^.;]){0,60}\b(?:Postgres|Astra|proposal|suggestion)\b`,
+  String.raw`\bPostgres\b[^.;]{0,60}(?:\b(?:per|according to|as (?:decided|requested|chosen|approved) by)\s+the user\b|\bat the user's (?:request|direction)\b)`,
+  String.raw`\bagent\s+(?:(?:also|first|then|initially|had|has)\s+)*(?:propos(?:ed|es)|suggest(?:ed|s)|recommend(?:ed|s)|push(?:ed|es) for)\b(?:(?!\b(?:not|never|against|keep|keeping)\b)[^.;]){0,60}\bPostgres\b|\bagent's (?:proposal|suggestion|recommendation)\b[^.;]{0,40}\bPostgres\b`,
+];
+
+/** The group exchange both peer cases send: the user asks, Astra proposes, the agent disagrees. */
+const peerProposal: ReadonlyArray<LeafMessage> = [
+  { role: "user", text: "Where should sessions live? I have not decided." },
+  {
+    role: "peer",
+    speaker: { label: "Astra", model: "gpt-6-astra" },
+    text: "Drop Redis and use Postgres for sessions.",
+  },
+  {
+    role: "assistant",
+    text: "I disagree. Keep Redis for sessions. The choice is still open.",
+  },
+];
+
+const peerProposalSource =
+  'Group threads (t3/peer-reply-summary-attribution): a seat model\'s published reply reached the summarizer as a plain assistant message with no name, and production summaries said "The assistant answered" for words the peer spoke.';
+
 export const leafCases: ReadonlyArray<LeafCase> = [
   {
     id: "leaf-peer-proposal-is-not-a-user-decision",
     kind: "bad",
-    source:
-      "Group threads (t3/peer-reply-summary-attribution): a seat model's published reply was summarized as the user's decision.",
-    messages: [
-      { role: "user", text: "Where should sessions live? I have not decided." },
-      {
-        role: "peer",
-        speaker: { label: "Astra", model: "gpt-6-astra" },
-        text: "Drop Redis and use Postgres for sessions.",
-      },
-      {
-        role: "assistant",
-        text: "I disagree. Keep Redis for sessions. The choice is still open.",
-      },
-    ],
+    source: peerProposalSource,
+    messages: peerProposal,
     mustMention: ["Astra", "Postgres"],
     attributed: [
       {
@@ -45,12 +60,7 @@ export const leafCases: ReadonlyArray<LeafCase> = [
         require: "Astra",
       },
     ],
-    mustNot: [
-      "[Uu]ser (decided|chose|wants|wanted|asked) to (drop Redis|use Postgres|keep Redis)",
-      "[Uu]ser's decision to (drop Redis|use Postgres|keep Redis)",
-      "\\buser\\b(?:(?!\\bnot\\b)[^.;]){0,30}\\b(?:agre|chose|choos|accept|decid)\\w*(?:(?!\\bnot\\b)[^.;]){0,30}\\bPostgres\\b",
-      "\\bagent\\b(?:(?!\\bnot\\b)[^.;]){0,40}\\b(?:propos|suggest)\\w*(?:(?!\\bnot\\b)[^.;]){0,40}\\bPostgres\\b",
-    ],
+    mustNot: misattributed,
   },
   {
     id: "leaf-ordinary-exchange-has-no-peer",
@@ -66,6 +76,49 @@ export const leafCases: ReadonlyArray<LeafCase> = [
     mustMention: ["README", "link checker|links"],
     attributed: [],
     mustNot: ["Astra"],
+  },
+];
+
+/** One finished exchange, as assisted learning sends it for fact candidates. */
+export interface KnowledgeCase {
+  readonly id: string;
+  readonly kind: "bad" | "control";
+  readonly source: string;
+  readonly messages: ReadonlyArray<LeafMessage>;
+  /** Candidate kinds that must not come out. */
+  readonly forbiddenKinds: ReadonlyArray<"decision" | "constraint" | "convention">;
+  /** Each regex must match some candidate. */
+  readonly mustMention: ReadonlyArray<string>;
+  /** No candidate may match these. */
+  readonly mustNot: ReadonlyArray<string>;
+}
+
+export const knowledgeCases: ReadonlyArray<KnowledgeCase> = [
+  {
+    id: "knowledge-peer-proposal-is-not-a-decision",
+    kind: "bad",
+    source: `${peerProposalSource} Assisted learning reads the same messages, so a peer proposal could be saved as the user's decision.`,
+    messages: peerProposal,
+    forbiddenKinds: ["decision"],
+    mustMention: [],
+    mustNot: [
+      ...misattributed,
+      String.raw`\bsessions (?:are|will be|should be)? ?(?:stored|kept|live|living|moved?|moving) (?:in|to) Postgres\b`,
+      String.raw`\b(?:use|uses|using) Postgres (?:for|as the) sessions?\b`,
+    ],
+  },
+  {
+    id: "knowledge-user-convention-is-kept",
+    kind: "control",
+    source:
+      "Control for the peer rule: a plain user instruction must still become a fact, so the rule cannot suppress ordinary learning.",
+    messages: [
+      { role: "user", text: "From now on API responses use snake_case keys everywhere." },
+      { role: "assistant", text: "Done. I converted the handlers to snake_case keys." },
+    ],
+    forbiddenKinds: [],
+    mustMention: ["snake_case"],
+    mustNot: [],
   },
 ];
 
