@@ -35,6 +35,32 @@ file before you merge upstream, build, or change shared UI. Upstream's
   covered unless they call those scripts (or the packaging/sign entrypoints)
   before copying a bundle into `/Applications`.
 
+## Upstream scope
+
+Conn ships to three targets (Nick, 2026-11-16). The nightly sync follows upstream only for
+what serves them.
+
+| Target | Platform | Built from |
+| --- | --- | --- |
+| Desktop app | macOS | `apps/desktop`, `apps/web` |
+| iPhone app | iOS | `apps/mobile` |
+| Servers | Linux and macOS | `apps/server`, the T3 server on Nick's machines; `apps/conn-server`, the Conn Server, on Linux in Orbit containers (macOS later) |
+
+Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR). For the Conn
+Server, also every area that `apps/conn-server/docs/orbit-profile.md` rates "not needed".
+
+How the sync applies it:
+
+1. **Merge everything, build only what we ship.** The sync still merges `upstream/main` whole.
+   Picking commits would make every later merge harder. Out-of-scope code comes in, but
+   nothing builds, tests or fixes it.
+2. **Out of scope never holds a sync.** A conflict only in out-of-scope code takes upstream's
+   side. A build or test failure only there is noted in the sync notes and left alone.
+3. **In scope holds a sync, as before.** That covers the desktop and iPhone builds, the T3
+   server, and the Conn Server's checks.
+4. **The sync notes say what was skipped.** Each sync lists the out-of-scope areas its
+   upstream range touched, in one line per area, in the `FORK.md` sync notes.
+
 ## Conn Server
 
 `apps/conn-server` is the Conn Server: our own Rust server behind the T3 client contract. It
@@ -47,11 +73,15 @@ from this tree.
   pull requests and pushes to `main` that change `apps/conn-server`. `conn-server-checks.yml`
   (`apps/conn-server/tools/check.sh`) runs on changes to `apps/conn-server` or
   `packages/contracts`.
-- **The nightly sync skips them, for now** (Nick, 2026-11-15). The workflows do not watch
-  `sync/*` branches, and each job skips a push or pull request that carries a ForkBot commit
-  (`forkbot@nckrtl.local`) or comes from a `sync/*` branch. The sync never runs or waits for a
-  Conn Server check. Drift it brings in fails at the next Conn Server or contract change;
-  `apps/conn-server/tools/follow-conn.sh` shows it at once.
+- **The nightly sync follows it** (Nick, 2026-11-16; this replaces the 2026-11-15 skip). On
+  its `sync/*` branch, after the merge, the sync runs `apps/conn-server/tools/follow-conn.sh
+  --capture`. It ports the upstream server changes in scope, as the T3 server makes them:
+  the areas `docs/orbit-profile.md` rates needed or useful. It regenerates what is
+  generated, and both Conn Server workflows must pass on the sync branch before the merge.
+  An in-scope change that cannot be ported that night becomes a known difference with its
+  reason, in the check's known list and in `apps/conn-server/docs/status.md`. A check is never
+  weakened to pass. An out-of-scope change needs no port; if it turns a check red, the fix
+  is to the check's scope, with the reason. `apps/conn-server/docs/upkeep.md` has the steps.
 - **Release.** A tag `conn-server-v<version>` (the `conn-server` crate's version) runs
   `conn-server-release.yml`. It makes a GitHub Release on `nckrtl/conn` with
   `conn-server-<version>-linux-x64.tar.gz` and its `.sha256`, not marked Latest; Orbit

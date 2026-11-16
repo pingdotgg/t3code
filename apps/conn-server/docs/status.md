@@ -72,7 +72,7 @@ read the monorepo two levels up, and `tools/follow-conn.sh` regenerates and repo
   thread list and read (#36961), and scheduled tasks that return `webhookUrl` only on
   creation and take a `scheduledTaskId` filter (#27716). See
   `crates/conn-provider-claude/README.md`, "Known differences".
-- The nightly sync does not run the Conn Server's checks (Nick, 2026-11-15; `docs/upkeep.md`).
+- The nightly sync follows the Conn Server (Nick, 2026-11-16; `docs/upkeep.md`, "In the nightly sync").
 - **CI on Linux** (PR #95): `methods.json` names a digest of the contract inputs
   (`contractDigest`, sha256 over the tracked files) instead of a commit id, which a shallow
   checkout cannot give and a squash merge rewrites. `parity.mjs` seals the T3 server's `PATH`.
