@@ -46,6 +46,7 @@ mod reads;
 mod restart;
 mod rollback;
 mod runner;
+mod secret_requests;
 mod shell;
 mod store;
 mod streaming;
@@ -347,6 +348,13 @@ pub trait Engine: Send + Sync {
                 "this engine does not support {method}"
             )))
         })
+    }
+
+    /// Records a secret card without exposing an internal command through client dispatch.
+    fn record_secret_request(&self, _input: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Err(
+            "Secret requests are not supported.".into(),
+        )))
     }
 
     /// Closes every provider session before the server exits, so no provider process, nor a

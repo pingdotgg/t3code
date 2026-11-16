@@ -163,6 +163,12 @@ packages/contracts/src/scheduledTask.ts
 packages/contracts/src/annotations.ts
 packages/contracts/src/orchestratorMcp.ts
 
+apps/server/src/secrets/SecretRequests.ts
+apps/server/src/panels/AgentPanelBroker.ts
+apps/server/src/mcp/toolkits/panels
+packages/contracts/src/secretRequest.ts
+packages/contracts/src/agentPanels.ts
+
 [crates/conn-server]
 apps/server/src/orchestration-v2/workflowScriptQuery.ts
 apps/server/src/orchestration-v2/workflowFileRead.ts

@@ -640,7 +640,12 @@ impl Inner {
                 "The command has no commandId.".into(),
             ));
         };
-        let Some(handler) = commands::handler(&command_type) else {
+        let handler = if command_type == "secret_request.record" {
+            Some(crate::secret_requests::record as commands::Handler)
+        } else {
+            commands::handler(&command_type)
+        };
+        let Some(handler) = handler else {
             return Err(DispatchError::Rejected(
                 commands::refusal(&command_type).to_owned(),
             ));
@@ -996,6 +1001,22 @@ fn projection_error(
 }
 
 impl Engine for SqliteEngine {
+    fn record_secret_request(&self, mut input: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let Some(fields) = input.as_object_mut() else {
+                return Err("Invalid secret request.".into());
+            };
+            fields.insert("type".into(), json!("secret_request.record"));
+            self.inner
+                .dispatch_value(input)
+                .await
+                .map(|_| ())
+                .map_err(|e| match e {
+                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
+                })
+        })
+    }
+
     fn dispatch(
         &self,
         command: Command,

@@ -92,6 +92,11 @@ redundant_clone = "warn"
 rc_buffer = "warn"
 large_futures = "warn"
 
+[profile.dev]
+# File and line in backtraces, without full debug info: a fresh `cargo test --workspace
+# --no-run` is 6.6 GB instead of 7.9 GB and builds in 42 s instead of 50 s (macOS, 2026-11-16).
+debug = "line-tables-only"
+
 [profile.release]
 # Smaller than opt-level 3 on every measure (README, "Memory"): binary, RSS and footprint.
 opt-level = "z"

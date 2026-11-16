@@ -142,8 +142,8 @@ follows the Conn commit it is part of. There is no pin.
   `T3_SERVER_VERSION`, `tools/upkeep/http-routes.json`). Never edit one by hand; change its
   generator and regenerate.
 - `docs/upkeep.md` says how the Conn Server follows Conn and what to do when a check is red.
-  A nightly bot merges upstream T3 Code into Conn and does not run the Conn Server's checks
-  (Nick, 2026-11-15); the next Conn Server change or `tools/follow-conn.sh` picks up the drift.
+  The nightly sync follows the Conn Server too: it ports the in-scope upstream server changes
+  and waits for the Conn Server checks (Nick, 2026-11-16; `FORK.md`, "Upstream scope").
 - Do not change TypeScript in the Conn monorepo for Conn Server work.
 
 ## Where things go

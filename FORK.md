@@ -35,6 +35,48 @@ file before you merge upstream, build, or change shared UI. Upstream's
   covered unless they call those scripts (or the packaging/sign entrypoints)
   before copying a bundle into `/Applications`.
 
+## Upstream scope
+
+Conn ships to three targets (Nick, 2026-11-16). The nightly sync follows upstream only for
+what serves them.
+
+| Target      | Platform        | Built from                                                                                                                       |
+| ----------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Desktop app | macOS           | `apps/desktop`, `apps/web`                                                                                                       |
+| iPhone app  | iOS             | `apps/mobile`                                                                                                                    |
+| Servers     | Linux and macOS | `apps/server`, the T3 server on Nick's machines; `apps/conn-server`, the Conn Server, on Linux in Orbit containers (macOS later) |
+
+Out of scope: Windows, Android and the Linux desktop app (AppImage, deb, AUR), the hosted web
+app (app.t3.codes and its previews), the T3 Connect relay (`infra/relay`), and the marketing
+site (`apps/marketing`). Only GitHub is used as a source-control host: GitLab, Forgejo,
+Bitbucket, Azure DevOps, GitCafe and Cursor origin are out of scope. For the Conn Server, also
+every area that `apps/conn-server/docs/orbit-profile.md` rates "not needed".
+
+Ports follow the same scope. The GUI must work properly on macOS and iOS only, and the Conn
+Server runs on Linux only. When leaving out another platform or host makes a port clearly
+simpler, leave it out and name it in the sync notes or the PR.
+
+Their upstream workflows stay in the tree and skip here: each checks
+`github.repository == 'pingdotgg/t3code'` ("Pull request runners"). They are `release.yml`
+and `release-desktop.yml` (the Windows, Linux and Android release builds), `publish-aur.yml`,
+`windows-tests.yml`, `mobile-android-apk.yml`, `deploy-relay.yml`, `relay-preview.yml`,
+`relay-preview-cleanup.yml` and `web-preview.yml`. Do not delete them (Nick, 2026-11-16):
+each upstream edit would become a modify/delete conflict in the sync, and upstream edits
+`release.yml` and `release-desktop.yml` most days. On a sync, take upstream's version of
+these files and keep their repository checks.
+
+How the sync applies it:
+
+1. **Merge everything, build only what we ship.** The sync still merges `upstream/main` whole.
+   Picking commits would make every later merge harder. Out-of-scope code comes in, but
+   nothing builds, tests or fixes it.
+2. **Out of scope never holds a sync.** A conflict only in out-of-scope code takes upstream's
+   side. A build or test failure only there is noted in the sync notes and left alone.
+3. **In scope holds a sync, as before.** That covers the desktop and iPhone builds, the T3
+   server, and the Conn Server's checks.
+4. **The sync notes say what was skipped.** Each sync lists the out-of-scope areas its
+   upstream range touched, in one line per area, in the `FORK.md` sync notes.
+
 ## Conn Server
 
 `apps/conn-server` is the Conn Server: our own Rust server behind the T3 client contract. It
@@ -47,11 +89,15 @@ from this tree.
   pull requests and pushes to `main` that change `apps/conn-server`. `conn-server-checks.yml`
   (`apps/conn-server/tools/check.sh`) runs on changes to `apps/conn-server` or
   `packages/contracts`.
-- **The nightly sync skips them, for now** (Nick, 2026-11-15). The workflows do not watch
-  `sync/*` branches, and each job skips a push or pull request that carries a ForkBot commit
-  (`forkbot@nckrtl.local`) or comes from a `sync/*` branch. The sync never runs or waits for a
-  Conn Server check. Drift it brings in fails at the next Conn Server or contract change;
-  `apps/conn-server/tools/follow-conn.sh` shows it at once.
+- **The nightly sync follows it** (Nick, 2026-11-16; this replaces the 2026-11-15 skip). On
+  its `sync/*` branch, after the merge, the sync runs `apps/conn-server/tools/follow-conn.sh
+  --capture`. It ports the upstream server changes in scope, as the T3 server makes them:
+  the areas `docs/orbit-profile.md` rates needed or useful. ForkBot does this port. It regenerates what is
+  generated, and both Conn Server workflows must pass on the sync branch before the merge.
+  An in-scope change that cannot be ported that night becomes a known difference with its
+  reason, in the check's known list and in `apps/conn-server/docs/status.md`. A check is never
+  weakened to pass. An out-of-scope change needs no port; if it turns a check red, the fix
+  is to the check's scope, with the reason. `apps/conn-server/docs/upkeep.md` has the steps.
 - **Release.** A tag `conn-server-v<version>` (the `conn-server` crate's version) runs
   `conn-server-release.yml`. It makes a GitHub Release on `nckrtl/conn` with
   `conn-server-<version>-linux-x64.tar.gz` and its `.sha256`, not marked Latest; Orbit
@@ -1555,4 +1601,4 @@ The fork also skips upstream's `setup-apt-mirrors` action and installs the brows
 
 Test Web runs its tests through `.github/scripts/web-test.cjs`. Headless Chromium on the GitHub-hosted runners sometimes drops its vitest connection (`VITEST_BROWSER_CONNECTION_CLOSED`) with no failed test, several times a day, during a different file each time. A check that fails on infrastructure is not a gate, but a test that crashes the page every time must stay red. So when the only problem is that error (no failed test, failed file, assertion or other unhandled error), the wrapper reruns only the files that did not finish, including the one that closed, and passes with a warning annotation if they pass. It fails if the browser closes again, if Vitest printed no summary, or if no file had passed. `web-test-reporter.mjs` records the shard's files (sharded with Vitest's own sequencer) and each finished file, so the list survives the crash. The Changes job runs the wrapper's tests (`web-test.test.cjs`). On a sync keep the wrapper in the Test step, and the two sparse-checkout lines and test step in Changes.
 
-Upstream-only workflows need upstream's Blacksmith runners and secrets (relay, web, EAS and macOS previews, showcase screenshots, Windows tests), and the fork has neither. Their entry jobs check `github.repository == 'pingdotgg/t3code'`, so they skip in the fork instead of queueing forever; jobs that depend on them skip too. This covers `relay-preview.yml`, `relay-preview-cleanup.yml` (its daily schedule queued forever before), `web-preview.yml`, `mobile-eas-preview.yml`, `mobile-eas-preview-fork.yml`, `desktop-macos-preview.yml`, `desktop-macos-preview-publish.yml` (the `resolve` job), `mobile-showcase-screenshots.yml` and `windows-tests.yml`. Release, deploy and AUR workflows already have this check or are disabled in the fork. On a sync keep these conditions, and check new upstream workflows for Blacksmith labels.
+Upstream-only workflows need upstream's Blacksmith runners and secrets (relay, web, EAS and macOS previews, showcase screenshots, Windows tests), and the fork has neither. Their entry jobs check `github.repository == 'pingdotgg/t3code'`, so they skip in the fork instead of queueing forever; jobs that depend on them skip too. This covers `relay-preview.yml`, `relay-preview-cleanup.yml` (its daily schedule queued forever before), `web-preview.yml`, `mobile-eas-preview.yml`, `mobile-eas-preview-fork.yml`, `desktop-macos-preview.yml`, `desktop-macos-preview-publish.yml` (the `resolve` job), `mobile-showcase-screenshots.yml`, `windows-tests.yml`, `mobile-android-apk.yml`, `publish-aur.yml`, `deploy-relay.yml` and `release.yml` (the `resolve_commit` job). `release-desktop.yml` has no check of its own: only `release.yml` and `desktop-macos-preview-publish.yml` call it, and both skip here. On a sync keep these conditions, and check new upstream workflows for Blacksmith labels.

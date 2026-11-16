@@ -995,8 +995,8 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `orchestration.subscribePromptSuggestion` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.subscribeShell` | yes | N | N |  | thread view, composer, diffs |
 | `orchestration.subscribeThread` | yes | N | N |  | thread view, composer, diffs |
-| `panels.requests` | no | U | U | S | agent opens a panel in the client |
-| `panels.respond` | no | U | U | S | agent opens a panel in the client |
+| `panels.requests` | yes | U | U | S | agent opens a panel in the client |
+| `panels.respond` | yes | U | U | S | agent opens a panel in the client |
 | `peerLinks.answerRequest` | no | X | N | L | threads on other machines (mini reaches every machine) |
 | `peerLinks.link` | no | X | N | L | threads on other machines (mini reaches every machine) |
 | `peerLinks.list` | no | X | N | L | threads on other machines (mini reaches every machine) |
@@ -1088,7 +1088,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `scheduledTasks.setEnabled` | yes | U | N |  | scheduled tasks (mini) |
 | `scheduledTasks.subscribe` | yes | U | N |  | scheduled tasks (mini) |
 | `scheduledTasks.upsert` | yes | U | N |  | scheduled tasks (mini) |
-| `secrets.answerRequest` | no | U | N | S | agent asks for a secret |
+| `secrets.answerRequest` | yes | U | N | S | agent asks for a secret |
 | `server.acceptAcpRegistryUrlAuth` | no | X | U | S | ACP registry, offline part |
 | `server.checkOtlpEndpoint` | no | X | U | S | telemetry |
 | `server.checkSecretSource` | no | X | U | S | 1Password secret source |
@@ -1202,7 +1202,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `mcp_call` | no | U | U | M | MCP Apps |
 | `mcp_connect` | no | U | U | M | MCP Apps |
 | `orchestrator_capabilities` | yes | N | N |  | core orchestration |
-| `panel_open` | no | U | U | S |  |
+| `panel_open` | yes | U | U | S |  |
 | `preview_act` | no | U | N | L | agent browser; needs headless Chromium on the server |
 | `preview_cdp_endpoint` | no | U | N | L | agent browser; needs headless Chromium on the server |
 | `preview_dialog` | no | U | N | L | agent browser; needs headless Chromium on the server |
@@ -1218,7 +1218,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `preview_wait_for` | no | U | N | L | agent browser; needs headless Chromium on the server |
 | `read_pull_request_guide` | no | O | N | M | PR babysitting; Orbit's review-and-merge does it in a container |
 | `request_credentials` | no | X | U | M | test logins |
-| `request_secret` | no | U | N | S | agent asks for a secret |
+| `request_secret` | yes | U | N | S | agent asks for a secret |
 | `run_scheduled_task_now` | yes | U | N |  | scheduled tasks |
 | `save_test_login` | no | X | U | M | test logins |
 | `schedule_task` | yes | U | N |  | scheduled tasks |

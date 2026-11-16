@@ -164,12 +164,16 @@ const program = Effect.gen(function* () {
   if (Exit.isSuccess(activity)) decodedTags.add("server.reportClientActivity");
 
   if (fixture) {
+    yield* decodeCall(client, "panels.requests", {deviceName: "Fixture Mac"});
     const events = yield* take(client.subscribeServerConfig({}), 20);
     check("windowed stream: 20 chunks, window 8", events.length === 20, `${events.length} events`);
     // Stream.take interrupted the subscription; the fixture logs when the server drops it.
     yield* Effect.sleep("200 millis");
     check("interrupt reaches the handler", stderr.join("").includes("stream dropped"));
   } else {
+    yield* decodeCall(client, "secrets.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
+    yield* decodeCall(client, "panels.respond", { requestId: "unknown", ok: true });
+
     const [config] = yield* take(client.subscribeServerConfig({}), 1);
     check(
       "subscribeServerConfig snapshot decodes",

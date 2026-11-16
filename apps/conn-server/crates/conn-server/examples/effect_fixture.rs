@@ -56,6 +56,26 @@ fn main() {
             Ok(rx)
         }
     });
+    let broker = conn_features::panels::PanelBroker::default();
+    table.stream("panels.requests", move |_, _: conn_contract::AgentPanelSubscribeInput| {
+        let broker = broker.clone();
+        async move {
+            let mut requests = broker.subscribe().unwrap();
+            let (tx, rx) = mpsc::channel(1);
+            tokio::spawn(async move {
+                let request = conn_contract::from_json(json!({
+                    "requestId":"pending", "threadId":"fixture", "panel":"files", "focusWindow":false
+                })).unwrap();
+                let (shown, ()) = tokio::join!(broker.show(request, std::time::Duration::from_secs(5)), async {
+                    let request = requests.recv().await.unwrap();
+                    broker.respond(conn_contract::from_json(json!({"requestId":request.request_id,"ok":true})).unwrap());
+                    let _ = tx.send(Ok(conn_contract::to_json(&request))).await;
+                });
+                assert!(shown.is_ok(), "the fixture desktop accepted the panel");
+            });
+            Ok(rx)
+        }
+    });
     let auth = AuthStore::in_memory();
     let state = AppState {
         table: Arc::new(table),

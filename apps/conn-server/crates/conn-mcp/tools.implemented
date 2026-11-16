@@ -37,3 +37,5 @@ t3_background_wait
 
 t3_workflow_stop
 tool_search
+request_secret
+panel_open

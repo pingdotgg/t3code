@@ -4,6 +4,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use conn_contract::from_json;
 use conn_engine::{EngineConfig, ProjectConfig, SqliteEngine, fake::FakeProvider};
 use http::{HeaderMap, HeaderValue, Method, StatusCode};
 use serde_json::{Value, json};
@@ -51,6 +52,12 @@ fn fixture_with(
     config.host = host;
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
+        panels: Some(conn_features::panels::PanelBroker::default()),
+        secrets: Some(conn_features::secrets::SecretRequests::new(
+            &dir,
+            engine.clone(),
+            Arc::new(conn_features::clock::SystemClock),
+        )),
         engine,
         environment_id: "env-test".into(),
         label: "Test".into(),
@@ -1675,16 +1682,17 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// Tools that a text we send to an agent names and that this server does not serve. An agent
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
-const NAMED_NOT_SERVED: [&str; 13] = [
+const NAMED_NOT_SERVED: [&str; 14] = [
     "create_threads",
     "device_list",
     "device_open",
     "device_screenshot",
+    "fill_credential",
     "html_preview",
     "html_render",
     "preview_open",
     "preview_status",
-    "request_secret",
+    "request_credentials",
     "t3_environment_link",
     "t3_environment_links",
     "unwatch_pull_request",
@@ -1746,11 +1754,14 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         clock: Arc::new(conn_features::clock::SystemClock),
         zone: jiff::tz::TimeZone::UTC,
         runner: Arc::new(conn_features::scheduled::EngineRunner::new(engine.clone())),
+        secret_requests: base.service.config.secrets.clone(),
         start_timer: false,
     })
     .await;
     let config = &base.service.config;
     let service = McpService::new(McpConfig {
+        panels: Some(conn_features::panels::PanelBroker::default()),
+        secrets: config.secrets.clone(),
         engine,
         environment_id: config.environment_id.clone(),
         label: config.label.clone(),
@@ -2387,4 +2398,464 @@ async fn deferred_clients_load_tools_by_provider_session_and_receive_list_change
             .await["error"]["message"],
         "Tool 'tool_search' not found"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_request_requires_an_active_owned_run_and_stays_hidden() {
+    let f = fixture("secret-owner");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    not_offered(
+        &mut swamp,
+        "request_secret",
+        json!({"label":"Key", "reason":"Test"}),
+    )
+    .await;
+    let thread = launch_as_swamp(&mut swamp, "Secrets", "hang", "full-access", "default").await;
+    let mut wrong = agent_of(&f, &thread);
+    if let Caller::Thread(caller) = &mut wrong {
+        caller.provider_instance_id = "codex".into();
+    }
+    let mut agent = Client::open(&f.service, wrong).await;
+    let (code, _) = agent
+        .failure("request_secret", json!({"label":"Key", "reason":"Test"}))
+        .await;
+    assert_eq!(code, "parent_not_active");
+    f.service.config.engine.shutdown().await;
+}
+
+async fn await_secret_card(f: &Fixture, thread: &str, label: &str) -> Value {
+    let engine = &f.service.config.engine;
+    let mut changes = engine
+        .subscribe_thread(from_json(json!({"threadId":thread})).unwrap())
+        .await
+        .unwrap();
+    loop {
+        let projection = engine.get_thread_projection(thread.into()).await.unwrap();
+        if let Some(card) = projection["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["type"] == "secret_request" && i["label"] == label)
+        {
+            return card.clone();
+        }
+        assert!(
+            changes.recv().await.is_some(),
+            "thread stream ended before card"
+        );
+    }
+}
+
+fn ask_secret(f: &Fixture, thread: &str, args: Value) -> tokio::task::JoinHandle<Value> {
+    let service = f.service.clone();
+    let caller = agent_of(f, thread);
+    tokio::spawn(async move {
+        Client::open(&service, caller)
+            .await
+            .ok("request_secret", args)
+            .await
+    })
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_answers_are_one_use_project_scoped_persistent_and_absent_from_events() {
+    let f = fixture("secret-ref");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Secrets", "hang", "full-access", "default").await;
+    let ask = ask_secret(
+        &f,
+        &thread,
+        json!({"clientRequestId":"ref", "label":"Ref", "reason":"Fixture"}),
+    );
+    let card = await_secret_card(&f, &thread, "Ref").await;
+    let shell = f.service.config.engine.shell_snapshot().await.unwrap();
+    let row = shell["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == thread)
+        .unwrap();
+    assert_eq!(row["pendingRuntimeRequest"]["userOnly"], true);
+    assert_eq!(row["pendingRuntimeRequest"]["id"], card["id"]);
+    let answer = json!({"threadId":thread,"turnItemId":card["id"],"answer":{"type":"save","secret":"test-answer"}});
+    let secrets = f.service.config.secrets.as_ref().unwrap();
+    secrets
+        .answer(from_json(answer.clone()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        secrets
+            .answer(from_json(answer).unwrap())
+            .await
+            .unwrap_err()
+            .0,
+        "already_answered"
+    );
+    let result = ask.await.unwrap();
+    assert_eq!(result["status"], "saved");
+    let reference = result["secretRef"].as_str().unwrap();
+    assert_eq!(
+        secrets
+            .save_to_file(&thread, card["id"].as_str().unwrap())
+            .await
+            .unwrap_err()
+            .0,
+        "not_a_file_request"
+    );
+
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.as_str().into())
+        .await
+        .unwrap();
+    assert!(
+        !projection.to_string().contains("test-answer"),
+        "secret never enters events or projections"
+    );
+    assert_eq!(
+        projection["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["id"] == card["id"])
+            .unwrap()["secretStatus"],
+        "saved"
+    );
+    let reopened = conn_features::secrets::SecretRequests::new(
+        &f.dir,
+        f.service.config.engine.clone(),
+        Arc::new(conn_features::clock::SystemClock),
+    );
+    assert_eq!(
+        reopened
+            .consume(reference, "other-project")
+            .await
+            .unwrap_err()
+            .0,
+        "ref_unavailable"
+    );
+    let project = project_id();
+    let (first, second) = tokio::join!(
+        reopened.consume(reference, &project),
+        reopened.consume(reference, &project)
+    );
+    assert_eq!(
+        usize::from(first.is_ok()) + usize::from(second.is_ok()),
+        1,
+        "one consumer wins"
+    );
+    assert_eq!(first.or(second).unwrap(), "test-answer");
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_file_delivery_and_pasted_values_retry_without_replacing_the_first_value() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture("secret-file");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Secrets", "hang", "full-access", "default").await;
+    let secrets = f.service.config.secrets.as_ref().unwrap();
+    let ask = ask_secret(
+        &f,
+        &thread,
+        json!({"clientRequestId":"file","label":"File","reason":"Fixture","delivery":"file"}),
+    );
+    let card = await_secret_card(&f, &thread, "File").await;
+    secrets.answer(from_json(json!({"threadId":thread,"turnItemId":card["id"],"answer":{"type":"save","secret":"shell-answer"}})).unwrap()).await.unwrap();
+    let result = ask.await.unwrap();
+    let file = result["file"].as_str().unwrap();
+    assert_eq!(std::fs::read_to_string(file).unwrap(), "shell-answer");
+    assert_eq!(
+        std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(f.dir.join("secrets/files"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert!(
+        secrets
+            .saved_ref(&thread, card["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .is_none(),
+        "file consumes stored copy"
+    );
+    let retried = ask_secret(
+        &f,
+        &thread,
+        json!({"clientRequestId":"file","label":"File","reason":"Fixture","delivery":"file"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(retried, result);
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let pasted = agent.ok("request_secret", json!({"clientRequestId":"pasted","label":"Pasted","reason":"Fixture","value":"  first-value\t "})).await;
+    let repeated = agent.ok("request_secret", json!({"clientRequestId":"pasted","label":"Pasted","reason":"Fixture","value":"second-value"})).await;
+    assert_eq!(pasted, repeated);
+    assert_eq!(
+        std::fs::read_to_string(pasted["file"].as_str().unwrap()).unwrap(),
+        "  first-value\t "
+    );
+    for args in [
+        json!({"label":" ","reason":"Test"}),
+        json!({"label":"Key","reason":"Test","value":""}),
+        json!({"label":"Key","reason":"Test","url":"file:///tmp/key"}),
+    ] {
+        let (code, _) = rpc_error(&mut agent, "request_secret", args).await;
+        assert_eq!(code, -32602);
+    }
+    let (code, _) = agent
+        .failure(
+            "request_secret",
+            json!({"label":"Pasted","reason":"Fixture","value":"value","delivery":"secretRef"}),
+        )
+        .await;
+    assert_eq!(code, "invalid_request");
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.as_str().into())
+        .await
+        .unwrap();
+    assert_eq!(
+        projection["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["type"] == "secret_request")
+            .count(),
+        1,
+        "pasted values need no card"
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn secret_decline_timeout_stop_and_aborted_call_close_the_card() {
+    let f = fixture("secret-closed");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Secrets", "hang", "full-access", "default").await;
+    let secrets = f.service.config.secrets.as_ref().unwrap();
+    let ask = ask_secret(&f, &thread, json!({"label":"Declined","reason":"Fixture"}));
+    let card = await_secret_card(&f, &thread, "Declined").await;
+    secrets
+        .answer(
+            from_json(
+                json!({"threadId":thread,"turnItemId":card["id"],"answer":{"type":"decline"}}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let result = ask.await.unwrap();
+    assert_eq!(result["status"], "declined");
+    assert_eq!(
+        result["note"],
+        conn_features::secrets::unsaved_note("declined")
+    );
+    let timed = ask_secret(
+        &f,
+        &thread,
+        json!({"label":"Timed","reason":"Fixture","timeoutMs":1000}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(timed["status"], "timed_out");
+    let abandoned = ask_secret(&f, &thread, json!({"label":"Aborted","reason":"Fixture"}));
+    let card = await_secret_card(&f, &thread, "Aborted").await;
+    let mut changes = f
+        .service
+        .config
+        .engine
+        .subscribe_thread(from_json(json!({"threadId":thread})).unwrap())
+        .await
+        .unwrap();
+    abandoned.abort();
+    assert!(abandoned.await.unwrap_err().is_cancelled());
+    loop {
+        let projection = f
+            .service
+            .config
+            .engine
+            .get_thread_projection(thread.as_str().into())
+            .await
+            .unwrap();
+        if projection["turnItems"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == card["id"] && i["secretStatus"] == "cancelled")
+        {
+            break;
+        }
+        assert!(changes.recv().await.is_some());
+    }
+    let stopped = ask_secret(&f, &thread, json!({"label":"Stopped","reason":"Fixture"}));
+    await_secret_card(&f, &thread, "Stopped").await;
+    dispatch(
+        &f,
+        json!({"type":"thread.stop","commandId":"stop-secrets","threadId":thread}),
+    )
+    .await;
+    assert_eq!(stopped.await.unwrap()["status"], "cancelled");
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn panel_open_delivers_each_panel_to_the_callers_desktop_and_stays_hidden() {
+    let f = fixture("panels");
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    not_offered(&mut swamp, "panel_open", json!({"panel":"files"})).await;
+    let thread = launch_as_swamp(&mut swamp, "Panels", "hang", "full-access", "default").await;
+    let broker = f.service.config.panels.as_ref().unwrap();
+    let mut desktop = broker.subscribe().unwrap();
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+
+    for field in ["url", "tabId", "profileId"] {
+        let mut input = json!({"panel":"browser"});
+        input[field] = json!("   ");
+        assert_eq!(
+            rpc_error(&mut agent, "panel_open", input).await.0,
+            -32602,
+            "{field}"
+        );
+    }
+    for panel in ["database", "mcp", "diff", "files", "browser"] {
+        let mut args = json!({"panel":panel,"focusWindow":false});
+        if panel == "database" {
+            args["sql"] = json!("select 1");
+        }
+        let (result, ()) = tokio::join!(agent.ok("panel_open", args), async {
+            let request = desktop.recv().await.unwrap();
+            assert_eq!(request.thread_id, thread);
+            assert!(!request.focus_window);
+            if panel == "database" {
+                assert_eq!(request.sql.as_deref(), Some("select 1"));
+            }
+            broker.respond(
+                from_json(json!({"requestId":request.request_id,"ok":true,"deviceName":"Mac"}))
+                    .unwrap(),
+            );
+        });
+        assert_eq!(result, json!({"panel":panel,"shownOn":"Mac"}));
+    }
+    let (code, _) = agent
+        .failure(
+            "panel_open",
+            json!({"panel":"browser","url":"https://example.com"}),
+        )
+        .await;
+    assert_eq!(
+        code, "capability_denied",
+        "browser automation is explicitly unavailable"
+    );
+    let rejected = agent
+        .request(
+            "tools/call",
+            json!({"name":"panel_open","arguments":{"panel":"files","sql":"select 1"}}),
+        )
+        .await;
+    assert_eq!(
+        rejected["result"]["content"][0]["text"],
+        "sql applies to the database panel only."
+    );
+    drop(desktop);
+    let missing = agent
+        .request(
+            "tools/call",
+            json!({"name":"panel_open","arguments":{"panel":"browser"}}),
+        )
+        .await;
+    assert_eq!(missing["result"]["isError"], true);
+    assert!(
+        missing["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("No Conn desktop app")
+    );
+    f.service.config.engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn saved_secret_refs_sign_webhooks_with_project_scope_one_use_and_safe_replays() {
+    let f = fixture_with_tasks("secret-webhook").await;
+    let mut swamp = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut swamp, "Signing", "hang", "full-access", "default").await;
+    let ask = ask_secret(
+        &f,
+        &thread,
+        json!({"label":"Signing key","reason":"Test webhook","clientRequestId":"sign-key"}),
+    );
+    let card = await_secret_card(&f, &thread, "Signing key").await;
+    f.service.config.secrets.as_ref().unwrap().answer(from_json(json!({"threadId":thread,"turnItemId":card["id"],"answer":{"type":"save","secret":"test-sign-key"}})).unwrap()).await.unwrap();
+    let saved = ask.await.unwrap();
+    let signature = json!({"header":"x-signature","encoding":"hex","prefix":"sha256=","secretRef":saved["secretRef"],"secret":"must-not-replace-the-ref"});
+    let tasks = f.service.config.scheduled_tasks.as_ref().unwrap();
+    let wrong = tasks.upsert(from_json(json!({"title":"Wrong project","prompt":"Hello","enabled":true,"projectId":"other-project","schedule":{"type":"webhook","signature":signature},"workspaceStrategy":{"type":"root"},"modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},"runtimeMode":"full-access","interactionMode":"default"})).unwrap()).await.unwrap_err();
+    assert!(
+        wrong.to_string().contains("already used or does not exist"),
+        "{wrong}"
+    );
+    let mut agent = Client::open(&f.service, agent_of(&f, &thread)).await;
+    let args = json!({"title":"Signed webhook","prompt":"Hello","clientRequestId":"signed-webhook","schedule":{"type":"webhook","signature":signature}});
+    let task = agent.ok("schedule_task", args.clone()).await;
+    assert_eq!(
+        agent.ok("schedule_task", args).await["scheduledTaskId"],
+        task["scheduledTaskId"]
+    );
+    let (code,message) = agent.failure("schedule_task",json!({"prompt":"Hello","clientRequestId":"another-webhook","schedule":{"type":"webhook","signature":signature}})).await;
+    assert_eq!(code, "orchestration_error");
+    assert!(
+        message.contains("already used or does not exist"),
+        "{message}"
+    );
+    let task = tasks
+        .find(task["scheduledTaskId"].as_str().unwrap())
+        .await
+        .unwrap();
+    let token = task
+        .webhook
+        .as_ref()
+        .unwrap()
+        .path
+        .rsplit('/')
+        .next()
+        .unwrap();
+    let body = b"{}";
+    let signed = format!(
+        "sha256={}",
+        conn_support::hex::hex(&conn_support::hmac::hmac_sha256(b"test-sign-key", body))
+    );
+    let result = tasks
+        .trigger_webhook(conn_features::scheduled::webhook::Delivery {
+            hook_id: task.id.clone(),
+            token: token.to_owned(),
+            method: "POST".into(),
+            query: String::new(),
+            headers: vec![("x-signature".into(), signed)],
+            body: body.to_vec(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            result,
+            conn_features::scheduled::webhook::TriggerResult::Accepted { .. }
+        ),
+        "{result:?}"
+    );
+    assert!(
+        !serde_json::to_string(&tasks.list().await)
+            .unwrap()
+            .contains("test-sign-key")
+    );
+    f.service.config.engine.shutdown().await;
 }

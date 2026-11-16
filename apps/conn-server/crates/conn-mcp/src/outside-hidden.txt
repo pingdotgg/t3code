@@ -8,3 +8,5 @@ annotations_complete
 annotations_release
 t3_background_wait
 tool_search
+request_secret
+panel_open
