@@ -556,6 +556,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@media (width >= 48rem) {
+  :root:not(.black-chrome)
+    [data-slot="sidebar"][data-variant="inset"][data-state="collapsed"]
+    ~ [data-slot="sidebar-inset"]
+    [data-layout-pane-id][data-pane-notched]
+    > [data-pane-cut="start-after-notch"] {
+    left: 0;
+
+    & > span > span {
+      transition: none;
+    }
+  }
+}
+
 @supports (anchor-scope: --pane-notch) {
   @media (width >= 48rem) {
     [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"] {
