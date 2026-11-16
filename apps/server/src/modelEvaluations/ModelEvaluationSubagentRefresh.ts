@@ -31,40 +31,53 @@ function settledSubagentRun(
   return { threadId: event.threadId, runId };
 }
 
+export const followSettledSubagentRefreshes = Effect.fn("ModelEvaluationSubagentRefresh.follow")(
+  function* (input: {
+    readonly evaluations: Pick<
+      ModelEvaluations.ModelEvaluations["Service"],
+      "enqueueSettledSubagentRefreshes"
+    >;
+    readonly orchestrator: Pick<
+      Orchestrator.OrchestratorV2["Service"],
+      "getLatestEventSequence" | "streamDomainEventsAfter"
+    >;
+  }) {
+    yield* Effect.gen(function* () {
+      const after = yield* input.orchestrator.getLatestEventSequence();
+      yield* input.evaluations
+        .enqueueSettledSubagentRefreshes()
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not refresh settled subagent evaluations", { cause }),
+          ),
+        );
+      yield* Stream.runForEach(input.orchestrator.streamDomainEventsAfter(after), (event) => {
+        const run = settledSubagentRun(event);
+        if (run === undefined) return Effect.void;
+        return input.evaluations.enqueueSettledSubagentRefreshes({ runId: run.runId }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not refresh a settled subagent evaluation", {
+              threadId: run.threadId,
+              runId: run.runId,
+              cause,
+            }),
+          ),
+        );
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("settled subagent evaluation refresh stopped", { cause }),
+      ),
+    );
+  },
+);
+
 const make = Effect.gen(function* () {
   const evaluations = yield* ModelEvaluations.ModelEvaluations;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
 
   const start: ModelEvaluationSubagentRefresh["Service"]["start"] = () =>
-    forkParked(
-      Effect.gen(function* () {
-        const after = yield* orchestrator.getLatestEventSequence();
-        yield* evaluations
-          .enqueueSettledSubagentRefreshes()
-          .pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not refresh settled subagent evaluations", { cause }),
-            ),
-          );
-        yield* Stream.runForEach(orchestrator.streamDomainEventsAfter(after), (event) => {
-          const run = settledSubagentRun(event);
-          if (run === undefined) return Effect.void;
-          return evaluations.enqueueSettledSubagentRefreshes({ runId: run.runId }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("Could not refresh a settled subagent evaluation", {
-                threadId: run.threadId,
-                runId: run.runId,
-                cause,
-              }),
-            ),
-          );
-        });
-      }).pipe(
-        Effect.catchCause((cause) =>
-          Effect.logWarning("settled subagent evaluation refresh stopped", { cause }),
-        ),
-      ),
-    );
+    forkParked(followSettledSubagentRefreshes({ evaluations, orchestrator }));
 
   return { start } satisfies ModelEvaluationSubagentRefresh["Service"];
 });
