@@ -1,16 +1,7 @@
-import { toServerClock } from "@t3tools/client-runtime/clock";
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
-import type { EnvironmentId } from "@t3tools/contracts";
-import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import {
-  type LayoutChangeEvent,
-  Pressable,
-  Text as SystemText,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { type LayoutChangeEvent, Pressable, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -33,7 +24,6 @@ import { BrowserPreviewButton } from "../browser/browser-preview-button";
 import { DevicePreviewButton } from "../devices/device-preview-button";
 import type { FloatingWorkingStatus } from "./floating-working-status";
 import { ShimmeringWorkContent } from "./thread-work-log";
-import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
@@ -199,9 +189,7 @@ export function FloatingWorkingControl(props: {
         >
           <FloatingStatusLabel
             key={
-              props.status.kind === "working" ||
-              props.status.kind === "compacting" ||
-              props.status.kind === "extension"
+              props.status.kind === "compacting" || props.status.kind === "extension"
                 ? props.status.kind
                 : `${props.status.kind}:${props.status.label}`
             }
@@ -557,39 +545,29 @@ function FloatingStatusLabel(props: {
       </StatusLabelRow>
     );
   }
-  if (props.status.kind === "preparing") {
-    return (
-      <StatusLabelRow
-        key="preparing"
-        accessibilityLabel={props.status.label}
-        className="gap-1.5"
-        onLayout={props.onLayout}
-      >
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-        <ShimmeringWorkContent
-          className="flex-none"
-          textClassName="font-t3-medium"
-          compact
-          icon="arrow.triangle.branch"
-          iconSubtleColor="transparent"
-          label={props.status.label}
-          showIcon={false}
-        />
-      </StatusLabelRow>
-    );
-  }
   return (
-    <WorkingDuration
-      key="working"
-      environmentId={props.status.environmentId}
-      startedAt={props.status.startedAt}
+    <StatusLabelRow
+      key="preparing"
+      accessibilityLabel={props.status.label}
+      className="gap-1.5"
       onLayout={props.onLayout}
-    />
+    >
+      <SymbolView
+        name="arrow.triangle.branch"
+        size={13}
+        tintColorClassName="accent-foreground"
+        type="monochrome"
+      />
+      <ShimmeringWorkContent
+        className="flex-none"
+        textClassName="font-t3-medium"
+        compact
+        icon="arrow.triangle.branch"
+        iconSubtleColor="transparent"
+        label={props.status.label}
+        showIcon={false}
+      />
+    </StatusLabelRow>
   );
 }
 
@@ -627,53 +605,6 @@ function StatusLabelRow(props: {
       )}
     </Animated.View>
   );
-}
-
-function WorkingDuration(props: {
-  readonly environmentId: EnvironmentId;
-  readonly startedAt: string;
-  readonly onLayout: (event: LayoutChangeEvent) => void;
-}) {
-  return (
-    <StatusLabelRow onLayout={props.onLayout}>
-      <WorkingTimer environmentId={props.environmentId} startedAt={props.startedAt} />
-    </StatusLabelRow>
-  );
-}
-
-function WorkingTimer(props: {
-  readonly environmentId: EnvironmentId;
-  readonly startedAt: string;
-}) {
-  const nowMs = useVisibleSecondClock(true);
-  return (
-    <SystemText
-      className="shrink text-xs text-foreground"
-      numberOfLines={1}
-      style={{ fontVariant: ["tabular-nums"], fontWeight: "500" }}
-    >
-      Working {formatWorkingDuration(props.startedAt, toServerClock(props.environmentId, nowMs))}
-    </SystemText>
-  );
-}
-
-function formatWorkingDuration(startedAt: string, nowMs: number): string {
-  const startedAtMs = Date.parse(startedAt);
-  if (!Number.isFinite(startedAtMs) || nowMs <= startedAtMs) {
-    return "0s";
-  }
-
-  const totalSeconds = Math.floor((nowMs - startedAtMs) / 1_000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-  if (totalSeconds >= 3_600) {
-    return formatDuration(totalSeconds * 1_000);
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}m ${seconds}s`;
 }
 
 function ScrollToEndButton(props: { readonly disabled?: boolean; readonly onPress: () => void }) {

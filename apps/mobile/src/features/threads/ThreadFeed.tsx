@@ -1,7 +1,10 @@
+import { toServerClock } from "@t3tools/client-runtime/clock";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
+import { useVisibleSecondClock } from "./use-visible-second-clock";
 import {
   ThreadMarkdownVideo,
   ThreadMediaRetainContext,
@@ -1687,6 +1690,29 @@ function compactionLabel(label: string, title: string | undefined) {
     : label;
 }
 
+function RunFoldWorking(props: {
+  environmentId: EnvironmentId;
+  startedAt: string;
+  rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+}) {
+  const nowMs = toServerClock(props.environmentId, useVisibleSecondClock(true));
+  const seconds = Math.floor((nowMs - Date.parse(props.startedAt)) / 1_000);
+  return (
+    <View
+      className="min-h-11 min-w-0 flex-1 flex-row items-center"
+      style={{ minHeight: Math.max(TURN_FOLD_HEIGHT - 3.5, props.rowSizing.estimatedRowHeight) }}
+    >
+      <Text
+        key={props.rowSizing.textSizeKey}
+        numberOfLines={1}
+        className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
+      >
+        Working for {seconds > 0 ? formatDuration(seconds * 1_000) : "0s"}
+      </Text>
+    </View>
+  );
+}
+
 function RunFoldButton({
   entry,
   environmentId,
@@ -1847,15 +1873,23 @@ function renderFeedEntry(
   if (entry.type === "run-fold") {
     return (
       <View className="mb-1 flex-row items-center border-b border-border-subtle px-2">
-        <RunFoldButton
-          key={entry.id}
-          entry={entry}
-          environmentId={props.environmentId}
-          threadId={props.threadId}
-          onToggle={props.onToggleTurnFold}
-          rowSizing={props.workRowSizing}
-          iconColor={iconSubtleColor}
-        />
+        {entry.workingSince ? (
+          <RunFoldWorking
+            environmentId={props.environmentId}
+            startedAt={entry.workingSince}
+            rowSizing={props.workRowSizing}
+          />
+        ) : (
+          <RunFoldButton
+            key={entry.id}
+            entry={entry}
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            onToggle={props.onToggleTurnFold}
+            rowSizing={props.workRowSizing}
+            iconColor={iconSubtleColor}
+          />
+        )}
         {entry.checkpointSummary ? (
           <TurnDiffStat
             checkpoint={entry.checkpointSummary}

@@ -1443,8 +1443,8 @@ describe("buildThreadFeed", () => {
         new Set(),
         new Set(),
         startedAt,
-      ),
-    ).toEqual([]);
+      ).map((row) => row.type),
+    ).toEqual(["run-fold"]);
   });
   it("hides tool calls or everything but the final answer", () => {
     const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;
@@ -1794,8 +1794,9 @@ describe("subagent continued by a later turn", () => {
   ];
 
   it("keeps each turn's fold between its own prompt and answer", () => {
+    const feed = buildThreadFeed(items.map((entry, index) => projected(entry, index)));
     const presented = deriveThreadFeedPresentation(
-      buildThreadFeed(items.map((entry, index) => projected(entry, index))),
+      feed,
       { runId: run2, status: "completed", startedAt: at(30), completedAt: at(41) },
       new Set(),
     );
@@ -1807,6 +1808,22 @@ describe("subagent continued by a later turn", () => {
       `run-fold:${run2}`,
       "closing-2",
     ]);
+
+    // While the run works, its fold row already holds that slot with a live timer.
+    const live = deriveThreadFeedPresentation(
+      feed,
+      { runId: run2, status: "running", startedAt: at(30), completedAt: null },
+      new Set(),
+      new Set(),
+      at(30),
+    );
+    expect(live.slice(3, 6).map((entry) => entry.id)).toEqual([
+      "prompt-2",
+      `run-fold:${run2}`,
+      expect.not.stringMatching(/^run-fold:/),
+    ]);
+    expect(live[4]).toMatchObject({ workingSince: at(30) });
+    expect(live.filter((entry) => entry.type === "run-fold")).toHaveLength(2);
   });
 });
 

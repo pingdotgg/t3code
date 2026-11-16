@@ -248,6 +248,8 @@ type ThreadFeedEntryContent =
   | {
       readonly type: "run-fold";
       readonly deferredWorkItemIds?: ReadonlyArray<string>;
+      /** Set while the run works: the row shows a live timer and does not toggle. */
+      readonly workingSince?: string;
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId;
@@ -1725,9 +1727,34 @@ export function deriveThreadFeedPresentation(
       for (const entryId of fold.hiddenEntryIds) collapsedEntryIds.add(entryId);
     }
   }
+  // The working run's fold row shows its live timer where "Worked for" lands once it settles.
+  // Zen never folds, so it keeps only the Thinking row.
+  const liveFold =
+    !zen &&
+    isWorking &&
+    activeWorkStartedAt !== null &&
+    activeRunId !== null &&
+    !compactionCommandRunIds.has(activeRunId)
+      ? liveRunFoldRow(activeRunId, activeWorkStartedAt)
+      : null;
+  let liveFoldPlaced = false;
+  // Earlier turns can hold the run's own items (a subagent it continued), so wait for its prompt.
+  let liveFoldReady =
+    liveFold !== null &&
+    !sourceFeed.some(
+      (entry) => isUserMessageEntry(entry) && feedEntryRunId(entry) === liveFold.runId,
+    );
   for (let sourceIndex = 0; sourceIndex < sourceFeed.length; sourceIndex += 1) {
     const entry = sourceFeed[sourceIndex]!;
     const feedIndex = retainedFeedIndices[sourceIndex]!;
+    if (liveFold !== null && !liveFoldPlaced && feedEntryRunId(entry) === liveFold.runId) {
+      if (isUserMessageEntry(entry)) {
+        liveFoldReady = true;
+      } else if (liveFoldReady) {
+        result.push(liveFold);
+        liveFoldPlaced = true;
+      }
+    }
     if (isUserMessageEntry(entry)) {
       restarts.push({ entry: feedIndex, rowsLength: result.length });
     }
@@ -1808,6 +1835,7 @@ export function deriveThreadFeedPresentation(
       );
     }
   }
+  if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
@@ -1945,6 +1973,23 @@ function runningSubagentsAtRunTail(feed: ReadonlyArray<ThreadFeedEntry>, runId: 
     running += items.filter(isLiveSubagentTurnItem).length;
   }
   return running;
+}
+
+let cachedLiveRunFoldRow: Extract<ThreadFeedEntry, { readonly type: "run-fold" }> | null = null;
+
+function liveRunFoldRow(runId: RunId, startedAt: string) {
+  if (cachedLiveRunFoldRow?.runId !== runId || cachedLiveRunFoldRow.workingSince !== startedAt) {
+    cachedLiveRunFoldRow = {
+      type: "run-fold",
+      id: `run-fold:${runId}`,
+      createdAt: startedAt,
+      runId,
+      label: "Working",
+      expanded: false,
+      workingSince: startedAt,
+    };
+  }
+  return cachedLiveRunFoldRow;
 }
 
 function thinkingRow(
