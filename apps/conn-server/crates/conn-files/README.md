@@ -78,28 +78,5 @@ the state folder). `cargo run --release -p conn-files --example search_memory --
 prints what a listing and both searches find and take. The `ts-files` and `rust-files`
 recorder scenarios drive the real web client against each server (`fixtures/README.md`).
 
-## HTML publication
-
-`html::publish` implements `HtmlRender.publish` for a server without an installed preview
-browser. It returns an `html_render` reference, saves a thread attachment, and uses the
-existing signed HTML asset route. `html::read_source` restricts path input to regular,
-single-link HTML documents outside internal state. `html::prepare` adds the shared bootstrap,
-inlines validated local images, and enforces T3's image, page and viewport-height rules.
-Run these blocking calls on `spawn_blocking`.
-
-The theme and interaction script in `src/html-bootstrap.json` is generated from
-`packages/shared/src/htmlRender.ts` by `conn-mcp/tools/gen-tools.mjs`. Its `--check` detects
-drift. No TypeScript code runs in the Rust server.
-
-`regex-automata` and `thiserror` are existing workspace dependencies, with unchanged versions
-and features and no new transitive crates. The former handles bounded pattern scans; each
-HTML regex limits its DFA and lazy-DFA cache to 64 KiB. crates.io on 2026-11-16 reports
-regex-automata 0.4.18 (updated 2026-08-04, 364 million recent downloads). The MCP fixture
-reports anonymous memory before and after its publication cases. On Beast, the debug fixture
-went from 2,516 to 5,228 KiB after 36 cases (+2,712 KiB, including retained case results).
-
-Browser installation and `html_preview` are separate work. This implementation omits
-optional measured `heights`, which T3 also omits when its pinned browser is absent. It does
-not implement T3's provider-session recovery when a provider drops a successful tool result.
-The normal result is accepted by the shared client's `htmlRenderFromToolItem` parser.
-See [HTML-PORTING.md](HTML-PORTING.md) for the behavior and test mapping.
+HTML publication omits T3's optional browser-measured heights and recovery of successful
+results missing from provider transcripts. HTML pattern whitespace follows Rust's Unicode rules.

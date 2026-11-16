@@ -348,8 +348,6 @@ clients and checks that the caller still owns a live run. Plan mode may pass inl
 only full-access threads may pass a file path. The files service prepares the page and saves
 its attachment. The result is the normal client render reference and T3's success message.
 No preview capability is advertised. `html_preview` and the browser tools remain unserved.
-The implementation omits optional browser-measured heights and provider-result recovery;
-see [HTML publication parity](../conn-files/HTML-PORTING.md).
 ## Secret requests
 
 `request_secret` acts as the calling thread and stays hidden from outside clients. It records

@@ -54,6 +54,7 @@ mod streaming;
 mod streams;
 mod time;
 mod titles;
+pub mod tool_output;
 mod visibility;
 
 pub use background_wait::{BackgroundWait, BackgroundWaitError};

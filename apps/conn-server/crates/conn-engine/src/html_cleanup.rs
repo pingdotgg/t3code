@@ -2,16 +2,19 @@
 
 use std::collections::HashSet;
 
-use serde_json::Value;
-
-use crate::store::{StoreResult, Tx};
+use crate::{
+    store::{StoreResult, Tx},
+    tool_output::html_render_from_tool_item,
+};
 
 pub(crate) fn plan(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Vec<(String, String)>> {
     let mut retained = HashSet::new();
     let mut candidates = HashSet::new();
     tx.html_cleanup_items(thread_id, |owner, item, shown| {
-        if let Some(id) = attachment_id(&item) {
-            let key = (owner, id);
+        if let Some(reference) = html_render_from_tool_item(&item)
+            && let Some(id) = reference.get("attachmentId").and_then(|id| id.as_str())
+        {
+            let key = (owner, id.to_owned());
             if shown {
                 retained.insert(key);
             } else {
@@ -24,197 +27,11 @@ pub(crate) fn plan(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Vec<(String, Str
     Ok(ids)
 }
 
-#[derive(Default)]
-struct Budget {
-    bytes: usize,
-    nodes: usize,
-    exceeded: bool,
-}
-
-struct Envelope {
-    data: Option<Value>,
-    failed: bool,
-}
-
-fn read(value: &Value, budget: &mut Budget, depth: usize) -> Envelope {
-    let empty = || Envelope {
-        data: None,
-        failed: false,
-    };
-    if depth > 4 || budget.nodes >= 128 {
-        budget.exceeded = true;
-        return empty();
-    }
-    budget.nodes += 1;
-    match value {
-        Value::String(text) => {
-            budget.bytes = budget.bytes.saturating_add(text.len());
-            if budget.bytes > 16_384 {
-                budget.exceeded = true;
-                return empty();
-            }
-            serde_json::from_str(text)
-                .ok()
-                .map_or_else(empty, |value| read(&value, budget, depth + 1))
-        }
-        Value::Array(blocks) => {
-            if blocks.len() > 32 {
-                budget.exceeded = true;
-                return empty();
-            }
-            let mut result = empty();
-            for block in blocks {
-                let text = block.get("text").unwrap_or(&Value::Null);
-                let next = read(text.get("text").unwrap_or(text), budget, depth + 1);
-                result.data = result.data.or(next.data);
-                result.failed |= next.failed;
-                if budget.exceeded {
-                    break;
-                }
-            }
-            result
-        }
-        Value::Object(object) => {
-            let failed = object.get("isError") == Some(&Value::Bool(true))
-                || object.get("is_error") == Some(&Value::Bool(true))
-                || object.get("_tag").and_then(Value::as_str) == Some("OrchestratorMcpFailure")
-                || object.get("error").is_some_and(|value| !value.is_null());
-            let content = object
-                .get("structuredContent")
-                .filter(|v| !v.is_null())
-                .or_else(|| object.get("content"));
-            if let Some(content) = content {
-                let next = read(content, budget, depth + 1);
-                Envelope {
-                    data: next.data,
-                    failed: failed || next.failed,
-                }
-            } else {
-                Envelope {
-                    data: Some(value.clone()),
-                    failed,
-                }
-            }
-        }
-        _ => empty(),
-    }
-}
-
-fn is_html_tool(name: &str) -> bool {
-    if name == "execute" {
-        return true;
-    }
-    let name = name.trim();
-    let name = name
-        .rsplit_once(char::is_whitespace)
-        .filter(|(_, suffix)| {
-            suffix.eq_ignore_ascii_case("complete") || suffix.eq_ignore_ascii_case("completed")
-        })
-        .map_or(name, |(head, _)| head.trim_end());
-    if name == "html_render" {
-        return true;
-    }
-    let lower = name.to_ascii_lowercase();
-    if let Some(rest) = name.get(5..).filter(|_| lower.starts_with("mcp__"))
-        && let Some((server, tool)) = rest.split_once("__")
-    {
-        return [
-            "t3-code",
-            "t3_code",
-            "t3code",
-            "t3-code-direct",
-            "t3_code_direct",
-        ]
-        .contains(&server.to_ascii_lowercase().as_str())
-            && tool == "html_render";
-    }
-    for prefix in [
-        "t3-code-direct",
-        "t3_code_direct",
-        "t3_code-direct",
-        "t3-code_direct",
-        "t3-code",
-        "t3_code",
-        "t3code",
-    ] {
-        if let Some(rest) = lower.strip_prefix(prefix) {
-            let suffix = name.get(name.len() - rest.len()..).unwrap_or_default();
-            if suffix
-                .strip_prefix(['.', ':', '/'])
-                .is_some_and(|s| s == "html_render")
-                || suffix.split_once('·').is_some_and(|(before, after)| {
-                    before.trim().is_empty() && after.trim_start() == "html_render"
-                })
-            {
-                return true;
-            }
-        }
-    }
-    let rest = lower
-        .strip_prefix("mcp")
-        .and_then(|s| {
-            let count = s
-                .bytes()
-                .take(2)
-                .take_while(|c| matches!(c, b'-' | b'_'))
-                .count();
-            (count > 0).then(|| s.get(count..)).flatten()
-        })
-        .unwrap_or(&lower);
-    for prefix in ["t3-code", "t3_code", "t3 code", "t3code"] {
-        if let Some(suffix) = rest.strip_prefix(prefix) {
-            let original = name.get(name.len() - suffix.len()..).unwrap_or_default();
-            if original.strip_prefix("__") == Some("html_render")
-                || original.strip_prefix(['-', '_', '.', ':', '/', ' ']) == Some("html_render")
-            {
-                return true;
-            }
-        }
-    }
-    lower.starts_with("t3-code-") && name.ends_with("_html_render")
-}
-
-fn attachment_id(item: &Value) -> Option<String> {
-    if !is_html_tool(item.get("toolName")?.as_str()?) {
-        return None;
-    }
-    let mut budget = Budget::default();
-    let result = read(item.get("output")?, &mut budget, 0);
-    if result.failed || budget.exceeded {
-        return None;
-    }
-    let data = result.data?;
-    let reference = data.get("htmlRender")?;
-    let id = reference.get("attachmentId")?.as_str()?;
-    if id.is_empty()
-        || id.encode_utf16().count() > 256
-        || !reference.get("title")?.is_string()
-        || !reference.get("height")?.as_f64()?.is_finite()
-    {
-        return None;
-    }
-    Some(id.to_owned())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::{Draft, Store};
-    use serde_json::json;
-
-    #[test]
-    fn reads_the_same_html_references_as_t3() {
-        let cases: Vec<Value> =
-            serde_json::from_str(include_str!("html-cleanup-cases.json")).unwrap();
-        for case in cases {
-            assert_eq!(
-                attachment_id(&case["item"]),
-                case["id"].as_str().map(str::to_owned),
-                "{}",
-                case["item"]
-            );
-        }
-    }
+    use serde_json::{Value, json};
 
     #[test]
     fn deletion_preserves_visible_source_runs_until_the_last_fork_leaves() {

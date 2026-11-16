@@ -149,6 +149,7 @@ pub fn publish(
     height: i64,
 ) -> Result<Reference, HtmlError> {
     let html = prepare(source)?;
+    let limits = bootstrap()?;
     let segment = attachments::thread_segment(thread_id).ok_or_else(store_error)?;
     let attachment_id = format!("{segment}-{}-html", conn_support::uuid_v4());
     let path = files
@@ -171,7 +172,7 @@ pub fn publish(
     let title = String::from_utf16_lossy(
         &title
             .encode_utf16()
-            .take(bootstrap()?.max_title_length)
+            .take(limits.max_title_length)
             .collect::<Vec<_>>(),
     );
     Ok(Reference {
@@ -181,7 +182,7 @@ pub fn publish(
         } else {
             title
         },
-        height: height.clamp(bootstrap()?.min_height, bootstrap()?.max_height),
+        height: height.clamp(limits.min_height, limits.max_height),
     })
 }
 

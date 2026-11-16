@@ -13,6 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { htmlParity } from "./html-parity.mjs";
+import { toolOutputParity } from "./tool-output-parity.mjs";
 import { McpSession, oauthMcpToken, pairBearer } from "./mcp-client.mjs";
 import { claudeStub, tsCredential, rustCredential, fileText, projectProviderPolicy } from "./handoff-fixture.mjs";
 import { monorepo } from "../../../tools/monorepo.mjs";
@@ -241,6 +242,7 @@ const htmlBinary = [
 ].find((file) => NodeFS.existsSync(file));
 if (htmlBinary === undefined) throw new Error("Build the conn-mcp html_cases example first.");
 await htmlParity(htmlBinary);
+await toolOutputParity(NodePath.join(NodePath.dirname(htmlBinary), "tool_output_cases"));
 
 const servers = await Promise.all([startTs(), startRust()]);
 const sessions = servers.map((server) => new McpSession(server.origin, server.authorization));

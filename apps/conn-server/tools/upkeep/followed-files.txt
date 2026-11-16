@@ -68,6 +68,8 @@ apps/server/src/orchestration-v2/ThreadSearch.ts
 apps/server/src/orchestration-v2/QueuedRunOrder.ts
 apps/server/src/orchestration-v2/ThreadManagementService.ts
 packages/shared/src/toolOutput.ts
+packages/shared/src/t3McpToolPresentation.ts
+packages/shared/src/mcpApp.ts
 
 [crates/conn-server/src/auth.rs]
 apps/server/src/auth
