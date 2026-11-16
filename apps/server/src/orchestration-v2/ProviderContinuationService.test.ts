@@ -101,10 +101,10 @@ function layerTest(input: {
   const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
     getThreadRecords: input.getThreadRecords,
     dispatch: (command) =>
-      (input.beforeDispatch?.(command.threadId) ?? Effect.void).pipe(
-        Effect.andThen(Queue.offer(input.dispatched, command)),
-        Effect.as({} as never),
-      ),
+      (
+        ("threadId" in command ? input.beforeDispatch?.(command.threadId) : undefined) ??
+        Effect.void
+      ).pipe(Effect.andThen(Queue.offer(input.dispatched, command)), Effect.as({} as never)),
   });
   const layerWorker = ProviderContinuationService.layer.pipe(
     Layer.provide(
