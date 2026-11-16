@@ -12,8 +12,8 @@ Both workflows use the same paths for pull requests and pushes to `main` or `syn
 - `conn-server-checks.yml` (`tools/check.sh`, including monorepo comparisons):
   `apps/conn-server/**`, `apps/server/**`, `apps/web/**`, `packages/**` and its workflow.
 
-`conn-server-checks.yml` builds the Rust prerequisites once, then runs five comparison
-groups from `tools/check.sh --group 1` through `--group 5`. Each group runs the canary.
+`conn-server-checks.yml` builds the Rust prerequisites once, then runs four comparison
+groups from `tools/check.sh --group 1` through `--group 4`. Each group runs the canary.
 `Conn Server checks` remains the final required check and fails if any group fails or skips.
 Each check has a timeout that stops its process group; each CI job also has a time limit.
 The nightly sync waits for the workflows triggered by its changes before it merges.
