@@ -9,6 +9,7 @@ pub mod detect;
 pub mod discovery;
 pub mod hosts;
 pub mod http;
+pub mod pull_requests;
 pub mod registry;
 pub mod remote;
 pub mod repository;

@@ -57,6 +57,12 @@ builder with a test that fails without the fix.
 - **Cleanup** (PR #110): one root fix for the stub ETXTBSY race; thread launch uses
   `fetch_base`; pull requests run the Conn Server checks on the same paths as pushes; trims
   from a retrospective review of #96-#103.
+- **Pull request checkout** (PR #108), GitHub only: `git.resolvePullRequest` and
+  `git.preparePullRequestThread` (in place or in a worktree; fork heads, deleted forks through
+  `refs/pull/<n>/head`, `owner:branch` through REST, upstream tracking as T3 sets it), and the
+  commit step of `git.runStackedAction` with a generated message. Push and PR creation answer
+  T3's typed `GitManagerError`: in a container they are Orbit's. Known difference: no hook
+  progress events.
 - **Clients** (VMPal macOS VM, Conn `c969c3ebd1`): the web client (through a host T3 as a
   remote environment) and the iOS dev client in a simulator (paired straight to the Conn
   Server) each ran a Haiku turn against the Conn Server on macOS.

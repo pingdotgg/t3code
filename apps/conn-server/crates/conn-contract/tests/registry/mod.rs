@@ -715,6 +715,8 @@ pub(crate) fn round_trip(
             go::<conn_contract::ProviderResumeUnsupportedError>(value)
         }
         "ProviderUserInputAnswers" => go::<conn_contract::ProviderUserInputAnswers>(value),
+        "PullRequestDiffInput" => go::<conn_contract::PullRequestDiffInput>(value),
+        "PullRequestDiffResult" => go::<conn_contract::PullRequestDiffResult>(value),
         "RuntimeMode" => go::<conn_contract::RuntimeMode>(value),
         "ServerAuthBootstrapMethod" => go::<conn_contract::ServerAuthBootstrapMethod>(value),
         "ServerAuthDescriptor" => go::<conn_contract::ServerAuthDescriptor>(value),

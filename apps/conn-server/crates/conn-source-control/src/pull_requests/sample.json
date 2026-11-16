@@ -1,0 +1,78 @@
+{
+  "number": 7,
+  "title": "A change",
+  "url": "https://github.com/a/b/pull/7",
+  "state": "OPEN",
+  "isDraft": false,
+  "headRefName": "feature",
+  "baseRefName": "main",
+  "headRefOid": "1111111111111111111111111111111111111111",
+  "headRepository": {
+    "nameWithOwner": "a/b",
+    "viewerPermission": "WRITE"
+  },
+  "headRepositoryOwner": {
+    "login": "a",
+    "__typename": "User"
+  },
+  "headRef": {
+    "id": "ref"
+  },
+  "isCrossRepository": false,
+  "maintainerCanModify": false,
+  "viewerCanUpdate": true,
+  "viewerDidAuthor": false,
+  "viewerCanUpdateBranch": true,
+  "mergeable": "MERGEABLE",
+  "mergeStateStatus": "CLEAN",
+  "reviewDecision": "APPROVED",
+  "additions": 10,
+  "deletions": 2,
+  "changedFiles": 1,
+  "body": "body",
+  "createdAt": "2026-11-15T00:00:00Z",
+  "updatedAt": "2026-11-16T00:00:00Z",
+  "mergedAt": null,
+  "closedAt": null,
+  "author": {
+    "login": "nick",
+    "name": "Nick",
+    "avatarUrl": null
+  },
+  "autoMergeRequest": null,
+  "baseRef": {
+    "compare": {
+      "behindBy": 0
+    }
+  },
+  "latestReviews": {
+    "nodes": []
+  },
+  "reviewRequests": {
+    "nodes": []
+  },
+  "labels": {
+    "nodes": []
+  },
+  "repository": {
+    "nameWithOwner": "a/b"
+  },
+  "commits": {
+    "nodes": [
+      {
+        "commit": {
+          "statusCheckRollup": {
+            "state": "SUCCESS",
+            "contexts": {
+              "nodes": [],
+              "pageInfo": {
+                "hasNextPage": false,
+                "endCursor": null
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
