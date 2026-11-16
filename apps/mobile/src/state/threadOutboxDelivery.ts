@@ -696,11 +696,11 @@ interface ThreadOutboxRetry {
 /** What a thread's delivery fiber does next with the head of its queue. */
 type ThreadDeliveryStep =
   /** Nothing to send until an input changes, or until `until` when a backoff is running. */
-  | { readonly kind: "wait"; readonly until?: number }
+  | { readonly _tag: "Wait"; readonly until?: number }
   /** The head failed without a send; back off before trying it again. */
-  | { readonly kind: "backoff"; readonly messageId: MessageId }
+  | { readonly _tag: "Backoff"; readonly messageId: MessageId }
   | {
-      readonly kind: "dispatch";
+      readonly _tag: "Dispatch";
       readonly messageId: MessageId;
       /** Resolves true when the message is done with (sent, removed or handed back). */
       readonly run: () => Promise<boolean>;
@@ -1180,7 +1180,7 @@ export function createThreadOutboxDelivery(): {
     } = inputs;
     const nextQueuedMessage = queuedMessages[0];
     if (!nextQueuedMessage) {
-      return { kind: "wait" };
+      return { _tag: "Wait" };
     }
     const messageId = nextQueuedMessage.messageId;
     if (
@@ -1188,10 +1188,10 @@ export function createThreadOutboxDelivery(): {
       acknowledgedExistingThreadMessageIds.has(messageId)
     ) {
       if (retryNotBefore(messageId) > Date.now()) {
-        return { kind: "wait", until: retryNotBefore(messageId) };
+        return { _tag: "Wait", until: retryNotBefore(messageId) };
       }
       return {
-        kind: "dispatch",
+        _tag: "Dispatch",
         messageId,
         run: () =>
           removeAcknowledgedExistingThreadMessage(
@@ -1201,22 +1201,22 @@ export function createThreadOutboxDelivery(): {
       };
     }
     if (editingQueuedMessageIds[messageId]) {
-      return { kind: "wait" };
+      return { _tag: "Wait" };
     }
     const blockedRecovery = blockedRecoveries.get(messageId);
     if (blockedRecovery) {
       if (blockedRecovery.message === nextQueuedMessage) {
-        return { kind: "wait" };
+        return { _tag: "Wait" };
       }
       blockedRecoveries.delete(messageId);
       blockedRecovery.unsubscribe();
     }
     if (retryNotBefore(messageId) > Date.now()) {
-      return { kind: "wait", until: retryNotBefore(messageId) };
+      return { _tag: "Wait", until: retryNotBefore(messageId) };
     }
     let thread = findThread(threads, nextQueuedMessage);
     if (thread && scopedThreadKey(thread.environmentId, thread.id) !== threadKey) {
-      return { kind: "wait" };
+      return { _tag: "Wait" };
     }
 
     const creation = nextQueuedMessage.creation;
@@ -1281,10 +1281,10 @@ export function createThreadOutboxDelivery(): {
       familyRead !== "settled"
     ) {
       // An empty family read changes no merged row, so nothing else would wake the thread.
-      return { kind: "backoff", messageId };
+      return { _tag: "Backoff", messageId };
     }
     if (deliveryAction === "send" && !operableEnvironments.has(nextQueuedMessage.environmentId)) {
-      return { kind: "wait" };
+      return { _tag: "Wait" };
     }
     const dispatchStep = resolveThreadOutboxDispatchStep({
       deliveryAction,
@@ -1299,15 +1299,15 @@ export function createThreadOutboxDelivery(): {
         : null,
     });
     if (dispatchStep.step === "wait") {
-      return { kind: "wait" };
+      return { _tag: "Wait" };
     }
     if (dispatchStep.step === "retry") {
-      return { kind: "backoff", messageId };
+      return { _tag: "Backoff", messageId };
     }
     if (dispatchStep.step === "restore") {
       const attachmentError = dispatchStep.reason;
       return {
-        kind: "dispatch",
+        _tag: "Dispatch",
         messageId,
         run: () =>
           confirmThreadOutboxMessageQueued(nextQueuedMessage).then((queued) =>
@@ -1325,10 +1325,10 @@ export function createThreadOutboxDelivery(): {
         : null;
     if (deliveryAction === "send" && creation !== undefined) {
       if (!isQueuedThreadCreationSendable(nextQueuedMessage)) {
-        return { kind: "wait" };
+        return { _tag: "Wait" };
       }
       if (creationProjectCwd === null && shellStatus !== "live") {
-        return { kind: "wait" };
+        return { _tag: "Wait" };
       }
     }
 
@@ -1383,7 +1383,7 @@ export function createThreadOutboxDelivery(): {
               ? sendQueuedMessage(nextQueuedMessage, thread)
               : Promise.resolve(false);
       });
-    return { kind: "dispatch", messageId, run };
+    return { _tag: "Dispatch", messageId, run };
   }
 
   // One fiber per thread with queued messages. Opening a thread's latch wakes its fiber to
@@ -1399,11 +1399,11 @@ export function createThreadOutboxDelivery(): {
         yield* wake.close;
         const inputs = appAtomRegistry.get(deliveryInputsAtom);
         const step = nextStep(threadKey, inputs.queuedMessagesByThreadKey[threadKey] ?? [], inputs);
-        if (step.kind === "backoff") {
+        if (step._tag === "Backoff") {
           scheduleRetry(step.messageId);
           return;
         }
-        if (step.kind === "wait") {
+        if (step._tag === "Wait") {
           if (step.until === undefined) {
             yield* wake.await;
             return;
