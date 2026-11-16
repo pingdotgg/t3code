@@ -4,6 +4,8 @@ import {
   ProjectKnowledgeMutation,
   type AssistedLearningRun,
   type KnowledgeMessageRef,
+  type MessageId,
+  type OrchestrationV2MessageSpeaker,
   type ProjectId,
   RunId,
   ThreadId,
@@ -24,7 +26,6 @@ import { forkParked } from "../../serverActivation.ts";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import { readPeerSpeakers } from "../../orchestration-v2/readPeerSpeakers.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import {
@@ -196,11 +197,8 @@ const make = Effect.gen(function* () {
         (left, right) => finalized.indexOf(left) - finalized.indexOf(right),
       );
       // Citations are message ids and digests from this canonical read; the model only names refs.
-      const speakersByMessage = new Map<
-        (typeof transcript)[number]["id"],
-        { readonly label: string; readonly model: string }
-      >();
-      const assistantIds = new Map<ThreadId, Array<(typeof transcript)[number]["id"]>>();
+      const speakersByMessage = new Map<MessageId, OrchestrationV2MessageSpeaker>();
+      const assistantIds = new Map<ThreadId, Array<MessageId>>();
       for (const message of transcript) {
         if (message.role !== "assistant") continue;
         const ids = assistantIds.get(message.threadId) ?? [];
@@ -208,7 +206,7 @@ const make = Effect.gen(function* () {
         assistantIds.set(message.threadId, ids);
       }
       for (const [id, messageIds] of assistantIds)
-        for (const [messageId, speaker] of yield* readPeerSpeakers(sql, id, messageIds))
+        for (const [messageId, speaker] of yield* projections.getPeerSpeakers(id, messageIds))
           speakersByMessage.set(messageId, speaker);
       const refs = new Map<string, KnowledgeMessageRef>();
       const userRefs = new Set<string>();

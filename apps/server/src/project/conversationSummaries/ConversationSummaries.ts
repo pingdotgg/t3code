@@ -2,6 +2,7 @@ import {
   ConversationSummary,
   ConversationSummaryError,
   ConversationSummaryPass,
+  ConversationSummarySourceRange,
   CONVERSATION_SUMMARY_MAX_EXPANSION_CHARS,
   CONVERSATION_SUMMARY_MAX_SOURCES,
   conversationSummarySourceIdentity,
@@ -19,6 +20,7 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2MessageSpeaker,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
   type ProjectId,
@@ -45,7 +47,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
-import { readPeerSpeakers } from "../../orchestration-v2/readPeerSpeakers.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import * as ProjectKnowledge from "../knowledge/ProjectKnowledge.ts";
@@ -330,11 +331,6 @@ const make = Effect.gen(function* () {
         source.kind === "message",
     );
     const messageResults = yield* knowledge.readSources({ ...input, sources: messages });
-    const speakers = yield* readPeerSpeakers(
-      sql,
-      input.threadId,
-      messages.map((source) => source.messageId),
-    );
     const invisible =
       messages.length === 0
         ? new Set<MessageId>()
@@ -343,16 +339,14 @@ const make = Effect.gen(function* () {
             messages.map((source) => source.messageId),
           );
     const current = new Map<string, ConversationSummarySourceResult>();
-    messages.forEach((source, index) => {
-      const result = invisible.has(source.messageId)
-        ? { state: "unavailable" as const, reason: "missing" as const }
-        : messageResults[index]!;
-      const speaker = result.state === "available" ? speakers.get(source.messageId) : undefined;
+    messages.forEach((source, index) =>
       current.set(
         conversationSummarySourceIdentity(source),
-        speaker === undefined || result.state !== "available" ? result : { ...result, speaker },
-      );
-    });
+        invisible.has(source.messageId)
+          ? { state: "unavailable", reason: "missing" }
+          : messageResults[index]!,
+      ),
+    );
     const tools = unique.filter(
       (source): source is Extract<ConversationSummaryRangeRef, { kind: "turn_item" }> =>
         source.kind === "turn_item",
@@ -930,7 +924,7 @@ const make = Effect.gen(function* () {
           createdAt: message.createdAt,
         });
       }
-      const speakers = yield* readPeerSpeakers(sql, threadId);
+      const speakers = yield* projections.getPeerSpeakers(threadId);
       for (const item of records.turnItems) {
         if (item.runId !== null && excluded.has(item.runId)) continue;
         const text = summaryToolText(item);
@@ -998,12 +992,12 @@ const make = Effect.gen(function* () {
         readonly messages: ReadonlyArray<
           {
             readonly text: string;
-            readonly range?: ConversationSummaryRangeRef["range"];
+            readonly range?: (typeof ConversationSummarySourceRange)["Type"];
           } & (
             | { readonly role: "user" | "assistant" | "tool" | "summary" }
             | {
                 readonly role: "peer";
-                readonly speaker: { readonly label: string; readonly model: string };
+                readonly speaker: OrchestrationV2MessageSpeaker;
               }
           )
         >;
@@ -1015,10 +1009,7 @@ const make = Effect.gen(function* () {
         const messages = input.messages.map((message, index) => {
           const ref = `M${index + 1}`;
           refs.set(ref, conversationSummarySourceKey(input.sources[index]!));
-          const range = message.range === undefined ? {} : { range: message.range };
-          return message.role === "peer"
-            ? { ref, role: message.role, speaker: message.speaker, text: message.text, ...range }
-            : { ref, role: message.role, text: message.text, ...range };
+          return { ref, ...message };
         });
         const reply = yield* textGeneration
           .generateConversationSummary({

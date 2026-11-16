@@ -328,6 +328,10 @@ const ProjectKnowledgeSourceSchema = Schema.Union([
     text: Schema.String,
     title: Schema.String,
     role: Schema.Literals(["user", "assistant"]),
+    /** Set when an assistant message was spoken by another model in the thread. */
+    speaker: Schema.optionalKey(
+      Schema.Struct({ label: TrimmedNonEmptyString, model: TrimmedNonEmptyString }),
+    ),
     createdAt: IsoDateTime,
     archived: Schema.Boolean,
   }),

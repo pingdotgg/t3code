@@ -464,7 +464,7 @@ it.effect(
   },
 );
 
-it.effect("attributes peer replies to their speaker in summary model input", () => {
+it.effect("sends a peer reply to the summary model as that peer", () => {
   const model = citing();
   return Effect.gen(function* () {
     yield* seed;
@@ -491,30 +491,6 @@ it.effect("attributes peer replies to their speaker in summary model input", () 
       role: "assistant",
       text: rawText(3),
     });
-    const summary = yield* onlySummary;
-    const service = yield* ConversationSummaries.ConversationSummaries;
-    const expansion = yield* service.expand({
-      ...scope,
-      summaryId: summary.id,
-      offset: 1,
-      limit: 1,
-    });
-    const peerSource = expansion.sources[0]?.result;
-    assert.equal(peerSource?.state, "available");
-    if (peerSource?.state !== "available") return yield* Effect.die("Expected the peer source");
-    assert.equal(peerSource.role, "assistant");
-    assert.deepEqual(peerSource.speaker, { label: "Astra", model: "gpt-6-astra" });
-    assert.equal(peerSource.text, rawText(1));
-    const agentPage = yield* service.expand({
-      ...scope,
-      summaryId: summary.id,
-      offset: 3,
-      limit: 1,
-    });
-    const agentSource = agentPage.sources[0]?.result;
-    if (agentSource?.state !== "available") return yield* Effect.die("Expected the agent source");
-    assert.equal(agentSource.role, "assistant");
-    assert.equal(agentSource.speaker, undefined);
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
