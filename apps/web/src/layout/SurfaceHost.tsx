@@ -367,6 +367,7 @@ interface StripSpan {
  * after its end moves without exposing trailing chrome. */
 function useStripResizeScroll(
   scrollerRef: React.RefObject<HTMLDivElement | null>,
+  stageRef: React.RefObject<HTMLDivElement | null>,
   focusedSpanRef: React.RefObject<StripSpan | null>,
   active: boolean,
 ): void {
@@ -374,48 +375,74 @@ function useStripResizeScroll(
   useLayoutEffect(() => {
     const scroller = scrollerRef.current;
     if (!scroller || !active) return;
-    // The scroll from before the latest resize, as the observer last left it.
-    let scrollLeft = scroller.scrollLeft;
-    let width = scroller.clientWidth;
-    let { left, right } = scroller.getBoundingClientRect();
+    let target = scroller.scrollLeft;
+    let landed = target;
+    let offset = 0;
+    let owed = 0;
+    let owedStage = 0;
+    let clientWidth = scroller.clientWidth;
+    let { left, right, width } = scroller.getBoundingClientRect();
+    const place = (next: number) => {
+      if (next === offset) return;
+      offset = next;
+      scroller.style.left = next === 0 ? "" : `${next}px`;
+    };
+    const adopt = () => {
+      target = landed = scroller.scrollLeft;
+      owed = 0;
+      place(0);
+    };
     const onScroll = () => {
       // The clamp of a resize the observer has not seen yet: it starts from before it.
-      if (scroller.clientWidth !== width) return;
-      if (Math.abs(scroller.scrollLeft - scrollLeft) >= 1) scrollLeft = scroller.scrollLeft;
+      if (scroller.clientWidth !== clientWidth) return;
+      if (scroller.scrollLeft !== landed) adopt();
     };
     // Runs after layout and before paint.
     const stopObserving = observeResize(scroller, () => {
-      if (scroller.clientWidth === width) return;
-      const grew = scroller.clientWidth > width;
-      width = scroller.clientWidth;
       const box = scroller.getBoundingClientRect();
-      const shift = box.left - left;
-      const endMoved = Math.abs(box.right - right) >= 0.5;
-      left = box.left;
-      right = box.right;
+      const boxLeft = box.left - offset;
+      const boxRight = box.right - offset;
+      if (box.width === width && boxLeft === left) return;
+      const shift = boxLeft - left;
+      const endMoved = Math.abs(boxRight - right) >= 0.5;
+      const grew = box.width > width;
+      left = boxLeft;
+      right = boxRight;
+      width = box.width;
+      clientWidth = scroller.clientWidth;
+      const now = scroller.scrollLeft;
       // Grown past the strip's end, the browser clamped the scroll before this ran.
-      const clamped = grew && scroller.scrollLeft + width >= scroller.scrollWidth - 1;
-      const from =
-        clamped || Math.abs(scroller.scrollLeft - scrollLeft) < 1
-          ? scrollLeft
-          : scroller.scrollLeft;
-      let target = from > 0 ? Math.min(Math.max(0, from + shift), scroller.scrollWidth - width) : 0;
+      const clamped = grew && now < landed && now >= scroller.scrollWidth - clientWidth - 1;
+      if (now !== landed && !clamped) adopt();
+      const stage = stageRef.current?.offsetWidth ?? 0;
+      if (owed > 0 && stage !== owedStage) owed = 0;
+      const room = Math.max(0, scroller.scrollWidth - width);
+      const wanted = target > 0 || owed > 0 ? target - owed + shift : 0;
+      let next = Math.min(Math.max(0, wanted), room);
+      owed = Math.max(0, -wanted);
+      owedStage = stage;
       const focused = endMoved ? focusedSpanRef.current : null;
-      if (focused && focused.left < target - 1) target = focused.left;
-      else if (focused && focused.left + focused.width > target + width + 1) {
-        target = Math.min(focused.left, focused.left + focused.width - width);
+      if (focused) owed = 0;
+      if (focused && focused.left < next - 1) next = focused.left;
+      else if (focused && focused.left + focused.width > next + width + 1) {
+        next = Math.min(focused.left, focused.left + focused.width - width);
       }
-      scrollLeft = target;
-      if (Math.abs(target - scroller.scrollLeft) < 0.5) return;
-      settleStripCamera();
-      scroller.scrollLeft = target;
+      target = next;
+      if (Math.abs(next - scroller.scrollLeft) >= 0.01) {
+        settleStripCamera();
+        scroller.scrollLeft = next;
+      }
+      landed = scroller.scrollLeft;
+      const rest = landed - next;
+      place(Math.abs(rest) < 0.01 ? 0 : rest);
     });
     scroller.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       stopObserving();
       scroller.removeEventListener("scroll", onScroll);
+      place(0);
     };
-  }, [active, focusedSpanRef, scrollerRef]);
+  }, [active, focusedSpanRef, scrollerRef, stageRef]);
 }
 
 /** Pure placement derivations stay separate from the host's retained transition state. */
@@ -852,6 +879,7 @@ export function LayoutSurfaceHost({
 
   useStripResizeScroll(
     scrollerRef,
+    stageRef,
     focusedSpanRef,
     !staged && !stacked && !narrow && maximizedTabId === null,
   );
