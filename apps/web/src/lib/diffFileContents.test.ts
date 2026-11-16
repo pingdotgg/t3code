@@ -113,6 +113,31 @@ describe("createGitDiffFileContentsLoader", () => {
     );
   });
 
+  it("checks long context lines against their full text, not the clamped one", async () => {
+    const context = "x".repeat(MAX_RENDERED_DIFF_LINE_LENGTH * 2);
+    const patch = [
+      "diff --git a/src/file01.ts b/src/file01.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/file01.ts",
+      "+++ b/src/file01.ts",
+      "@@ -2,2 +2,2 @@",
+      ` ${context}`,
+      "-old",
+      "+new",
+      "",
+    ].join("\n");
+    const oldContents = `start\n${context}\nold\nend\n`;
+
+    // `git diff -w` prints one side's context; the other side differs only in whitespace.
+    await expect(
+      loaderReturning(oldContents, `start\n ${context}\nnew\nend\n`)(parsePartialFileDiff(patch)),
+    ).resolves.toBeDefined();
+    const stale = `${context.slice(0, -1)}y`;
+    await expect(
+      loaderReturning(oldContents, `start\n${stale}\nnew\nend\n`)(parsePartialFileDiff(patch)),
+    ).rejects.toThrow("changed since the diff was loaded");
+  });
+
   it("loads a whitespace-ignored patch whose context shows one side's whitespace", async () => {
     const patch = [
       "diff --git a/src/file01.ts b/src/file01.ts",

@@ -18,9 +18,18 @@ function clampLine(line: string): string {
   return `${body.slice(0, cut)} … ${hidden} more characters not shown${ending}`;
 }
 
+// Clamped patch lines keep their originals so stale-content checks compare real text.
+const unclampedLines = new WeakMap<ReadonlyArray<string>, ReadonlyArray<string>>();
+
 function clampLines(lines: ReadonlyArray<string>): string[] | null {
   if (lines.every((line) => line.length <= MAX_RENDERED_DIFF_LINE_LENGTH)) return null;
-  return lines.map(clampLine);
+  const clamped = lines.map(clampLine);
+  unclampedLines.set(clamped, lines);
+  return clamped;
+}
+
+export function getUnclampedLines(lines: ReadonlyArray<string>): ReadonlyArray<string> {
+  return unclampedLines.get(lines) ?? lines;
 }
 
 // Same object when nothing is clamped, so render caches keep their keys.
