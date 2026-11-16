@@ -57,12 +57,12 @@ export function useActiveRowReveal(
       });
       return stopWaiting;
     }
-    const inPlace = reveal.pendingKey === rowKey && reveal.pendingInPlace === true;
+    const revealInPlace = reveal.pendingKey === rowKey && reveal.pendingInPlace === true;
     completeSidebarRouteReveal(reveal);
     mountRevealOwed.current = false;
     // A row under the pointer was just clicked, so it is in view; scrolling it would force a
     // layout mid-commit. Keyboard activation can come from a focused row scrolled out of view.
-    if (inPlace || row.matches(":hover")) return undefined;
+    if (revealInPlace || row.matches(":hover")) return undefined;
     row.scrollIntoView({ block: "nearest" });
     return undefined;
   };
