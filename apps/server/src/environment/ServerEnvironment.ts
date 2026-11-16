@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
@@ -19,7 +20,10 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { resolveServerInstallation } from "../cli/invocation.ts";
 import { dropCloudLink } from "../cloud/CliState.ts";
-import { readAgentActivityPublishingActive } from "../cloud/config.ts";
+import {
+  readAgentActivityPublishingActive,
+  RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+} from "../cloud/config.ts";
 import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import { resolveServiceLauncherMode } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
@@ -202,6 +206,11 @@ const makeIdentity = Effect.gen(function* () {
           Effect.orElseSucceed(() => null),
         );
 
+  const hasCloudLink = Effect.gen(function* () {
+    const secrets = yield* ServerSecretStore.ServerSecretStore;
+    return Option.isSome(yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET));
+  }).pipe(Effect.provide(ServerSecretStore.layer));
+
   const environmentIdRaw = yield* Effect.gen(function* () {
     const persisted = yield* readPersistedEnvironmentId;
     if (persisted) {
@@ -210,7 +219,14 @@ const makeIdentity = Effect.gen(function* () {
         return persisted;
       }
       if (recorded === null) {
+        // A home from before machines were recorded: a copy cannot be told from its original.
+        const linked = yield* hasCloudLink.pipe(Effect.orElseSucceed(() => false));
         yield* recordEnvironmentMachine(machine);
+        if (linked) {
+          yield* Effect.logWarning(
+            `If this T3 home was copied from another machine, both share one T3 Connect link and tunnel. On the copy, delete '${serverConfig.environmentIdPath}', restart T3 Code, and link it again.`,
+          );
+        }
         return persisted;
       }
       // This T3 home was copied from another machine. Sharing the original's ID would share
@@ -233,6 +249,8 @@ const makeIdentity = Effect.gen(function* () {
       return replacement;
     }
 
+    // Any T3 Connect link left here was made for an environment ID that is gone.
+    yield* dropCloudLink.pipe(Effect.provide(ServerSecretStore.layer));
     const generated = yield* random.uuidV4();
     yield* persistEnvironmentId(generated);
     let winner = yield* readPersistedEnvironmentId;

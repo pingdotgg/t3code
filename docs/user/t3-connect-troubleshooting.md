@@ -122,6 +122,14 @@ an active link between your account and the host.
   approval for new devices. Approve the code this device shows from a device
   that is already connected, or run `t3 auth connect-device approve <code>` on
   the host. See [Approve new devices](./remote-access.md#approve-new-devices).
+- **The host's T3 home was copied from another machine** (Migration Assistant,
+  a backup restore, or a copied `~/.t3` folder), and both machines run T3 Code.
+  Both then share one link, and linking either one again takes the other
+  offline. T3 Code gives a copy its own identity on its own, except for a copy
+  made from a version that did not record its machine yet. On the copy, delete
+  `environment-id` in the `userdata` folder (`~/.t3/userdata` by default),
+  restart T3 Code, and run `t3 connect`. If `t3 connect status` on the
+  original machine says its link was revoked, run `t3 connect` there too.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, or
   [link a paid T3 Chat account](./remote-access.md#more-machines-with-t3-chat)

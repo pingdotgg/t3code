@@ -267,15 +267,27 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
   it.effect("gives a T3 home copied to another machine its own environment id", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-server-environment-copy-test-",
+      const makeHome = Effect.gen(function* () {
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-server-environment-copy-test-",
+        });
+        const serverConfig = yield* makeServerConfig(baseDir);
+        yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+        return serverConfig;
       });
-      const serverConfig = yield* makeServerConfig(baseDir);
-      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
-      yield* fileSystem.writeFileString(serverConfig.environmentIdPath, "existing-id\n");
-      const onMachine = <A, E, R>(machineId: string, effect: Effect.Effect<A, E, R>) =>
+      const copyHome = Effect.fn(function* (from: ServerConfig.ServerConfig["Service"]) {
+        const to = yield* makeHome;
+        yield* fileSystem.remove(to.baseDir, { recursive: true });
+        yield* fileSystem.copy(from.baseDir, to.baseDir);
+        return to;
+      });
+      const onMachine = <A, E, R>(
+        home: ServerConfig.ServerConfig["Service"],
+        machineId: string,
+        effect: Effect.Effect<A, E, R>,
+      ) =>
         effect.pipe(
-          Effect.provideService(ServerConfig.ServerConfig, serverConfig),
+          Effect.provideService(ServerConfig.ServerConfig, home),
           Effect.provideService(HostProcess.Platform, "linux"),
           Effect.provideService(FileSystem.FileSystem, {
             ...fileSystem,
@@ -285,8 +297,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
                 : fileSystem.readFileString(path, encoding),
           }),
         );
-      const readEnvironmentId = (machineId: string) =>
+      const readEnvironmentId = (home: ServerConfig.ServerConfig["Service"], machineId: string) =>
         onMachine(
+          home,
           machineId,
           Effect.gen(function* () {
             const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
@@ -295,18 +308,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
         );
       const encode = (value: string) => new TextEncoder().encode(value);
       const withSecrets = <A, E>(
+        home: ServerConfig.ServerConfig["Service"],
         use: (secrets: ServerSecretStore.ServerSecretStore["Service"]) => Effect.Effect<A, E>,
       ) =>
         onMachine(
+          home,
           "machine-a",
           Effect.service(ServerSecretStore.ServerSecretStore).pipe(
             Effect.flatMap(use),
             Effect.provide(ServerSecretStore.layer),
           ),
         );
+      const linkSecrets = (home: ServerConfig.ServerConfig["Service"]) =>
+        withSecrets(home, (secrets) =>
+          Effect.forEach(
+            [
+              RELAY_URL_SECRET,
+              CLOUD_LINKED_USER_ID,
+              RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+              CLOUD_ENDPOINT_RUNTIME_CONFIG,
+            ],
+            (name) => secrets.get(name).pipe(Effect.map((value) => value._tag)),
+          ),
+        );
 
-      expect(yield* readEnvironmentId("machine-a")).toBe("existing-id");
-      yield* withSecrets((secrets) =>
+      // A home linked by a release that recorded no machine.
+      const original = yield* makeHome;
+      yield* fileSystem.writeFileString(original.environmentIdPath, "existing-id\n");
+      yield* withSecrets(original, (secrets) =>
         Effect.all([
           secrets.set(RELAY_URL_SECRET, encode("https://relay.example")),
           secrets.set(CLOUD_LINKED_USER_ID, encode("user")),
@@ -314,23 +343,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
           secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, encode("tunnel")),
         ]),
       );
-      expect(yield* readEnvironmentId("machine-a")).toBe("existing-id");
+      const legacyCopy = yield* copyHome(original);
 
-      const copied = yield* readEnvironmentId("machine-b");
-      expect(copied).not.toBe("existing-id");
-      expect(yield* readEnvironmentId("machine-b")).toBe(copied);
-      const remaining = yield* withSecrets((secrets) =>
-        Effect.forEach(
-          [
-            RELAY_URL_SECRET,
-            CLOUD_LINKED_USER_ID,
-            RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-            CLOUD_ENDPOINT_RUNTIME_CONFIG,
-          ],
-          (name) => secrets.get(name).pipe(Effect.map((value) => value._tag)),
-        ),
-      );
-      expect(remaining).toEqual(["Some", "None", "None", "None"]);
+      expect(yield* readEnvironmentId(original, "machine-a")).toBe("existing-id");
+      expect(yield* readEnvironmentId(original, "machine-a")).toBe("existing-id");
+      // Unmarked copies cannot be told apart; deleting the copy's ID is the way out.
+      expect(yield* readEnvironmentId(legacyCopy, "machine-b")).toBe("existing-id");
+      yield* fileSystem.remove(legacyCopy.environmentIdPath);
+      const recovered = yield* readEnvironmentId(legacyCopy, "machine-b");
+      expect(recovered).not.toBe("existing-id");
+      expect(yield* linkSecrets(legacyCopy)).toEqual(["Some", "None", "None", "None"]);
+
+      const copied = yield* copyHome(original);
+      const copiedId = yield* readEnvironmentId(copied, "machine-b");
+      expect(copiedId).not.toBe("existing-id");
+      expect(yield* readEnvironmentId(copied, "machine-b")).toBe(copiedId);
+      expect(yield* linkSecrets(copied)).toEqual(["Some", "None", "None", "None"]);
+      expect(yield* linkSecrets(original)).toEqual(["Some", "Some", "Some", "Some"]);
     }),
   );
 
