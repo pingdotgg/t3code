@@ -169,9 +169,11 @@ you can still reach another way stays saved.
 Open **Permissions** next to **Routes** in web or desktop, or **Your permissions**
 in the mobile route details, to see what your current connection can do on that
 environment. For a remote environment, this is in its route details. Permissions
-shown there apply only to the route marked **In use**; other routes are not
-checked. Direct pairing and T3 Connect have separate sessions and may grant
-different permissions.
+shown there apply only to the route marked **In use**. Direct pairing and T3
+Connect have separate sessions and may grant different permissions. When one
+route's session grants everything another's does and more, such as T3 Connect
+beside an older LAN pairing, T3 Code connects over the route that grants more,
+wherever it is in the list.
 
 ### Balance new threads across machines
 

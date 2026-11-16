@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { type AuthGrantScope, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
 
@@ -18,6 +18,7 @@ import {
   entryWithRoutes,
   isNearbyAddress,
   mergeLearnedRoutes,
+  orderRoutesByGrant,
   pendingRouteOrder,
   removedWithRelay,
   routeKeepsItsHost,
@@ -129,6 +130,19 @@ describe("connection routes", () => {
     const vpn = direct("vpn", "http://100.101.102.103:3773/");
     const pasted = direct("ts-2", "http://[fd7a:115c:a1e0::2]:3773/");
     expect(upsertRoute([vpn, TAILNET], pasted)).toEqual([vpn, pasted, TAILNET]);
+  });
+
+  it("orders routes by grant with one stable winner", () => {
+    const grants = new Map<string, ReadonlySet<AuthGrantScope>>([
+      [connectionRouteId(LAN.target), new Set(["orchestration:read"])],
+      [connectionRouteId(TAILNET.target), new Set(["terminal:operate"])],
+      [connectionRouteId(RELAY.target), new Set(["orchestration:read", "filesystem:read"])],
+    ]);
+    expect(orderRoutesByGrant([LAN, RELAY], grants)).toEqual([RELAY, LAN]);
+    // T3 Connect beats LAN, which the user put ahead of Tailscale. Keeping
+    // Tailscale ahead of T3 Connect too would leave each route beaten by another.
+    expect(orderRoutesByGrant([LAN, TAILNET, RELAY], grants)).toEqual([RELAY, LAN, TAILNET]);
+    expect(orderRoutesByGrant([LAN, PUBLIC, RELAY], grants)).toEqual([RELAY, LAN, PUBLIC]);
   });
 
   it("shows a dragged order only until the saved routes catch up or change", () => {
