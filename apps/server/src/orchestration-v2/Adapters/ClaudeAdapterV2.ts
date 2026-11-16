@@ -4769,12 +4769,16 @@ function providerFailureFromResult(
     apiErrorStatus === 429 && message.result.startsWith("API Error:")
       ? gatewayCooldownResetAt(
           // CLIProxyAPI nests upstream errors in its message; only its own cooldown counts.
-          (message.result.startsWith(
+          message.result.startsWith(
             "API Error: Request rejected (429) · All credentials for model ",
           )
-            ? /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/
-          ).exec(message.result),
+            ? (/^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(
+                message.result,
+              ) ??
+                /^API Error: Request rejected \(429\) · All credentials for model [^\s()]+ are cooling down \(last error: [\s\S]*\) \(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)$/.exec(
+                  message.result,
+                ))
+            : /\(reset after (?:(\d+)h ?)?(?:(\d+)m ?)?(?:(\d+)s)?\)/.exec(message.result),
           receivedAt,
         )
       : undefined;
