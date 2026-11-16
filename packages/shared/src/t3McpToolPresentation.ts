@@ -277,6 +277,16 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  qa_evidence_record: tool(
+    ["Record", "Recording", "Recorded", "QA evidence"],
+    "browser",
+    "browser",
+  ),
+  qa_report_finish: tool(
+    ["Finish", "Finishing", "Finished", "the QA report"],
+    "browser",
+    "browser",
+  ),
   device_list: tool(["List", "Listing", "Listed", "simulators and emulators"], "device", "device"),
   device_open: tool(
     ["Open", "Opening", "Opened", "a device in the Device panel"],

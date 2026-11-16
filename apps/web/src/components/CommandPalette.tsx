@@ -285,6 +285,12 @@ const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
 const NEW_THREAD_IN_GROUP = "projects";
 
+const EXPLORO_HIDDEN_ACTIONS: ReadonlySet<string> = new Set([
+  "action:link-pull-request",
+  "action:open-thread-pull-requests",
+  "action:pull-requests",
+]);
+
 /** The submenu an open intent starts in; its groups resolve while rendering. */
 function openIntentView(intent: CommandPaletteOpenIntent | null): CommandPaletteView | null {
   switch (intent?.kind) {
@@ -1781,7 +1787,9 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems });
+  // Exploro is a QA tool and offers no pull request workflow.
+  const qaActionItems = actionItems.filter((item) => !EXPLORO_HIDDEN_ACTIONS.has(item.value));
+  const rootGroups = buildRootGroups({ actionItems: qaActionItems, recentThreadItems });
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
@@ -1840,7 +1848,7 @@ function OpenCommandPaletteDialog(props: {
       ? {
           allOptions: {
             rootGroups,
-            nestedItems: buildNestedSearchItems(actionItems, deferredQuery),
+            nestedItems: buildNestedSearchItems(qaActionItems, deferredQuery),
           },
         }
       : {}),

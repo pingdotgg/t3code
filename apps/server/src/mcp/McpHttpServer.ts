@@ -67,6 +67,8 @@ import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
+import { QaToolkit } from "./toolkits/qa/tools.ts";
+import * as QaHandlers from "./toolkits/qa/handlers.ts";
 import {
   PreviewSnapshotTool,
   PreviewSnapshotToolkit,
@@ -1251,6 +1253,7 @@ const layerPreviewSnapshotRegistration = imageToolRegistration(
 export const layerPreviewToolkit = Layer.mergeAll(
   layerPreviewStandardToolkitRegistration,
   layerPreviewSnapshotRegistration,
+  toolkitRegistration(QaToolkit, QaHandlers.layer),
 );
 
 export const layerOrchestratorToolkit = toolkitRegistration(

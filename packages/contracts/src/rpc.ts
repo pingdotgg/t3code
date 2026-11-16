@@ -385,6 +385,13 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  QaRunDeleteInput,
+  QaRunDeleteResult,
+  QaRunError,
+  QaRunsSnapshot,
+  QaRunsSubscribeInput,
+} from "./qaRuns.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -553,6 +560,8 @@ export const WS_METHODS = {
   serverRefreshUsageRates: "server.refreshUsageRates",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
+  qaRunsSubscribe: "qaRuns.subscribe",
+  qaRunsDelete: "qaRuns.delete",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
   scheduledTasksDelete: "scheduledTasks.delete",
@@ -2022,6 +2031,19 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsQaRunsSubscribeRpc = Rpc.make(WS_METHODS.qaRunsSubscribe, {
+  payload: QaRunsSubscribeInput,
+  success: QaRunsSnapshot,
+  error: Schema.Union([QaRunError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+const WsQaRunsDeleteRpc = Rpc.make(WS_METHODS.qaRunsDelete, {
+  payload: QaRunDeleteInput,
+  success: QaRunDeleteResult,
+  error: Schema.Union([QaRunError, EnvironmentAuthorizationError]),
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2173,6 +2195,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
   WsScheduledTasksSubscribeRpc,
+  WsQaRunsSubscribeRpc,
+  WsQaRunsDeleteRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
   WsScheduledTasksDeleteRpc,

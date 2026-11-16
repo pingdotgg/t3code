@@ -28,7 +28,8 @@ Trust matters more than a high pass rate. A wrong PASS is the worst result you c
 Use the built-in browser tools: \`preview_open\`, \`preview_snapshot\` (page state, accessibility tree,
 diagnostics; \`save=true\` writes a screenshot), \`preview_act\` (click, type, select…), \`preview_wait_for\`,
 \`preview_navigate\`, \`preview_resize\`, \`preview_status\` (tabs and dialogs), \`preview_dialog\`, and
-\`preview_evaluate\` for read-only checks such as reading an input's value.
+\`preview_evaluate\` for read-only checks such as reading an input's value. Record evidence with
+\`qa_evidence_record\` and end the run with \`qa_report_finish\`.
 
 Start with \`preview_open\` on the target URL. \`preview_status\` reports \`available: false\` when no tab
 exists yet; that is normal, so open a tab anyway. Only call the browser unavailable if \`preview_open\`
@@ -94,9 +95,11 @@ from what you see, say which ones, and test those.
 
 ### 5. Evidence
 
-For each scenario keep: the steps you took, what you expected, what you actually saw (quote the
-exact visible text), the URL, and a screenshot (\`preview_snapshot\` with \`save=true\`) at the moment
-that decides the verdict. Add console errors when relevant.`,
+Exploro records the run's video on its own. For each verdict, call \`qa_evidence_record\` right
+after you observed the result, while the page still shows it. It saves a screenshot and the console
+and network logs to the run's evidence folder. Pass the scenario, the verdict, and a note quoting the
+exact visible text you saw. For a FAIL, also pass \`expected\`, \`actual\`, \`severity\` and \`steps\`. A PASS
+or FAIL without a screenshot is stored as INCONCLUSIVE.`,
   // oxlint-disable-next-line t3code/no-em-dash-copy -- model-facing report template, verbatim from SKILL.md
   `## Verdicts
 
@@ -118,7 +121,8 @@ For each FAIL also give a **cause**: \`product\` (the site is wrong), \`test dat
 
 ## Report
 
-End with this report in your final message:
+After your last verdict, call \`qa_report_finish\`. It writes \`report.md\` and \`report.html\` to the
+run folder, and the QA panel shows the run. Then end with this report in your final message:
 
 \`\`\`markdown
 ## QA report: <site> — <goal>

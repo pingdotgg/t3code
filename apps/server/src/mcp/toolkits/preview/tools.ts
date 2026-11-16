@@ -29,6 +29,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as QaRecorder from "../../../qa/QaRecorder.ts";
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
@@ -84,7 +85,7 @@ const PreviewOpenTool = browserTool(
     ),
     success: PreviewAutomationStatus,
     failure: PreviewToolFailure,
-    dependencies,
+    dependencies: [...dependencies, QaRecorder.QaRecorder],
   })
     .annotate(Tool.Title, "Open browser preview")
     .annotate(Tool.Destructive, false),

@@ -178,39 +178,16 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
   );
 }
 
-it("offers no git controls in a No project thread, but shows its linked pull request", async () => {
-  using fixture = setup({
-    workspaceRoot: SCRATCH_ROOT,
-    folder: `${SCRATCH_ROOT}/thread`,
-    pullRequests: [linkedPullRequest],
-  });
-  await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByText("#27513")).toBeVisible();
-  await expect
-    .element(page.getByRole("button", { name: "Initialize Git" }))
-    .not.toBeInTheDocument();
-});
-
-it("shows a linked pull request in a folder that is not a git repository", async () => {
+it("shows the QA sections and none of the developer ones, even in a folder with a linked pull request", async () => {
   using fixture = setup({
     workspaceRoot: "/work/plain",
     folder: "/work/plain",
     pullRequests: [linkedPullRequest],
   });
   await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
-  await expect.element(page.getByText("#27513")).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
-});
-
-it("offers no Initialize Git before the server config says where No project lives", async () => {
-  using fixture = setup({
-    workspaceRoot: SCRATCH_ROOT,
-    folder: `${SCRATCH_ROOT}/thread`,
-    configLoaded: false,
-  });
-  await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByRole("region", { name: "Test run" })).toBeVisible();
+  await expect.element(page.getByText("#27513")).not.toBeInTheDocument();
+  await expect.element(page.getByRole("region", { name: "Workspace" })).not.toBeInTheDocument();
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();

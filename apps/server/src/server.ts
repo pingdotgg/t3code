@@ -98,6 +98,8 @@ import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as PreviewAgentActivity from "./preview/PreviewAgentActivity.ts";
+import * as QaRecorder from "./qa/QaRecorder.ts";
+import * as QaRuns from "./qa/QaRuns.ts";
 import * as DesktopBrowserChannel from "./preview/DesktopBrowserChannel.ts";
 import * as ServerBrowserStream from "./preview/ServerBrowserStream.ts";
 import * as PreviewBrowser from "./preview/PreviewBrowser.ts";
@@ -872,6 +874,13 @@ const layerMakeRoutes = Layer.mergeAll(
     ),
   ),
   Layer.provide(PreviewBrowser.layer),
+  // One run store for agents (/mcp) and clients (WebSocket); the recorder follows turns.
+  Layer.provide(
+    QaRecorder.layer.pipe(
+      Layer.provideMerge(QaRuns.layer),
+      Layer.provide(PreviewAgentActivity.layer),
+    ),
+  ),
   // Links to other environments, shared by Settings (WebSocket) and agents (/mcp).
   Layer.provide(
     PeerForwarding.layer.pipe(

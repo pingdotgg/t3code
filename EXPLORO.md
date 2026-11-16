@@ -1,6 +1,6 @@
 # Exploro
 
-Exploro is an open-source agent harness for manual QA engineers and developers. You give it a
+Exploro is an open-source agent harness for manual QA engineers. You give it a
 website and a testing goal; an agent explores the site in a real browser, and you watch, take
 over, and keep the evidence.
 
@@ -18,6 +18,14 @@ still describes the T3 codebase and applies here; this file only adds what is di
   not add its own planner, model bridge or verifier.
 - **Prompt text is not enforcement.** Limits such as which sites a session may visit belong in
   the server.
+- **QA engineers only.** Where T3 shows developer workflow (editors, project scripts, git,
+  branches, pull requests, dev servers), Exploro shows the QA workflow instead. Hide those
+  features in the UI, together with their keybindings and command palette entries; do not delete
+  upstream code, so T3 merges stay easy.
+- **Evidence is server-owned.** Each QA run writes `<home>/userdata/qa-runs/<thread>/<run>/`
+  (`run.json`, `report.md`, a self-contained `report.html`, `evidence/`). Runs are kept until
+  the user deletes them. A verdict without a screenshot is stored as INCONCLUSIVE, whatever the
+  agent asked for.
 
 ## Develop
 
