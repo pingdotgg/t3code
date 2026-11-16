@@ -1,5 +1,9 @@
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 import * as Digest from "effect/crypto/Digest";
+import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
+import * as Exit from "effect/Exit";
+import * as Semaphore from "effect/Semaphore";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -47,8 +51,26 @@ const invalid = (reason: string) => Effect.fail(new CursorAccountUsageInvalidErr
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const pageRequestBody = (page: number, pageSize: number, sinceMs: number, endDate: number) =>
-  JSON.stringify({ page, pageSize, startDate: String(sinceMs), endDate: String(endDate) });
+const decodeTeams = Schema.decodeUnknownEffect(
+  Schema.Struct({ teams: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.Number }))) }),
+);
+const decodeUser = Schema.decodeUnknownEffect(Schema.Struct({ userId: Schema.Number }));
+
+const pageRequestBody = (
+  page: number,
+  pageSize: number,
+  sinceMs: number,
+  endDate: number,
+  teamId?: number,
+  userId?: number,
+) =>
+  JSON.stringify({
+    page,
+    pageSize,
+    startDate: String(sinceMs),
+    endDate: String(endDate),
+    ...(teamId === undefined ? {} : { teamId, userId }),
+  });
 
 const billedEventIdentity = (...fields: readonly unknown[]) => JSON.stringify(fields);
 
@@ -80,257 +102,336 @@ function boundaryOverlap(previous: readonly string[], current: readonly string[]
 /** Never forward the access token through a redirect. */
 const NO_REDIRECT: RequestInit = { redirect: "error" };
 
-export const readCursorAccountUsage = Effect.fn("readCursorAccountUsage")(function* (
-  credentialSource: CursorCredentialSource,
-  sinceMs: number,
-  endDate: number,
-): Effect.fn.Return<CursorAccountUsageReadResult, never, Digest.Digest | HttpClient.HttpClient> {
+export const makeCursorAccountUsageReader = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const digest = yield* Digest.Digest;
   // Per-event hashes share the scan span and use the native hex encoder.
   const accountHash = (value: string) => digest.digestHex(Digest.sha256, textEncoder.encode(value));
-  const credential = yield* Effect.result(exchangeCursorApiKey(credentialSource.apiKey));
-  if (Result.isFailure(credential)) {
-    return {
-      accountKey: null,
-      records: [],
-      missing: false,
-      error: "Cursor account usage could not be read.",
-    };
-  }
-  const accessToken = credential.success;
-  let accountKey: string | null = null;
-  const read = Effect.gen(function* () {
+  const readSession = Effect.fn("CursorAccountUsage.readSession")(function* (apiKey: string) {
+    const accessToken = yield* exchangeCursorApiKey(apiKey);
     const payload = Base64Url.decodeString(accessToken.split(".")[1] ?? "");
     if (Result.isFailure(payload)) return yield* invalid("Invalid authentication");
-    const subject = object(
+    const authentication = object(
       yield* decodeJson(payload.success).pipe(
         Effect.catch(() => invalid("Invalid authentication")),
       ),
-    ).sub;
-    if (typeof subject !== "string" || !subject) return yield* invalid("Invalid authentication");
-    accountKey = yield* accountHash(subject);
-    if (!Number.isFinite(sinceMs) || !Number.isFinite(endDate) || sinceMs < 0 || sinceMs > endDate)
-      return yield* invalid("Invalid date window");
-    const pageRequest = HttpClientRequest.post(
-      `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
-    ).pipe(
-      HttpClientRequest.bearerToken(accessToken),
-      HttpClientRequest.setHeader("connect-protocol-version", "1"),
     );
-    const records: UsageRecord[] = [];
-    const occurrences = new Map<string, number>();
-    const normalized: Array<(Omit<UsageRecord, "dedupeKey"> & { dedupeKey: string }) | null> = [];
-    const pages: Array<{ start: number; end: number; overlap: number }> = [];
-    let previousEvents: unknown[] = [];
-    const pageSize = 1000;
-    let total: number | undefined;
-    const readPage = Effect.fn("CursorAccountUsage.readPage")(
-      function* (page: number) {
-        // A count can include overlapping page boundaries. Allow room to
-        // reconcile them without imposing a fixed account-size limit.
-        if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
-          return yield* invalid("Account usage page limit exceeded");
-        }
-        const response = yield* httpClient
-          .execute(
-            pageRequest.pipe(
-              HttpClientRequest.bodyText(
-                pageRequestBody(page, pageSize, sinceMs, endDate),
-                "application/json",
+    const subject = authentication.sub;
+    if (typeof subject !== "string" || !subject) return yield* invalid("Invalid authentication");
+    const accountKey = yield* accountHash(subject);
+    const membershipRequest = Effect.fn("CursorAccountUsage.membershipRequest")(function* (
+      method: string,
+    ) {
+      const response = yield* httpClient
+        .execute(
+          HttpClientRequest.post(
+            `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/${method}`,
+          ).pipe(
+            HttpClientRequest.bearerToken(accessToken),
+            HttpClientRequest.setHeader("connect-protocol-version", "1"),
+            HttpClientRequest.bodyText("{}", "application/json"),
+          ),
+        )
+        .pipe(Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT));
+      if (response.status < 200 || response.status >= 300)
+        return yield* invalid("Account membership request failed");
+      const body = yield* response.json;
+      const fields = object(body);
+      if ("error" in fields || "message" in fields || "code" in fields)
+        return yield* invalid("Account membership error response");
+      return body;
+    }, Effect.timeout("10 seconds"));
+    const [teams, me] = yield* Effect.all(
+      [
+        membershipRequest("GetTeams").pipe(Effect.flatMap(decodeTeams)),
+        membershipRequest("GetMe").pipe(Effect.flatMap(decodeUser)),
+      ],
+      { concurrency: 2 },
+    );
+    const teamIds = [...new Set((teams.teams ?? []).map((team) => team.id))];
+    if (teamIds.some((id) => !Number.isSafeInteger(id) || id <= 0))
+      return yield* invalid("Invalid account teams");
+    const userId = me.userId;
+    if (!Number.isSafeInteger(userId) || userId <= 0) return yield* invalid("Invalid account user");
+
+    const nowMs = yield* Clock.currentTimeMillis;
+    const ttlMs =
+      typeof authentication.exp === "number"
+        ? Math.max(0, Math.min(5 * 60_000, authentication.exp * 1000 - nowMs - 30_000))
+        : 5 * 60_000;
+    return { accessToken, accountKey, teamIds, userId, ttlMs };
+  });
+  const sessions = yield* Cache.makeWith(readSession, {
+    capacity: 16,
+    timeToLive: (exit) =>
+      Exit.isSuccess(exit) ? Duration.millis(exit.value.ttlMs) : Duration.zero,
+  });
+  return Effect.fn("readCursorAccountUsage")(function* (
+    credentialSource: CursorCredentialSource,
+    sinceMs: number,
+    endDate: number,
+  ) {
+    let accountKey: string | null = null;
+    const read = Effect.gen(function* () {
+      if (
+        !Number.isFinite(sinceMs) ||
+        !Number.isFinite(endDate) ||
+        sinceMs < 0 ||
+        sinceMs > endDate
+      )
+        return yield* invalid("Invalid date window");
+      const session = yield* Cache.get(sessions, credentialSource.apiKey);
+      const { accessToken, teamIds, userId } = session;
+      accountKey = session.accountKey;
+      const pageSlots = yield* Semaphore.make(6);
+      // Omitting teamId returns personal history; team history also needs the current user filter.
+      const readScope = Effect.fn("CursorAccountUsage.readScope")(function* (teamId?: number) {
+        const pageRequest = HttpClientRequest.post(
+          `${DEFAULT_CURSOR_API_ENDPOINT}/aiserver.v1.DashboardService/GetFilteredUsageEvents`,
+        ).pipe(
+          HttpClientRequest.bearerToken(accessToken),
+          HttpClientRequest.setHeader("connect-protocol-version", "1"),
+        );
+        const records: UsageRecord[] = [];
+        const occurrences = new Map<string, number>();
+        const normalized: Array<(Omit<UsageRecord, "dedupeKey"> & { dedupeKey: string }) | null> =
+          [];
+        const pages: Array<{ start: number; end: number; overlap: number }> = [];
+        let previousEvents: unknown[] = [];
+        const pageSize = 1000;
+        let total: number | undefined;
+        const readPage = Effect.fn("CursorAccountUsage.readPage")(
+          function* (page: number) {
+            // A count can include overlapping page boundaries. Allow room to
+            // reconcile them without imposing a fixed account-size limit.
+            if (page > (total === undefined ? 1000 : Math.ceil(total / pageSize) * 2 + 1)) {
+              return yield* invalid("Account usage page limit exceeded");
+            }
+            const response = yield* httpClient
+              .execute(
+                pageRequest.pipe(
+                  HttpClientRequest.bodyText(
+                    pageRequestBody(page, pageSize, sinceMs, endDate, teamId, userId),
+                    "application/json",
+                  ),
+                ),
+              )
+              .pipe(
+                Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
+                Effect.mapError(
+                  () =>
+                    new CursorAccountUsageInvalidError({ reason: "Account usage request failed" }),
+                ),
+              );
+            if (response.status === 401 || response.status === 403) {
+              yield* Cache.invalidate(sessions, credentialSource.apiKey);
+              return {
+                accountKey,
+                records: [],
+                missing: false,
+                error: "Sign in to Cursor again to read account usage.",
+              } satisfies CursorAccountUsageReadResult;
+            }
+            if (response.status < 200 || response.status >= 300)
+              return yield* invalid("Account usage request failed");
+            const parsed: unknown = yield* response.json.pipe(
+              Effect.mapError(
+                () => new CursorAccountUsageInvalidError({ reason: "Invalid account usage page" }),
               ),
-            ),
-          )
-          .pipe(
-            Effect.provideService(FetchHttpClient.RequestInit, NO_REDIRECT),
-            Effect.mapError(
-              () => new CursorAccountUsageInvalidError({ reason: "Account usage request failed" }),
-            ),
-          );
-        if (response.status === 401 || response.status === 403) {
-          return {
+            );
+            if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+              return yield* invalid("Invalid account usage page");
+            }
+            const body = object(parsed);
+            const keys = Object.keys(body);
+            if ("error" in body || "message" in body || "code" in body)
+              return yield* invalid("Account usage error response");
+            const count = keys.length === 0 ? 0 : body.totalUsageEventsCount;
+            const events =
+              keys.length === 0 || (keys.length === 1 && keys[0] === "totalUsageEventsCount")
+                ? []
+                : body.usageEventsDisplay;
+            if (
+              (count !== undefined &&
+                (typeof count !== "number" ||
+                  !Number.isSafeInteger(count) ||
+                  count < 0 ||
+                  (total !== undefined && count !== total))) ||
+              !Array.isArray(events) ||
+              events.length > pageSize ||
+              (count === undefined && !Array.isArray(body.usageEventsDisplay))
+            ) {
+              return yield* invalid("Inconsistent account usage page");
+            }
+            if (typeof count === "number") total = count;
+            return events as unknown[];
+          },
+          Effect.timeoutOrElse({
+            duration: Duration.seconds(10),
+            orElse: () => invalid("Account usage request timed out"),
+          }),
+          pageSlots.withPermit,
+        );
+        // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
+        // the first one's count implies are requested up to six ahead and consumed in page order.
+        const ahead: Fiber.Fiber<
+          Effect.Success<ReturnType<typeof readPage>>,
+          CursorAccountUsageInvalidError
+        >[] = [];
+        for (let page = 1; ; page++) {
+          while (ahead.length < Math.min(6, Math.ceil((total ?? 0) / pageSize) - page + 1)) {
+            ahead.push(yield* Effect.forkScoped(readPage(page + ahead.length)));
+          }
+          const next = ahead.shift();
+          const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
+          if (!Array.isArray(events)) return events;
+          const start = normalized.length;
+          const firstTimestamp = object(events[0]).timestamp;
+          // Equal raw events must have equal timestamps; avoid canonicalizing disjoint pages.
+          const mayOverlap =
+            (typeof firstTimestamp !== "string" && typeof firstTimestamp !== "number") ||
+            previousEvents.some((event) => object(event).timestamp === firstTimestamp);
+          const overlap = mayOverlap
+            ? boundaryOverlap(previousEvents.map(canonicalJson), events.map(canonicalJson))
+            : 0;
+          previousEvents = events;
+          for (const raw of events) {
+            const event = object(raw);
+            const usage = object(event.tokenUsage);
+            if (event.tokenUsage === undefined || event.tokenUsage === null) {
+              normalized.push(null);
+              continue;
+            }
+            for (const key of [
+              "inputTokens",
+              "outputTokens",
+              "cacheReadTokens",
+              "cacheWriteTokens",
+              "totalCents",
+            ]) {
+              const value = usage[key];
+              if (
+                value !== undefined &&
+                (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+              ) {
+                return yield* invalid("Invalid account usage totals");
+              }
+            }
+            const timestampMs =
+              typeof event.timestamp === "string" && event.timestamp.trim() !== ""
+                ? Number(event.timestamp)
+                : event.timestamp;
+            if (
+              typeof timestampMs !== "number" ||
+              !Number.isFinite(timestampMs) ||
+              typeof event.model !== "string" ||
+              !event.model
+            )
+              return yield* invalid("Invalid account usage event");
+            if (timestampMs < sinceMs || timestampMs > endDate) {
+              normalized.push(null);
+              continue;
+            }
+            const totals = {
+              uncachedInputTokens: tokens(usage.inputTokens),
+              cachedInputTokens: tokens(usage.cacheReadTokens),
+              cacheCreationTokens: tokens(usage.cacheWriteTokens),
+              outputTokens: tokens(usage.outputTokens),
+              reasoningTokens: 0,
+            };
+            const reportedCostUsd =
+              typeof usage.totalCents === "number" ? usage.totalCents / 100 : null;
+            const sessionId = typeof event.conversationId === "string" ? event.conversationId : "";
+            // No event ID is provided. Preserve identical billed rows with an occurrence index.
+            const key = yield* accountHash(
+              billedEventIdentity(
+                ...(teamId === undefined ? [] : [teamId]),
+                timestampMs,
+                event.model,
+                sessionId,
+                totals,
+                reportedCostUsd,
+              ),
+            );
+            normalized.push({
+              provider: "cursor",
+              timestampMs,
+              model: event.model,
+              rateModel: cursorRateModel(event.model),
+              sessionId,
+              totals,
+              reportedCostUsd,
+              speed: "standard",
+              dedupeKey: key,
+            });
+          }
+          pages.push({ start, end: normalized.length, overlap });
+          if (events.length < pageSize) break;
+          yield* Effect.yieldNow;
+        }
+        const rawCount = normalized.length;
+        if (total !== undefined && rawCount < total)
+          return yield* invalid("Incomplete account usage pages");
+        let removalsRemaining = total === undefined ? 0 : rawCount - total;
+        // The final count proves which boundary copies to remove, including non-token events.
+        for (const page of pages) {
+          const removalCount = Math.min(removalsRemaining, page.overlap);
+          removalsRemaining -= removalCount;
+          for (let index = page.start; index < page.end; index++) {
+            const record = normalized[index];
+            normalized[index] = null;
+            if (index < page.start + removalCount || record == null) continue;
+            const key = record.dedupeKey;
+            const occurrence = occurrences.get(key) ?? 0;
+            occurrences.set(key, occurrence + 1);
+            record.dedupeKey = `cursor-account:${accountKey}:${key}:${occurrence}`;
+            records.push(record);
+          }
+          yield* Effect.yieldNow;
+        }
+        if (removalsRemaining !== 0) return yield* invalid("Inconsistent account usage boundaries");
+        yield* Effect.annotateCurrentSpan({
+          "cursor.usage.pages": pages.length,
+          "cursor.usage.events": rawCount,
+          "cursor.usage.records": records.length,
+        });
+        return {
+          accountKey,
+          records,
+          missing: false,
+          error: null,
+        } satisfies CursorAccountUsageReadResult;
+      });
+
+      const results = yield* Effect.forEach(
+        [undefined, ...teamIds],
+        (teamId) => readScope(teamId).pipe(Effect.scoped),
+        { concurrency: 2 },
+      );
+      const failure = results.find((result) => result.error !== null);
+      if (failure !== undefined) return failure;
+      return {
+        accountKey,
+        records: results.flatMap((result) => result.records),
+        missing: false,
+        error: null,
+      } satisfies CursorAccountUsageReadResult;
+    });
+    return yield* read.pipe(
+      Effect.scoped,
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(60),
+        orElse: () => invalid("Account usage read timed out"),
+      }),
+      Effect.orElseSucceed(
+        () =>
+          ({
             accountKey,
             records: [],
             missing: false,
-            error: "Sign in to Cursor again to read account usage.",
-          } satisfies CursorAccountUsageReadResult;
-        }
-        if (response.status < 200 || response.status >= 300)
-          return yield* invalid("Account usage request failed");
-        const parsed: unknown = yield* response.json.pipe(
-          Effect.mapError(
-            () => new CursorAccountUsageInvalidError({ reason: "Invalid account usage page" }),
-          ),
-        );
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          return yield* invalid("Invalid account usage page");
-        }
-        const body = object(parsed);
-        const keys = Object.keys(body);
-        if ("error" in body || "message" in body || "code" in body)
-          return yield* invalid("Account usage error response");
-        const count = keys.length === 0 ? 0 : body.totalUsageEventsCount;
-        const events =
-          keys.length === 0 || (keys.length === 1 && keys[0] === "totalUsageEventsCount")
-            ? []
-            : body.usageEventsDisplay;
-        if (
-          (count !== undefined &&
-            (typeof count !== "number" ||
-              !Number.isSafeInteger(count) ||
-              count < 0 ||
-              (total !== undefined && count !== total))) ||
-          !Array.isArray(events) ||
-          events.length > pageSize ||
-          (count === undefined && !Array.isArray(body.usageEventsDisplay))
-        ) {
-          return yield* invalid("Inconsistent account usage page");
-        }
-        if (typeof count === "number") total = count;
-        return events as unknown[];
-      },
-      Effect.timeoutOrElse({
-        duration: Duration.seconds(10),
-        orElse: () => invalid("Account usage request timed out"),
-      }),
+            error: "Cursor account usage could not be read.",
+          }) satisfies CursorAccountUsageReadResult,
+      ),
     );
-    // Cursor caps a page at 1,000 events and takes about a second to answer one, so the pages
-    // the first one's count implies are requested up to six ahead and consumed in page order.
-    const ahead: Fiber.Fiber<
-      Effect.Success<ReturnType<typeof readPage>>,
-      CursorAccountUsageInvalidError
-    >[] = [];
-    for (let page = 1; ; page++) {
-      while (ahead.length < Math.min(6, Math.ceil((total ?? 0) / pageSize) - page + 1)) {
-        ahead.push(yield* Effect.forkScoped(readPage(page + ahead.length)));
-      }
-      const next = ahead.shift();
-      const events = yield* next === undefined ? readPage(page) : Fiber.join(next);
-      if (!Array.isArray(events)) return events;
-      const start = normalized.length;
-      const firstTimestamp = object(events[0]).timestamp;
-      // Equal raw events must have equal timestamps; avoid canonicalizing disjoint pages.
-      const mayOverlap =
-        (typeof firstTimestamp !== "string" && typeof firstTimestamp !== "number") ||
-        previousEvents.some((event) => object(event).timestamp === firstTimestamp);
-      const overlap = mayOverlap
-        ? boundaryOverlap(previousEvents.map(canonicalJson), events.map(canonicalJson))
-        : 0;
-      previousEvents = events;
-      for (const raw of events) {
-        const event = object(raw);
-        const usage = object(event.tokenUsage);
-        if (event.tokenUsage === undefined || event.tokenUsage === null) {
-          normalized.push(null);
-          continue;
-        }
-        for (const key of [
-          "inputTokens",
-          "outputTokens",
-          "cacheReadTokens",
-          "cacheWriteTokens",
-          "totalCents",
-        ]) {
-          const value = usage[key];
-          if (
-            value !== undefined &&
-            (typeof value !== "number" || !Number.isFinite(value) || value < 0)
-          ) {
-            return yield* invalid("Invalid account usage totals");
-          }
-        }
-        const timestampMs =
-          typeof event.timestamp === "string" && event.timestamp.trim() !== ""
-            ? Number(event.timestamp)
-            : event.timestamp;
-        if (
-          typeof timestampMs !== "number" ||
-          !Number.isFinite(timestampMs) ||
-          typeof event.model !== "string" ||
-          !event.model
-        )
-          return yield* invalid("Invalid account usage event");
-        if (timestampMs < sinceMs || timestampMs > endDate) {
-          normalized.push(null);
-          continue;
-        }
-        const totals = {
-          uncachedInputTokens: tokens(usage.inputTokens),
-          cachedInputTokens: tokens(usage.cacheReadTokens),
-          cacheCreationTokens: tokens(usage.cacheWriteTokens),
-          outputTokens: tokens(usage.outputTokens),
-          reasoningTokens: 0,
-        };
-        const reportedCostUsd =
-          typeof usage.totalCents === "number" ? usage.totalCents / 100 : null;
-        const sessionId = typeof event.conversationId === "string" ? event.conversationId : "";
-        // No event ID is provided. Preserve identical billed rows with an occurrence index.
-        const key = yield* accountHash(
-          billedEventIdentity(timestampMs, event.model, sessionId, totals, reportedCostUsd),
-        );
-        normalized.push({
-          provider: "cursor",
-          timestampMs,
-          model: event.model,
-          rateModel: cursorRateModel(event.model),
-          sessionId,
-          totals,
-          reportedCostUsd,
-          speed: "standard",
-          dedupeKey: key,
-        });
-      }
-      pages.push({ start, end: normalized.length, overlap });
-      if (events.length < pageSize) break;
-      yield* Effect.yieldNow;
-    }
-    const rawCount = normalized.length;
-    if (total !== undefined && rawCount < total)
-      return yield* invalid("Incomplete account usage pages");
-    let removalsRemaining = total === undefined ? 0 : rawCount - total;
-    // The final count proves which boundary copies to remove, including non-token events.
-    for (const page of pages) {
-      const removalCount = Math.min(removalsRemaining, page.overlap);
-      removalsRemaining -= removalCount;
-      for (let index = page.start; index < page.end; index++) {
-        const record = normalized[index];
-        normalized[index] = null;
-        if (index < page.start + removalCount || record == null) continue;
-        const key = record.dedupeKey;
-        const occurrence = occurrences.get(key) ?? 0;
-        occurrences.set(key, occurrence + 1);
-        record.dedupeKey = `cursor-account:${accountKey}:${key}:${occurrence}`;
-        records.push(record);
-      }
-      yield* Effect.yieldNow;
-    }
-    if (removalsRemaining !== 0) return yield* invalid("Inconsistent account usage boundaries");
-    yield* Effect.annotateCurrentSpan({
-      "cursor.usage.pages": pages.length,
-      "cursor.usage.events": rawCount,
-      "cursor.usage.records": records.length,
-    });
-    return {
-      accountKey,
-      records,
-      missing: false,
-      error: null,
-    } satisfies CursorAccountUsageReadResult;
   });
-  return yield* read.pipe(
-    Effect.scoped,
-    Effect.timeoutOrElse({
-      duration: Duration.seconds(60),
-      orElse: () => invalid("Account usage read timed out"),
-    }),
-    Effect.orElseSucceed(
-      () =>
-        ({
-          accountKey,
-          records: [],
-          missing: false,
-          error: "Cursor account usage could not be read.",
-        }) satisfies CursorAccountUsageReadResult,
-    ),
-  );
 });
