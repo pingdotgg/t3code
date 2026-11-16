@@ -102,9 +102,11 @@ conversation keeps its first prompt and the newest messages that fit, and the
 thread says how many earlier messages it left out. A Codex or Pi conversation
 that needs more, or has more than 100,000 records, is skipped every time, so
 opening the page again does not import it. It ignores malformed records and
-skips unreadable or unparseable conversations.
+conversations with no messages, such as a session opened in an editor but never
+used. It skips unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project. To
+Each import attempt reads up to 100 conversations and 4 GiB per project.
+Conversations with no messages count toward the 4 GiB but not the 100. To
 continue a large batch, open the Welcome page again and pick the project in
 **Review all**. Completed conversations are not imported again. You can continue
 without the remaining history.

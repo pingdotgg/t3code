@@ -285,7 +285,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     didSet {
       guard oldValue != fontSize else { return }
       inputField.font = UIFont.monospacedSystemFont(ofSize: max(fontSize, 13), weight: .regular)
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
@@ -321,14 +321,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     didSet {
       guard oldValue != appearanceScheme else { return }
       appearance = TerminalAppearanceScheme(value: appearanceScheme)
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
   var themeConfig: String = "" {
     didSet {
       guard oldValue != themeConfig else { return }
-      resetSurface()
+      applyConfigInPlace()
     }
   }
 
@@ -663,7 +663,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
       surfaceCreationFailed = true
       return
     }
-    loadThemeConfig(into: config)
+    // Creation proceeds without the file, as before; font_size is also set on the surface config.
+    _ = loadThemeConfig(into: config)
     ghostty_config_finalize(config)
     defer { ghostty_config_free(config) }
 
@@ -707,6 +708,27 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     lastContentScale = 0
     lastReportedGrid = nil
     surfaceCreationFailed = false
+    setNeedsLayout()
+  }
+
+  // Font and theme change in place: a new surface would replay output and re-answer its queries.
+  private func applyConfigInPlace() {
+    guard let app, let surface else {
+      resetSurface()
+      return
+    }
+    guard let config = ghostty_config_new() else { return }
+    defer { ghostty_config_free(config) }
+    let loaded = loadThemeConfig(into: config)
+    ghostty_config_finalize(config)
+    ghostty_app_set_color_scheme(app, appearance.ghosttyColorScheme)
+    ghostty_surface_set_color_scheme(surface, appearance.ghosttyColorScheme)
+    tickApp()
+    // Without the file, the config lacks font-size and would reset the surface to defaults.
+    if loaded {
+      ghostty_surface_update_config(surface, config)
+    }
+    resizeSurface()
     setNeedsLayout()
   }
 
@@ -933,16 +955,16 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     terminalViewport.backgroundColor = backgroundColorValue
   }
 
-  private func loadThemeConfig(into config: ghostty_config_t) {
-    guard let path = writeThemeConfigFile() else { return }
+  private func loadThemeConfig(into config: ghostty_config_t) -> Bool {
+    guard let path = writeThemeConfigFile() else { return false }
     path.withCString { cString in
       ghostty_config_load_file(config, cString)
     }
+    return true
   }
 
   private func writeThemeConfigFile() -> String? {
-    guard !themeConfig.isEmpty else { return nil }
-    let configContents = themeConfig
+    let configContents = "\(themeConfig)\nfont-size = \(String(format: "%g", Double(fontSize)))\n"
     let url = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("t3-terminal-theme-\(appearance.rawValue).ghostty")
 
