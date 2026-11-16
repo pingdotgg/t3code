@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Uses Node built-in fs and path for icon rendering.
 // Renders Exploro's app icons from the SVG sources in assets/brand with sharp, so icons can be
 // regenerated on any OS. It writes the same files the Icon Composer export (icons:export) owns.
 import * as NodeFSP from "node:fs/promises";
