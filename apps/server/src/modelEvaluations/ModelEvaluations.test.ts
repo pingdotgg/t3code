@@ -520,15 +520,33 @@ it.effect(
 );
 
 it.effect(
-  "keeps model options and judges separate, counts observed scores, and expires old guidance",
+  "pools latency and capacity options, and keeps effort, judges, scope, and observed scores separate",
   () =>
     Effect.gen(function* () {
       const service = yield* ModelEvaluations.ModelEvaluations;
       const settings = yield* ServerSettings.ServerSettingsService;
-      for (let index = 0; index < 8; index++) {
+      const cases: ReadonlyArray<{
+        readonly options: NonNullable<ModelSelection["options"]>;
+        readonly subagent?: boolean;
+        readonly switchJudge?: boolean;
+      }> = [
+        { options: [] },
+        { options: [{ id: "fastMode", value: true }] },
+        { options: [{ id: "fastMode", value: false }] },
+        { options: [{ id: "serviceTier", value: "priority" }] },
+        { options: [{ id: "contextWindow", value: "1m" }] },
+        { options: [{ id: "ultracode", value: true }] },
+        { options: [{ id: "effort", value: "high" }] },
+        { options: [{ id: "effort", value: "low" }] },
+        { options: [{ id: "reasoningEffort", value: "high" }] },
+        { options: [{ id: "reasoning_effort", value: "medium" }] },
+        { options: [], switchJudge: true },
+        { options: [], subagent: true },
+      ];
+      for (const [index, entry] of cases.entries()) {
         const id = RunId.make(`group-run-${index}`);
         const thread = ThreadId.make(`group-thread-${index}`);
-        if (index === 6)
+        if (entry.switchJudge)
           yield* settings.updateSettings({
             modelEvaluationModelSelection: {
               instanceId: ProviderInstanceId.make("codex"),
@@ -538,25 +556,31 @@ it.effect(
         yield* seed({
           thread,
           run: id,
-          subagent: index === 7,
-          model: {
-            ...modelSelection,
-            options: index === 5 ? [{ id: "effort", value: "high" }] : [],
-          },
+          subagent: entry.subagent,
+          model: { ...modelSelection, options: entry.options },
         });
         yield* service.evaluateRun({ threadId: thread, runId: id, runOutcome: "completed" });
       }
       const report = yield* service.list(scope);
-      assert.equal(report.guidance.length, 4);
-      const learned = report.guidance.find((group) => group.sampleCount === 5)!;
+      const groupsWith = (id: string) =>
+        report.guidance.filter((group) =>
+          (group.modelSelection.options ?? []).some((option) => option.id === id),
+        );
+      assert.equal(report.guidance.length, 7);
+      const learned = report.guidance.find((group) => group.sampleCount === 6)!;
       assert.equal(learned.confidence, "observed");
       assert.equal(learned.meanScores.taskCompletion, 3);
-      assert.equal(learned.scoreCounts.taskCompletion, 5);
+      assert.equal(learned.scoreCounts.taskCompletion, 6);
       assert.equal(learned.scoreCounts.verification, 0);
       assert.equal(learned.strengths.length, 1);
+      assert.equal(learned.scope, "turn");
+      assert.equal(groupsWith("effort").length, 2);
+      assert.equal(groupsWith("reasoningEffort").length, 1);
+      assert.equal(groupsWith("reasoning_effort").length, 1);
+      assert.equal(report.guidance.filter((group) => group.scope === "subagent").length, 1);
       yield* settings.updateSettings({ enableModelEvaluations: false });
       assert.deepEqual(yield* service.guidance(scope), []);
-      assert.equal((yield* service.list(scope)).records.length, 8);
+      assert.equal((yield* service.list(scope)).records.length, cases.length);
       yield* TestClock.adjust("91 days");
       assert.deepEqual((yield* service.list(scope)).guidance, []);
     }).pipe(Effect.provide(makeLayer((request) => Effect.succeed(verdict(request.packet))))),
