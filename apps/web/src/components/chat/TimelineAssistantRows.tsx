@@ -130,6 +130,7 @@ export function SentMessageTimelineRow({
         itemKey={row.id}
         request={ctx.citationRequest}
         listRef={ctx.listRef}
+        quotable
       >
         <ChatMarkdown
           text={row.text}
