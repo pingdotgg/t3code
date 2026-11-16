@@ -235,6 +235,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       cloudProvider,
       cloudModel,
       hasAudioConsent,
+      getStreamingEnabled: () => latestRef.current.clientSettings.speechStreaming,
       getTranscriptionOptions: (): SpeechTranscriptionOptions => {
         const {
           clientSettings: settings,
