@@ -786,12 +786,12 @@ const withCheckCount = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.map(Clock.clockWith(Effect.succeed), (clock) => {
     const counted = { checks: 0 };
     const counting: Clock.Clock = {
-      currentTimeMillisUnsafe: () => {
-        counted.checks++;
-        return clock.currentTimeMillisUnsafe();
-      },
+      currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
       currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
-      monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanosUnsafe: () => {
+        counted.checks++;
+        return clock.monotonicTimeNanosUnsafe();
+      },
       currentTimeMillis: clock.currentTimeMillis,
       currentTimeNanos: clock.currentTimeNanos,
       monotonicTimeNanos: clock.monotonicTimeNanos,

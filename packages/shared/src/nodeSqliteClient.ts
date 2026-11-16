@@ -989,6 +989,18 @@ const make = Effect.fn("makeWithDatabase")(function* (
       : [];
   type Reader = (typeof readers)[number];
   let retiringReaders = 0;
+  // Runs before the readers' own finalizers, so no read claims a slot whose worker already closed.
+  let closed = false;
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      closed = true;
+      for (const waiter of readerWaiters) wake(waiter);
+    }),
+  );
+  const readersClosed = Effect.fail(failedWith({ message: "Database reader closed" }, "execute"));
+  // The grace uses monotonic time, so a wall-clock correction neither stretches nor skips it.
+  const monotonicMillis = (clock: Clock.Clock) =>
+    Number(clock.monotonicTimeNanosUnsafe() / 1000n) / 1000;
 
   // Returns the reader a read may claim, or how long until an abandoned one may be replaced.
   const findReader = (now: number): Reader | number | undefined => {
@@ -1037,23 +1049,27 @@ const make = Effect.fn("makeWithDatabase")(function* (
   // while another reader is claimable or awaits its grace, wakes the next, so no wake is lost.
   // A read arriving behind waiting reads parks behind them; it never takes a reader ahead of them.
   const waitForReader = (restore: typeof Effect.interruptible) =>
-    Effect.withFiber((fiber): Effect.Effect<Reader> => {
+    Effect.withFiber((fiber): Effect.Effect<Reader, SqlError> => {
+      if (closed) return readersClosed;
       const clock = fiber.getRef(Clock.Clock);
-      const found =
-        readerWaiters.size === 0 ? findReader(clock.currentTimeMillisUnsafe()) : undefined;
+      const found = readerWaiters.size === 0 ? findReader(monotonicMillis(clock)) : undefined;
       if (typeof found === "object") return Effect.succeed(claimReader(found));
       const waiter: ReaderWaiter = { resume: undefined };
       readerWaiters.add(waiter);
-      const attempt = (found: Reader | number | undefined): Effect.Effect<Reader> => {
+      const attempt = (found: Reader | number | undefined): Effect.Effect<Reader, SqlError> => {
+        if (closed) {
+          readerWaiters.delete(waiter);
+          return readersClosed;
+        }
         if (typeof found !== "object") {
           return Effect.andThen(
             restore(park(waiter, found)),
-            Effect.suspend(() => attempt(findReader(clock.currentTimeMillisUnsafe()))),
+            Effect.suspend(() => attempt(findReader(monotonicMillis(clock)))),
           );
         }
         readerWaiters.delete(waiter);
         claimReader(found);
-        if (readerWaiters.size > 0 && findReader(clock.currentTimeMillisUnsafe()) !== undefined) {
+        if (readerWaiters.size > 0 && findReader(monotonicMillis(clock)) !== undefined) {
           readersChanged();
         }
         return Effect.succeed(found);
@@ -1092,7 +1108,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
             reader.state = reader.busy()
               ? {
                   name: "abandoned",
-                  since: releasing.getRef(Clock.Clock).currentTimeMillisUnsafe(),
+                  since: monotonicMillis(releasing.getRef(Clock.Clock)),
                 }
               : idle;
             readersChanged();
