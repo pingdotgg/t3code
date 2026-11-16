@@ -1,29 +1,56 @@
 // @effect-diagnostics globalJsonInEffect:off
+import * as Arr from "effect/Array";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 const SSE_EVENT_SEPARATOR = /(?:\r\n|\r(?!\n)|\n){2}/u;
 
-async function* sseDataLines(response: Response): AsyncGenerator<string> {
-  if (response.body === null) return;
-  const decoder = new TextDecoder();
-  let buffered = "";
-  for await (const chunk of response.body) {
-    buffered += decoder.decode(chunk as Uint8Array, { stream: true });
-    let separator = SSE_EVENT_SEPARATOR.exec(buffered);
-    while (separator !== null) {
-      const rawEvent = buffered.slice(0, separator.index);
-      buffered = buffered.slice(separator.index + separator[0].length);
-      const data = rawEvent
-        .split(/\r\n|\r|\n/u)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trimStart())
-        .join("\n");
-      if (data.length > 0) yield data;
-      separator = SSE_EVENT_SEPARATOR.exec(buffered);
-    }
+// Splits buffered SSE text into complete events' joined `data:` lines, returning the unparsed tail.
+function takeSseData(buffered: string): readonly [rest: string, data: ReadonlyArray<string>] {
+  const events: Array<string> = [];
+  let separator = SSE_EVENT_SEPARATOR.exec(buffered);
+  while (separator !== null) {
+    const data = buffered
+      .slice(0, separator.index)
+      .split(/\r\n|\r|\n/u)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).trimStart())
+      .join("\n");
+    if (data.length > 0) events.push(data);
+    buffered = buffered.slice(separator.index + separator[0].length);
+    separator = SSE_EVENT_SEPARATOR.exec(buffered);
   }
+  return [buffered, events];
 }
+
+// Reads a body until it ends; on interruption it unlocks and cancels the body, so a stalled read ends.
+const bodyChunks = <E>(
+  body: ReadableStream<Uint8Array>,
+  onError: (cause: unknown) => E,
+): Stream.Stream<Uint8Array, E> =>
+  Stream.unwrap(
+    Effect.acquireRelease(
+      Effect.sync(() => body.getReader()),
+      (reader) =>
+        Effect.promise(() => {
+          reader.releaseLock();
+          return body.cancel().catch(() => undefined);
+        }),
+    ).pipe(
+      Effect.map((reader) =>
+        Stream.fromPull(
+          Effect.succeed(
+            Effect.tryPromise({ try: () => reader.read(), catch: onError }).pipe(
+              Effect.flatMap(({ done, value }) =>
+                done ? Cause.done() : Effect.succeed(Arr.of(value)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
 export const discardResponseBody = (response: Response): Effect.Effect<void> =>
   Effect.promise(() => response.body?.cancel().catch(() => undefined) ?? Promise.resolve());
@@ -37,7 +64,14 @@ export function responsePayloads<E>(
   }
   const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0]!.trim();
   if (mediaType.toLowerCase() === "text/event-stream") {
-    return Stream.fromAsyncIterable(sseDataLines(response), onError).pipe(
+    const body = response.body;
+    if (body === null) return Stream.empty;
+    return bodyChunks(body, onError).pipe(
+      Stream.decodeText,
+      Stream.mapAccum(
+        () => "",
+        (buffered, text) => takeSseData(buffered + text),
+      ),
       Stream.mapEffect((data) => Effect.try({ try: () => JSON.parse(data), catch: onError })),
     );
   }
