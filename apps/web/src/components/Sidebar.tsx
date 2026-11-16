@@ -75,7 +75,10 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import {
+  resolveListedAncestorThreadRef,
+  type OlderSettledScope,
+} from "@t3tools/client-runtime/state/threads";
 
 import { CheckIcon, FolderIcon, SettingsIcon } from "lucide-react";
 import {
@@ -219,7 +222,6 @@ import {
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
-  resolveSidebarRowThreadId,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -1208,16 +1210,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const routeRowThreadKey =
     currentThreadRef === null
       ? null
-      : scopedThreadKey(
-          scopeThreadRef(
-            currentThreadRef.environmentId,
-            resolveSidebarRowThreadId(
-              currentThreadRef.threadId,
-              currentThreadRef.environmentId,
-              threads,
-            ),
-          ),
-        );
+      : scopedThreadKey(resolveListedAncestorThreadRef(currentThreadRef, threads));
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
 
   if (routeTarget?.kind === "draft") {

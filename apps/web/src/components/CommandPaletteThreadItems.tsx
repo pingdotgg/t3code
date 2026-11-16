@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   claimThreadOpen,
@@ -26,7 +27,7 @@ import {
   deriveProviderInstanceEntries,
   type ProviderInstanceEntry,
 } from "../providerInstances";
-import { useVisibleThreadShells } from "../state/entities";
+import { useDelegatedUnderParent, useVisibleThreadShells } from "../state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
@@ -45,7 +46,6 @@ import {
   type CommandPaletteActionItem,
 } from "./CommandPalette.logic";
 import { useEnvironmentLookups, useProjectLookups } from "./CommandPaletteLookups";
-import { isSidebarHiddenThread } from "./Sidebar.logic";
 import { ThreadCommandSubtitle } from "./ThreadCommandSubtitle";
 import {
   ThreadRowLeadingStatus,
@@ -101,6 +101,7 @@ function useConnectedThreadSearch(query: string) {
 
 function useRecentThreads(
   activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null,
+  delegatedUnderParent: ReadonlySet<string>,
 ) {
   const threads = useVisibleThreadShells();
   const { projectByKey } = useProjectLookups();
@@ -108,7 +109,11 @@ function useRecentThreads(
     .filter(
       (thread) =>
         thread.archivedAt === null &&
-        !isSidebarHiddenThread(thread) &&
+        !isShownUnderParent(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          thread.lineage,
+          delegatedUnderParent,
+        ) &&
         !(thread.id === activeThread?.id && thread.environmentId === activeThread.environmentId),
     )
     .map((thread) => ({
@@ -137,7 +142,8 @@ export function useCommandPaletteThreadItems(input: {
   const { activeThread, threadSearchQuery, includeAllThreads } = input;
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
-  const recentThreads = useRecentThreads(activeThread);
+  const delegatedUnderParent = useDelegatedUnderParent();
+  const recentThreads = useRecentThreads(activeThread, delegatedUnderParent);
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);
@@ -151,6 +157,7 @@ export function useCommandPaletteThreadItems(input: {
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
   const threadItems = buildThreadActionItems({
     threads: includeAllThreads ? threads : recentThreads,
+    delegatedUnderParent,
     ...(environments.length > 1
       ? {
           environmentLabelOf: (thread: (typeof threads)[number]) =>

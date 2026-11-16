@@ -2897,6 +2897,7 @@ export default function ChatView(props: ChatViewProps) {
     isWeb: !isElectron,
     isDesktop: isElectron,
   });
+  const getShortcutContextStable = useStableCallback(getShortcutContext);
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
@@ -3104,6 +3105,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     activeThreadBranch,
     activeProject,
+    activeProjectIsScratch,
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
@@ -3936,6 +3938,7 @@ export default function ChatView(props: ChatViewProps) {
                               resolvedTheme={resolvedTheme}
                               settings={settings}
                               keybindings={keybindings}
+                              getShortcutContext={getShortcutContextStable}
                               terminalOpen={Boolean(terminalUiState.terminalOpen)}
                               gitCwd={gitCwd}
                               pullRequestProjectId={
