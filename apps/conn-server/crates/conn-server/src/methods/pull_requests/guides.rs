@@ -6,6 +6,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+// Bound stored rows to 8 MiB; T3 does not cap its stored guide JSON.
 const MAX_GUIDE_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]

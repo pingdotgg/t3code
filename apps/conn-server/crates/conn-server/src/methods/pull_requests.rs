@@ -1110,7 +1110,9 @@ fn register_panel(table: &mut MethodTable, panel: Arc<Panel>) {
     unary!("pullRequests.labelCandidates", label_candidates);
     unary!("pullRequests.setLabels", set_labels);
     unary!("pullRequests.update", update);
+    // runAction needs guarded Git/stack operations and engine merge/link synchronization.
     unary!("pullRequests.stack", stack);
+    // Generation needs owned background runs, scratch checkouts, diff normalization and writes.
     unary!("pullRequests.reviewGuide", review_guide);
 
     unary!("pullRequests.listStats", list_stats);
