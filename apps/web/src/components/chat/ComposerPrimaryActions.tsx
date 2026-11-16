@@ -202,6 +202,8 @@ export function CollapsedComposerStopAction({
   hasSendableContent,
   isEditingQueuedMessage,
   onInterrupt,
+  stopShortcutLabel = null,
+  isStopShortcutEvent,
 }: {
   children: ReactNode;
   canOperateThread: boolean;
@@ -210,6 +212,8 @@ export function CollapsedComposerStopAction({
   hasSendableContent: boolean;
   isEditingQueuedMessage: boolean;
   onInterrupt: () => void;
+  stopShortcutLabel?: string | null;
+  isStopShortcutEvent?: ((event: KeyboardEvent) => boolean) | undefined;
 }) {
   const [stopPhase, setStopPhase] = useStopPhase({ runId, canInterrupt, canOperateThread });
   if (
@@ -232,6 +236,8 @@ export function CollapsedComposerStopAction({
         preserveComposerFocusOnPointerDown
         onStopRequested={() => setStopPhase("pending")}
         onInterrupt={onInterrupt}
+        stopShortcutLabel={stopShortcutLabel}
+        isStopShortcutEvent={isStopShortcutEvent}
       />
     </span>
   );

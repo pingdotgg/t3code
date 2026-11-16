@@ -90,8 +90,9 @@ export function useAssistantCitationTarget({
       };
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
-          // A live citation owns this Escape; the chat would otherwise also stop the agent.
-          if (!activationRef.current.dismissed) {
+          // A pending citation scroll owns this Escape; the chat would otherwise also stop the agent.
+          const activation = activationRef.current;
+          if (!activation.dismissed && !activation.scrolled && !done) {
             event.preventDefault();
             event.stopPropagation();
           }

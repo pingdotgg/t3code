@@ -1711,6 +1711,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
+  const stopShortcutLabel = shortcutLabelForCommand(keybindings, "thread.stop", {
+    context: { composerFocus: true, turnRunning: true },
+  });
   const isStopShortcutEventStable = useStableCallback(
     (event: KeyboardEvent) =>
       resolveShortcutCommand(event, keybindings, {
@@ -3477,6 +3480,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   hasSendableContent={composerSendState.hasSendableContent}
                   isEditingQueuedMessage={isEditingQueuedMessage}
                   onInterrupt={handleInterruptPrimaryActionStable}
+                  stopShortcutLabel={stopShortcutLabel}
+                  isStopShortcutEvent={isStopShortcutEventStable}
                 >
                   <button
                     type="button"
@@ -3771,9 +3776,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         },
                       },
                     )}
-                    stopShortcutLabel={shortcutLabelForCommand(keybindings, "thread.stop", {
-                      context: { composerFocus: true, turnRunning: true },
-                    })}
+                    stopShortcutLabel={stopShortcutLabel}
                     isStopShortcutEvent={isStopShortcutEventStable}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}

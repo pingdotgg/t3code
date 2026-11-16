@@ -29,7 +29,7 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import { mergeWithDefaultKeybindings, parseKeybindingShortcut } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1079,6 +1079,13 @@ function useNewKeybindingDraft({
     });
   };
 
+  const selectCommand = (command: KeybindingCommand) => {
+    setCommandDraft(command);
+    if (!commandRecordsEscape(command) && parseKeybindingShortcut(keyDraft)?.key === "escape") {
+      setDraft({ keyDraft: "" });
+    }
+  };
+
   const captureKeybinding = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Tab" && !isRecording) return;
     event.preventDefault();
@@ -1098,7 +1105,7 @@ function useNewKeybindingDraft({
 
   return {
     commandDraft,
-    setCommandDraft,
+    selectCommand,
     keyDraft,
     whenDraft,
     whenDraftExpression,
@@ -1135,7 +1142,7 @@ function NewKeybindingCommandSelect({
   return (
     <Select
       value={draft.commandDraft}
-      onValueChange={(value) => draft.setCommandDraft(value as KeybindingCommand)}
+      onValueChange={(value) => draft.selectCommand(value as KeybindingCommand)}
     >
       <SelectTrigger size="sm" className={className}>
         <SelectValue placeholder="Command" />

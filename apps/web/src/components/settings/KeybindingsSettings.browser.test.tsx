@@ -127,7 +127,7 @@ it("Esc in the keybindings search clears the query without closing Settings", as
 it.each([
   { pressed: "{Escape}", recorded: "esc" },
   { pressed: "{Shift>}{Escape}{/Shift}", recorded: "shift+esc" },
-])("records $recorded for the stop command, and a second Esc cancels", async (shortcut) => {
+])("records $recorded only for the stop command, and a second Esc cancels", async (shortcut) => {
   await using screen = await render(
     <RegistryProvider>
       <KeybindingsSettingsPanel />
@@ -145,6 +145,14 @@ it.each([
 
   await userEvent.keyboard("{Escape}");
   await expect.element(field).toHaveValue("");
+
+  await field.click();
+  await userEvent.keyboard(shortcut.pressed);
+  await screen.getByRole("combobox").last().click();
+  await page.getByRole("option", { name: "Sidebar: Toggle" }).click();
+  await expect
+    .element(screen.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" }))
+    .toHaveValue("");
 });
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
