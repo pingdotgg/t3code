@@ -30,7 +30,6 @@ import {
   hasProviderUsageLimits,
   isUsageLimitsCommand,
 } from "@t3tools/shared/usageLimits";
-import { parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import type { ReactNode } from "react";
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
@@ -101,7 +100,10 @@ import { useComposerTextRole, type ScaledTextRole } from "../settings/appearance
 import type { RemoteClientConnectionState } from "../../lib/connection";
 import { MOBILE_TYPOGRAPHY } from "../../lib/typography";
 import { Menu } from "../../components/ui/Menu";
-import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/composer-dispatch";
+import {
+  composerRunsDraftLocally,
+  type ActiveTurnComposerAction,
+} from "@t3tools/client-runtime/state/composer-dispatch";
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import {
   resolveComposerSendPresentation,
@@ -502,7 +504,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
-  const { text: draftMessage, attachments: draftAttachments } = useComposerDraft(composerDraftKey);
+  const {
+    text: draftMessage,
+    attachments: draftAttachments,
+    context: draftContext,
+  } = useComposerDraft(composerDraftKey);
   const queuedEdit = props.queuedEdit ?? null;
   const hasContent =
     draftMessage.trim().length > 0 ||
@@ -534,18 +540,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
-  const sendPresentation = resolveComposerSendPresentation({
-    editingQueuedMessage: queuedEdit !== null,
-    // A side-chat command starts a side chat; it never queues or steers the running turn.
-    running:
-      props.activeThreadBusy &&
-      (props.redirectsApproval || parseSideChatCommand(draftMessage) === null),
-    canSteer: props.canSteerActiveTurn,
-    followUpBehavior: props.followUpBehavior,
-    deliveryDeferred:
-      props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
-  });
-  const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
   const modelUnavailable =
     props.connectionState === "connected" &&
@@ -582,6 +576,25 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
     );
+  const draftRunsLocally = composerRunsDraftLocally({
+    text: draftMessage,
+    holdsOnlyText: draftAttachments.length === 0,
+    // A redirect's text answers its approval, so `/side` there is that text.
+    sideChat: !props.redirectsApproval,
+    usageLimits: usageLimitsOffered,
+    codexFeedback: selectedProviderStatus?.driver === "codex",
+    freshSession: props.onFreshSession !== undefined && draftContext === undefined,
+  });
+  const sendPresentation = resolveComposerSendPresentation({
+    editingQueuedMessage: queuedEdit !== null,
+    running: props.activeThreadBusy && !draftRunsLocally,
+    canSteer: props.canSteerActiveTurn,
+    followUpBehavior: props.followUpBehavior,
+    deliveryDeferred:
+      !draftRunsLocally &&
+      (props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading),
+  });
+  const sendLabel = sendPresentation.label;
   const openUsageLimits = () => {
     const report = collectProviderUsageLimits(
       currentModelSelection.instanceId,
