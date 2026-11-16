@@ -5699,6 +5699,87 @@ describe("working window", () => {
     ]);
   });
 
+  it("keeps live progress when tools are hidden and only the answer after Zen work ends", () => {
+    const message = (id: string, second: number): TimelineEntry => ({
+      id,
+      kind: "message",
+      createdAt: time(second),
+      message: {
+        id: MessageId.make(id),
+        role: "assistant",
+        text: id,
+        runId,
+        createdAt: time(second),
+        updatedAt: time(second),
+        streaming: false,
+      },
+    });
+    const user = prompt("prompt", 0);
+    const userEntry = { ...user, message: { ...user.message, runId: null } };
+    const progress = message("progress", 1);
+    const thought = work("thought", 1, {
+      label: "Thinking",
+      detail: "Checking the files",
+      itemType: "reasoning",
+      toolLifecycleStatus: "completed",
+    });
+    const command = work("command", 2, {
+      label: "Running pwd",
+      itemType: "command_execution",
+      toolLifecycleStatus: "inProgress",
+    });
+    for (const toolCallVisibility of ["showAll", "hideSuccessful", "hideAll", "zen"] as const) {
+      const input = {
+        timelineEntries: [userEntry, thought, progress, command],
+        latestRun: { runId, status: "running" as const, startedAt: time(0), completedAt: null },
+        isWorking: true,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        turnWorkFold: true,
+        toolCallVisibility,
+      };
+      const rows = applyWorkingWindow(deriveMessagesTimelineRows(input), input);
+      expect(
+        workingRow(rows)?.window?.items.some((item) => item.id === "thought"),
+        toolCallVisibility,
+      ).toBe(true);
+      const visibleProgress =
+        rows.some((row) => row.id === "progress") ||
+        workingRow(rows)?.window?.items.some((item) => item.id === "progress");
+      expect(visibleProgress, toolCallVisibility).toBe(true);
+      if (toolCallVisibility === "hideAll" || toolCallVisibility === "zen") {
+        expect(workingRow(rows)?.window?.items.some((item) => item.id === "command")).toBe(false);
+      }
+      const ended = {
+        ...input,
+        timelineEntries: [...input.timelineEntries, message("final", 3)],
+        latestRun: {
+          ...input.latestRun,
+          status: "completed" as const,
+          completedAt: time(3),
+          turnEnded: true,
+        },
+        isWorking: false,
+      };
+      const settled = applyWorkingWindow(deriveMessagesTimelineRows(ended), ended);
+      expect(settled.filter((row) => row.kind === "message").map((row) => row.id)).toEqual([
+        "prompt",
+        "final",
+      ]);
+      expect(workingRow(settled)).toBeUndefined();
+      if (toolCallVisibility === "zen") {
+        const checkpointing = { ...ended, isWorking: true };
+        expect(
+          deriveMessagesTimelineRows(checkpointing)
+            .filter((row) => row.kind === "message")
+            .map((row) => row.id),
+        ).toEqual(["prompt", "final"]);
+        const legacy = { ...input, turnWorkFold: false };
+        expect(deriveMessagesTimelineRows(legacy).some((row) => row.id === "progress")).toBe(false);
+      }
+    }
+  });
+
   it("keeps unchanged window items when a later one changes", () => {
     const command = work("command", 2, {
       label: "Ran pwd",
