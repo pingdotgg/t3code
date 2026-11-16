@@ -74,13 +74,18 @@ vi.mock(
 );
 
 // A file named broken.png fails compression the way an unreadable image does, once the test
-// calls `brokenImage.fail`.
+// calls `brokenImage.fail`. `brokenImage.setup` gives each test a fresh pending gate.
 const brokenImage = vi.hoisted(() => {
-  let fail = () => {};
-  const failed = new Promise<void>((resolve) => {
-    fail = resolve;
-  });
-  return { failed, fail: () => fail() };
+  const gate = { failed: Promise.resolve(), fail: () => {} };
+  return {
+    gate,
+    setup: () => {
+      gate.failed = new Promise<void>((resolve) => {
+        gate.fail = resolve;
+      });
+    },
+    fail: () => gate.fail(),
+  };
 });
 vi.mock("~/lib/imageCompression", async (importOriginal) => {
   const actual = await importOriginal<typeof import("~/lib/imageCompression")>();
@@ -88,7 +93,7 @@ vi.mock("~/lib/imageCompression", async (importOriginal) => {
     ...actual,
     prepareImageForAttachment: (file: File, maxBytes: number) =>
       file.name === "broken.png"
-        ? brokenImage.failed.then(() => ({ ok: false, reason: "unreadable" }) as const)
+        ? brokenImage.gate.failed.then(() => ({ ok: false, reason: "unreadable" }) as const)
         : actual.prepareImageForAttachment(file, maxBytes),
   };
 });
@@ -141,6 +146,7 @@ it("text and screenshots pasted outside the composer send with an Enter right af
 });
 
 it("an Enter held for a compressing image sends nothing when the image fails", async () => {
+  brokenImage.setup();
   const thread = threadWithHistory("paste-to-focus-broken-image", 1);
   using _environment = installFakeEnvironment([thread], { acceptCommands: true });
   __setClientSettingsForTests({
