@@ -113,7 +113,9 @@ function shouldIncludeModelPickerOption(input: {
   if (isProviderInstancePickerReady(input.entry)) return true;
   return (
     input.entry.enabled &&
-    (input.entry.driverKind === "opencode" || input.entry.driverKind === "antigravity") &&
+    (input.entry.driverKind === "opencode" ||
+      input.entry.driverKind === "antigravity" ||
+      input.entry.driverKind === "cursor") &&
     input.entry.instanceId === input.activeInstanceId &&
     input.option.slug === input.activeModel &&
     input.option.isUnavailable === true
@@ -464,6 +466,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
     setSelectedInstanceId(instanceId);
+    // Focusing the search on touch raises the on-screen keyboard on every provider tap.
+    if (window.matchMedia("(pointer: coarse)").matches) return;
     window.requestAnimationFrame(() => {
       focusSearchInput();
     });
