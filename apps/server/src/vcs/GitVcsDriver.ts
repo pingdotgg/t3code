@@ -481,6 +481,8 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// Staging that builds the reusable index may hash gigabytes once; later captures only see changes.
+const CHECKPOINT_COLD_STAGE_TIMEOUT_MS = 10 * 60_000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
 // one, so an unknown subject keeps its commit attributed.
@@ -1477,6 +1479,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           execute({
             operation,
             cwd: input.cwd,
+            // A cold capture that timed out would discard its work and never seed the cache.
+            ...(cachePath !== undefined && !cachedIndex
+              ? { timeoutMs: CHECKPOINT_COLD_STAGE_TIMEOUT_MS }
+              : {}),
             args: [
               ...indexConfig,
               ...durableWrite,
