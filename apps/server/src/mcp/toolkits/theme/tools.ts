@@ -53,7 +53,7 @@ const ThemeReadTool = Tool.make("t3_theme_read", {
 const ThemeSetTool = Tool.make("t3_theme_set", {
   ...shared,
   description:
-    "Restyle T3 Code itself, only when the user asks. With `theme`, publish it as `themeId` (the same id updates it) and switch this machine's web and desktop clients to it. Without `theme`, switch to a built-in or published `themeId`. `appearance` switches them to light, dark, or system mode, with or without a theme. Live full-access or default caller thread only.",
+    "Restyle T3 Code itself, only when the user asks. With `theme`, publish it as `themeId` (same id updates it) and switch this server's web app and this machine's desktop app to it, not remote desktop apps. Without `theme`, switch to a built-in or published `themeId`. `appearance` sets light, dark, or system mode. Live full-access or default caller thread only.",
   parameters: Schema.Struct({
     themeId: Schema.optionalKey(EnvironmentThemeId),
     theme: Schema.optionalKey(EnvironmentThemeFile),
