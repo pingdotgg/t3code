@@ -86,8 +86,22 @@ jobs:
         shell: bash
         run: node scripts/update-release-package-versions.ts "${{ needs.version.outputs.version }}"
 
+      # Same split as upstream release-desktop.yml: build the JS bundle and the
+      # resource monitor first, then package with --skip-build. Letting the
+      # packager build everything leaves extra files that break the Windows
+      # payload file limit.
+      - name: Build JS bundle
+        shell: bash
+        run: vp run build:desktop:bundle
+
+      - name: Build resource monitor
+        shell: bash
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
+
       - name: Build desktop app
         shell: bash
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
         run: >-
           node scripts/build-desktop-artifact.ts
           --platform ${{ matrix.platform }}
@@ -95,6 +109,7 @@ jobs:
           --arch x64
           --build-version "${{ needs.version.outputs.version }}"
           --output-dir release
+          --skip-build
           --keep-stage
           --verbose
 
