@@ -23,6 +23,21 @@ export const LinearUser = Schema.Struct({
 export interface LinearUser extends Schema.Struct.Type<typeof LinearUser.fields> {}
 
 /**
+ * `fragment LinearBot on ActorBot`
+ *
+ * A bot actor representing a non-human entity that performed an action, such as an integration (GitHub, Slack, Zendesk), an AI assistant, or an automated workflow. Bot actors are displayed in activity feeds and history to indicate when changes were made by applications rather than users.
+ */
+export const LinearBot = Schema.Struct({
+  /** The display name of the bot. */
+  name: Schema.NullOr(Schema.String),
+  /** The display name of the external user on behalf of whom the bot acted. Shown when an integration action was triggered by a specific person in the external system. */
+  userDisplayName: Schema.NullOr(Schema.String),
+  /** A URL pointing to the avatar image representing this bot, typically the integration's logo or icon. */
+  avatarUrl: Schema.NullOr(Schema.String)
+})
+export interface LinearBot extends Schema.Struct.Type<typeof LinearBot.fields> {}
+
+/**
  * `fragment LinearWorkflowState on WorkflowState`
  *
  * A state in a team's workflow, representing an issue status such as Triage, Backlog, Todo, In Progress, In Review, Done, or Canceled. Each team has its own set of workflow states that define the progression of issues through the team's process. Workflow states have a type that categorizes them (triage, backlog, unstarted, started, completed, canceled), a position that determines their display order, and a color for visual identification. States can be inherited from parent teams to sub-teams.
@@ -97,6 +112,8 @@ export const LinearComment = Schema.Struct({
   url: Schema.String,
   /** The user who wrote the comment. Null for comments created by integrations or bots without a user association. */
   user: Schema.NullOr(LinearUser),
+  /** The bot that created the comment. */
+  botActor: Schema.NullOr(LinearBot),
   /** Reactions associated with the comment. */
   reactions: Schema.Array(LinearReaction)
 })
@@ -149,6 +166,8 @@ export const LinearIssue = Schema.Struct({
   team: TeamTeam,
   /** The user who created the issue. Null if the creator's account has been deleted or if the issue was created by an integration or system process. */
   creator: Schema.NullOr(LinearUser),
+  /** The bot that created the issue, if applicable. */
+  botActor: Schema.NullOr(LinearBot),
   /** The user to whom the issue is assigned. Null if the issue is unassigned. */
   assignee: Schema.NullOr(LinearUser),
   /** Labels associated with this issue. */
@@ -217,23 +236,26 @@ export const T3Issues = GraphQL.query("T3Issues", {
     variables: [
       { name: "first", body: "Int!" },
       { name: "after", body: "String" },
-      { name: "filter", body: "IssueFilter!" }
+      { name: "filter", body: "IssueFilter!" },
+      { name: "orderBy", body: "PaginationOrderBy!" }
     ],
     selections: [
-      { name: "issues", body: ["(first:$", "first", " after:$", "after", " filter:$", "filter", " orderBy:updatedAt){nodes{...LinearIssue}pageInfo{...LinearPageInfo}}"] }
+      { name: "issues", body: ["(first:$", "first", " after:$", "after", " filter:$", "filter", " orderBy:$", "orderBy", "){nodes{...LinearIssue}pageInfo{...LinearPageInfo}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
+      { name: "LinearBot", body: ["on ActorBot{name userDisplayName avatarUrl}"] },
       { name: "LinearLabel", body: ["on IssueLabel{id name color}"] }
     ]
   },
   variables: {
     first: Shared.Int,
     after: Schema.optional(Schema.NullOr(Schema.String)),
-    filter: Shared.IssueFilter
+    filter: Shared.IssueFilter,
+    orderBy: Shared.PaginationOrderBy
   },
   result: Schema.Struct({
     /** All issues. Returns a paginated list of issues visible to the authenticated user. Can be filtered by various criteria including team, assignee, state, labels, project, and cycle. */
@@ -277,6 +299,8 @@ export const IssueHistory = Schema.Struct({
   createdAt: Shared.DateTime,
   /** The actor that performed the actions. This field may be empty in the case of integrations or automations. */
   actor: Schema.NullOr(LinearUser),
+  /** The bot that performed the action. */
+  botActor: Schema.NullOr(LinearBot),
   /** The state that the issue was moved from. */
   fromState: Schema.NullOr(LinearWorkflowState),
   /** The state that the issue was moved to. */
@@ -323,14 +347,15 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
-      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}reactions{...LinearReaction}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearReaction", body: ["on Reaction{id emoji user{...LinearUser}}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
+      { name: "LinearBot", body: ["on ActorBot{name userDisplayName avatarUrl}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearLabel", body: ["on IssueLabel{id name color}"] }
     ]
@@ -368,9 +393,10 @@ export const T3Comments = GraphQL.query("T3Comments", {
       { name: "issue", body: ["(id:$", "id", "){comments(first:$", "first", " after:$", "after", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}}"] }
     ],
     fragments: [
-      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}reactions{...LinearReaction}}"] },
+      { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
+      { name: "LinearBot", body: ["on ActorBot{name userDisplayName avatarUrl}"] },
       { name: "LinearReaction", body: ["on Reaction{id emoji user{...LinearUser}}"] }
     ]
   },
@@ -690,8 +716,17 @@ export declare namespace T3IssueReactions {
   export type Result = typeof T3IssueReactions.result.Type
 }
 
+/** An issue is the core work item in Linear. Issues belong to a team, have a workflow status, can be assigned to users, carry a priority level, and can be organized into projects and cycles. Issues support sub-issues (parent-child hierarchy up to 10 levels deep), labels, due dates, estimates, and SLA tracking. They can also be linked to other issues via relations, attached to releases, and tracked through their full history of changes. */
+export const CommentIssueIssue = Schema.Struct({
+  /** The unique identifier of the entity. */
+  id: Shared.ID
+})
+export interface CommentIssueIssue extends Schema.Struct.Type<typeof CommentIssueIssue.fields> {}
+
 /** A comment associated with an issue, project update, initiative update, document content, post, project, or initiative. Comments support rich text (ProseMirror), emoji reactions, and threaded replies via parentId. Comments can be created by workspace users or by external users through integrations (e.g., Slack, Intercom). Each comment belongs to exactly one parent entity. */
 export const Comment = Schema.Struct({
+  /** The issue that the comment is associated with. Null if the comment belongs to a different parent entity type. */
+  issue: Schema.NullOr(CommentIssueIssue),
   /** Reactions associated with the comment. */
   reactions: Schema.Array(LinearReaction)
 })
@@ -704,7 +739,7 @@ export const T3CommentReactions = GraphQL.query("T3CommentReactions", {
       { name: "id", body: "String!" }
     ],
     selections: [
-      { name: "comment", body: ["(id:$", "id", "){reactions{...LinearReaction}}"] }
+      { name: "comment", body: ["(id:$", "id", "){issue{id}reactions{...LinearReaction}}"] }
     ],
     fragments: [
       { name: "LinearReaction", body: ["on Reaction{id emoji user{...LinearUser}}"] },

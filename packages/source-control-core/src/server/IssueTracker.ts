@@ -12,6 +12,7 @@ import type {
   IssueCreateResult,
   IssueEvent,
   IssueInvolvement,
+  IssueListSort,
   IssueLinkedPullRequest,
   IssueListState,
   IssueReaction,
@@ -107,6 +108,11 @@ export interface IssueTrackerApi {
       readonly limit: number;
       /** Free text as the tracker understands it; ignored by a tracker without `search`. */
       readonly query?: string | undefined;
+      /** Label names an issue must carry, every one of them. */
+      readonly labels?: ReadonlyArray<string> | undefined;
+      /** The `login` of an assignee, as this tracker's own issues name them. */
+      readonly assignee?: string | undefined;
+      readonly sort: IssueListSort;
       /** A cursor this tracker handed back from an earlier page. Absent asks for the first. */
       readonly cursor?: string | undefined;
     },

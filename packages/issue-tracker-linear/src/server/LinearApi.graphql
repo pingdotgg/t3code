@@ -6,6 +6,12 @@ fragment LinearUser on User {
   avatarUrl
 }
 
+fragment LinearBot on ActorBot {
+  name
+  userDisplayName
+  avatarUrl
+}
+
 fragment LinearWorkflowState on WorkflowState {
   id
   name
@@ -40,6 +46,9 @@ fragment LinearComment on Comment {
   user {
     ...LinearUser
   }
+  botActor {
+    ...LinearBot
+  }
   reactions {
     ...LinearReaction
   }
@@ -64,6 +73,9 @@ fragment LinearIssue on Issue {
   }
   creator {
     ...LinearUser
+  }
+  botActor {
+    ...LinearBot
   }
   assignee {
     ...LinearUser
@@ -93,8 +105,8 @@ query T3Viewer {
   }
 }
 
-query T3Issues($first: Int!, $after: String, $filter: IssueFilter!) {
-  issues(first: $first, after: $after, filter: $filter, orderBy: updatedAt) {
+query T3Issues($first: Int!, $after: String, $filter: IssueFilter!, $orderBy: PaginationOrderBy!) {
+  issues(first: $first, after: $after, filter: $filter, orderBy: $orderBy) {
     nodes {
       ...LinearIssue
     }
@@ -132,6 +144,9 @@ query T3Issue($id: String!, $comments: Int!) {
         createdAt
         actor {
           ...LinearUser
+        }
+        botActor {
+          ...LinearBot
         }
         fromState {
           ...LinearWorkflowState
@@ -268,6 +283,9 @@ query T3IssueReactions($id: String!) {
 
 query T3CommentReactions($id: String!) {
   comment(id: $id) {
+    issue {
+      id
+    }
     reactions {
       ...LinearReaction
     }

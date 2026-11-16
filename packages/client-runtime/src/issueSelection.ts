@@ -67,6 +67,18 @@ export function issuePicksFor<T>(
   return { basis: detail, draft: open ? picks.draft : new Map(), written: null };
 }
 
+/**
+ * A write that failed is forgotten along with the picks it carried, unless the picker was picked
+ * in again since: those picks stay, and the next close writes them with the ones that failed.
+ */
+export function issuePicksAfterFailedWrite<T>(
+  latest: IssuePicks<T>,
+  sent: IssuePicks<T>,
+): IssuePicks<T> {
+  if (latest.written !== sent.written) return latest;
+  return latest.draft === sent.draft ? noIssuePicks() : { ...latest, written: null };
+}
+
 /** The set a closing picker writes: null when the tracker has it or was already sent it. */
 export function issueWriteAfterPicks(
   after: ReadonlyArray<string> | null,

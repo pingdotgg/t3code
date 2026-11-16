@@ -62,8 +62,8 @@ const CAPABILITIES: IssueCapabilities = {
 
 /** Forgejo's own ceiling on a page, which a self-hosted server may lower. */
 const PAGE_SIZE = 50;
-/** Comment reactions are a request each, so only the first page's are read with the detail. */
-const COMMENT_REACTION_LIMIT = 50;
+/** How many pages of a listing with no cursor of its own are read before giving up on the rest. */
+const MAX_PAGES = 10;
 
 const repoPath = (scope: string) => `repos/${scope.split("/").map(encodeURIComponent).join("/")}`;
 const issuePath = (scope: string, number: number) => `${repoPath(scope)}/issues/${number}`;
@@ -245,6 +245,52 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         ),
       );
 
+    /** Every page of a listing the caller gets no cursor for, up to `MAX_PAGES`. */
+    const readEveryPage = Effect.fn("ForgejoIssueTracker.readEveryPage")(function* <A>(
+      target: Target,
+      operation: string,
+      path: string,
+      schema: Schema.Codec<A, unknown, never, never>,
+    ) {
+      const rows: A[] = [];
+      for (let page = 1; page <= MAX_PAGES; page++) {
+        const next = yield* readPage(target, operation, path, page, schema);
+        rows.push(...next.rows);
+        if (next.nextCursor === null) break;
+      }
+      return rows;
+    });
+
+    /**
+     * Labels are written by id, so names are resolved against the repository's own, page by page
+     * until each is found. A name the repository lacks refuses the write rather than dropping it.
+     */
+    const labelIds = Effect.fn("ForgejoIssueTracker.labelIds")(function* (
+      target: Target,
+      operation: string,
+      names: ReadonlyArray<string>,
+    ) {
+      const ids = new Map<string, number>();
+      for (let page = 1; ids.size < new Set(names).size && page <= MAX_PAGES; page++) {
+        const next = yield* readPage(
+          target,
+          operation,
+          `${repoPath(target.scope)}/labels`,
+          page,
+          ForgejoLabel,
+        );
+        for (const label of next.rows) {
+          if (names.includes(label.name)) ids.set(label.name, label.id);
+        }
+        if (next.nextCursor === null) break;
+      }
+      if (names.some((name) => !ids.has(name))) {
+        return yield* refused(operation, "Forgejo found no label by one of the names given.");
+      }
+      return [...ids.values()];
+    });
+
+    /** `/comments` takes no page and answers with every comment, so the pages are cut here. */
     const commentsPage = (
       target: Target,
       operation: string,
@@ -252,10 +298,11 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
       page: number,
       viewer: string,
     ) =>
-      readPage(target, operation, `${path}/comments`, page, ForgejoComment).pipe(
-        Effect.flatMap(({ rows, nextCursor }) =>
-          Effect.forEach(
-            rows.slice(0, COMMENT_REACTION_LIMIT),
+      readArray(target, operation, `${path}/comments`, ForgejoComment).pipe(
+        Effect.flatMap((rows) => {
+          const end = page * PAGE_SIZE;
+          return Effect.forEach(
+            rows.slice(end - PAGE_SIZE, end),
             (comment) =>
               readArray(
                 target,
@@ -269,8 +316,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 })),
               ),
             { concurrency: 4 },
-          ).pipe(Effect.map((comments) => ({ comments, nextCursor }))),
-        ),
+          ).pipe(
+            Effect.map((comments) => ({
+              comments,
+              nextCursor: rows.length > end ? String(page + 1) : null,
+            })),
+          );
+        }),
       );
 
     /** Pull requests the timeline shows citing this issue, each read once for its state. */
@@ -278,22 +330,26 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
       target: Target,
       timeline: ReadonlyArray<typeof ForgejoTimelineEntry.Type>,
     ): Effect.Effect<ReadonlyArray<IssueLinkedPullRequest>, IssueTrackerError> => {
-      const numbers = [
-        ...new Set(
-          timeline.flatMap((entry) =>
-            entry.type === "pull_ref" && entry.ref_issue?.pull_request
-              ? [entry.ref_issue.number]
-              : [],
-          ),
-        ),
-      ];
+      // A reference may come from another repository, which is where that pull request is read.
+      const cited = new Map<string, { readonly repository: string; readonly number: number }>();
+      for (const entry of timeline) {
+        if (entry.type !== "pull_ref" || !entry.ref_issue?.pull_request) continue;
+        const named = entry.ref_issue.repository?.full_name;
+        // The scope may carry the server's mount path in front of the same repository.
+        const repository =
+          named === undefined || target.scope.endsWith(`/${named}`) ? target.scope : named;
+        cited.set(`${repository}#${entry.ref_issue.number}`, {
+          repository,
+          number: entry.ref_issue.number,
+        });
+      }
       return Effect.forEach(
-        numbers,
-        (number) =>
+        cited.values(),
+        ({ repository, number }) =>
           read(
             target,
             "getIssue",
-            { path: `${repoPath(target.scope)}/pulls/${number}` },
+            { path: `${repoPath(repository)}/pulls/${number}` },
             Schema.Struct({
               number: Schema.Int,
               title: Schema.String,
@@ -305,7 +361,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           ).pipe(
             Effect.map((pull) => [
               {
-                repository: target.scope,
+                repository,
                 number: pull.number,
                 title: pull.title,
                 url: pull.html_url,
@@ -342,8 +398,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         const params = new URLSearchParams({
           type: "issues",
           state: input.state,
-          sort: "recentupdate",
+          sort: input.sort === "created" ? "latest" : "recentupdate",
         });
+        const labels = input.labels ?? [];
+        if (labels.length > 0) params.set("labels", labels.join(","));
         const text = input.query?.trim() ?? "";
         if (text.length > 0) params.set("q", text);
         const involvement =
@@ -355,6 +413,12 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 ? "mentioned_by"
                 : null;
         if (involvement !== null) params.set(involvement, input.viewer);
+        if (input.assignee !== undefined) params.set("assigned_by", input.assignee);
+        // `assigned_by` names one person, so "assigned to me" is kept here beside a named assignee.
+        const alsoAssignedTo =
+          input.involvement === "assigned" && input.assignee !== undefined
+            ? input.viewer.toLowerCase()
+            : null;
         const { rows, nextCursor } = yield* readPage(
           input,
           "listIssues",
@@ -363,7 +427,15 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           ForgejoIssue,
         );
         return {
-          items: rows.flatMap((issue) => (issue.pull_request ? [] : [forgejoIssue(issue)])),
+          items: rows
+            .flatMap((issue) => (issue.pull_request ? [] : [forgejoIssue(issue)]))
+            // Forgejo documents `labels` as matching any of them; every one is what was asked.
+            .filter(
+              (issue) =>
+                labels.every((label) => issue.labels.some((carried) => carried.name === label)) &&
+                (alsoAssignedTo === null ||
+                  issue.assignees.some((actor) => actor.login.toLowerCase() === alsoAssignedTo)),
+            ),
           nextCursor,
         };
       }),
@@ -376,7 +448,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 getIssue(input, "getIssue", path),
                 getRepository(input, "getIssue"),
                 getViewer(input, "getIssue"),
-                readPage(input, "getIssue", `${path}/timeline`, 1, ForgejoTimelineEntry),
+                readEveryPage(input, "getIssue", `${path}/timeline`, ForgejoTimelineEntry),
                 readArray(input, "getIssue", `${path}/reactions`, ForgejoReaction),
               ],
               { concurrency: 3 },
@@ -385,7 +457,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           Effect.flatMap(([issue, repository, viewer, timeline, reactions]) =>
             Effect.all([
               commentsPage(input, "getIssue", issuePath(input.scope, issue.number), 1, viewer),
-              linkedPullRequests(input, timeline.rows),
+              linkedPullRequests(input, timeline),
             ]).pipe(
               Effect.map(([conversation, links]) => ({
                 ...forgejoIssue(issue),
@@ -395,7 +467,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 reactions: forgejoReactions(reactions, viewer),
                 comments: conversation.comments,
                 commentsCursor: conversation.nextCursor,
-                events: timeline.rows.flatMap((entry) => forgejoIssueEvent(entry) ?? []),
+                events: timeline.flatMap((entry) => forgejoIssueEvent(entry) ?? []),
                 linkedPullRequests: links,
               })),
             ),
@@ -414,13 +486,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
       },
 
       create: (input) =>
-        // Labels are written by id, so the names are resolved against the repository's own first.
-        readArray(
-          input,
-          "create",
-          `${repoPath(input.scope)}/labels?limit=${PAGE_SIZE}`,
-          ForgejoLabel,
-        ).pipe(
+        labelIds(input, "create", input.labels).pipe(
           Effect.flatMap((labels) =>
             read(
               input,
@@ -431,9 +497,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                 body: {
                   title: input.title,
                   body: input.body,
-                  labels: labels.flatMap((label) =>
-                    input.labels.includes(label.name) ? [label.id] : [],
-                  ),
+                  labels,
                   assignees: input.assignees,
                 },
               },
@@ -459,8 +523,12 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         ),
 
       update: (input) =>
-        issueTarget("update", input).pipe(
-          Effect.flatMap(({ path }) =>
+        Effect.all([
+          issueTarget("update", input),
+          // Resolved before anything is written, so an unknown label changes nothing.
+          input.labels === undefined ? Effect.void : labelIds(input, "update", input.labels),
+        ]).pipe(
+          Effect.flatMap(([{ path }, labels]) =>
             Effect.all([
               input.title === undefined && input.body === undefined && input.assignees === undefined
                 ? Effect.void
@@ -473,26 +541,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
                       ...(input.assignees === undefined ? {} : { assignees: input.assignees }),
                     },
                   }),
-              input.labels === undefined
+              labels === undefined
                 ? Effect.void
-                : readArray(
-                    input,
-                    "update",
-                    `${repoPath(input.scope)}/labels?limit=${PAGE_SIZE}`,
-                    ForgejoLabel,
-                  ).pipe(
-                    Effect.flatMap((labels) =>
-                      write(input, "update", {
-                        path: `${path}/labels`,
-                        method: "PUT",
-                        body: {
-                          labels: labels.flatMap((label) =>
-                            input.labels!.includes(label.name) ? [label.id] : [],
-                          ),
-                        },
-                      }),
-                    ),
-                  ),
+                : write(input, "update", {
+                    path: `${path}/labels`,
+                    method: "PUT",
+                    body: { labels },
+                  }),
             ]),
           ),
           Effect.asVoid,

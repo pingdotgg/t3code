@@ -17,6 +17,7 @@ import {
   type TrackerIssueDetail,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import { PersistenceSqlError } from "../persistence/Errors.ts";
 import * as IssueTrackerBindings from "../persistence/IssueTrackerBindings.ts";
 import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 
@@ -142,6 +143,7 @@ function makeService(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly trackers: ReadonlyArray<IssueTrackerApi>;
   readonly bindings?: Record<string, IssueTrackerProjectBinding>;
+  readonly bindingsFailure?: PersistenceSqlError;
 }) {
   return IssueService.IssueService.pipe(
     Effect.provide(
@@ -149,14 +151,17 @@ function makeService(input: {
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
-              list: Effect.succeed(
-                new Map(
-                  Object.entries(input.bindings ?? {}).map(([id, binding]) => [
-                    id as ProjectId,
-                    binding,
-                  ]),
-                ),
-              ),
+              list:
+                input.bindingsFailure !== undefined
+                  ? Effect.fail(input.bindingsFailure)
+                  : Effect.succeed(
+                      new Map(
+                        Object.entries(input.bindings ?? {}).map(([id, binding]) => [
+                          id as ProjectId,
+                          binding,
+                        ]),
+                      ),
+                    ),
             }),
             Layer.succeed(
               IssueTrackerRegistry.IssueTrackerRegistry,
@@ -232,6 +237,30 @@ describe("IssueService", () => {
         failure: { _tag: "IssueOperationError", reason: "read-only" },
       });
       expect(writes).toEqual(["acme/web#1"]);
+
+      // A link's port picks the server: the project bound with it, not a default-port namesake.
+      const ported = yield* makeService({
+        projects: [
+          project({ id: "plain", repository: "acme/web", provider: "forgejo", host: "gitea.test" }),
+          project({
+            id: "ported",
+            repository: "acme/web",
+            provider: "forgejo",
+            host: "gitea.test:8443",
+          }),
+        ],
+        trackers: [fakeTracker({ kind: IssueTrackerKind.make("forgejo") })],
+      });
+      expect(yield* ported.resolveUrl("https://gitea.test:8443/acme/web/issues/3")).toMatchObject({
+        projectId: "ported",
+        host: "gitea.test:8443",
+        key: "3",
+        writable: true,
+      });
+      expect(yield* ported.resolveUrl("https://gitea.test/acme/web/issues/3")).toMatchObject({
+        projectId: "plain",
+        host: "gitea.test",
+      });
 
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
@@ -371,7 +400,7 @@ describe("IssueService", () => {
       expect(
         result.entries.filter((entry) => entry.projectId === "web").map((entry) => entry.scope),
       ).toEqual(["Acme/Web", "Acme/Web"]);
-      expect(result.nextCursors).toEqual({ "github.com Acme/Web": "next" });
+      expect(result.nextCursors).toEqual({ "github.com acme/web": "next" });
       expect(result.errors).toEqual([
         { projectId: "api", projectTitle: "api", message: "The issue tracker request failed." },
       ]);
@@ -402,6 +431,16 @@ describe("IssueService", () => {
       expect(next.entries.map((entry) => [entry.projectId, entry.key])).toEqual([["web", "4"]]);
       expect(next.nextCursors).toEqual({});
       expect(next.errors).toEqual([]);
+
+      // The cursor belongs to the scope, not to the project whose spelling first read it.
+      listed.length = 0;
+      const through = yield* service.list({
+        state: "open",
+        projectId: "web-worktree" as ProjectId,
+        cursors: result.nextCursors,
+      });
+      expect(listed).toEqual(["acme/web"]);
+      expect(through.entries.map((entry) => entry.key)).toEqual(["4"]);
     }),
   );
 });
@@ -476,6 +515,20 @@ describe("IssueService with a standalone tracker", () => {
       expect(notes.entries.map((entry) => [entry.projectId, entry.scope])).toEqual([
         ["notes", "OPS"],
       ]);
+
+      // Bindings that cannot be read fail the listing; they are not taken for "none bound".
+      const unreadable = yield* makeService({
+        projects,
+        trackers,
+        bindingsFailure: new PersistenceSqlError({
+          operation: "IssueTrackerBindingsRepository.list",
+          detail: "disk I/O error",
+        }),
+      });
+      expect(yield* Effect.flip(unreadable.list({ state: "open" }))).toMatchObject({
+        _tag: "IssueOperationError",
+        operation: "listProjects",
+      });
     }),
   );
 });

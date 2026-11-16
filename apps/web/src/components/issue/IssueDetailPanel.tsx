@@ -9,6 +9,7 @@ import {
   issueAssigneeHeld,
   issueAssigneesAfterPicks,
   issueLabelsAfterPicks,
+  issuePicksAfterFailedWrite,
   issuePicksFor,
   issueWriteAfterPicks,
   noIssuePicks,
@@ -43,7 +44,7 @@ import {
 import { useState, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { issueEnvironment } from "~/state/issues";
+import { issueEnvironment, refreshIssueLists } from "~/state/issues";
 import { useProjects, useThreadShell } from "~/state/entities";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
@@ -228,10 +229,14 @@ function IssueLabelPicker({
       current.written,
     );
     if (labels === null) return;
-    setPicks({ ...current, written: labels });
+    const sent = { ...current, written: labels };
+    setPicks(sent);
     void update({ environmentId, input: { ...reference, labels } }).then((result) => {
-      if (result._tag !== "Failure") return;
-      setPicks((latest) => (latest.written === labels ? noIssuePicks() : latest));
+      if (result._tag !== "Failure") {
+        refreshIssueLists(environmentId);
+        return;
+      }
+      setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
         title: "Could not change labels",
@@ -333,10 +338,14 @@ function IssueAssigneePicker({
       current.written,
     );
     if (assignees === null) return;
-    setPicks({ ...current, written: assignees });
+    const sent = { ...current, written: assignees };
+    setPicks(sent);
     void update({ environmentId, input: { ...reference, assignees } }).then((result) => {
-      if (result._tag !== "Failure") return;
-      setPicks((latest) => (latest.written === assignees ? noIssuePicks() : latest));
+      if (result._tag !== "Failure") {
+        refreshIssueLists(environmentId);
+        return;
+      }
+      setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
       toastManager.add({
         type: "error",
         title: "Could not change assignees",
@@ -533,6 +542,7 @@ export function IssueDetailPanel({
       });
       return;
     }
+    refreshIssueLists(environmentId);
     setEditing(null);
   };
 
@@ -550,7 +560,9 @@ export function IssueDetailPanel({
         title: "The state could not be changed",
         description: readableFailure(squashAtomCommandFailure(result), "The tracker refused it."),
       });
+      return;
     }
+    refreshIssueLists(environmentId);
   };
 
   const stateControl: ReactNode = canSetState ? (

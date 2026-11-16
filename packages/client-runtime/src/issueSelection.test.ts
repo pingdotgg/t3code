@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   issueAssigneesAfterPicks,
   issueLabelsAfterPicks,
+  issuePicksAfterFailedWrite,
   issuePicksFor,
   issueWriteAfterPicks,
   noIssuePicks,
@@ -71,5 +72,24 @@ describe("issue picker picks", () => {
       "ui",
       "p1",
     ]);
+  });
+
+  it("keeps picks made after a write that then fails, and forgets the failed ones otherwise", () => {
+    const detail = { labels: [label("bug")] };
+    const picked = issuePicksFor(noIssuePicks<ReturnType<typeof label>>(), detail, true);
+    const sent = {
+      ...picked,
+      draft: toggleSelection(picked.draft, "docs", label("docs"), false),
+      written: ["bug", "docs"],
+    };
+    expect(issuePicksAfterFailedWrite(sent, sent).draft.size).toBe(0);
+
+    const later = { ...sent, draft: toggleSelection(sent.draft, "ui", label("ui"), false) };
+    const kept = issuePicksAfterFailedWrite(later, sent);
+    expect(kept.written).toBeNull();
+    expect(issueLabelsAfterPicks(detail, kept.draft)).toEqual(["bug", "docs", "ui"]);
+
+    const rewritten = { ...later, written: ["bug", "docs", "ui"] };
+    expect(issuePicksAfterFailedWrite(rewritten, sent)).toBe(rewritten);
   });
 });
