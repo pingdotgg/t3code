@@ -16,6 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 import {
   GitCommandError,
   SourceControlProviderError,
+  type SourceControlCloneProtocol,
   type SourceControlCloneRepositoryInput,
 } from "@t3tools/contracts";
 
@@ -911,8 +912,10 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
 });
 
 // regression: #37540 retrying Publish after a failed first push failed on "name already exists"
-function retriedPublishLayer(pushAttempts: { count: number }) {
+// The first push fails; the remote keeps the URL it was added with, like ensureRemote.
+function retriedPublishLayer(pushedUrls: Array<string>) {
   let created = false;
+  let remoteUrl: string | null = null;
   return layer({
     provider: makeProvider({
       createRepository: (input) => {
@@ -933,16 +936,21 @@ function retriedPublishLayer(pushAttempts: { count: number }) {
       },
     }),
     git: {
+      ensureRemote: (input) =>
+        Effect.sync(() => {
+          remoteUrl ??= input.url;
+          return "origin";
+        }),
       execute: (input) =>
-        Effect.succeed(
-          input.args[0] === "remote"
-            ? { ...processOutput(), stdout: `${CLONE_URLS.url}\n` }
-            : processOutput(),
-        ),
+        Effect.sync(() => {
+          if (input.args[0] !== "remote") return processOutput();
+          if (input.args[1] === "set-url") remoteUrl = input.args.at(-1)!;
+          return { ...processOutput(), stdout: `${remoteUrl}\n` };
+        }),
       pushCurrentBranch: (cwd) =>
         Effect.suspend(() => {
-          pushAttempts.count += 1;
-          return pushAttempts.count === 1
+          pushedUrls.push(remoteUrl!);
+          return pushedUrls.length === 1
             ? Effect.fail(
                 new GitCommandError({
                   operation: "pushCurrentBranch",
@@ -962,7 +970,10 @@ function retriedPublishLayer(pushAttempts: { count: number }) {
   });
 }
 
-const publishAs = (visibility: "private" | "public") =>
+const publishAs = (
+  visibility: "private" | "public",
+  protocol: SourceControlCloneProtocol = "auto",
+) =>
   Effect.gen(function* () {
     const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
     return yield* service.publishRepository({
@@ -971,31 +982,42 @@ const publishAs = (visibility: "private" | "public") =>
       repository: "octocat/t3code",
       visibility,
       remoteName: "origin",
+      protocol,
     });
   });
 
 it.effect("finishes a retried publish when the repository already exists as the remote", () => {
-  const pushAttempts = { count: 0 };
+  const pushedUrls: Array<string> = [];
   return Effect.gen(function* () {
     yield* Effect.flip(publishAs("private"));
     const result = yield* publishAs("private");
 
     assert.strictEqual(result.status, "pushed");
     assert.strictEqual(result.remoteName, "origin");
-    assert.strictEqual(pushAttempts.count, 2);
-  }).pipe(Effect.provide(retriedPublishLayer(pushAttempts)));
+    assert.strictEqual(pushedUrls.length, 2);
+  }).pipe(Effect.provide(retriedPublishLayer(pushedUrls)));
+});
+
+it.effect("a retried publish pushes over the protocol the retry chose", () => {
+  const pushedUrls: Array<string> = [];
+  return Effect.gen(function* () {
+    yield* Effect.flip(publishAs("private", "ssh"));
+    yield* publishAs("private", "https");
+
+    assert.deepStrictEqual(pushedUrls, [CLONE_URLS.sshUrl, CLONE_URLS.url]);
+  }).pipe(Effect.provide(retriedPublishLayer(pushedUrls)));
 });
 
 it.effect(
   "does not resume a retried publish into a repository created with another visibility",
   () => {
-    const pushAttempts = { count: 0 };
+    const pushedUrls: Array<string> = [];
     return Effect.gen(function* () {
       yield* Effect.flip(publishAs("public"));
       const error = yield* Effect.flip(publishAs("private"));
 
       assert.strictEqual(error.operation, "publishRepository");
-      assert.strictEqual(pushAttempts.count, 1);
-    }).pipe(Effect.provide(retriedPublishLayer(pushAttempts)));
+      assert.strictEqual(pushedUrls.length, 1);
+    }).pipe(Effect.provide(retriedPublishLayer(pushedUrls)));
   },
 );

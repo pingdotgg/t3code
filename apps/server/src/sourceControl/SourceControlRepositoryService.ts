@@ -521,18 +521,17 @@ export const make = Effect.gen(function* () {
           if (remoteKey !== sourceControlDefinitions.repositoryKeyFromRemote(created.urls.url)) {
             return yield* createError;
           }
-          return created.urls;
+          return { urls: created.urls, resumedRemoteUrl: remote.stdout.trim() };
         },
         (effect, createError) => Effect.mapError(effect, () => createError),
       );
-      const urls = yield* provider
+      const { urls, resumedRemoteUrl } = yield* provider
         .createRepository({ cwd: input.cwd, repository, visibility: input.visibility })
         .pipe(
-          Effect.tap((urls) =>
-            Effect.sync(() =>
-              createdRepositories.set(createdKey, { visibility: input.visibility, urls }),
-            ),
-          ),
+          Effect.map((urls) => {
+            createdRepositories.set(createdKey, { visibility: input.visibility, urls });
+            return { urls, resumedRemoteUrl: null };
+          }),
           Effect.catch(useCreatedRepository),
         );
       const remoteUrl = selectRemoteUrl(urls, input.protocol);
@@ -541,6 +540,15 @@ export const make = Effect.gen(function* () {
         preferredName: preferredRemoteName,
         url: remoteUrl,
       });
+      // ensureRemote keeps the matching remote's URL; a retry choosing a protocol must apply it.
+      const explicitProtocol = input.protocol === "ssh" || input.protocol === "https";
+      if (explicitProtocol && resumedRemoteUrl !== null && resumedRemoteUrl !== remoteUrl) {
+        yield* git.execute({
+          operation: "SourceControlRepositoryService.publishRepository.applyProtocol",
+          cwd: input.cwd,
+          args: ["remote", "set-url", remoteName, remoteUrl],
+        });
+      }
 
       // Empty repos cannot push HEAD; report partial success because the remote already exists.
       const hasCommits = yield* git
