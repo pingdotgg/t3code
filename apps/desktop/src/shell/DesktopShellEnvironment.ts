@@ -93,7 +93,7 @@ export class DesktopShellEnvironment extends Context.Service<
     readonly awaitDiscovery: Effect.Effect<boolean>;
     /** Whether the user's own login shell, not a fallback, gave the PATH a new terminal gets. */
     readonly awaitUserShellDiscovery: Effect.Effect<boolean>;
-    /** Whether the first discovery has finished, for callers that cannot wait on it. */
+    /** Whether discovery has settled (the user's shell answered or retries ran out), without waiting. */
     readonly discoveryFinished: Effect.Effect<boolean>;
     readonly updates: Stream.Stream<DesktopShellEnvironmentSnapshot>;
   }
@@ -675,6 +675,7 @@ export const make = Effect.gen(function* () {
   const changes = yield* PubSub.unbounded<DesktopShellEnvironmentSnapshot>();
   const latest = yield* Ref.make<Option.Option<DesktopShellEnvironmentSnapshot>>(Option.none());
   const discovered = yield* Deferred.make<ShellDiscovery>();
+  const settledDiscovery = yield* Deferred.make<void>();
   const publish = Effect.fn("desktop.shellEnvironment.publish")(function* (
     patch: ShellEnvironmentPatch,
     discovered = false,
@@ -744,6 +745,7 @@ export const make = Effect.gen(function* () {
             ),
           ),
     ),
+    Effect.onExit(() => Deferred.succeed(settledDiscovery, undefined)),
   );
   const installIntoProcess = yield* Effect.cached(
     Effect.gen(function* () {
@@ -799,7 +801,7 @@ export const make = Effect.gen(function* () {
       Effect.andThen(Deferred.await(discovered)),
       Effect.map(({ fromUserShell }) => fromUserShell),
     ),
-    discoveryFinished: Deferred.isDone(discovered),
+    discoveryFinished: Deferred.isDone(settledDiscovery),
     updates,
   });
 });

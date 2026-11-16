@@ -713,6 +713,8 @@ describe("DesktopShellEnvironment", () => {
           Effect.gen(function* () {
             assert.isTrue(yield* service.awaitDiscovery);
             assert.equal(env.PATH, "/usr/bin");
+            // The user's shell may still opt out of telemetry, so discovery has not settled.
+            assert.isFalse(yield* service.discoveryFinished);
             // The Linux probe checks the D-Bus socket on the real filesystem, which the clock does not await.
             const published = yield* service.updates.pipe(
               Stream.filter((snapshot) => snapshot.environment.PATH === "/fish/bin:/usr/bin"),
