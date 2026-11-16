@@ -261,6 +261,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [isFocused, setIsFocused] = useState(false);
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const pendingNativeImagePasteCountRef = useRef(0);
+  type HeldSend = { readonly draftKey: string; readonly followUp?: ActiveTurnComposerAction };
+  const heldSendRef = useRef<HeldSend | null>(null);
+  const [releasedSend, setReleasedSend] = useState<HeldSend | null>(null);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsRoutePresentedRef = useRef(false);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
@@ -524,13 +527,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onEditorFocusChange?.(false);
   };
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
-    if (
-      isSubmissionLocked ||
-      sendBlockedReason !== null ||
-      pendingPastedTextAttachmentCountRef.current > 0 ||
-      pendingNativeImagePasteCountRef.current > 0
-    )
+    if (isSubmissionLocked || sendBlockedReason !== null) return;
+    // Sending now would leave a still-converting pasted image out of the turn, so wait for it.
+    if (pendingNativeImagePasteCountRef.current > 0) {
+      heldSendRef.current = { draftKey: composerDraftKey, followUp };
       return;
+    }
+    if (pendingPastedTextAttachmentCountRef.current > 0) return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
@@ -566,6 +569,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       projectTitle: props.environmentLabel ?? "T3 Code",
     });
   };
+
+  const sendReleased = useEffectEvent((held: HeldSend) => {
+    if (held.draftKey === composerDraftKey) void handleSend(held.followUp);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends from the render where the pasted images joined the draft
+  useEffect(() => {
+    if (releasedSend) sendReleased(releasedSend);
+  }, [releasedSend]);
 
   const lockedProviderInstanceId = props.canSwitchProvider
     ? undefined
@@ -854,6 +865,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     pendingNativeImagePasteCountRef.current += 1;
                     void props.onNativePasteImages(uris).finally(() => {
                       pendingNativeImagePasteCountRef.current -= 1;
+                      if (pendingNativeImagePasteCountRef.current > 0) return;
+                      const held = heldSendRef.current;
+                      heldSendRef.current = null;
+                      if (held) setReleasedSend(held);
                     });
                   }}
                   onPasteText={(paste) => {
