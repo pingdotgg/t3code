@@ -13516,6 +13516,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const backgroundForegroundWork = Effect.fnUntraced(function* (
           live: ClaudeLiveQueryContext,
           turn: ActiveClaudeTurnContext,
+          moveCommands: boolean,
           deadline: number,
         ) {
           const foreground: Array<{
@@ -13524,7 +13525,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }> = [];
           // Only the turn's own calls: a subagent's commands move with the subagent.
           for (const toolCall of turn.toolCalls.values()) {
-            if (toolCall.classification.itemType === "command_execution") {
+            if (moveCommands && toolCall.classification.itemType === "command_execution") {
               foreground.push({ toolUseId: toolCall.nativeItemId });
             }
           }
@@ -13661,7 +13662,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-            yield* backgroundForegroundWork(existing, currentTurn, backgroundDeadline);
+            yield* backgroundForegroundWork(
+              existing,
+              currentTurn,
+              // A delivery T3 wrote itself, such as a child's result, waits for the command.
+              !(
+                turnInput.message.createdBy === "agent" &&
+                turnInput.message.creationSource === "server"
+              ),
+              backgroundDeadline,
+            );
             if (liveSteerSelection !== undefined) {
               yield* applySelectionLive(existing, liveSteerSelection);
             }

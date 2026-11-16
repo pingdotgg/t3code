@@ -5961,26 +5961,38 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           },
         }),
       );
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: input.runId,
-        providerThread: harness.providerThread,
-        providerTurnId: idAllocator.derive.providerTurn({
-          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-          nativeTurnId: `turn:${input.attemptId}`,
-        }),
-        message: {
-          createdBy: "user",
-          creationSource: "web",
-          messageId: MessageId.make("steer-background-command"),
-          text: "How is it going?",
-          attachments: [],
-        },
+      const steer = (
+        message: Pick<
+          ProviderAdapter.ProviderAdapterV2SteerInput["message"],
+          "createdBy" | "creationSource" | "messageId"
+        >,
+      ) =>
+        harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: input.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${input.attemptId}`,
+          }),
+          message: { ...message, text: "How is it going?", attachments: [] },
+        });
+      // Nobody asked to interrupt the command for a delivery T3 wrote itself.
+      yield* steer({
+        createdBy: "agent",
+        creationSource: "server",
+        messageId: MessageId.make("steer-server-delivery"),
+      });
+      assert.deepEqual(moved, []);
+      yield* steer({
+        createdBy: "user",
+        creationSource: "web",
+        messageId: MessageId.make("steer-background-command"),
       });
       assert.deepEqual(moved, ["toolu-steer-render"]);
       // Moved before the steer went out, so the CLI can take the steer in at once.
-      assert.deepEqual(offeredBeforeMove, [1]);
-      assert.lengthOf(harness.offeredMessages, 2);
+      assert.deepEqual(offeredBeforeMove, [2]);
+      assert.lengthOf(harness.offeredMessages, 3);
     }).pipe(
       Effect.scoped,
       Effect.provide(
