@@ -22,7 +22,7 @@ import {
 } from "../components/settings/settingsScopeNavigation";
 import {
   getSettingsSearchTargetScope,
-  getThreadAutoSettlementSearchAvailability,
+  getThreadSettingsSearchAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
 } from "../components/settings/settingsSearch";
@@ -47,22 +47,27 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const { environments } = useEnvironments();
   const hash = useLocation({ select: (location) => location.hash });
   const searchTarget = getSettingsSearchTargetScope(hash);
-  const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
-    ? getThreadAutoSettlementSearchAvailability(environments, scope)
-    : null;
+  const capabilityAvailability =
+    searchTarget?.requiresThreadAutoSettlement || searchTarget?.requiresScheduledTaskSnooze
+      ? getThreadSettingsSearchAvailability(
+          environments,
+          scope,
+          searchTarget.requiresScheduledTaskSnooze ? "scheduledTaskSnooze" : undefined,
+        )
+      : null;
   if (
     scope.kind !== "unavailable" &&
     searchTarget &&
-    autoSettlementAvailability &&
-    !autoSettlementAvailability.isTargetAvailable
+    capabilityAvailability &&
+    !capabilityAvailability.isTargetAvailable
   ) {
     return (
       <SettingsScopeNotice
         target="environment"
         targetId={hash}
-        eligibleEnvironmentIds={autoSettlementAvailability.eligibleEnvironmentIds}
+        eligibleEnvironmentIds={capabilityAvailability.eligibleEnvironmentIds}
       >
-        {autoSettlementAvailability.eligibleEnvironmentIds.length > 0
+        {capabilityAvailability.eligibleEnvironmentIds.length > 0
           ? `${searchTarget.title} requires a supporting environment. Choose one to continue.`
           : `${searchTarget.title} requires a supporting environment. Connect or update an environment to continue.`}
       </SettingsScopeNotice>

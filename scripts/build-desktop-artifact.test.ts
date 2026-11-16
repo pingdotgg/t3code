@@ -537,6 +537,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
       assert.isNull(preview.publish);
       assert.isNull(previewChannel.publish);
+      const mockRelease = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "0.1.9",
+        false,
+        true,
+        4567,
+        undefined,
+      ).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))));
+      assert.deepStrictEqual(mockRelease.publish, [
+        { provider: "generic", url: "http://localhost:4567" },
+      ]);
 
       for (const [platform, target] of [
         ["mac", "dmg"],

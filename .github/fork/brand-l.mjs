@@ -32,6 +32,7 @@ replaceOnce(
   'const DESKTOP_APP_ID = "com.t3tools.t3code";',
   `const DESKTOP_APP_ID = "${APP_ID}";`,
 );
+replaceOnce("apps/desktop/src/app/DesktopEnvironment.ts", '"com.t3tools.t3code"', `"${APP_ID}"`);
 replaceOnce(
   "apps/desktop/package.json",
   '"productName": "T3 Code (Beta)"',

@@ -262,6 +262,8 @@ it.layer(layer)("ThreadInsightsQuery", (it) => {
         yield* thread("fork", root, "fork");
         yield* run(root, 1, "rolled_back");
         yield* agent(root, child);
+        yield* run(child, 1);
+        yield* run(child, 2, "running");
         yield* agent(child, native, "provider_native");
         yield* agent(native, root);
         yield* agent(root, ThreadId.make("remote-child"), "app_owned", true);
@@ -274,6 +276,8 @@ it.layer(layer)("ThreadInsightsQuery", (it) => {
           threadId: root,
         });
         expect(result.rows.map((row) => row.threadId)).toEqual([root, child, native]);
+        expect(result.rows.find((row) => row.threadId === child)?.status).toBe("running");
+        expect(result.rows.find((row) => row.threadId === native)?.status).toBe("completed");
         expect(result.rows.map((row) => row.usage.inputTokens)).toEqual([100, undefined, 50]);
         expect(result.rows.map((row) => row.usage.turns)).toEqual([1, 1, 1]);
         expect(result.rows[1]?.usage.status).toBe("unavailable");
@@ -384,6 +388,17 @@ it.layer(layer)("ThreadInsightsQuery", (it) => {
       expect(result.unavailableThreadIds).toEqual([broken]);
       const error = yield* query.read({ threadId: broken }).pipe(Effect.flip);
       expect(error._tag).toBe("OrchestrationV2GetThreadProjectionError");
+      yield* sql`UPDATE orchestration_v2_projection_plans
+        SET payload_json = '{}' WHERE plan_id = 'child-task'`;
+      const missingPlan = yield* query.read({ threadId: root });
+      expect(missingPlan.rows.find((row) => row.threadId === broken)?.steps).toBeNull();
+      expect(missingPlan.rows.find((row) => row.threadId === root)?.usage.inputTokens).toBe(100);
+      expect(missingPlan.rows.find((row) => row.threadId === healthy)?.usage.inputTokens).toBe(25);
+      expect(missingPlan.unavailableThreadIds).toEqual([broken]);
+      yield* sql`UPDATE orchestration_v2_projection_plans
+        SET payload_json = '{}' WHERE plan_id = 'root-task'`;
+      const planError = yield* query.read({ threadId: root }).pipe(Effect.flip);
+      expect(planError._tag).toBe("OrchestrationV2GetThreadProjectionError");
     }),
   );
   it.effect("bounds wide families and reports omitted children", () =>
