@@ -119,7 +119,8 @@ export function startElectronBrowserHost(): () => void {
     preview.onPointerEvent((event) => {
       useBrowserPointerStore.getState().apply(event);
     }),
-    preview.onOpenLink(openLinkInPreview),
+    // Open-link events reach every window; only the main window acts, so one link opens one tab.
+    ...(popoutTabId ? [] : [preview.onOpenLink(openLinkInPreview)]),
   ];
   return () => {
     for (const dispose of disposers) dispose();
