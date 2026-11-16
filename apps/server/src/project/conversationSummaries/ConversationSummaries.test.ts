@@ -884,6 +884,52 @@ it.effect("keeps a skipped stretch skipped when an outage fills the failure ledg
   }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
 });
 
+it.effect("skips a stretch that fails twice when the ledger is full of skipped stretches", () => {
+  let down = true;
+  const lateStretch = rawText(66 * 2 + 1);
+  const model = scripted((input) =>
+    down || input.messages[0]?.text === lateStretch
+      ? Effect.fail(failingStretch("empty"))
+      : Effect.succeed({
+          statements: [{ text: "Summarized.", citations: [input.messages[0]!.ref] }],
+        }),
+  );
+  const lateCalls = () =>
+    model.calls.filter((call) => call.messages[0]?.text === lateStretch).length;
+  return Effect.gen(function* () {
+    // Leaves over the even messages leave each odd message a stretch of its own.
+    const stretches = 71;
+    yield* seedThread(stretches * 2 + 6);
+    for (let index = 0; index < stretches; index++) yield* persistSummary(index, [index * 2]);
+    // An outage records the first 66 stretches, three a pass. Marking them skipped stands in
+    // for the hundreds of passes it takes to skip that many.
+    for (let pass = 0; pass < 22; pass++) yield* summarize;
+    const sql = yield* SqlClient.SqlClient;
+    const [row] = yield* sql<{ readonly payload_json: string }>`
+      SELECT payload_json FROM conversation_summary_passes WHERE thread_id = ${threadId}
+    `;
+    const stored: { chunkFailures: ReadonlyArray<{ readonly key: string }> } = JSON.parse(
+      row!.payload_json,
+    );
+    assert.lengthOf(stored.chunkFailures, 64);
+    const skipped = stored.chunkFailures.map(({ key }) => ({
+      key,
+      failures: 2,
+      skipped: true,
+      reason: "Router returned no text.",
+    }));
+    yield* sql`
+      UPDATE conversation_summary_passes
+      SET payload_json = ${JSON.stringify({ ...stored, chunkFailures: skipped })}
+      WHERE thread_id = ${threadId}
+    `;
+
+    down = false;
+    for (let pass = 0; pass < 30; pass++) yield* summarize;
+    assert.equal(lateCalls(), 2);
+  }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+});
+
 it.effect("summarizes the next stretch when the model cites none of the chunk", () => {
   const model = scripted((input) =>
     Effect.succeed({
