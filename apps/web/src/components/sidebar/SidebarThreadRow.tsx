@@ -1,5 +1,5 @@
 import { useAtomMount } from "@effect/atom-react";
-import { asLaunchingThread, isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
+import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -14,6 +14,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   canSnooze,
   hasQueuedTurnStart,
+  hasSettleBlockingRun,
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
@@ -991,7 +992,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   if (snoozeGateOpened && snoozeGateOpensAt !== null) {
     setSnoozeGateClock({ thread, now: new Date(snoozeGateOpensAt).toISOString() });
   }
-  const showSettleButton = props.settlementSupported && !isThreadWorking(thread);
+  const showSettleButton = props.settlementSupported && !hasSettleBlockingRun(thread);
   const showSnoozeButton =
     canOperateThread && props.snoozeSupported && canSnooze(thread, { now: snoozeGateNow });
   const showCardActions = showSettleButton || showSnoozeButton || hasUnsentDraft;
