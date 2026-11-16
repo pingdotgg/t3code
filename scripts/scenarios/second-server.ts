@@ -9,6 +9,7 @@ import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
+import { ScenarioError } from "./shell.ts";
 import { prepareHome, start } from "./start-app.ts";
 
 export const SECOND_HOME = `${T3_HOME}-second-environment`;
@@ -25,7 +26,7 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
   const port = yield* (yield* NetService.NetService).reserveLoopbackPort();
   yield* prepareHome(SECOND_HOME);
   const token = yield* Deferred.make<string>();
-  yield* start({
+  const server = yield* start({
     cwd: APP_DIR,
     command: node,
     args: [
@@ -50,7 +51,17 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
       return value === undefined ? Effect.void : Deferred.succeed(token, value).pipe(Effect.asVoid);
     },
   });
-  paired({ host: `http://127.0.0.1:${port}`, token: yield* Deferred.await(token) });
+  // A server that exits before printing its token never will: fail instead of waiting forever.
+  const exited = server.exitCode.pipe(
+    Effect.flatMap(
+      (code) =>
+        new ScenarioError({ message: `The second server exited with code ${code} at startup.` }),
+    ),
+  );
+  paired({
+    host: `http://127.0.0.1:${port}`,
+    token: yield* Effect.raceFirst(Deferred.await(token), exited),
+  });
   return yield* Effect.never;
 });
 
