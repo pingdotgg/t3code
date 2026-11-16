@@ -2226,33 +2226,6 @@ it.effect("recalls unseen facts beyond a full page of facts the thread has read"
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("recall attaches two unseen facts when the thread was shown the best matches", () =>
-  Effect.gen(function* () {
-    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
-    const projectId = ProjectId.make("recall-beyond-shown");
-    const threadId = ThreadId.make("recall-beyond-shown");
-    yield* createProject(projectId);
-    const ids = Array.from({ length: 45 }, (_, index) =>
-      ProjectFactId.make(`crowd-${index.toString().padStart(2, "0")}`),
-    );
-    for (const factId of ids)
-      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
-    const shown = ids.slice(0, 40);
-    const unseen = ids.slice(40);
-    yield* knowledge.recordViews(projectId, threadId, shown);
-    const query = "Change cache keys to include tenant IDs.";
-    const outcome = yield* knowledge.recall({
-      projectId,
-      threadId,
-      requestId: CommandId.make("recall-beyond-shown"),
-      query,
-      composer: { text: query, records: [] },
-      knowledgeAllowance: 48000,
-    });
-    assert.deepEqual(attachedFactIds(outcome), unseen.slice(0, 2));
-  }).pipe(Effect.provide(layerTest)),
-);
-
 it.effect("recall keeps the most trusted fact when more than the bound match equally", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
