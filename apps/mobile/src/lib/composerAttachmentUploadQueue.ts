@@ -119,6 +119,8 @@ export function createComposerAttachmentUploadQueue(options: {
   >();
   let desired = new Map<string, ComposerAttachmentUploadRequest>();
   let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+  // Server-rejected uploads stay failed, even across draft restores, until the user retries them.
+  const rejected = new Map<string, string>();
   let disposed = false;
 
   function setState(key: string, state: ComposerAttachmentUploadState | undefined) {
@@ -135,6 +137,11 @@ export function createComposerAttachmentUploadQueue(options: {
     else delete next[key];
     states = next;
     options.onChange(states);
+  }
+
+  function markRejected(key: string, reason: string) {
+    jobs.get(key)?.controller.abort();
+    if (states[key]?.status !== "failed") setState(key, { status: "failed", reason });
   }
 
   function pump() {
@@ -194,13 +201,22 @@ export function createComposerAttachmentUploadQueue(options: {
         if (!desired.has(key)) setState(key, undefined);
       }
       for (const key of desired.keys()) {
-        if (!states[key]) setState(key, { status: "uploading", progress: 0 });
+        const reason = rejected.get(key);
+        if (reason !== undefined) markRejected(key, reason);
+        else if (!states[key]) setState(key, { status: "uploading", progress: 0 });
       }
       pump();
+    },
+    markFailed(environmentId: EnvironmentId, attachmentId: string, reason: string) {
+      if (disposed) return;
+      const key = composerAttachmentUploadKey(environmentId, attachmentId);
+      rejected.set(key, reason);
+      if (desired.has(key)) markRejected(key, reason);
     },
     retry(environmentId: EnvironmentId, attachmentId: string) {
       const key = composerAttachmentUploadKey(environmentId, attachmentId);
       if (states[key]?.status !== "failed") return;
+      rejected.delete(key);
       setState(key, undefined);
       pump();
     },
@@ -210,6 +226,7 @@ export function createComposerAttachmentUploadQueue(options: {
     dispose() {
       disposed = true;
       desired.clear();
+      rejected.clear();
       for (const job of jobs.values()) job.controller.abort();
       states = {};
       options.onChange(states);

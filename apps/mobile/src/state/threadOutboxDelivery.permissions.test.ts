@@ -65,6 +65,10 @@ vi.mock("./session", async () => {
       sessionHasScope(appAtomRegistry.get(sessionStateAtom(environmentId)), scope),
   };
 });
+vi.mock("./composer-attachment-uploads", () => ({
+  markComposerAttachmentUploadFailed: vi.fn(),
+}));
+
 vi.mock("./projects", async () => {
   const { Atom } = await import("effect/reactivity");
   return { environmentProjects: { projectsAtom: Atom.make([]) } };

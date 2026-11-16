@@ -26,6 +26,7 @@ const harness = vi.hoisted(() => ({
     typeof import("./thread-outbox-manager").createThreadOutboxManager
   >,
   removePersistedFile: vi.fn(async () => undefined),
+  markAttachmentUploadFailed: vi.fn(),
   removeOutboxMessage: vi.fn(async (_message: QueuedThreadMessage) => undefined),
   prepareTurnAttachments: vi.fn<typeof import("../lib/attachmentUpload").prepareTurnAttachments>(),
   draftFile: (() => {
@@ -83,6 +84,10 @@ vi.mock("../lib/uuid", () => ({
 
 vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
+}));
+
+vi.mock("./composer-attachment-uploads", () => ({
+  markComposerAttachmentUploadFailed: harness.markAttachmentUploadFailed,
 }));
 
 vi.mock("./projects", () => ({ environmentProjects: {} }));
@@ -229,6 +234,7 @@ afterEach(() => {
   appAtomRegistry.set(threadComposerErrorsAtom, {});
   harness.draftFile.setWriteError(null);
   harness.removePersistedFile.mockClear();
+  harness.markAttachmentUploadFailed.mockClear();
   harness.removeOutboxMessage.mockClear();
   harness.prepareTurnAttachments.mockReset();
 });
@@ -770,7 +776,7 @@ describe("thread outbox recovery rollback", () => {
     ).toEqual({ message: "rejected", messageId: message.messageId });
   });
 
-  it("restores a server-rejected upload without its ID so the next send uploads fresh", async () => {
+  it("restores a server-rejected upload as failed and without its ID so retry uploads fresh", async () => {
     const base = withReusedFileUpload(
       queuedMessage({
         messageId: "message-claim-rejected",
@@ -798,6 +804,9 @@ describe("thread outbox recovery rollback", () => {
     expect(restored.map((attachment) => attachment.uploadedAttachmentId)).toEqual([
       "pending-kept",
       undefined,
+    ]);
+    expect(harness.markAttachmentUploadFailed.mock.calls).toEqual([
+      [message.environmentId, "file-rejected", "rejected"],
     ]);
   });
 

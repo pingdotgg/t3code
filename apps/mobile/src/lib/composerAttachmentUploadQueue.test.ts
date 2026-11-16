@@ -236,6 +236,39 @@ describe("composer attachment upload queue", () => {
     queue.dispose();
   });
 
+  it("keeps a server-rejected attachment failed through restore and progress until retry", async () => {
+    let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+    const upload = vi.fn(
+      async (_request: ComposerAttachmentUploadRequest): Promise<boolean> => true,
+    );
+    const queue = createComposerAttachmentUploadQueue({
+      upload,
+      onChange: (next) => (states = next),
+    });
+    queue.markFailed(environmentId, "rejected", "stored size does not match");
+    queue.sync([request("kept"), request("rejected")]);
+    await queue.settled();
+    expect(states).toEqual({
+      [composerAttachmentUploadKey(environmentId, "kept")]: { status: "ready" },
+      [composerAttachmentUploadKey(environmentId, "rejected")]: {
+        status: "failed",
+        reason: "stored size does not match",
+      },
+    });
+    queue.sync([]);
+    queue.sync([request("kept"), request("rejected")]);
+    queue.markFailed(environmentId, "kept", "attachment not found");
+    await queue.settled();
+    expect(upload.mock.calls.map(([{ attachment }]) => attachment.id)).not.toContain("rejected");
+    expect(states[composerAttachmentUploadKey(environmentId, "kept")]?.status).toBe("failed");
+    queue.retry(environmentId, "rejected");
+    await queue.settled();
+    expect(states[composerAttachmentUploadKey(environmentId, "rejected")]).toEqual({
+      status: "ready",
+    });
+    queue.dispose();
+  });
+
   it("does not spin when an upload's draft was abandoned before persistence", async () => {
     const upload = vi.fn(async () => false);
     const queue = createComposerAttachmentUploadQueue({ upload, onChange: () => {} });

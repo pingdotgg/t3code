@@ -91,6 +91,7 @@ import {
   threadOutboxShellStatusesAtom,
 } from "./use-thread-outbox";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
+import { markComposerAttachmentUploadFailed } from "./composer-attachment-uploads";
 import { workspaceConnections } from "./workspace";
 
 const threadOutboxDebug = createDebugLogger("thread-outbox");
@@ -522,6 +523,18 @@ export async function restoreRejectedQueuedMessage(
     }
     // After queue removal, the draft owns content and must never roll back.
     rollback = null;
+    const rejectedAttachment = queuedMessage.attachments.find(
+      (attachment) =>
+        rejectedAttachmentId !== undefined &&
+        attachment.uploadedAttachmentId === rejectedAttachmentId,
+    );
+    if (rejectedAttachment) {
+      markComposerAttachmentUploadFailed(
+        queuedMessage.environmentId,
+        rejectedAttachment.id,
+        message,
+      );
+    }
     if (queuedMessage.creation) {
       withdrawError();
       recordPendingThreadCreationOutcome({
