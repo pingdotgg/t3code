@@ -16,6 +16,7 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       const themes = yield* EnvironmentTheme.EnvironmentThemeService;
       const {
         current,
+        themesDir,
         themes: published,
         theme,
       } = yield* themes.read(themeId).pipe(
@@ -30,8 +31,14 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       return {
         current,
         builtIn: BUILT_IN_THEME_IDS,
-        published: published.map(({ id, name, css }) => ({ id, name, hasCss: Boolean(css) })),
-        ...(theme === undefined ? {} : { theme: Struct.omit(theme, ["id"]) }),
+        published: published.map(({ id, name, css, background }) => ({
+          id,
+          name,
+          hasCss: Boolean(css),
+          hasBackground: background !== undefined,
+        })),
+        ...(theme === undefined ? {} : { theme: Struct.omit(theme, ["id", "background"]) }),
+        themesDir,
         guide: THEME_GUIDE,
       };
     }),
