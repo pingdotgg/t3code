@@ -104,32 +104,24 @@ const fineSlotHeight = (row: Extract<TimelineRow, { kind: "message" }>) =>
       : "h-0";
 
 /**
- * At the end of a first message's row that has no reply yet: a Reply button. With a mouse it shows
- * while the pointer is on the row, in the row's bottom padding and a slot that tops it up. On a touch
- * screen it always shows and has its own height, so it stays clear of the next row.
+ * At the end of one of the agent's main-list rows that has no reply yet: a Reply button, since the
+ * user follows up on what the agent said. With a mouse it shows while the pointer is on the row, in
+ * the row's bottom padding and a slot that tops it up. On a touch screen it always shows and has its
+ * own height, so it stays clear of the next row.
  */
 export function SubThreadReplyButton(props: {
   readonly row: Extract<TimelineRow, { kind: "message" }>;
 }) {
   const subThread = useRowSubThread(props.row.id);
-  if (subThread === null || subThread.summary.replies > 0) return null;
+  if (subThread === null || props.row.message.role === "user" || subThread.summary.replies > 0)
+    return null;
   const { threadRef, summary } = subThread;
-  const fromUser = props.row.message.role === "user";
   return (
-    <div
-      className={cn(
-        "relative flex pointer-coarse:h-auto",
-        fineSlotHeight(props.row),
-        fromUser && "justify-end",
-      )}
-    >
+    <div className={cn("relative flex pointer-coarse:h-auto", fineSlotHeight(props.row))}>
       <button
         type="button"
         onClick={() => openSubThread(threadRef, summary.first)}
-        className={cn(
-          "absolute top-0 z-10 inline-flex items-center gap-1 rounded-md bg-background px-1.5 text-muted-foreground text-xs opacity-0 outline-none hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset group-hover/sub-thread-row:opacity-100 pointer-coarse:static pointer-coarse:py-0.5 pointer-coarse:opacity-100",
-          fromUser ? "right-0" : "left-0",
-        )}
+        className="absolute top-0 left-0 z-10 inline-flex items-center gap-1 rounded-md bg-background px-1.5 text-muted-foreground text-xs opacity-0 outline-none hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset group-hover/sub-thread-row:opacity-100 pointer-coarse:static pointer-coarse:py-0.5 pointer-coarse:opacity-100"
       >
         <ReplyIcon className="size-3" />
         Reply

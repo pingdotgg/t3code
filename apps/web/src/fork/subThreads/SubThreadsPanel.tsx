@@ -92,7 +92,7 @@ function SubThreadList(props: {
       ? (syncError ?? "Loading replies…")
       : history.hasMoreHistory
         ? "No replies in the loaded messages."
-        : "No replies yet. Point at a message in the chat and choose Reply.";
+        : "No replies yet. Point at one of the agent's messages and choose Reply.";
   const rows = [...props.summaries.values()]
     .filter((summary) => summary.replies > 0)
     .map((summary) => {

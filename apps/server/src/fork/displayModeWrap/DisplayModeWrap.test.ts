@@ -1192,7 +1192,9 @@ it.effect("recaps a reply's own sub-thread in Chat + Replies, and reports the ch
   return Effect.gen(function* () {
     const now = yield* DateTime.now;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const id = (name: string) => MessageId.make(`message:display-wrap:replies:${name}`);
+    const answerId = `item:${repliesId}:2`;
     const typed = (ordinal: number, name: string, text: string, under?: string) =>
       itemUpdated(now, repliesId, runId, ordinal, {
         type: "user_message",
@@ -1212,51 +1214,55 @@ it.effect("recaps a reply's own sub-thread in Chat + Replies, and reports the ch
       }),
       typed(3, "other", "Unrelated question."),
       itemUpdated(now, repliesId, runId, 4, { type: "command_execution" }),
-      typed(5, "q2", "And the lint job?", id("q1")),
+      typed(5, "q2", "And the lint job?", answerId),
     ];
     yield* Effect.forEach(events, (event) => projections.apply(event), { discard: true });
     const block = (lines: ReadonlyArray<string>, text: string) =>
       ["<t3-replies-mode>", ...lines, "</t3-replies-mode>", text].join("\n");
-    const answerWith = (name: string) =>
-      `To answer, call send_to_user with reply_to "${shortId(id(name))}" and the user's words below as user_message.`;
+    const answerWith = (name: string, where: string) =>
+      `To answer, call send_to_user with reply_to "${shortId(id(name))}" and the user's words below as user_message. Your answer shows ${where}.`;
     assert.strictEqual(
       yield* deliver({
         threadId: repliesId,
         id: id("q2"),
         text: "And the lint job?",
-        under: id("q1"),
+        under: answerId,
       }),
       `${CHAT_REPLIES_DISPLAY_MODE.notice}\n${block(
         [
           `Message "${shortId(id("q2"))}" from the user, a reply in the sub-thread that showed:`,
-          "[user] Is the build green?",
           "[you] Yes, all checks pass.",
-          answerWith("q2"),
+          answerWith("q2", "in this sub-thread"),
         ],
         "And the lint job?",
       )}`,
     );
     assert.deepStrictEqual(changes, [
-      {
-        firstId: id("q1"),
-        lines: [
-          "[user] Is the build green?",
-          "[you] Yes, all checks pass.",
-          "[user] And the lint job?",
-        ],
-      },
+      { firstId: answerId, lines: ["[you] Yes, all checks pass.", "[user] And the lint job?"] },
     ]);
-    assert.strictEqual(
-      yield* deliver({ threadId: repliesId, id: id("other"), text: "Unrelated question." }),
+    const inMainList = (name: string, text: string) =>
       block(
         [
-          `Message "${shortId(id("other"))}" from the user, a new message in the main list.`,
-          answerWith("other"),
+          `Message "${shortId(id(name))}" from the user in the main list.`,
+          answerWith(name, "in the main list"),
         ],
-        "Unrelated question.",
-      ),
+        text,
+      );
+    assert.strictEqual(
+      yield* deliver({ threadId: repliesId, id: id("other"), text: "Unrelated question." }),
+      inMainList("other", "Unrelated question."),
     );
     assert.strictEqual(changes.length, 1);
+    // A thread told the rules before they changed gets them again, once.
+    yield* sql`UPDATE fork_display_mode_told SET mode_id = 'chat-replies' WHERE thread_id = ${repliesId}`;
+    assert.strictEqual(
+      yield* deliver({ threadId: repliesId, id: id("later"), text: "Ship it." }),
+      `${CHAT_REPLIES_DISPLAY_MODE.stateNotice}\n${inMainList("later", "Ship it.")}`,
+    );
+    assert.strictEqual(
+      yield* deliver({ threadId: repliesId, id: id("next"), text: "Thanks." }),
+      inMainList("next", "Thanks."),
+    );
   }).pipe(Effect.provide(Layer.merge(store, wrapper.pipe(Layer.provide(subThreads)))));
 });
 

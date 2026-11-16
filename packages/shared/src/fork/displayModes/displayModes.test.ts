@@ -106,6 +106,29 @@ describe("displayEventFromTurnItem", () => {
       { type: "other" },
     ],
     [
+      "the user's /compact, which owes no answer",
+      {
+        type: "user_message",
+        messageId: "m7",
+        createdBy: "user",
+        creationSource: "web",
+        text: " /compact ",
+      },
+      { type: "user", id: "m7", text: " /compact ", compaction: true },
+    ],
+    [
+      "the user's /compact with a file, which is a prompt",
+      {
+        type: "user_message",
+        messageId: "m8",
+        createdBy: "user",
+        creationSource: "web",
+        text: "/compact",
+        attachments: [{ type: "image" }],
+      },
+      { type: "user", id: "m8", text: "/compact" },
+    ],
+    [
       "T3 Code's own /compact when the user returns",
       {
         type: "user_message",
@@ -496,24 +519,33 @@ describe("sub-threads", () => {
     answer("A2", "Q2"),
   ];
 
-  it("puts each reply in the sub-thread of the message it answers, and keeps it out of the main list", () => {
-    const cores = foldCores(events);
-    expect(cores.filter((core) => !core.reply).map((core) => core.text)).toEqual(["Q1", "News"]);
-    expect(subThreadCores(cores, "user:Q1").map((core) => core.text)).toEqual([
+  it("puts an answer where the message it answers is", () => {
+    const cores = foldCores([...events, replyUnder("More?", "sent:A1"), answer("Sure", "More?")]);
+    expect(cores.filter((core) => !core.reply).map((core) => core.text)).toEqual([
       "Q1",
+      "News",
       "A1",
-      "Q2",
-      "A2",
     ]);
+    expect(subThreadCores(cores, "user:Q1").map((core) => core.text)).toEqual(["Q1", "Q2", "A2"]);
     expect(subThreadCores(cores, "sent:News").map((core) => core.text)).toEqual([
       "News",
       "Why?",
       "Because",
     ]);
+    expect(subThreadCores(cores, "sent:A1").map((core) => core.text)).toEqual([
+      "A1",
+      "More?",
+      "Sure",
+    ]);
   });
 
   it("gives an answer no sub-thread when the message it answers is not among the events", () => {
     expect(foldCores([answer("A1", "Q1")])).toMatchObject([{ reply: true, first: null }]);
+    // Until a reply under it shows it is in the main list.
+    expect(foldCores([answer("A1", "Q1"), replyUnder("More?", "sent:A1")])).toMatchObject([
+      { id: "sent:A1", reply: false, first: "sent:A1" },
+      { reply: true, first: "sent:A1" },
+    ]);
   });
 
   it("rewrites the answer or the first message that the call names, not the latest send", () => {
@@ -574,12 +606,12 @@ describe("sub-threads", () => {
     expect(freshFirstPointer(new Set([...taken, fresh]), "News")).not.toBe(fresh);
   });
 
-  it("tells the agent the id of a new message, with no recap", () => {
+  it("tells the agent the id of a main-list message and where its answer shows, with no recap", () => {
     expect(CHAT_REPLIES_DISPLAY_MODE.wrap!(events, "Q3", { id: "user:Q3" })).toBe(
       [
         "<t3-replies-mode>",
-        `Message "${shortId("user:Q3")}" from the user, a new message in the main list.`,
-        `To answer, call send_to_user with reply_to "${shortId("user:Q3")}" and the user's words below as user_message.`,
+        `Message "${shortId("user:Q3")}" from the user in the main list.`,
+        `To answer, call send_to_user with reply_to "${shortId("user:Q3")}" and the user's words below as user_message. Your answer shows in the main list.`,
         "</t3-replies-mode>",
         "Q3",
       ].join("\n"),
@@ -596,7 +628,7 @@ describe("sub-threads", () => {
         "[you] A2",
         "[user] Q3",
         "[you] A3",
-        `To answer, call send_to_user with reply_to "${shortId("user:Q4")}" and the user's words below as user_message.`,
+        `To answer, call send_to_user with reply_to "${shortId("user:Q4")}" and the user's words below as user_message. Your answer shows in this sub-thread.`,
         "</t3-replies-mode>",
         "Q4",
       ].join("\n"),

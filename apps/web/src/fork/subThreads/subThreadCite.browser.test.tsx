@@ -1,5 +1,6 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { MessageId, TurnItemId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { CHAT_REPLIES_DISPLAY_MODE } from "@t3tools/shared/displayModes";
@@ -21,7 +22,7 @@ import {
   type FakeDriver,
 } from "../../../test/fakeEnvironment";
 import { render } from "../../../test/render";
-import { subThreadDraftId } from "./subThreadReply";
+import { replyContextField, subThreadDraftId } from "./subThreadReply";
 
 vi.mock(
   "../../../../../packages/client-runtime/src/connection/driver.ts",
@@ -55,7 +56,21 @@ function threadWithAgentSubThread(name: string) {
     input: { text: "The deploy is done.", new_sub_thread: true },
     output: { ok: true },
   };
-  return { thread: { ...history, items: [...history.items, news] }, first: news.id };
+  // Only a message that already has replies takes a main-list Cite into its Replies.
+  const reply = {
+    ...item,
+    id: TurnItemId.make(`${name}-reply`),
+    ordinal: 3,
+    type: "user_message" as const,
+    messageId: MessageId.make(`${name}-reply`),
+    text: "Which deploy?",
+    attachments: [],
+    inputIntent: "turn_start" as const,
+    createdBy: "user" as const,
+    creationSource: "web" as const,
+    ...replyContextField(news.id),
+  };
+  return { thread: { ...history, items: [...history.items, news, reply] }, first: news.id };
 }
 
 const layouts = {
@@ -70,12 +85,12 @@ const settings = {
 };
 
 const waitForChatRepliesMode = () =>
-  expect.element(page.getByRole("button", { name: "Reply" }).first()).toBeInTheDocument();
+  expect.element(page.getByRole("button", { name: /1 reply/ }).first()).toBeInTheDocument();
 
 const selectWithPointer = (text: string) => userEvent.tripleClick(page.getByText(text));
 
 it.each(Object.keys(layouts) as Array<keyof typeof layouts>)(
-  "a Cite in the main list opens the message's replies in the %s, adds the quote to the saved reply draft and opens its comment box with focus",
+  "a Cite in the main list opens the replies of a message that has some in the %s, adds the quote to the saved reply draft and opens its comment box with focus",
   async (layout) => {
     const { width, thread, first } = layouts[layout];
     const threadRef = scopeThreadRef(ENVIRONMENT_ID, thread.id);

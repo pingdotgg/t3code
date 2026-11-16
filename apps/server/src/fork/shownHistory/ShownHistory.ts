@@ -304,9 +304,10 @@ const locateTarget = Effect.fn("ShownHistory.locateTarget")(function* (
 });
 
 /**
- * Whether `rows`, newest first, hold `minCores` messages and the first message of each reply among
- * them. An agent's reply whose answered message is not among the SUB_THREAD_WINDOW_CORES messages
- * before it needs none: send_to_user accepts an answer only to those, so that message never existed.
+ * Whether `rows`, newest first, hold `minCores` messages, the first message of each reply among
+ * them, and the message each answer among them answers: the fold places an answer by that message.
+ * An answer whose message is not among the SUB_THREAD_WINDOW_CORES messages before it needs none:
+ * send_to_user accepts an answer only to those, so that message never existed.
  */
 function shownNeedsMet(rows: ReadonlyArray<ShownRow>, minCores: number): boolean {
   const cores = foldCores(rows.map((row) => row.event).toReversed());

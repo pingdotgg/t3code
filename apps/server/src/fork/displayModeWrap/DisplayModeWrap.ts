@@ -9,8 +9,9 @@ import {
 } from "@t3tools/contracts";
 import {
   type DisplayMode,
+  DISPLAY_MODES,
   displayEventFromTurnItem,
-  isMainListEvent,
+  isMainListOnItsOwn,
   isWebTypedMessage,
   type MessageOrigin,
   NORMAL_DISPLAY_MODE,
@@ -92,7 +93,7 @@ export interface DisplayModeWrapShape {
    * The user messages and send calls that the screen shows, oldest first, in any state. Reads back
    * past the user's last typed message and at least `cores` messages (default WRAPPED_CORE_COUNT),
    * counted from the item with `ownNativeId` back when given. With `toMainListMessage`, also past
-   * the latest message of the main list of a thread with sub-threads.
+   * the latest event that is in the main list on its own (`isMainListOnItsOwn`).
    */
   readonly latestShownItems: (
     threadId: ThreadId,
@@ -201,8 +202,8 @@ export const layer: Layer.Layer<
 
     // Reads newest first from before `before`, or from the end, until `coreCount` messages
     // (not rewrites) and, without `before`, a typed message, counted from `ownNativeId` back when
-    // given, and with `toMainListMessage`, a message of the main list. Visibility gets no items:
-    // they only decide interrupt results, which never enter the agent's transcript.
+    // given, and with `toMainListMessage`, an event in the main list on its own. Visibility gets no
+    // items: they only decide interrupt results, which never enter the agent's transcript.
     const shownItems = Effect.fn("DisplayModeWrap.shownItems")(function* (
       threadId: ThreadId,
       before: MessageId | null,
@@ -286,7 +287,7 @@ export const layer: Layer.Layer<
             const event = displayEventFromTurnItem(item);
             if (event?.type === "user") passedTyped = true;
             if (event?.type === "user" || event?.type === "sent") cores++;
-            if (event !== null && isMainListEvent(event)) passedMainList = true;
+            if (event !== null && isMainListOnItsOwn(event)) passedMainList = true;
             if (passedTyped && passedMainList && cores >= coreCount) return found.reverse();
           }
           const last = rows.at(-1);
@@ -330,7 +331,7 @@ export const layer: Layer.Layer<
 
     const recordTold = (threadId: ThreadId, mode: DisplayMode) =>
       sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
-        VALUES (${threadId}, ${mode.id})
+        VALUES (${threadId}, ${mode.toldId})
         ON CONFLICT (thread_id) DO UPDATE SET mode_id = excluded.mode_id`.pipe(
         Effect.asVoid,
         Effect.catchCause((cause) =>
@@ -353,7 +354,7 @@ export const layer: Layer.Layer<
       threadId: ThreadId,
       context: NoteContext,
     ) {
-      if (context === "fresh") return yield* setTold(threadId, NORMAL_DISPLAY_MODE.id);
+      if (context === "fresh") return yield* setTold(threadId, NORMAL_DISPLAY_MODE.toldId);
       if (context === "uncertain") return yield* setTold(threadId, UNKNOWN_TOLD);
       yield* sql`DELETE FROM fork_display_mode_told WHERE thread_id = ${threadId}`;
       yield* sql`INSERT INTO fork_display_mode_told (thread_id, mode_id)
@@ -433,10 +434,15 @@ export const layer: Layer.Layer<
         const toldRows = yield* sql<{ readonly mode_id: string }>`
           SELECT mode_id FROM fork_display_mode_told WHERE thread_id = ${threadId}
         `;
-        const told = toldRows[0]?.mode_id ?? NORMAL_DISPLAY_MODE.id;
-        // After `unknown`, the agent may not know the mode that a switch notice would switch from.
+        const told = toldRows[0]?.mode_id ?? NORMAL_DISPLAY_MODE.toldId;
+        // After `unknown` or an older rules version, the agent may not know the mode that a switch
+        // notice would switch from, or its current rules.
         const note =
-          told === mode.id ? null : told === UNKNOWN_TOLD ? mode.stateNotice : mode.notice;
+          told === mode.toldId
+            ? null
+            : DISPLAY_MODES.some((known) => known.toldId === told)
+              ? mode.notice
+              : mode.stateNotice;
         if (yield* isSlashCommand(threadId, message))
           return note === null
             ? unchanged

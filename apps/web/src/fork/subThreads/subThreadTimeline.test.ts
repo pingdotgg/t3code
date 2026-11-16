@@ -115,7 +115,8 @@ const entriesOf = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
     optimisticMessages: [],
   });
 
-// The user's question with an answer and a follow-up, and the agent's news with one reply.
+// The user's question with an answer, a follow-up that old history put under the question, and the
+// agent's news with one reply.
 const items = [
   typed("q1", 0, "Is the build green?"),
   sent("news", 1, { text: "The deploy is done.", new_sub_thread: true }),
@@ -132,20 +133,24 @@ const readAt = (at: string | null) =>
   new Map([["q1", { firstId: "q1", readAt: at, summary: null }]]);
 
 describe("Chat + Replies rows", () => {
-  it("draws only the first messages in the main list", () => {
-    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries))).toEqual(["q1", "news"]);
+  it("draws the main list with each answer where its question is", () => {
+    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries))).toEqual(["q1", "news", "a1"]);
   });
 
   it("draws a sub-thread as its first message and its replies", () => {
     expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries, "q1"))).toEqual([
       "q1",
-      "a1",
       "q2",
       "a2",
     ]);
     expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, entries, "news"))).toEqual([
       "news",
       "why",
+    ]);
+    const underAnswer = entriesOf([...items, typed("more", 7, "Why?", "a1")]);
+    expect(ids(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, underAnswer, "a1"))).toEqual([
+      "a1",
+      "more",
     ]);
   });
 
@@ -160,9 +165,9 @@ describe("Chat + Replies rows", () => {
     expect(editedAt(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, edited))).toEqual([
       undefined,
       time(9),
+      undefined,
     ]);
     expect(editedAt(applyDisplayMode(CHAT_REPLIES_DISPLAY_MODE, edited, "q1"))).toEqual([
-      undefined,
       undefined,
       undefined,
       time(9),
@@ -189,6 +194,7 @@ describe("subThreadOfReply", () => {
     expect(subThreadOfReply(entries, "why")).toBe("news");
     // A first message is in the main list, and other rows are in no sub-thread.
     expect(subThreadOfReply(entries, "q1")).toBeNull();
+    expect(subThreadOfReply(entries, "a1")).toBeNull();
     expect(subThreadOfReply(entries, "work")).toBeNull();
     expect(subThreadOfReply(entries, "gone")).toBeNull();
   });
@@ -203,6 +209,8 @@ describe("rowShownIn", () => {
     expect(rowShownIn(entries, "q1", null)).toBe("here");
     expect(rowShownIn(entries, "q1", "q1")).toBe("here");
     expect(rowShownIn(entries, "q1", "news")).toBe("elsewhere");
+    expect(rowShownIn(entries, "a1", null)).toBe("here");
+    expect(rowShownIn(entries, "a1", "q1")).toBe("elsewhere");
     // A row that is not loaded yet may still be loaded, by the main list.
     expect(rowShownIn(entries, "gone", null)).toBe("unknown");
     expect(rowShownIn(entries, "gone", "q1")).toBe("unknown");
@@ -214,12 +222,13 @@ describe("timelineSubThreads", () => {
     const summaries = timelineSubThreads(entries, null);
     expect(summaries.get("q1")).toMatchObject({
       firstFrom: "user",
-      replies: 3,
+      replies: 2,
       lastFrom: "agent",
       lastText: "Lint passes too.",
       lastAt: time(6),
-      agentReplyTimes: [time(3), time(6)],
+      agentReplyTimes: [time(6)],
     });
+    expect(summaries.get("a1")).toMatchObject({ firstFrom: "agent", replies: 0 });
     expect(summaries.get("news")).toMatchObject({
       firstFrom: "agent",
       replies: 1,
@@ -246,8 +255,8 @@ describe("timelineSubThreads", () => {
 
   it("counts as unread the agent's replies after the user's last read", () => {
     const summary = timelineSubThreads(entries, null).get("q1")!;
-    expect(unreadReplies(summary, new Map())).toBe(2);
-    expect(unreadReplies(summary, readAt(null))).toBe(2);
+    expect(unreadReplies(summary, new Map())).toBe(1);
+    expect(unreadReplies(summary, readAt(null))).toBe(1);
     expect(unreadReplies(summary, readAt(time(3)))).toBe(1);
     expect(unreadReplies(summary, readAt(time(6)))).toBe(0);
     // Before the server's first answer, the read times are unknown and nothing shows as new.
@@ -259,10 +268,10 @@ describe("timelineSubThreads", () => {
     const edited = timelineSubThreads(entriesOf([...items, editLint]), before);
     const summary = edited.get("q1")!;
     expect(summary).toMatchObject({
-      replies: 3,
+      replies: 2,
       lastAt: time(9),
       lastText: "Lint and types pass.",
-      agentReplyTimes: [time(3), time(9)],
+      agentReplyTimes: [time(9)],
     });
     expect(unreadReplies(summary, readAt(time(6)))).toBe(1);
     expect(edited.get("news")).toBe(before.get("news"));
@@ -272,7 +281,7 @@ describe("timelineSubThreads", () => {
     const late = timelineSubThreads(entriesOf([...items, followUp, editLint]), unedited);
     expect(late.get("q1")).not.toBe(unedited.get("q1"));
     expect(late.get("q1")).toMatchObject({
-      agentReplyTimes: [time(3), time(9)],
+      agentReplyTimes: [time(9)],
       lastAt: time(9),
       lastFrom: "agent",
       lastText: "Lint and types pass.",

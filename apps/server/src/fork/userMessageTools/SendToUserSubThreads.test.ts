@@ -177,7 +177,8 @@ const refusalLines = (result: McpSchema.CallToolResult) => {
 const DONE = "If you are done, end your turn with no text.";
 const shown = (message: string) => ({ ok: true, message: `${message} ${DONE}` });
 
-// Two sub-threads: the user's question with one answer and a follow-up, and the agent's news with a reply.
+// The user's question with its answer and a follow-up that old history put under the question, and
+// the agent's news with a reply.
 const twoSubThreads = () => [
   typed("q1", "Is the build green?"),
   news("n1", "The deploy is done."),
@@ -207,7 +208,8 @@ it.effect("refuses a send that names neither a message to answer nor a new sub-t
 
 it.effect("shows a new message and returns the id that names it", () =>
   Effect.gen(function* () {
-    setup([...twoSubThreads(), typed("q3", "Anything else?")]);
+    const asked = [typed("q3", "Anything else?"), answer("a3", "No.", "q3")];
+    setup([...twoSubThreads(), ...asked]);
     const result = yield* call("send_to_user", {
       text: "CI is red on main.",
       new_sub_thread: true,
@@ -221,7 +223,12 @@ it.effect("shows a new message and returns the id that names it", () =>
     expect(changes).toEqual([]);
     // The same words again after the user writes in the main list, before the first send is in
     // the history, get their own id.
-    setup([...twoSubThreads(), typed("q3", "Anything else?"), typed("q4", "And the docs?")]);
+    setup([
+      ...twoSubThreads(),
+      ...asked,
+      typed("q4", "And the docs?"),
+      answer("a4", "They are fine.", "q4"),
+    ]);
     const together = yield* call("send_to_user", {
       text: "CI is red on main.",
       new_sub_thread: true,
@@ -230,7 +237,7 @@ it.effect("shows a new message and returns the id that names it", () =>
       messageId: shortId("CI is red on main.\n1"),
     });
     // The same words as an earlier first message get an id of their own, kept in the result.
-    setup([...twoSubThreads(), typed("q5", "And the tests?")]);
+    setup([...twoSubThreads(), typed("q5", "And the tests?"), answer("a5", "They pass.", "q5")]);
     const again = yield* call("send_to_user", {
       text: "The deploy is done.",
       new_sub_thread: true,
@@ -281,7 +288,7 @@ it.effect("takes one new message in the main list until the user sends one there
     ]);
 
     // A send not stored yet holds the main list too.
-    setup([...twoSubThreads(), typed("q3", "Anything else?")]);
+    setup([...twoSubThreads(), typed("q3", "Anything else?"), answer("a3", "No.", "q3")]);
     expect((yield* call("send_to_user", news2)).isError).not.toBe(true);
     expect(refusalLines(yield* call("send_to_user", news2)).slice(0, 2)).toEqual([
       taken,
@@ -292,19 +299,20 @@ it.effect("takes one new message in the main list until the user sends one there
     setup([
       news("n0", "The deploy is done."),
       typed("q4", "Anything else?"),
+      answer("a4", "No.", "q4"),
       running(news("s1", "Lint is red.")),
       running(news("s2", "CI is red.")),
     ]);
     expect(refusalLines(yield* call("send_to_user", news2, repliesThread, "s2"))).toEqual([
       taken,
       delivering,
-      ...unanswered(["q4", "Anything else?"]),
       DONE,
     ]);
     expect((yield* call("send_to_user", news2, repliesThread, "s1")).isError).not.toBe(true);
     // A running call that the handler refuses takes nothing.
     setup([
       typed("q5", "Anything else?"),
+      answer("a5", "No.", "q5"),
       running(sent("s3", { text: "Lint is red." })),
       running(sent("s4", { text: "On it.", new_sub_thread: true, ack: true })),
       running(news("s6", "a".repeat(1001))),
@@ -313,7 +321,7 @@ it.effect("takes one new message in the main list until the user sends one there
     ]);
     expect((yield* call("send_to_user", news2, repliesThread, "s5")).isError).not.toBe(true);
 
-    // An ack and an answer go into a sub-thread, and a replace adds no message.
+    // An ack and an answer in the main list are no new messages, and a replace adds no message.
     setup([
       typed("q6", "Is the build green?"),
       ackOf("k6", "Checking.", "q6"),
@@ -335,22 +343,52 @@ it.effect("takes one new message in the main list until the user sends one there
     ]);
     expect((yield* call("send_to_user", news2)).isError).not.toBe(true);
 
-    // A message the user sends to the main list opens it again.
-    setup([...twoSubThreads(), typed("q8", "Anything else?")]);
+    // A message the user sends to the main list opens it again, once it has its answer.
+    setup([...twoSubThreads(), typed("q8", "Anything else?"), answer("a8", "No.", "q8")]);
     expect((yield* call("send_to_user", news2)).isError).not.toBe(true);
+
+    // A `/compact` is not the user writing in the main list, and a new message may answer none.
+    setup([news("n9", "The deploy is done."), typed("c9", "/compact")]);
+    expect(refusalLines(yield* call("send_to_user", news2))[0]).toBe(taken);
+    setup([typed("q10", "Is the build green?"), ackOf("k10", "Checking.", "q10")]);
+    expect((yield* call("send_to_user", news2)).isError).not.toBe(true);
+    // An answer is no new message; the refusal names only the new message.
+    setup([
+      typed("q11", "Is the build green?"),
+      answer("a11", "Yes.", "q11"),
+      news("n11", "The deploy is done."),
+    ]);
+    expect(refusalLines(yield* call("send_to_user", news2))).toEqual([
+      taken,
+      "To change it, call replace_send_to_user with sub_thread set to its id:",
+      `"${shortId("The deploy is done.")}": The deploy is done.`,
+      DONE,
+    ]);
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("shows an answer to the latest user message of each sub-thread, in any order", () =>
+it.effect("shows an answer to the latest user message of each place, in any order", () =>
   Effect.gen(function* () {
-    setup(twoSubThreads());
+    setup([
+      ...twoSubThreads(),
+      typed("more", "Which checks?", "a1"),
+      typed("q3", "Anything else?"),
+    ]);
     const first = yield* call("send_to_user", {
       text: "Build 20261111.",
       reply_to: shortId("why"),
       user_message: "Which build was deployed?",
     });
     expect(first.structuredContent).toEqual(
-      shown(`Shown to the user as your answer to "${shortId("why")}".`),
+      shown(`Shown to the user as your answer to "${shortId("why")}", in its sub-thread.`),
+    );
+    const main = yield* call("send_to_user", {
+      text: "No, that is all.",
+      reply_to: shortId("q3"),
+      user_message: "Anything else?",
+    });
+    expect(main.structuredContent).toEqual(
+      shown(`Shown to the user as your answer to "${shortId("q3")}", in the main list.`),
     );
     const second = yield* call("send_to_user", {
       text: "Lint passes too.",
@@ -358,8 +396,18 @@ it.effect("shows an answer to the latest user message of each sub-thread, in any
       user_message: "[user] And the lint job?",
     });
     expect(second.structuredContent).toEqual(
-      shown(`Shown to the user as your answer to "${shortId("q2")}".`),
+      shown(`Shown to the user as your answer to "${shortId("q2")}", in its sub-thread.`),
     );
+    // A reply under the answer in the main list is answered in the answer's sub-thread.
+    const under = yield* call("send_to_user", {
+      text: "Lint, types and tests.",
+      reply_to: shortId("more"),
+      user_message: "Which checks?",
+    });
+    expect(under.structuredContent).toEqual(
+      shown(`Shown to the user as your answer to "${shortId("more")}", in its sub-thread.`),
+    );
+    // The answer in the main list starts no summary.
     expect(changes).toEqual([
       {
         firstId: "n1",
@@ -371,11 +419,14 @@ it.effect("shows an answer to the latest user message of each sub-thread, in any
       },
       {
         firstId: "q1",
+        lines: ["[user] Is the build green?", "[user] And the lint job?", "[you] Lint passes too."],
+      },
+      {
+        firstId: "a1",
         lines: [
-          "[user] Is the build green?",
           "[you] Yes, all checks pass.",
-          "[user] And the lint job?",
-          "[you] Lint passes too.",
+          "[user] Which checks?",
+          "[you] Lint, types and tests.",
         ],
       },
     ]);
@@ -395,7 +446,7 @@ it.effect("refuses an id that no user message has", () =>
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("refuses words unlike the named message, with its sub-thread to check", () =>
+it.effect("refuses words unlike the named message, with its place to check", () =>
   Effect.gen(function* () {
     setup(twoSubThreads());
     const result = yield* call("send_to_user", {
@@ -412,28 +463,65 @@ it.effect("refuses words unlike the named message, with its sub-thread to check"
       "That message's sub-thread shows:",
       "[you] The deploy is done.",
       "[user] Which build was deployed?",
-      "Check that this is the sub-thread you mean to reply in.",
+      "Check that this is the message you mean to answer.",
+    ]);
+    const main = yield* call("send_to_user", {
+      text: "Yes.",
+      reply_to: shortId("q1"),
+      user_message: "And the lint job?",
+    });
+    expect(refusalLines(main).slice(1)).toEqual([
+      "The main list shows:",
+      "[user] Is the build green?",
+      "[you] The deploy is done.",
+      "[you] Yes, all checks pass.",
+      "Check that this is the message you mean to answer.",
     ]);
     expect(changes).toEqual([]);
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("refuses an answer to a message that the user followed up in the same sub-thread", () =>
+it.effect("refuses an answer to a message that the user followed up in the same place", () =>
   Effect.gen(function* () {
-    setup([typed("q1", "Is the build green?"), typed("q2", "And the lint job?", "q1")]);
-    const lines = refusalLines(
-      yield* call("send_to_user", {
-        text: "Yes.",
-        reply_to: shortId("q1"),
-        user_message: "Is the build green?",
-      }),
-    );
-    expect(lines).toEqual([
-      `Refused: the user sent a later message, "${shortId("q2")}", in this sub-thread. Answer that one.`,
-      "That message's sub-thread shows:",
+    const q1 = { text: "Yes.", reply_to: shortId("q1"), user_message: "Is the build green?" };
+    setup([typed("q1", "Is the build green?"), typed("q2", "And the lint job?")]);
+    expect(refusalLines(yield* call("send_to_user", q1))).toEqual([
+      `Refused: the user sent a later message, "${shortId("q2")}", in the main list. Answer that one.`,
+      "The main list shows:",
       "[user] Is the build green?",
       "[user] And the lint job?",
     ]);
+    setup([
+      news("n1", "The deploy is done."),
+      typed("why", "Which build?", "n1"),
+      typed("why2", "And when?", "n1"),
+    ]);
+    expect(
+      refusalLines(
+        yield* call("send_to_user", {
+          text: "Build 20261111.",
+          reply_to: shortId("why"),
+          user_message: "Which build?",
+        }),
+      ),
+    ).toEqual([
+      `Refused: the user sent a later message, "${shortId("why2")}", in this sub-thread. Answer that one.`,
+      "That message's sub-thread shows:",
+      "[you] The deploy is done.",
+      "[user] Which build?",
+      "[user] And when?",
+    ]);
+    // A reply that old history put under the question is in another place.
+    setup([typed("q1", "Is the build green?"), typed("q2", "And the lint job?", "q1")]);
+    expect((yield* call("send_to_user", q1)).isError).not.toBe(true);
+    // `/compact` is not a later message.
+    setup([
+      typed("q3", "Is the build green?"),
+      ackOf("k3", "Checking.", "q3"),
+      typed("c3", "/compact"),
+    ]);
+    const after = yield* call("send_to_user", { ...q1, reply_to: shortId("q3") });
+    expect(after.isError).not.toBe(true);
   }).pipe(Effect.provide(layer)),
 );
 
@@ -476,7 +564,7 @@ it.effect("does not count a send made in Normal as an answer, though it passed r
       user_message: "And the lint job?",
     });
     expect(result.structuredContent).toEqual(
-      shown(`Shown to the user as your answer to "${shortId("q2")}".`),
+      shown(`Shown to the user as your answer to "${shortId("q2")}", in its sub-thread.`),
     );
   }).pipe(Effect.provide(layer)),
 );
@@ -561,7 +649,6 @@ it.effect("replaces the answer to the named message only", () =>
       firstId: "q1",
       lines: [
         "[user] Is the build green?",
-        "[you] Yes, all checks pass.",
         "[user] And the lint job?",
         "[you] Lint and types pass.",
       ],
@@ -578,19 +665,54 @@ it.effect("replaces the answer to the named message only", () =>
     expect(unlike.slice(-3)).toEqual([
       "Your current answer, as old_text:",
       "Lint passes too.",
-      "Check that this is the sub-thread you mean to reply in.",
+      "Check that this is the message you mean to answer.",
     ]);
-    const stale = refusalLines(
-      yield* call("replace_send_to_user", {
-        reply_to: shortId("q1"),
-        user_message: "Is the build green?",
-        old_text: "Yes, all checks pass.",
-        new_text: "Yes.",
-      }),
+    // The answer to q1 is in the main list: a reply that old history put under q1 leaves it open.
+    const q1 = {
+      reply_to: shortId("q1"),
+      user_message: "Is the build green?",
+      old_text: "Yes, all checks pass.",
+      new_text: "Yes.",
+    };
+    const changed = changes.length;
+    expect((yield* call("replace_send_to_user", q1)).isError).not.toBe(true);
+    expect(changes.length).toBe(changed);
+    const stale = (id: string) =>
+      `Refused: the user has written after your answer to message "${shortId("q1")}", so it stays as it is. Answer their latest message with send_to_user and reply_to "${shortId(id)}".`;
+    setup([...twoSubThreads(), typed("q3", "Anything else?")]);
+    expect(refusalLines(yield* call("replace_send_to_user", q1))).toEqual([
+      stale("q3"),
+      "The main list shows:",
+      "[you] The deploy is done.",
+      "[you] Yes, all checks pass.",
+      "[user] Anything else?",
+    ]);
+    setup([...twoSubThreads(), typed("more", "Why?", "a1")]);
+    expect(refusalLines(yield* call("replace_send_to_user", q1))).toEqual([
+      stale("more"),
+      "That message's sub-thread shows:",
+      "[you] Yes, all checks pass.",
+      "[user] Why?",
+    ]);
+    // A reply under an ack leaves the answer to send.
+    setup([
+      typed("q4", "Is the build green?"),
+      ackOf("k4", "Checking.", "q4"),
+      typed("more", "How long?", "k4"),
+    ]);
+    const acked = { ...q1, reply_to: shortId("q4"), old_text: "Checking." };
+    expect(refusalLines(yield* call("replace_send_to_user", acked))[0]).toBe(
+      `Refused: the user has written after your ack for message "${shortId("q4")}", so it stays as it is. Send your answer to "${shortId("q4")}" with send_to_user and reply_to "${shortId("q4")}".`,
     );
-    expect(stale[0]).toBe(
-      `Refused: the user has replied after your answer to message "${shortId("q1")}", so it stays as it is. Answer their latest reply with send_to_user and reply_to "${shortId("q2")}".`,
-    );
+    // `/compact` is not a later message: the ack still becomes the answer.
+    setup([
+      typed("q5", "Is the build green?"),
+      ackOf("k5", "Checking.", "q5"),
+      typed("c5", "/compact"),
+    ]);
+    const compacted = { ...q1, reply_to: shortId("q5"), old_text: "Checking." };
+    expect((yield* call("replace_send_to_user", compacted)).isError).not.toBe(true);
+    setup([...twoSubThreads(), answer("a2", "Lint passes too.", "q2")]);
     const none = refusalLines(
       yield* call("replace_send_to_user", {
         reply_to: shortId("why"),
@@ -606,7 +728,7 @@ it.effect("replaces the answer to the named message only", () =>
 );
 
 it.effect(
-  "replaces the agent's own first message only while the user has not replied under it",
+  "replaces the agent's own new message only until the user writes after it or replies under it",
   () =>
     Effect.gen(function* () {
       setup([
@@ -631,22 +753,22 @@ it.effect(
       );
       expect(unknown).toEqual([
         'Refused: none of your messages sent with new_sub_thread has the id "ffffff".',
-        "Your messages that the user has not replied under, by id:",
+        "Your messages sent with new_sub_thread that you may still change, by id:",
         `"${shortId("The deploy is done.")}": The deploy is done.`,
         `"${shortId("CI is red.")}": CI is red.`,
       ]);
+      const news1 = {
+        sub_thread: shortId("The deploy is done."),
+        user_message: "",
+        old_text: "The deploy is done.",
+        new_text: "x",
+      };
+      const written = (id: string) =>
+        `Refused: the user has written after this message, so it stays as it is. Answer their latest message with send_to_user and reply_to "${shortId(id)}".`;
       setup([news("n1", "The deploy is done."), typed("why", "Which build?", "n1")]);
-      const replied = refusalLines(
-        yield* call("replace_send_to_user", {
-          sub_thread: shortId("The deploy is done."),
-          user_message: "",
-          old_text: "The deploy is done.",
-          new_text: "x",
-        }),
-      );
-      expect(replied[0]).toBe(
-        `Refused: the user has replied under this message, so it stays as it is. Answer their latest reply with send_to_user and reply_to "${shortId("why")}".`,
-      );
+      expect(refusalLines(yield* call("replace_send_to_user", news1))[0]).toBe(written("why"));
+      setup([news("n1", "The deploy is done."), typed("q2", "Anything else?")]);
+      expect(refusalLines(yield* call("replace_send_to_user", news1))[0]).toBe(written("q2"));
     }).pipe(Effect.provide(layer)),
 );
 
@@ -737,34 +859,45 @@ it.effect("refuses a replace while the answer after an ack is still being delive
   }).pipe(Effect.provide(layer)),
 );
 
-it.effect("judges a named call by the history before it, and a replace also by replies since", () =>
+it.effect("judges a named call by the history before it, and a replace by messages since", () =>
   Effect.gen(function* () {
     const running = (id: string, tool: string, input: Record<string, unknown>) =>
       ({ ...sent(id, input), toolName: `mcp__t3-code__${tool}`, status: "running" }) as const;
-    // The user replied while the call ran: the send answers the message that the agent saw.
-    const sendArgs = { text: "Yes.", reply_to: shortId("q1"), user_message: "Is the build green?" };
+    // The user wrote while the call ran: the send answers the message that the agent saw.
+    const sendArgs = {
+      text: "Yes.",
+      reply_to: shortId("q1"),
+      user_message: "Is the build green?",
+    };
     setup([
       typed("q1", "Is the build green?"),
       running("s1", "send_to_user", sendArgs),
-      typed("q2", "And the lint job?", "q1"),
+      typed("q2", "And the lint job?"),
     ]);
     expect((yield* call("send_to_user", sendArgs, repliesThread, "s1")).isError).not.toBe(true);
-    // A replace is refused: the user's reply was written to the answer as it was.
+    // A replace is refused: the user's message was written after the answer as it was.
     const replaceArgs = {
       reply_to: shortId("q1"),
       user_message: "Is the build green?",
       old_text: "Yes.",
       new_text: "No.",
     };
-    setup([
+    const replacing = [
       typed("q1", "Is the build green?"),
       answer("a1", "Yes.", "q1"),
       running("r1", "replace_send_to_user", replaceArgs),
-      typed("q2", "And the lint job?", "q1"),
-    ]);
+    ];
+    for (const under of [undefined, "a1"]) {
+      setup([...replacing, typed("q2", "And the lint job?", under)]);
+      expect(
+        refusalLines(yield* call("replace_send_to_user", replaceArgs, repliesThread, "r1"))[0],
+      ).toContain("the user has written after your answer");
+    }
+    // A reply that old history put under the question is not after the answer in its place.
+    setup([...replacing, typed("q2", "And the lint job?", "q1")]);
     expect(
-      refusalLines(yield* call("replace_send_to_user", replaceArgs, repliesThread, "r1"))[0],
-    ).toContain("the user has replied after your answer");
+      (yield* call("replace_send_to_user", replaceArgs, repliesThread, "r1")).isError,
+    ).not.toBe(true);
     const firstArgs = {
       sub_thread: shortId("The deploy is done."),
       user_message: "",
@@ -778,6 +911,6 @@ it.effect("judges a named call by the history before it, and a replace also by r
     ]);
     expect(
       refusalLines(yield* call("replace_send_to_user", firstArgs, repliesThread, "r2"))[0],
-    ).toContain("the user has replied under this message");
+    ).toContain("the user has written after this message");
   }).pipe(Effect.provide(layer)),
 );

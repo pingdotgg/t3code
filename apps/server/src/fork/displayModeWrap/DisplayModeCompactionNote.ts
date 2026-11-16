@@ -32,8 +32,9 @@ export const providedCompactionNote = Effect.serviceOption(DisplayModeCompaction
 );
 
 /**
- * The mode that the thread's current agent was last told, or `unknown`. A thread with no row never
- * had a note sent, so no conversation of it holds one. Told nothing counts as told Normal.
+ * The mode that the thread's current agent was last told, by its `toldId`, or `unknown`. A thread
+ * with no row never had a note sent, so no conversation of it holds one. Told nothing counts as
+ * told Normal.
  */
 export const createToldTable = Effect.flatMap(
   SqlClient.SqlClient,

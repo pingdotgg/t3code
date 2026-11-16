@@ -9,7 +9,12 @@ import {
   selectThreadRightPanelState,
   useRightPanelStore,
 } from "../../rightPanelStore";
-import { citeInThread, registerReplyBox, sheetInitialFocus } from "./subThreadCite";
+import {
+  citeInThread,
+  citeOpensReplies,
+  registerReplyBox,
+  sheetInitialFocus,
+} from "./subThreadCite";
 import { openSubThread, useSubThreadsStore } from "./subThreadsState";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread"));
@@ -83,6 +88,27 @@ const repliesOnScreen = () =>
 const shownSubThread = () => useSubThreadsStore.getState().shownByThreadKey[threadKey];
 
 describe("a Cite in the main list of a Chat + Replies thread", () => {
+  it.each([
+    { replies: undefined, opens: false },
+    { replies: 0, opens: false },
+    { replies: 1, opens: true },
+  ])("opens the message's Replies only when it has some: $replies", ({ replies, opens }) => {
+    const summary =
+      replies === undefined
+        ? undefined
+        : {
+            first: "first-b",
+            firstFrom: "agent" as const,
+            firstText: "Pick A or B",
+            replies,
+            lastAt: "2026-11-16T00:00:00.000Z",
+            lastFrom: "agent" as const,
+            lastText: "Pick A or B",
+            agentReplyTimes: [],
+          };
+    expect(citeOpensReplies(summary)).toBe(opens);
+  });
+
   it("goes into the main box when it has text", () => {
     using view = mainView(" my note ");
     const reply = fakeBox("a reply draft");

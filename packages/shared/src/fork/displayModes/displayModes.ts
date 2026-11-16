@@ -1,7 +1,8 @@
-import type {
-  OrchestrationV2Actor,
-  OrchestrationV2CreationSource,
-  OrchestrationV2TurnItem,
+import {
+  isCompactionCommandMessage,
+  type OrchestrationV2Actor,
+  type OrchestrationV2CreationSource,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 
 import { assistantCitationsToPlainText } from "../../assistantCitations.ts";
@@ -45,6 +46,8 @@ export type DisplayEvent =
       readonly id: string;
       readonly text: string;
       readonly under?: string | undefined;
+      /** A `/compact` with no attachments: it only compacts, so it owes no answer. */
+      readonly compaction?: true;
     }
   /**
    * `replyTo` is the short id of the user message that the send answers. Without it, the send is a
@@ -77,9 +80,13 @@ export type DisplayEvent =
    */
   | { readonly type: "other" };
 
-/** Whether `event` is a message of the main list in a thread with sub-threads, not a reply. */
-export const isMainListEvent = (event: DisplayEvent): boolean =>
-  (event.type === "user" && event.under === undefined) ||
+/**
+ * Whether `event` is a user message in the main list (not a `/compact`), or a send that answers none.
+ * An answer's place needs the message it answers, so only these events are in the main list on their
+ * own.
+ */
+export const isMainListOnItsOwn = (event: DisplayEvent): boolean =>
+  (event.type === "user" && event.under === undefined && event.compaction !== true) ||
   (event.type === "sent" && event.replyTo === undefined);
 
 /** A core is one message that a display mode shows, from the user or from the agent. */
@@ -88,22 +95,30 @@ export interface VisibleCore {
   readonly from: "user" | "agent";
   readonly text: string;
   /**
-   * The id of the first message of the core's sub-thread: its own id for a first message, and null
-   * for an agent's reply to a user message that is not among the events.
+   * The id of the main-list message whose sub-thread holds the core: its own id for a core in the
+   * main list, and null for an answer to a user message that is not among the events.
+   * Invariant: `!reply` implies `first === id`.
    */
   readonly first: string | null;
-  /** Whether the core is a reply. A reply shows in its sub-thread, not in the main list. */
+  /**
+   * Whether the core is not in the main list: it shows in the sub-thread of `first`, or nowhere when
+   * `first` is null. A user message is a reply when it carries a `fork-reply` record. An answer is a
+   * reply when the message it answers is one.
+   */
   readonly reply: boolean;
   /**
    * The id that the agent names the core by: for a user message, a hash of its id; for the agent's
-   * first message, the id that its send returned, which the stored call keeps, or a hash of the
-   * text it was sent with when the send returned none. An agent's reply has none.
+   * message that answers none, the id that its send returned, which the stored call keeps, or a
+   * hash of the text it was sent with when the send returned none. An agent's answer has none: the
+   * agent names it by the message it answers.
    */
   readonly shortId?: string | undefined;
-  /** For an agent's reply, the short id of the user message that it answers. */
+  /** For an agent's answer, the short id of the user message that it answers. */
   readonly replyTo?: string | undefined;
   /** An ack that no rewrite has made the answer yet. */
   readonly ack?: true;
+  /** A user's `/compact` with no attachments, which owes no answer. */
+  readonly compaction?: true;
   /** The id of the latest rewrite that changed the core's text. */
   readonly editedBy?: string;
 }
@@ -120,6 +135,11 @@ export function shortId(text: string): string {
 
 export interface DisplayMode {
   readonly id: string;
+  /**
+   * What the server records once the agent has this mode's rules. A change to the rules gives the
+   * mode a new value, so a thread told an older one gets `stateNotice` again.
+   */
+  readonly toldId: string;
   readonly label: string;
   /**
    * Goes before the first message that the user types after the thread switches to this mode. A new
@@ -147,8 +167,9 @@ export interface DisplayMode {
    */
   readonly oneSendPerMessage: boolean;
   /**
-   * Whether each first message has a sub-thread of replies. The main list then shows the cores that
-   * are not replies, and the agent answers a user message by its short id.
+   * Whether the user can reply under one of the agent's main-list messages, in its sub-thread. The
+   * main list shows the cores that are not replies. The agent answers a user message by its short
+   * id, and the answer shows where that message is.
    */
   readonly subThreads: boolean;
 }
@@ -192,9 +213,14 @@ export function foldCores(
   const userByShortId = new Map<string, number>();
   const answerByReplyTo = new Map<string, number>();
   const agentFirstByShortId = new Map<string, number>();
+  const unplacedAnswers = new Map<string, number>();
   for (const event of events) {
     switch (event.type) {
       case "user": {
+        // Reply shows only on main-list rows, so a reply under an unplaced answer places it there.
+        const root = event.under === undefined ? undefined : unplacedAnswers.get(event.under);
+        if (root !== undefined)
+          cores[root] = { ...cores[root]!, first: event.under!, reply: false };
         const id = shortId(event.id);
         userByShortId.set(
           id,
@@ -205,6 +231,7 @@ export function foldCores(
             first: event.under ?? event.id,
             reply: event.under !== undefined,
             shortId: id,
+            ...(event.compaction && { compaction: event.compaction }),
           }) - 1,
         );
         break;
@@ -225,17 +252,23 @@ export function foldCores(
           agentFirstByShortId.set(id, latestSent);
         } else {
           const answered = userByShortId.get(event.replyTo);
+          const question = answered === undefined ? undefined : cores[answered]!;
+          // An answer shows where the message it answers is. With that message not among the
+          // events, its place is unknown and it shows nowhere until a reply under it places it;
+          // ShownHistory loads that message with it.
+          const inMainList = question !== undefined && !question.reply;
           latestSent =
             cores.push({
               id: event.id,
               from: "agent",
               text: event.text,
-              first: answered === undefined ? null : cores[answered]!.first,
-              reply: true,
+              first: question === undefined ? null : inMainList ? event.id : question.first,
+              reply: !inMainList,
               replyTo: event.replyTo,
               ...(event.ack && { ack: event.ack }),
             }) - 1;
           answerByReplyTo.set(event.replyTo, latestSent);
+          if (question === undefined) unplacedAnswers.set(event.id, latestSent);
         }
         break;
       case "rewrite": {
@@ -266,6 +299,10 @@ export const subThreadCores = (
   cores: ReadonlyArray<VisibleCore>,
   first: string,
 ): ReadonlyArray<VisibleCore> => cores.filter((core) => core.first === first);
+
+/** Whether `a` and `b` show in the same place: both in the main list, or both in one sub-thread. */
+export const samePlace = (a: VisibleCore, b: VisibleCore): boolean =>
+  a.reply === b.reply && (!a.reply || (a.first !== null && a.first === b.first));
 
 /** The first message of a sub-thread and its latest WRAPPED_CORE_COUNT other messages, as a recap shows them. */
 export function subThreadRecap(thread: ReadonlyArray<VisibleCore>): ReadonlyArray<VisibleCore> {
@@ -298,6 +335,7 @@ export const recapLine = (core: VisibleCore): string =>
 
 export const NORMAL_DISPLAY_MODE: DisplayMode = {
   id: "normal",
+  toldId: "normal",
   label: "Normal",
   notice:
     "<t3-display-mode>The user switched this thread back to the full view. They see your replies and tool calls again; reply as usual, not only through send_to_user.</t3-display-mode>",
@@ -326,6 +364,7 @@ function messagesOnlyWrap(events: ReadonlyArray<DisplayEvent>, text: string): st
 
 export const MESSAGES_ONLY_DISPLAY_MODE: DisplayMode = {
   id: "messages-only",
+  toldId: "messages-only",
   label: "Messages only",
   notice:
     "<t3-display-mode>The user switched this thread to Messages only. From now on they see only their own messages and your send_to_user messages; reply with send_to_user.</t3-display-mode>",
@@ -340,6 +379,7 @@ export const MESSAGES_ONLY_DISPLAY_MODE: DisplayMode = {
 
 export const MESSAGES_DASHBOARD_DISPLAY_MODE: DisplayMode = {
   id: "messages-dashboard",
+  toldId: "messages-dashboard",
   label: "Messages + Dashboard",
   notice:
     "<t3-display-mode>The user switched this thread to Messages + Dashboard. They see only their own messages and your send_to_user messages; reply with send_to_user. They also see this thread's Dashboard, six slots in this order: decide (needs their decision), waiting, working, autoreview, humanreview, merged. Read it with dashboard_get. To change a slot, call dashboard_set with the slot's current text as old_text and the whole new text as new_text.</t3-display-mode>",
@@ -365,22 +405,23 @@ function chatRepliesWrap(
   return [
     "<t3-replies-mode>",
     message.under === undefined
-      ? `Message "${id}" from the user, a new message in the main list.`
+      ? `Message "${id}" from the user in the main list.`
       : shown.length === 0
         ? `Message "${id}" from the user, a reply in a sub-thread.`
         : `Message "${id}" from the user, a reply in the sub-thread that showed:`,
     ...shown.map(recapLine),
-    `To answer, call send_to_user with reply_to "${id}" and the user's words below as user_message.`,
+    `To answer, call send_to_user with reply_to "${id}" and the user's words below as user_message. Your answer shows ${message.under === undefined ? "in the main list" : "in this sub-thread"}.`,
     "</t3-replies-mode>",
     text,
   ].join("\n");
 }
 
 const CHAT_REPLIES_RULES =
-  "They see only their own messages and your send_to_user messages. The main list shows first messages; a reply shows in the sub-thread under its first message. Each message from the user comes with a short id. To answer one, call send_to_user with reply_to set to its id and user_message set to its words; you may answer each message once, and only the user's latest message in a sub-thread. To change an answer, call replace_send_to_user with the same reply_to. To say something that answers no message, call send_to_user with new_sub_thread true; to change that message before the user replies under it, call replace_send_to_user with sub_thread set to the id that the send returned.";
+  "They see only their own messages and your send_to_user messages. The main list is one chat. The user can also choose Reply on one of your messages there and talk with you in its sub-thread. Each message from the user comes with a short id. To answer one, call send_to_user with reply_to set to its id and user_message set to its words; your answer shows where the user wrote it, in the main list or in that sub-thread. Answer only the user's latest message in each place, once. To change an answer, call replace_send_to_user with the same reply_to, until the user writes after it there or replies under it. To say something that answers no message, call send_to_user with new_sub_thread true: it shows in the main list, one until the user writes there again. To change that message, call replace_send_to_user with sub_thread set to the id that the send returned, until the user writes after it or replies under it.";
 
 export const CHAT_REPLIES_DISPLAY_MODE: DisplayMode = {
   id: "chat-replies",
+  toldId: "chat-replies@2",
   label: "Chat + Replies",
   notice: `<t3-display-mode>The user switched this thread to Chat + Replies. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
   stateNotice: `<t3-display-mode>This thread is in Chat + Replies. ${CHAT_REPLIES_RULES}</t3-display-mode>`,
@@ -515,6 +556,7 @@ export function displayEventFromMessage(
     readonly createdBy?: MessageOrigin["createdBy"] | undefined;
     readonly creationSource?: MessageOrigin["creationSource"] | undefined;
     readonly context?: { readonly records: ReadonlyArray<unknown> } | undefined;
+    readonly attachments?: ReadonlyArray<unknown> | undefined;
   },
 ): DisplayEvent | null {
   if (message.role !== "user") return message.text.trim() === "" ? null : { type: "other" };
@@ -528,6 +570,13 @@ export function displayEventFromMessage(
         id: message.id,
         text: message.text,
         under: subThreadOfRecords(message.context?.records),
+        ...(isCompactionCommandMessage({
+          role: "user",
+          text: message.text,
+          attachments: message.attachments,
+        }) && {
+          compaction: true as const,
+        }),
       }
     : { type: "other" };
 }

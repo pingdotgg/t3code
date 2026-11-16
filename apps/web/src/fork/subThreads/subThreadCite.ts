@@ -11,7 +11,7 @@ import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { selectActiveRightPanel, useRightPanelStore } from "../../rightPanelStore";
 import type { CiteAssistantText } from "../dashboard/dashboardCitation";
 import { useThreadDisplayMode } from "../displayMode/useThreadDisplayMode";
-import { openSubThread, useSubThreadSummaries } from "./subThreadsState";
+import { openSubThread, type SubThreadSummary, useSubThreadSummaries } from "./subThreadsState";
 
 type CiteComposer = RefObject<Pick<
   ChatComposerHandle,
@@ -98,6 +98,10 @@ export function citeInThread(
   return inserted;
 }
 
+/** A main-list Cite goes to a message's Replies only once it has replies; else it stays in the main box. */
+export const citeOpensReplies = (summary: SubThreadSummary | undefined): boolean =>
+  (summary?.replies ?? 0) > 0;
+
 export function useSubThreadCite(
   routingThreadRef: ScopedThreadRef | null,
   composer: CiteComposer,
@@ -105,7 +109,7 @@ export function useSubThreadCite(
   const routes = useThreadDisplayMode(routingThreadRef).subThreads;
   const summaries = useSubThreadSummaries(routes ? routingThreadRef : null);
   return useStableCallback((citation, sourceAnchor) =>
-    routingThreadRef !== null && summaries.has(citation.messageId)
+    routingThreadRef !== null && citeOpensReplies(summaries.get(citation.messageId))
       ? citeInThread(routingThreadRef, citation.messageId, composer, citation, sourceAnchor)
       : citeInto(composer, citation, sourceAnchor),
   );

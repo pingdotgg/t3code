@@ -9,12 +9,13 @@ import {
   displayEventFromTurnItem,
   foldCores,
   freshFirstPointer,
-  isMainListEvent,
+  isMainListOnItsOwn,
   messagePointer,
   recapLine,
   recapText,
   REPLACE_SEND_TO_USER_TOOL_NAME,
   resolveDisplayMode,
+  samePlace,
   SEND_TO_USER_MAX_BYTES,
   SEND_TO_USER_TOOL_NAME,
   SUB_THREAD_LISTED_COUNT,
@@ -114,7 +115,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   parameters: Schema.Struct({
     text: SendText,
     reply_to: Pointer(
-      "Chat + Replies only. The id of the user's message that this text answers, as the <t3-replies-mode> block before that message gave it.",
+      "Chat + Replies only. The id of the user's message that this text answers, as the <t3-replies-mode> block before that message gave it. The answer shows where that message is: in the main list or in its sub-thread.",
     ),
     user_message: Schema.optional(
       Schema.NullOr(
@@ -127,7 +128,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
       Schema.NullOr(
         Schema.Boolean.annotate({
           description:
-            "Chat + Replies only. True for a message that answers no message from the user. It shows in the main list.",
+            "Chat + Replies only. True for a message that answers no message from the user. It shows in the main list, where the user can reply under it: one until the user writes there again.",
         }),
       ),
     ),
@@ -161,10 +162,10 @@ const ReplaceSendToUserTool = Tool.make(REPLACE_SEND_TO_USER_TOOL_NAME, {
   description: `In threads set to Messages only, Messages + Dashboard or Chat + Replies, you answer each message of the user once, after at most one ack. This replaces your latest message for it in place; an ack becomes the answer. Pass the user's last message and your current message as the recap shows them (their words only), each at least ${MIN_PERCENT}% alike, and the whole new text. In Chat + Replies, also pass reply_to or sub_thread.`,
   parameters: Schema.Struct({
     reply_to: Pointer(
-      "Chat + Replies only. The id of the user's message whose answer you replace. user_message is then that message.",
+      "Chat + Replies only. The id of the user's message whose answer you replace, until the user writes after that answer or replies under it. user_message is then that message.",
     ),
     sub_thread: Pointer(
-      "Chat + Replies only. The id of a message that you sent with new_sub_thread, as that send returned it, to replace that message while the user has not replied under it. user_message is then an empty string.",
+      "Chat + Replies only. The id of a message that you sent with new_sub_thread, as that send returned it, to replace that message until the user writes after it or replies under it. user_message is then an empty string.",
     ),
     user_message: MatchInput(
       `The user's last message, at most ${MATCH_INPUT_TOLD_BYTES} bytes of UTF-8 after JSON escaping. An empty string if they have typed none.`,
@@ -288,16 +289,17 @@ const listedLine = (core: VisibleCore) => {
   return `"${core.shortId}": ${line.length > 160 ? `${line.slice(0, 160)}…` : line}`;
 };
 
-/** The user's messages that the agent may still answer: the latest of its sub-thread, with no answer. */
+/** A user's message that owes an answer: not a `/compact`, which runs with no turn of the agent. */
+const owesAnswer = (core: VisibleCore) => core.from === "user" && core.compaction !== true;
+
+/** The user's messages that the agent may still answer: the latest of its place, with no answer. */
 function unansweredLines(cores: ReadonlyArray<VisibleCore>): ReadonlyArray<string> {
   const open = cores.filter(
     (core, index) =>
-      core.from === "user" &&
-      // `/compact` runs with no turn of the agent, so no answer is owed to it.
-      core.text.trim().toLowerCase() !== "/compact" &&
+      owesAnswer(core) &&
       // After the message: an earlier message may have the same short id, with an answer of its own.
       !cores.slice(index + 1).some((answer) => answer.replyTo === core.shortId && !answer.ack) &&
-      !cores.slice(index + 1).some((later) => later.from === "user" && later.first === core.first),
+      !cores.slice(index + 1).some((later) => owesAnswer(later) && samePlace(later, core)),
   );
   return open.length === 0
     ? []
@@ -307,40 +309,65 @@ function unansweredLines(cores: ReadonlyArray<VisibleCore>): ReadonlyArray<strin
       ];
 }
 
-/** The agent's first messages that it may still replace: those with no reply from the user. */
+/** The user's latest message after `message`, in its place or under it. It freezes `message`. */
+function userAfter(
+  cores: ReadonlyArray<VisibleCore>,
+  message: VisibleCore,
+): VisibleCore | undefined {
+  return cores
+    .slice(cores.findIndex((core) => core.id === message.id) + 1)
+    .findLast(
+      (core) => owesAnswer(core) && (samePlace(core, message) || core.first === message.id),
+    );
+}
+
+/** Whether `core` is a message that the agent sent with `new_sub_thread`. */
+const isNewMessage = (core: VisibleCore) =>
+  core.from === "agent" && !core.reply && core.replyTo === undefined;
+
+/** The agent's messages sent with `new_sub_thread` that it may still replace. */
 function replaceableLines(cores: ReadonlyArray<VisibleCore>): ReadonlyArray<string> {
-  const open = cores.filter(
-    (core) =>
-      core.from === "agent" &&
-      !core.reply &&
-      !cores.some((reply) => reply.from === "user" && reply.first === core.id),
-  );
+  const open = cores.filter((core) => isNewMessage(core) && userAfter(cores, core) === undefined);
   return open.length === 0
     ? []
     : [
-        "Your messages that the user has not replied under, by id:",
+        "Your messages sent with new_sub_thread that you may still change, by id:",
         ...open.slice(-SUB_THREAD_LISTED_COUNT).map(listedLine),
       ];
 }
 
-const subThreadRefusal = (
+/** A refusal that shows what the user saw where `at` is: the main list, or its sub-thread. */
+const placeRefusal = (
   code: OrchestratorMcpFailure["code"],
   reasons: ReadonlyArray<string>,
-  thread: ReadonlyArray<VisibleCore>,
+  cores: ReadonlyArray<VisibleCore>,
+  at: VisibleCore | undefined,
   more: ReadonlyArray<string>,
-) =>
-  new OrchestratorMcpFailure({
+) => {
+  const shown =
+    at === undefined
+      ? []
+      : !at.reply
+        ? cores.filter((core) => !core.reply).slice(-WRAPPED_CORE_COUNT)
+        : at.first === null
+          ? []
+          : subThreadRecap(subThreadCores(cores, at.first));
+  return new OrchestratorMcpFailure({
     code,
     message: [
       `Refused: ${reasons.join(" ")}`,
-      ...(thread.length === 0
+      ...(shown.length === 0
         ? []
-        : ["That message's sub-thread shows:", ...subThreadRecap(thread).map(recapLine)]),
+        : [
+            at?.reply ? "That message's sub-thread shows:" : "The main list shows:",
+            ...shown.map(recapLine),
+          ]),
       ...more,
     ].join("\n"),
   });
+};
 
-const CHECK_SUB_THREAD = "Check that this is the sub-thread you mean to reply in.";
+const CHECK_MESSAGE = "Check that this is the message you mean to answer.";
 const inputField = (item: OrchestrationV2TurnItem, field: string): unknown =>
   item.type === "dynamic_tool" && typeof item.input === "object" && item.input !== null
     ? Reflect.get(item.input, field)
@@ -388,7 +415,7 @@ function takenAsNewMessage(item: OrchestrationV2TurnItem) {
 function mainListSends(items: ReadonlyArray<OrchestrationV2TurnItem>, named: boolean) {
   const at = items.findLastIndex((item) => {
     const event = displayEventFromTurnItem(item);
-    return event?.type === "user" && isMainListEvent(event);
+    return event?.type === "user" && isMainListOnItsOwn(event);
   });
   return {
     anchor: items[at]?.id,
@@ -396,7 +423,7 @@ function mainListSends(items: ReadonlyArray<OrchestrationV2TurnItem>, named: boo
       const event = displayEventFromTurnItem(item);
       return event === null
         ? takenAsNewMessage(item)
-        : event.type === "sent" && isMainListEvent(event);
+        : event.type === "sent" && isMainListOnItsOwn(event);
     }),
   };
 }
@@ -404,11 +431,9 @@ function mainListSends(items: ReadonlyArray<OrchestrationV2TurnItem>, named: boo
 /** After a refused new message: how to change the agent's message in the main list, and what to answer. */
 function mainListTakenLines(cores: ReadonlyArray<VisibleCore>): ReadonlyArray<string> {
   const since = cores
-    .slice(cores.findLastIndex((core) => core.from === "user" && !core.reply) + 1)
-    .filter((core) => core.from === "agent" && !core.reply);
-  const open = since.filter(
-    (core) => !cores.some((reply) => reply.from === "user" && reply.first === core.id),
-  );
+    .slice(cores.findLastIndex((core) => owesAnswer(core) && !core.reply) + 1)
+    .filter(isNewMessage);
+  const open = since.filter((core) => userAfter(cores, core) === undefined);
   return [
     ...(since.length === 0
       ? [
@@ -514,22 +539,24 @@ export const layerHandlers = McpToolAccess.toLayer(
         replyTo === undefined && input.new_sub_thread === true && input.ack !== true,
       );
       if ((replyTo !== undefined) === (input.new_sub_thread === true)) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [
             "this thread is set to Chat + Replies. To answer a message from the user, pass reply_to with its id and user_message with its words. For a message that answers none, pass new_sub_thread true and no reply_to.",
           ],
-          [],
+          cores,
+          undefined,
           unansweredLines(cores),
         );
       }
       if (replyTo === undefined && input.ack === true) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [
             "an ack answers a message from the user, so it needs reply_to. Send a new message without ack.",
           ],
-          [],
+          cores,
+          undefined,
           unansweredLines(cores),
         );
       }
@@ -538,12 +565,13 @@ export const layerHandlers = McpToolAccess.toLayer(
         const main = mainListSends(items, named);
         const mainKey = holdKey(threadId, `main\n${main.anchor ?? ""}`);
         if (main.sends.length > 0 || holds.held(mainKey, named, now) !== "open") {
-          return yield* subThreadRefusal(
+          return yield* placeRefusal(
             "invalid_request",
             [
               "you already sent a new message to the main list, and the user has not written there since. You may not send two in a row there.",
             ],
-            [],
+            cores,
+            undefined,
             mainListTakenLines(cores),
           );
         }
@@ -569,32 +597,36 @@ export const layerHandlers = McpToolAccess.toLayer(
         };
       }
       const target = cores.findLast((core) => core.from === "user" && core.shortId === replyTo);
-      if (target === undefined || target.first === null) {
-        return yield* subThreadRefusal(
+      if (target === undefined) {
+        return yield* placeRefusal(
           "invalid_request",
           [`no message from the user has the id "${replyTo}".`],
-          [],
+          cores,
+          undefined,
           unansweredLines(cores),
         );
       }
-      const thread = subThreadCores(cores, target.first);
       const similarity = userSimilarity(input.user_message ?? "", target.text);
       if (similarity < TEXT_MATCH_MIN_RATIO) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [userMismatch(similarity, `message "${replyTo}"`, target.text)],
-          thread,
-          [CHECK_SUB_THREAD],
+          cores,
+          target,
+          [CHECK_MESSAGE],
         );
       }
-      const latest = thread.findLast((core) => core.from === "user");
+      // `/compact` is never the latest message, except when it is the one being answered.
+      const counts = owesAnswer(target) ? owesAnswer : (core: VisibleCore) => core.from === "user";
+      const latest = cores.findLast((core) => counts(core) && samePlace(core, target));
       if (latest !== target) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [
-            `the user sent a later message, "${latest?.shortId}", in this sub-thread. Answer that one.`,
+            `the user sent a later message, "${latest?.shortId}", ${target.reply ? "in this sub-thread" : "in the main list"}. Answer that one.`,
           ],
-          thread,
+          cores,
+          target,
           [],
         );
       }
@@ -610,17 +642,21 @@ export const layerHandlers = McpToolAccess.toLayer(
         },
       });
       if (!verdict.ok)
-        return yield* subThreadRefusal("invalid_request", [verdict.reason], thread, []);
+        return yield* placeRefusal("invalid_request", [verdict.reason], cores, target, []);
       holds.record(key, named, input.ack === true ? "ack" : "answer", verdict.next, now);
       if (input.ack === true) return ACKED;
-      yield* subThreadChanged(
-        threadId,
-        [...thread, { id: "", from: "agent", text: input.text, first: target.first, reply: true }],
-        target.first,
-      );
+      if (target.reply && target.first !== null)
+        yield* subThreadChanged(
+          threadId,
+          [
+            ...subThreadCores(cores, target.first),
+            { id: "", from: "agent", text: input.text, first: target.first, reply: true },
+          ],
+          target.first,
+        );
       return {
         ok: true as const,
-        message: `Shown to the user as your answer to "${replyTo}". ${DONE}`,
+        message: `Shown to the user as your answer to "${replyTo}", ${target.reply ? "in its sub-thread" : "in the main list"}. ${DONE}`,
       };
     });
 
@@ -638,26 +674,27 @@ export const layerHandlers = McpToolAccess.toLayer(
       const replyTo = messagePointer(input.reply_to);
       const subThread = messagePointer(input.sub_thread);
       if ((replyTo === undefined) === (subThread === undefined)) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [
             "this thread is set to Chat + Replies. Pass reply_to to replace your answer to that message from the user, or sub_thread to replace a message that you sent with new_sub_thread, and not both.",
           ],
-          [],
+          cores,
+          undefined,
           [...unansweredLines(cores), ...replaceableLines(cores)],
         );
       }
       if (replyTo !== undefined) {
         const target = cores.findLast((core) => core.from === "user" && core.shortId === replyTo);
-        if (target === undefined || target.first === null) {
-          return yield* subThreadRefusal(
+        if (target === undefined) {
+          return yield* placeRefusal(
             "invalid_request",
             [`no message from the user has the id "${replyTo}".`],
-            [],
+            cores,
+            undefined,
             unansweredLines(cores),
           );
         }
-        const thread = subThreadCores(cores, target.first);
         const now = yield* Clock.currentTimeMillis;
         const key = holdKey(threadId, target.id);
         const verdict = judgeReplace({
@@ -669,34 +706,37 @@ export const layerHandlers = McpToolAccess.toLayer(
           },
         });
         if (!verdict.ok) {
-          return yield* subThreadRefusal("invalid_request", [verdict.reason], thread, []);
+          return yield* placeRefusal("invalid_request", [verdict.reason], cores, target, []);
         }
-        const answer = thread
-          .slice(thread.indexOf(target) + 1)
+        const answer = cores
+          .slice(cores.indexOf(target) + 1)
           .findLast((core) => core.replyTo === replyTo);
         if (answer === undefined) {
-          return yield* subThreadRefusal(
+          return yield* placeRefusal(
             "invalid_request",
             [
               `you have not answered message "${replyTo}", so there is nothing to replace. Use send_to_user.`,
             ],
-            thread,
+            cores,
+            target,
             [],
           );
         }
-        // As for a first message: once the user has replied to an answer, it stays as they read it.
-        // That holds for a reply typed while this call ran, which only `coresNow` has.
-        const threadNow = subThreadCores(coresNow, target.first);
-        const later = threadNow
-          .slice(threadNow.findIndex((core) => core.id === answer.id) + 1)
-          .findLast((core) => core.from === "user");
+        // Once the user has written after an answer, it stays as they read it. That holds for a
+        // message typed while this call ran, which only `coresNow` has.
+        const answerNow = coresNow.find((core) => core.id === answer.id) ?? answer;
+        const later = userAfter(coresNow, answerNow);
         if (later !== undefined) {
-          return yield* subThreadRefusal(
+          return yield* placeRefusal(
             "invalid_request",
             [
-              `the user has replied after your answer to message "${replyTo}", so it stays as it is. Answer their latest reply with send_to_user and reply_to "${later.shortId}".`,
+              // judgeSend still takes the answer after an ack that the user replied under.
+              answerNow.ack && later.first === answerNow.id
+                ? `the user has written after your ack for message "${replyTo}", so it stays as it is. Send your answer to "${replyTo}" with send_to_user and reply_to "${replyTo}".`
+                : `the user has written after your ${answerNow.ack ? "ack for" : "answer to"} message "${replyTo}", so it stays as it is. Answer their latest message with send_to_user and reply_to "${later.shortId}".`,
             ],
-            thread,
+            coresNow,
+            later,
             [],
           );
         }
@@ -713,50 +753,53 @@ export const layerHandlers = McpToolAccess.toLayer(
               ]),
         ];
         if (mismatches.length > 0) {
-          return yield* subThreadRefusal("invalid_request", mismatches, thread, [
+          return yield* placeRefusal("invalid_request", mismatches, cores, target, [
             "Your current answer, as old_text:",
             recapText(answer.text),
-            CHECK_SUB_THREAD,
+            CHECK_MESSAGE,
           ]);
         }
         holds.record(key, named, "replace", verdict.next, now);
-        yield* subThreadChanged(
-          threadId,
-          thread.map((core) => (core === answer ? { ...core, text: input.new_text } : core)),
-          target.first,
-        );
+        if (answer.reply && answer.first !== null)
+          yield* subThreadChanged(
+            threadId,
+            subThreadCores(cores, answer.first).map((core) =>
+              core === answer ? { ...core, text: input.new_text } : core,
+            ),
+            answer.first,
+          );
         return SHOWN;
       }
-      const first = cores.findLast(
-        (core) => core.from === "agent" && !core.reply && core.shortId === subThread,
-      );
-      if (first === undefined) {
-        return yield* subThreadRefusal(
+      const message = cores.findLast((core) => isNewMessage(core) && core.shortId === subThread);
+      if (message === undefined) {
+        return yield* placeRefusal(
           "invalid_request",
           [`none of your messages sent with new_sub_thread has the id "${subThread}".`],
-          [],
+          cores,
+          undefined,
           replaceableLines(cores),
         );
       }
-      const thread = subThreadCores(cores, first.id);
-      const reply = subThreadCores(coresNow, first.id).findLast((core) => core.from === "user");
-      if (reply !== undefined) {
-        return yield* subThreadRefusal(
+      const later = userAfter(coresNow, message);
+      if (later !== undefined) {
+        return yield* placeRefusal(
           "invalid_request",
           [
-            `the user has replied under this message, so it stays as it is. Answer their latest reply with send_to_user and reply_to "${reply.shortId}".`,
+            `the user has written after this message, so it stays as it is. Answer their latest message with send_to_user and reply_to "${later.shortId}".`,
           ],
-          thread,
+          coresNow,
+          later,
           [],
         );
       }
-      const oldSimilarity = textSimilarity(quoted(input.old_text), recapText(first.text));
+      const oldSimilarity = textSimilarity(quoted(input.old_text), recapText(message.text));
       if (oldSimilarity < TEXT_MATCH_MIN_RATIO) {
-        return yield* subThreadRefusal(
+        return yield* placeRefusal(
           "invalid_request",
           [`old_text is ${percent(oldSimilarity)}% like that message; needs ${MIN_PERCENT}%.`],
-          [],
-          ["Your message, as old_text:", recapText(first.text)],
+          cores,
+          undefined,
+          ["Your message, as old_text:", recapText(message.text)],
         );
       }
       return SHOWN;
