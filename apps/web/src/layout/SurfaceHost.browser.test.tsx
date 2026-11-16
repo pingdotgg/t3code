@@ -22,13 +22,16 @@ import {
 import {
   createLayoutLauncherContent,
   createLayoutState,
+  createLayoutTab,
   findLayoutChatForThread,
   findLayoutSurfaceTabs,
   selectFocusedTab,
+  type LayoutColumn,
+  type LayoutTab,
 } from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
 import { LayoutSurfaceHost } from "./SurfaceHost";
-import { useLayoutSurfaceSync } from "./surfaceSync";
+import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
 
@@ -376,3 +379,117 @@ it("drops a side chat's file as its parent's tab where it lands, then moves that
   });
   expect(parentTabs().map(({ pane }) => pane.id)).toEqual([chatPaneId]);
 });
+
+it.each(["left", "right"] as const)(
+  "moves a file tab open in another workspace to the focused workspace's %s edge",
+  async (edge) => {
+    using _fixture = setupPullRequestDrop();
+    const column = (id: string, tabs: LayoutTab[]): LayoutColumn => ({
+      id,
+      width: 1,
+      panes: [{ id: `${id}-pane`, tabs, activeTabId: tabs[0]!.id, size: 1 }],
+    });
+    const workspace = (id: string, columns: LayoutColumn[]) => ({
+      id,
+      name: null,
+      focusedPaneId: columns[0]!.panes[0]!.id,
+      cameraWidth: null,
+      columns,
+    });
+    const fileTab = createLayoutTab({
+      kind: "surface",
+      threadRef: pullRequestThreadRef,
+      surfaceId: "file:src/app.ts",
+    });
+    useLayoutStore.setState({
+      layout: {
+        focusedWorkspaceId: "focused",
+        workspaces: [
+          workspace("focused", [
+            column("chat", [
+              createLayoutTab({ kind: "chat", target: { kind: "server", threadRef } }),
+            ]),
+          ]),
+          workspace("other", [
+            column("file", [fileTab]),
+            column("other-chat", [
+              createLayoutTab({
+                kind: "chat",
+                target: { kind: "server", threadRef: pullRequestThreadRef },
+              }),
+            ]),
+          ]),
+        ],
+      },
+    });
+    useRightPanelStore.setState({
+      byThreadKey: {
+        [scopedThreadKey(pullRequestThreadRef)]: {
+          isOpen: true,
+          activeSurfaceId: "file:src/app.ts",
+          surfaces: [fileSurface("src/app.ts", 12, 1)],
+        },
+      },
+    });
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: pullRequestThreadRef,
+      surface: fileSurface("src/app.ts", 30, 0),
+    };
+    await using _screen = await render(<SurfaceSync />);
+
+    await act(() => {
+      expect(commitLayoutDrop(source, { kind: "extend", edge })).toBe(true);
+    });
+    const moved = findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef);
+    expect(moved.map(({ tab }) => tab.id)).toEqual([fileTab.id]);
+    expect(moved[0]!.workspace.id).toBe("focused");
+    const edgeColumn =
+      edge === "left" ? moved[0]!.workspace.columns[0] : moved[0]!.workspace.columns.at(-1);
+    expect(edgeColumn!.panes.map((pane) => pane.tabs.map((tab) => tab.id))).toEqual([[fileTab.id]]);
+  },
+);
+
+it.each(["beside", "into"] as const)(
+  "drops a file %s a standalone Files pane where the Files pane was",
+  async (where) => {
+    using fixture = setupPullRequestDrop();
+    const { chatPaneId } = fixture;
+    const tabFor = (surfaceId: string) =>
+      findLayoutSurfaceTabs(useLayoutStore.getState().layout, pullRequestThreadRef).find(
+        ({ tab }) => tab.content.kind === "surface" && tab.content.surfaceId === surfaceId,
+      );
+    await using _screen = await render(<SurfaceSync />);
+    await act(() => {
+      requestLayoutSurfacePlacement(pullRequestThreadRef, {
+        kind: "split",
+        paneId: chatPaneId,
+        side: "right",
+      });
+      useRightPanelStore.getState().open(pullRequestThreadRef, "files");
+    });
+    const files = tabFor("files")!;
+    expect(files.pane.id).not.toBe(chatPaneId);
+    const source: LayoutDragSource = {
+      kind: "surface",
+      threadRef: pullRequestThreadRef,
+      surface: fileSurface("src/app.ts", 12, 0),
+    };
+
+    await act(() => {
+      expect(
+        commitLayoutDrop(
+          source,
+          where === "into"
+            ? { kind: "into", paneId: files.pane.id }
+            : { kind: "side", paneId: files.pane.id, side: "down" },
+        ),
+      ).toBe(true);
+    });
+    const file = tabFor("file:src/app.ts")!;
+    expect(tabFor("files")).toBeUndefined();
+    expect(file.column.id).toBe(files.column.id);
+    expect(file.pane.tabs.map((tab) => tab.id)).toEqual([file.tab.id]);
+    if (where === "into") expect(file.pane.id).toBe(files.pane.id);
+  },
+);

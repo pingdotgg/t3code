@@ -195,6 +195,7 @@ export function resolveLayoutDropTarget(
 function layoutDropDestination(
   layout: LayoutState,
   target: LayoutDropTarget,
+  workspaceId = layout.focusedWorkspaceId,
 ): LayoutTabDestination | null {
   if (target.kind === "side") {
     return { kind: "split", paneId: target.paneId, side: target.side, exact: true };
@@ -205,7 +206,7 @@ function layoutDropDestination(
       paneId: target.paneId,
       ...(target.index === undefined ? {} : { index: target.index }),
     };
-  const workspace = selectFocusedWorkspace(layout);
+  const workspace = selectFocusedWorkspace({ ...layout, focusedWorkspaceId: workspaceId });
   if (target.edge === "left") return { kind: "column", workspaceId: workspace.id, index: 0 };
   if (target.edge === "right") {
     return { kind: "column", workspaceId: workspace.id, index: workspace.columns.length };
@@ -441,7 +442,9 @@ export function commitLayoutDrop(source: LayoutDragSource, target: LayoutDropTar
     openLayoutDragSurface(source.threadRef, source.surface);
     const layout = useLayoutStore.getState().layout;
     const placed = existing || reopensOthers ? layoutDragSourceTab(layout, source) : null;
-    const landing = placed ? layoutDropDestination(layout, target) : null;
+    const landing = placed
+      ? layoutDropDestination(layout, target, store.layout.focusedWorkspaceId)
+      : null;
     if (placed && landing) useLayoutStore.getState().moveTab(placed.tab.id, landing);
   } else {
     store.placeContent(layoutDragContent(source), destination);
