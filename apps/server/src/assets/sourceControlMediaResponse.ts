@@ -28,7 +28,7 @@ export const sourceControlMediaResponse = Effect.fn(
 )(function* (
   asset: {
     readonly url: string;
-    readonly cwd: string;
+    readonly cwd?: string;
     readonly repository?: string;
     readonly expiresAt: number;
   },
@@ -40,12 +40,18 @@ export const sourceControlMediaResponse = Effect.fn(
       remainingSeconds > 0 ? `private, max-age=${remainingSeconds}` : "private, no-store",
     "x-content-type-options": "nosniff",
   };
+  // A host can refuse until the user signs in, so a failure must not outlive this request.
+  const failure = (status: number) =>
+    HttpServerResponse.empty({
+      status,
+      headers: { ...headers, "cache-control": "private, no-store" },
+    });
   const media = sourceControlDefinitions.mediaUrl(asset.url);
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;
   const fetchMedia = drivers.find(({ driver }) => driver.kind === media?.definition.kind)?.instance
     .fetchMedia;
   if (media === null || fetchMedia === undefined) {
-    return HttpServerResponse.empty({ status: 404, headers });
+    return failure(404);
   }
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
@@ -54,7 +60,7 @@ export const sourceControlMediaResponse = Effect.fn(
   }
   // Clients that predate `repository` fall back to the repository checked out at `cwd`.
   let repository = asset.repository;
-  if (repository === undefined) {
+  if (repository === undefined && asset.cwd !== undefined) {
     const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
     const identity = yield* identities.resolve(asset.cwd);
     if (identity?.provider === media.definition.kind && identity.owner && identity.name) {
@@ -66,22 +72,17 @@ export const sourceControlMediaResponse = Effect.fn(
     headers: forwarded,
     ...(repository === undefined ? {} : { repository }),
   });
-  if (response === null) return HttpServerResponse.empty({ status: 502, headers });
+  if (response === null) return failure(502);
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.
-  if (response.status >= 400) {
-    return HttpServerResponse.empty({
-      status: response.status >= 500 ? 502 : response.status,
-      headers,
-    });
-  }
+  if (response.status >= 400) return failure(response.status >= 500 ? 502 : response.status);
   const upstreamType =
     response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const contentType = MEDIA_CONTENT_TYPE_PATTERN.test(upstreamType)
     ? upstreamType
     : Option.getOrElse(Mime.getType(media.fileName), () => "").toLowerCase();
   if (!MEDIA_CONTENT_TYPE_PATTERN.test(contentType)) {
-    return HttpServerResponse.empty({ status: 415, headers });
+    return failure(415);
   }
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = response.headers[name];

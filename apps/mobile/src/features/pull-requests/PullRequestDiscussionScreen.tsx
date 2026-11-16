@@ -248,7 +248,11 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
                 }
               >
                 <View className="flex-row items-center gap-2">
-                  <PullRequestAvatar actor={comment.author} size={28} />
+                  <PullRequestAvatar
+                    actor={comment.author}
+                    environmentId={target.environmentId}
+                    size={28}
+                  />
                   <Text className="min-w-0 flex-1 text-sm font-t3-medium">
                     {comment.author?.login ?? "Unknown author"}
                   </Text>

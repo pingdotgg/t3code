@@ -311,7 +311,7 @@ function PullRequestAuthorChoices({
         {visible.map((option) => (
           <MenuRadioItem key={option.actor.login.toLowerCase()} value={option.actor.login}>
             <span className="flex min-w-0 items-center gap-2">
-              <PullRequestActorAvatar actor={option.actor} />
+              <PullRequestActorAvatar actor={option.actor} environmentId={option.environmentId} />
               <span className="min-w-0 flex-1 truncate">{option.actor.login}</span>
               {option.mergedCount > 0 ? (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
