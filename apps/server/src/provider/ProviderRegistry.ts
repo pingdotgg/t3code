@@ -761,6 +761,7 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
+      yield* refreshHostPath;
       const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
       if (!instance) {
         return yield* Ref.get(providersRef);
