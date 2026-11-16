@@ -73,6 +73,13 @@ fn relays_lines_with_t3s_headers_and_stays_small() {
             format!("http://127.0.0.1:{port}/mcp"),
         )
         .env("T3_ACP_MCP_AUTHORIZATION", "Bearer secret")
+        .env(
+            "CONN_SERVER_BROWSER_PATH",
+            std::env::temp_dir().join(format!(
+                "conn-bridge-unused-browser-{}",
+                conn_support::uuid_v4()
+            )),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -120,7 +127,22 @@ fn relays_lines_with_t3s_headers_and_stays_small() {
         .parse()
         .unwrap_or(0);
     eprintln!("acp-mcp-bridge resident memory while idle: {rss_kib} KiB");
-    assert!(rss_kib > 0 && rss_kib < 32 * 1024, "{rss_kib} KiB");
+    // RSS includes unrelated server code pages; bound anonymous memory on Linux.
+    #[cfg(target_os = "linux")]
+    let idle_kib = {
+        let smaps = std::fs::read_to_string(format!("/proc/{}/smaps_rollup", child.id())).unwrap();
+        let anonymous: u64 = smaps
+            .lines()
+            .find_map(|line| line.strip_prefix("Anonymous:"))
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+            .expect("smaps_rollup has Anonymous in KiB");
+        eprintln!("acp-mcp-bridge anonymous memory while idle: {anonymous} KiB");
+        anonymous
+    };
+    #[cfg(not(target_os = "linux"))]
+    let idle_kib = rss_kib;
+    assert!(idle_kib > 0 && idle_kib < 32 * 1024, "{idle_kib} KiB");
 
     drop(stdin);
     assert!(child.wait().unwrap().success());
