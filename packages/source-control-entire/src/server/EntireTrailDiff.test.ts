@@ -264,6 +264,9 @@ describe("Entire trail diffs", () => {
         "gone.txt": "",
       });
       assert.isTrue(answer.complete);
+      // A file marked viewed from the patch names the same blob the revisions do.
+      const { patch } = yield* provider.getDiff({ ...target, cwd: checkout });
+      assert.include(patch, `..${answer.revisions.get("a.txt")}`);
     }).pipe(Effect.provide(server.layer), Effect.ensuring(repository.cleanup));
   });
 

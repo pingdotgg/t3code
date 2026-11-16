@@ -86,7 +86,9 @@ const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const REVISIONS_TTL = Duration.seconds(30);
 const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
 // The reader's git config (`diff.noprefix`, an external driver) would change the parsed patch.
+// Full blob ids let a viewed mark made on the patch match what `getFileRevisions` reads back.
 const PATCH_OPTIONS = [
+  "--full-index",
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
@@ -1032,7 +1034,7 @@ export const make = Effect.gen(function* () {
       const result = yield* runGit(
         "getFileRevisions",
         input.cwd,
-        ["diff", ...PATCH_OPTIONS, "--full-index", base, head],
+        ["diff", ...PATCH_OPTIONS, base, head],
         "Could not read the trail's files.",
       );
       if (result.stdoutTruncated)
