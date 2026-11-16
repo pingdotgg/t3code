@@ -5,6 +5,7 @@ import {
   emptySelection,
   isSelected,
   selectionChanges,
+  toggleOnlySelection,
   toggleSelection,
   type SelectionDraft,
 } from "./pullRequestSelection.ts";
@@ -38,6 +39,25 @@ describe("pull request selection draft", () => {
     const draft = pick(pick(emptySelection(), "docs"), "bug");
     const refreshed = new Set(["docs"]);
     expect(selectionChanges(draft, (key) => refreshed.has(key))).toEqual({ add: [], remove: [] });
+  });
+
+  it("keeps one pick where the host keeps one reviewer", () => {
+    const listed = ["bug", "docs", "chore"].map((key) => ({
+      key,
+      item: key,
+      hostSelected: hostSelected(key),
+    }));
+    const only = (draft: SelectionDraft<string>, key: string) =>
+      toggleOnlySelection(draft, key, key, hostSelected(key), listed);
+
+    // A search result outside the listed rows is replaced too.
+    let draft = only(emptySelection(), "search-hit");
+    draft = only(draft, "docs");
+    expect(selectionChanges(draft, hostSelected)).toEqual({ add: ["docs"], remove: ["bug"] });
+
+    draft = only(draft, "docs");
+    expect(selectionChanges(draft, hostSelected)).toEqual({ add: [], remove: ["bug"] });
+    expect(only(draft, "bug").size).toBe(0);
   });
 
   it("splits a change into writes the contract accepts", () => {

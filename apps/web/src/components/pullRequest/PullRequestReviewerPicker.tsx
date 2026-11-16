@@ -14,11 +14,12 @@ import {
   isSelected,
   changeBatches,
   selectionChanges,
+  toggleOnlySelection,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 
@@ -72,6 +73,7 @@ export function PullRequestReviewerPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState(emptySelection<PullRequestReviewerCandidate>);
+  const [sending, setSending] = useState(false);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
@@ -131,28 +133,43 @@ export function PullRequestReviewerPicker({
     });
   };
 
-  const onOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen);
-    if (nextOpen) return;
-    // Loaded rows first: they carry the request state mutations update.
-    const latest = [
-      ...(candidatesQuery.data?.candidates ?? []),
-      ...(searchResult.data?.candidates ?? []),
-    ];
+  // Loaded rows first: they carry the request state mutations update.
+  const latest = [
+    ...(candidatesQuery.data?.candidates ?? []),
+    ...(searchResult.data?.candidates ?? []),
+  ];
+  const single = candidatesQuery.data?.multiple === false;
+
+  const commit = async () => {
     const { add, remove } = selectionChanges(
       draft,
       (key, person) =>
         latest.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
         person.isRequested,
     );
-    setDraft(emptySelection());
-    // A search result is keyed by what was typed, so the writes do not reach it on their own.
-    const refreshSearch =
-      hostQuery !== null && add.length + remove.length > 0 ? searchResult.refresh : null;
+    if (add.length + remove.length === 0) {
+      setDraft(emptySelection());
+      return;
+    }
+    // The draft holds until the writes settle, so reopening never shows the old reviewers.
+    setSending(true);
     // Removing first lets a host that keeps one reviewer take the new one.
-    void send(remove, false)
-      .then(() => send(add, true))
-      .then(() => refreshSearch?.());
+    await send(remove, false);
+    await send(add, true);
+    setDraft(emptySelection());
+    setSending(false);
+    // A search result is keyed by what was typed, so the writes do not reach it on their own.
+    if (hostQuery !== null) searchResult.refresh();
+  };
+  const commitOnUnmount = useEffectEvent(() => {
+    if (open && !sending) void commit();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaving the page with the picker open still sends the picks
+  useEffect(() => () => commitOnUnmount(), []);
+
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen && !sending) void commit();
   };
 
   return (
@@ -181,16 +198,25 @@ export function PullRequestReviewerPicker({
       truncated={truncation !== null}
       truncatedLabel={truncation === null ? "" : TRUNCATED_LABELS[truncation](searchError, resolve)}
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
-      onSelect={(candidate) =>
+      onSelect={(candidate) => {
+        const key = `${candidate.kind}:${candidate.id}`;
         setDraft((current) =>
-          toggleSelection(
-            current,
-            `${candidate.kind}:${candidate.id}`,
-            candidate,
-            candidate.isRequested,
-          ),
-        )
-      }
+          single
+            ? toggleOnlySelection(
+                current,
+                key,
+                candidate,
+                candidate.isRequested,
+                latest.map((entry) => ({
+                  key: `${entry.kind}:${entry.id}`,
+                  item: entry,
+                  hostSelected: entry.isRequested,
+                })),
+              )
+            : toggleSelection(current, key, candidate, candidate.isRequested),
+        );
+      }}
+      disabled={sending}
     >
       {(candidate) => (
         <>

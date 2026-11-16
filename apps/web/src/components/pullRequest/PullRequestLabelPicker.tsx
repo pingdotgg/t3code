@@ -2,7 +2,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestLabelCandidate, PullRequestRef } from "@t3tools/contracts";
 import { CheckIcon, TagIcon } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { m } from "~/i18n/messages";
 
@@ -44,6 +44,7 @@ export function PullRequestLabelPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState(emptySelection<PullRequestLabelCandidate>);
+  const [sending, setSending] = useState(false);
 
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.labelCandidates({ environmentId, input: reference }) : null,
@@ -79,17 +80,33 @@ export function PullRequestLabelPicker({
     });
   };
 
-  const onOpenChange = (nextOpen: boolean) => {
-    setOpen(nextOpen);
-    if (nextOpen) return;
+  const commit = async () => {
     const latest = candidatesQuery.data?.candidates ?? [];
     const { add, remove } = selectionChanges(
       draft,
       (name, label) => latest.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
     );
-    setDraft(emptySelection());
+    if (add.length + remove.length === 0) {
+      setDraft(emptySelection());
+      return;
+    }
+    // The draft holds until the writes settle, so reopening never shows the old labels.
+    setSending(true);
     // Adding first keeps the Labels row from showing empty between the two writes.
-    void send(add, true).then(() => send(remove, false));
+    await send(add, true);
+    await send(remove, false);
+    setDraft(emptySelection());
+    setSending(false);
+  };
+  const commitOnUnmount = useEffectEvent(() => {
+    if (open && !sending) void commit();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- leaving the page with the picker open still sends the picks
+  useEffect(() => () => commitOnUnmount(), []);
+
+  const onOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    if (!nextOpen && !sending) void commit();
   };
 
   return (
@@ -119,6 +136,7 @@ export function PullRequestLabelPicker({
           toggleSelection(current, candidate.name, candidate, candidate.isApplied),
         )
       }
+      disabled={sending}
     >
       {(candidate) => {
         const dot = pullRequestLabelColor(candidate.color);
