@@ -242,8 +242,7 @@ import {
 } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
-import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
-import { htmlRenderRowHeight, ThreadHtmlRender } from "./HtmlRenderWebView";
+import { ThreadHtmlRender } from "./HtmlRenderWebView";
 import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -1755,6 +1754,7 @@ function renderFeedEntry(
     readonly onToggleWorkGroup: (groupId: string, anchorKey?: string) => void;
     readonly onToggleWorkRow: (rowId: string, anchorKey?: string, groupId?: string) => void;
     readonly onToggleTurnFold: (runId: RunId) => void;
+    readonly onHtmlRenderInteraction: (rowId: string) => void;
     readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
     readonly onPressPreview: (source: FilePreviewSource) => void;
     readonly onPlaybackStart: () => void;
@@ -1842,6 +1842,7 @@ function renderFeedEntry(
         render={entry.render}
         frameWidth={props.contentWidth}
         iconColor={iconSubtleColor}
+        onInteraction={() => props.onHtmlRenderInteraction(entry.id)}
       />
     );
   }
@@ -3758,7 +3759,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const getFixedItemSize = (entry: ThreadFeedRow) => {
     if (entry.type === "guest-pending") return undefined;
     if (entry.type === "html-render") {
-      return htmlRenderRowHeight(htmlRenderFrameHeight(entry.render, contentWidth));
+      // The WebView fits its live document, including disclosures and client font wrapping.
+      return undefined;
     }
     if (workRowSizing.fixedRowHeight === undefined || entry.checkpointSummary) {
       return undefined;
@@ -3862,6 +3864,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             onToggleWorkGroup,
             onToggleWorkRow,
             onToggleTurnFold,
+            onHtmlRenderInteraction: (rowId) => {
+              // A disclosure inside the WebView may resize its row after the touch.
+              const list = listRef.current;
+              list?.cancelScroll();
+              list?.anchorVisibleContent({ key: rowId });
+            },
             onOpenTurnDiff,
             onPressPreview,
             onPlaybackStart: onInlinePlaybackStart,

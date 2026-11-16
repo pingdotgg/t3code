@@ -25,10 +25,6 @@ const ROW_BOTTOM_MARGIN = 8;
 const ACTION_ROW_HEIGHT = 32;
 const FULL_SCREEN_GUTTER = 16;
 
-export function htmlRenderRowHeight(frameHeight: number) {
-  return ACTION_ROW_HEIGHT + frameHeight + ROW_BOTTOM_MARGIN;
-}
-
 function useHtmlRenderTheme() {
   const { themeId, themeAppearance, themeVariables, systemColorsActive } =
     useAppearancePreferences();
@@ -49,13 +45,13 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
+const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,h=Math.ceil(d.scrollHeight>d.clientHeight?d.scrollHeight:d.getBoundingClientRect().height),o=x+","+y+","+h;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y,height:h}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
 
-function readOverflowMessage(data: string): Overflow | null {
+function readOverflowMessage(data: string): (Overflow & { readonly height: number }) | null {
   try {
     const message: unknown = JSON.parse(data);
     return typeof message === "object" &&
@@ -65,8 +61,12 @@ function readOverflowMessage(data: string): Overflow | null {
       "x" in message &&
       typeof message.x === "boolean" &&
       "y" in message &&
-      typeof message.y === "boolean"
-      ? { x: message.x, y: message.y }
+      typeof message.y === "boolean" &&
+      "height" in message &&
+      typeof message.height === "number" &&
+      Number.isFinite(message.height) &&
+      message.height > 0
+      ? { x: message.x, y: message.y, height: message.height }
       : null;
   } catch {
     return null;
@@ -79,6 +79,8 @@ export function HtmlRenderWebView(props: {
   readonly uri: string;
   readonly title: string;
   readonly nested: boolean;
+  readonly onInteraction?: () => void;
+  readonly onContentHeight?: (height: number) => void;
   readonly onLoadError?: () => void;
 }) {
   const theme = useHtmlRenderTheme();
@@ -132,6 +134,7 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
+        onTouchStart={props.onInteraction}
         decelerationRate={webViewDecelerationRate}
         // Android's patched WebView always keeps horizontal drags. Only pages
         // with vertical overflow hold vertical drags until they reach an edge.
@@ -159,7 +162,10 @@ export function HtmlRenderWebView(props: {
               injectedJavaScript: OVERFLOW_SCRIPT,
               onMessage: (event: WebViewMessageEvent) => {
                 const next = readOverflowMessage(event.nativeEvent.data);
-                if (next !== null) setOverflow(next);
+                if (next !== null) {
+                  setOverflow(next);
+                  props.onContentHeight?.(next.height);
+                }
               },
             }
           : {})}
@@ -179,10 +185,12 @@ export function ThreadHtmlRender(props: {
   readonly render: HtmlRenderReference;
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
+  readonly onInteraction: () => void;
 }) {
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const [contentHeight, setContentHeight] = useState<number>();
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth, contentHeight);
   const fileName = htmlRenderFileName(title);
   const resource = {
     _tag: "attachment" as const,
@@ -249,6 +257,8 @@ export function ThreadHtmlRender(props: {
             uri={uri}
             title={title}
             nested
+            onInteraction={props.onInteraction}
+            onContentHeight={setContentHeight}
             onLoadError={handleLoadError}
           />
         ) : failed || asset._tag === "Failure" ? (
