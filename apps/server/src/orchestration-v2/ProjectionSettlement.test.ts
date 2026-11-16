@@ -232,7 +232,49 @@ it.effect(
         yield* createRun(yield* createThread(status), status);
       }
       const queued = yield* createThread("queued");
-      yield* createRun(queued, "queued");
+      const queuedRun = yield* createRun(queued, "queued");
+      yield* store.apply({
+        id: EventId.make("event:settlement:queued-message"),
+        type: "message.updated",
+        threadId: queued,
+        occurredAt: old,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: MessageId.make(`message:${queuedRun}`),
+          threadId: queued,
+          runId: queuedRun,
+          nodeId: null,
+          role: "user",
+          text: "Queued input",
+          attachments: [],
+          streaming: false,
+          createdAt: old,
+          updatedAt: old,
+        },
+      });
+      const automatic = yield* createThread("automatic-queued");
+      const automaticRun = yield* createRun(automatic, "queued");
+      yield* store.apply({
+        id: EventId.make("event:settlement:automatic-message"),
+        type: "message.updated",
+        threadId: automatic,
+        occurredAt: old,
+        payload: {
+          createdBy: "agent",
+          creationSource: "provider",
+          id: MessageId.make(`message:${automaticRun}`),
+          threadId: automatic,
+          runId: automaticRun,
+          nodeId: null,
+          role: "user",
+          text: "Automatic input",
+          attachments: [],
+          streaming: false,
+          createdAt: old,
+          updatedAt: old,
+        },
+      });
       const blocked = yield* createThread("blocked");
       yield* store.apply({
         id: EventId.make("event:settlement:request"),
@@ -324,13 +366,17 @@ it.effect(
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
-        new Set([idle, completed, queued, woke, background, persistent, rolledBack]),
+        new Set([idle, completed, automatic, woke, background, persistent, rolledBack]),
       );
       assert.deepEqual(
         new Set(eligible.map((thread) => thread.id)),
         new Set(
           shell.threads
-            .filter((thread) => isAutoSettlementCandidate(thread, DateTime.toEpochMillis(now)))
+            .filter(
+              (thread) =>
+                thread.id !== queued &&
+                isAutoSettlementCandidate(thread, DateTime.toEpochMillis(now)),
+            )
             .map((thread) => thread.id),
         ),
       );

@@ -8331,6 +8331,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND active.status IN ('preparing', 'starting', 'running', 'waiting')
               )
               AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs queued
+                WHERE queued.thread_id = t.thread_id AND queued.status = 'queued'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_messages message
+                    WHERE message.message_id = json_extract(queued.payload_json, '$.userMessageId')
+                      AND message.thread_id = t.thread_id AND message.role = 'user'
+                      AND (
+                        json_extract(message.payload_json, '$.createdBy') IS NOT 'user'
+                        OR json_type(message.payload_json, '$.scheduledTaskId') IS NOT NULL
+                        OR json_type(message.payload_json, '$.notification') IS NOT NULL
+                        OR json_type(message.payload_json, '$.delegatedCompletion') IS NOT NULL
+                      )
+                  )
+              )
+              AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id AND request.status = 'pending'
               )
