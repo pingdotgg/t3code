@@ -6294,6 +6294,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     >,
     toolName = "mcp__probe_server__show_weather",
     toolUseResult: unknown = { content: '{"tempC":21}', structuredContent: { tempC: 21 } },
+    runtimePolicy = CLAUDE_TEST_RUNTIME_POLICY,
   ) {
     const mcpRequests: Array<unknown> = [];
     const harness = yield* makeWakeHarnessWithOptions({
@@ -6331,6 +6332,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         attemptId: RunAttemptId.make("mcp-app"),
         text: "Show the weather",
         attachments: [],
+        runtimePolicy,
       }),
     );
     const id = "weather-app-call";
@@ -6647,28 +6649,131 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       called: false,
       readOnly: false,
     },
+    {
+      case: "native permission checks and an unrelated deny rule",
+      rules: [{ behavior: "deny", rule: "mcp__buildkite__create_build" }],
+      nativeChecks: true,
+      checked: true,
+      called: true,
+      readOnly: true,
+    },
+    {
+      // Accepted gap: a server-wide ask rule for a hidden alias containing __. Claude's checked call
+      // still evaluates it; its ask reaches canUseTool, which refuses it while no turn is active.
+      case: "native checks and an ask rule for a hidden alias containing __",
+      rules: [{ behavior: "ask", rule: "mcp__finance__prod" }],
+      nativeChecks: true,
+      checked: true,
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "native checks with unrelated ask and deny rules on other servers",
+      rules: [
+        { behavior: "ask", rule: "mcp__github__merge_pull_request" },
+        { behavior: "ask", rule: "Bash(git push *)" },
+        { behavior: "deny", rule: "mcp__redash__archive_query" },
+        { behavior: "deny", rule: "Bash(rm -rf *)" },
+      ],
+      nativeChecks: true,
+      checked: true,
+      called: true,
+      readOnly: true,
+    },
+    {
+      case: "native checks and an ask rule for this tool on a hidden alias",
+      rules: [{ behavior: "ask", rule: "mcp__probe_alias__refresh_weather" }],
+      nativeChecks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "native checks and a server-wide ask rule for a possible alias",
+      rules: [{ behavior: "ask", rule: "mcp__probe_alias" }],
+      nativeChecks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "native checks and a server-wide ask rule for this server",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server" }],
+      nativeChecks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "native checks and an ask wildcard",
+      rules: [{ behavior: "ask", rule: "mcp__*" }],
+      nativeChecks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "native checks with unreadable permission rules",
+      rules: "unreadable",
+      nativeChecks: true,
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "native checks outside Full Access",
+      rules: [{ behavior: "deny", rule: "mcp__buildkite__create_build" }],
+      nativeChecks: true,
+      approvalRequired: true,
+      called: false,
+      readOnly: false,
+    },
+    {
+      case: "native checks for a tool without a read-only annotation",
+      rules: [{ behavior: "deny", rule: "mcp__buildkite__create_build" }],
+      nativeChecks: true,
+      mutating: true,
+      called: false,
+      readOnly: false,
+    },
   ] as const)("applies Claude's permission rules to MCP app calls with $case", (testCase) =>
     Effect.gen(function* () {
       const server = "server" in testCase ? testCase.server : PROBE_SERVER_STATUS.name;
       const tool = "tool" in testCase ? testCase.tool : "refresh_weather";
-      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(MCP_APP_CAPABILITIES, {
-        mcpServerStatus: Effect.succeed([
-          {
-            ...PROBE_SERVER_STATUS,
-            name: server,
-            tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
-          },
-        ]),
-        listPermissionRules:
-          testCase.rules === "unreadable"
-            ? Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "listPermissionRules",
-                  cause: new Error("Unsupported control request subtype"),
-                }),
-              )
-            : Effect.succeed(testCase.rules),
-      });
+      const capabilities =
+        "nativeChecks" in testCase
+          ? [...MCP_APP_CAPABILITIES, "mcp_call_check_permissions_v1"]
+          : MCP_APP_CAPABILITIES;
+      const { harness, mcpRequests } = yield* runClaudeMcpAppToolTurn(
+        capabilities,
+        {
+          mcpServerStatus: Effect.succeed([
+            {
+              ...PROBE_SERVER_STATUS,
+              name: server,
+              tools: [
+                {
+                  ...PROBE_SERVER_STATUS.tools[1],
+                  name: tool,
+                  annotations: {
+                    ...("mutating" in testCase ? {} : { readOnly: true }),
+                    destructive: false,
+                  },
+                },
+              ],
+            },
+          ]),
+          listPermissionRules:
+            testCase.rules === "unreadable"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "listPermissionRules",
+                    cause: new Error("Unsupported control request subtype"),
+                  }),
+                )
+              : Effect.succeed(testCase.rules),
+        },
+        undefined,
+        undefined,
+        "approvalRequired" in testCase
+          ? { ...CLAUDE_TEST_RUNTIME_POLICY, runtimeMode: "approval-required" }
+          : CLAUDE_TEST_RUNTIME_POLICY,
+      );
       const mcpApps = harness.runtime.mcpApps!;
       const target = { providerThread: harness.providerThread, server };
       const [listed] = yield* mcpApps.listTools(target);
@@ -6680,6 +6785,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       const exit = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
       assert.equal(Exit.isSuccess(exit), testCase.called);
+      if ("nativeChecks" in testCase && testCase.called) {
+        assert.deepInclude(mcpRequests, {
+          tool: "mcp__probe_server__refresh_weather",
+          arguments: {},
+          ...("checked" in testCase ? { checkPermissions: true } : {}),
+        });
+      }
       assert.equal(
         mcpRequests.some(
           (request) => typeof request === "object" && request !== null && "arguments" in request,

@@ -1403,6 +1403,27 @@ ${associatedDomains}
 `;
 }
 
+/** `renderMacPasskeyEntitlements` without the team-bound passkey and associated-domain entries. */
+export function renderMacEntitlementsWithoutPasskeys(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+  </dict>
+</plist>
+`;
+}
+
 export function resolveFffNativeDependencies(
   platform: typeof BuildPlatform.Type,
   arch: typeof BuildArch.Type,
@@ -2781,7 +2802,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   macPasskeySigning:
     | {
         readonly entitlementsPath: string;
-        readonly provisioningProfilePath: string;
+        readonly provisioningProfilePath?: string;
       }
     | undefined,
   wslRuntimeBundled = false,
@@ -2883,7 +2904,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
-            provisioningProfile: macPasskeySigning.provisioningProfilePath,
+            ...(macPasskeySigning.provisioningProfilePath === undefined
+              ? {}
+              : { provisioningProfile: macPasskeySigning.provisioningProfilePath }),
           }
         : {}),
     };
@@ -3856,8 +3879,21 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
 
+  // Fork builds sign with their own Developer ID and have no provisioning profile for T3's app ID.
+  // Without one, sign with the same runtime entitlements minus passkeys (no associated domains).
+  const macSignedWithoutPasskeys =
+    options.platform === "mac" &&
+    options.signed &&
+    !loadRepoEnv({ repoRoot }).T3CODE_MACOS_PROVISIONING_PROFILE?.trim();
+  const macPlainEntitlementsPath = macSignedWithoutPasskeys
+    ? path.join(stageAppDir, "entitlements.mac.plist")
+    : undefined;
+  if (macPlainEntitlementsPath) {
+    yield* Effect.log("[desktop-artifact] No provisioning profile; signing without passkeys.");
+    yield* fs.writeFileString(macPlainEntitlementsPath, renderMacEntitlementsWithoutPasskeys());
+  }
   const configuredMacPasskeySigning =
-    options.platform === "mac" && options.signed
+    options.platform === "mac" && options.signed && !macSignedWithoutPasskeys
       ? yield* Effect.try({
           try: () => resolveMacPasskeySigningConfiguration(loadRepoEnv({ repoRoot })),
           catch: MacPasskeySigningConfigurationResolutionError.fromCause,
@@ -3940,7 +3976,9 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
             entitlementsPath: macEntitlementsPath,
             provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
           }
-        : undefined,
+        : macPlainEntitlementsPath
+          ? { entitlementsPath: macPlainEntitlementsPath }
+          : undefined,
       bundlesWslRuntime({ platform: options.platform, runtimeArchivePath: options.wslRuntime }),
       options.arch,
     ),
