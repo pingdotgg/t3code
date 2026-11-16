@@ -39,6 +39,7 @@ import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
+const HEADER_SETTLE_MS = 300;
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
 
 /** Retain each native controller tree; removing its root can leave RNS's stack empty. */
@@ -93,15 +94,15 @@ function RetainedWorkspaceTab(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reports the slot's first native mount to the host, which uncovers the tab then
   useEffect(() => {
     if (!mounted) return;
-    // The header options this mount wrote reach UIKit in the commit after it, and the insets
-    // UIKit then measures in the one after that.
-    let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() =>
+    // UIKit fades in the bar items this mount's header options build (~14 frames) and moves the
+    // content under them, so the last tab's snapshot stays over the slot until that settles.
+    const timer = setTimeout(
+      () =>
         setMountedSlots((current) => (current.has(slot) ? current : new Set(current).add(slot))),
-      );
-    });
+      HEADER_SETTLE_MS,
+    );
     return () => {
-      cancelAnimationFrame(frame);
+      clearTimeout(timer);
       // A replacement slot (e.g. a re-enabled fourth tab) must report its own mount.
       setMountedSlots((current) => {
         if (!current.has(slot)) return current;
