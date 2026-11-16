@@ -62,8 +62,7 @@ describe("dedupeChecks", () => {
   it("reports the same run for two events' failures finished at once, whichever is listed first", () => {
     const failed = (event: string) => ({
       ...entry("lint", "failure", { at: "2026-11-07T00:01:00Z" }),
-      check: { name: "lint", status: "failure" as const, description: null, url: event },
-      event,
+      check: { name: "lint", status: "failure" as const, description: null, url: event, event },
     });
 
     expect(

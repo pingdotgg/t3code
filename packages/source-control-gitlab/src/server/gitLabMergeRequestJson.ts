@@ -335,7 +335,6 @@ export const PIPELINE_STAGES_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String
     mergeRequest(iid: $iid) {
       headPipeline {
         path
-        finishedAt
         stages(first: 100) {
           nodes {
             name
@@ -402,7 +401,6 @@ const RawPipelineStagesSchema = Schema.Struct({
                 headPipeline: Schema.NullOr(
                   Schema.Struct({
                     path: OptionalString,
-                    finishedAt: OptionalString,
                     stages: Schema.optional(
                       Schema.NullOr(
                         Schema.Struct({
@@ -453,7 +451,6 @@ export function decodePipelineStageChecksJson(
     return Result.succeed(null);
   }
   const link = (path: string | null) => (path?.startsWith("/") ? `${origin}${path}` : null);
-  const finishedAt = trimmed(pipeline?.finishedAt);
   const checks: Array<PullRequestCheck> = [];
   for (const stage of pipeline?.stages?.nodes ?? []) {
     const name = trimmed(stage?.name);
@@ -469,8 +466,6 @@ export function decodePipelineStageChecksJson(
         status: toPipelineStatus(stage.status),
         description: trimmed(stage.detailedStatus?.label),
         url: link(trimmed(stage.detailedStatus?.detailsPath) ?? trimmed(pipeline?.path)),
-        // A job retry keeps the stage's URL; a retried job listed below gets a new one.
-        ...(finishedAt !== null && { finishedAt }),
       });
       continue;
     }

@@ -305,7 +305,6 @@ describe("decodePipelineStageChecksJson", () => {
                 ? null
                 : {
                     path: "/fork/web/-/pipelines/9",
-                    finishedAt: "2026-11-10T00:39:53Z",
                     stages: { nodes: stages, pageInfo: { hasNextPage } },
                   },
           },
@@ -414,7 +413,6 @@ describe("decodePipelineStageChecksJson", () => {
         status: "failure",
         description: "failed",
         url: "https://gitlab.com/fork/web/-/pipelines/9#test",
-        finishedAt: "2026-11-10T00:39:53Z",
       },
     ]);
   });

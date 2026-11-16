@@ -116,8 +116,10 @@ export const PullRequestCheck = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
-  /** When this run finished, for hosts whose retries keep the run's URL (GitLab job retries). */
+  /** When this run finished, for hosts whose retries keep the run's URL (GitLab pipeline retries). */
   finishedAt: Schema.optional(Schema.String),
+  /** What triggered the run, where the host says (GitHub's `push` or `pull_request`). */
+  event: Schema.optional(Schema.String),
   /**
    * Not a check: it stands for ones the host could not list, such as workflow runs awaiting
    * approval when that read fails, so nothing waits on it or counts it as passing.

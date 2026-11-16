@@ -79,14 +79,16 @@ export function dedupeChecks(
     readonly at: string | null;
     // Hosts with one-second timestamps can date a final and an earlier status alike.
     readonly sequence?: number;
-    /** What triggered the run, where the host says (GitHub's `push` or `pull_request`). */
-    readonly event?: string | null;
   }>,
 ): ReadonlyArray<PullRequestCheck> {
   type Entry = (typeof entries)[number];
   const newestByRun = new Map<string, Entry>();
   for (const entry of entries) {
-    const key = JSON.stringify([entry.workflowName ?? "", entry.check.name, entry.event ?? null]);
+    const key = JSON.stringify([
+      entry.workflowName ?? "",
+      entry.check.name,
+      entry.check.event ?? null,
+    ]);
     const kept = newestByRun.get(key);
     if (kept !== undefined) {
       if (!isAtLeastAsNew(entry.at, kept.at)) continue;
@@ -112,7 +114,7 @@ export function dedupeChecks(
     const newer = isAtLeastAsNew(entry.at, kept.at);
     // Equal times break on the event, so a reordered rollup cannot flip the run a watch was told.
     const tied = newer && isAtLeastAsNew(kept.at, entry.at);
-    const later = tied ? (entry.event ?? "") > (kept.event ?? "") : newer;
+    const later = tied ? (entry.check.event ?? "") > (kept.check.event ?? "") : newer;
     const worse = severity > 0 || (severity === 0 && later);
     const chosen = worse ? entry : kept;
     newestByCheck.set(

@@ -508,19 +508,39 @@ describe("evaluatePullRequestWatch", () => {
         [],
       );
     }
-    // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart. A stage
-    // told while its pipeline still ran is the same run once the pipeline finishes.
-    const pipeline = (finishedAt: string) => ({ ...run(2), finishedAt });
+    // A GitLab pipeline retry keeps its URL; only when it finished tells the runs apart.
+    const pipeline = (finishedAt: string) => ({ ...check("Pipeline", "failure"), finishedAt });
     const told = evaluatePullRequestWatch(
-      again.next,
+      watch(),
       detail({ checks: [pipeline("00:01")] }),
       noRemarks,
     );
-    assert.deepEqual(told.changes, []);
     assert.deepEqual(
       evaluatePullRequestWatch(told.next, detail({ checks: [pipeline("00:03")] }), noRemarks)
         .changes,
       [{ kind: "checks-failed", failed: [pipeline("00:03")] }],
+    );
+  });
+
+  it("reports one failure of a check whose push and pull_request runs both fail", () => {
+    const run = (event: string, job: number): PullRequestCheck => ({
+      ...check("lint", "failure"),
+      url: `https://ci.example/lint/job/${job}`,
+      event,
+    });
+    const push = evaluatePullRequestWatch(watch(), detail({ checks: [run("push", 1)] }), noRemarks);
+    assert.deepEqual(push.changes, [{ kind: "checks-failed", failed: [run("push", 1)] }]);
+    const pullRequest = evaluatePullRequestWatch(
+      push.next,
+      detail({ checks: [run("pull_request", 2)] }),
+      noRemarks,
+    );
+    assert.deepEqual(pullRequest.changes, []);
+    // The rerun of the push run that fails again is news, once it finishes.
+    assert.deepEqual(
+      evaluatePullRequestWatch(pullRequest.next, detail({ checks: [run("push", 3)] }), noRemarks)
+        .changes,
+      [{ kind: "checks-failed", failed: [run("push", 3)] }],
     );
   });
 
@@ -529,7 +549,9 @@ describe("evaluatePullRequestWatch", () => {
     const failed = detail({ checks: [check("lint", "failure")] });
     const report = evaluatePullRequestWatch(older, failed, noRemarks);
     assert.deepEqual(report.changes, []);
-    assert.deepEqual(report.next.failedRuns, [JSON.stringify(["lint", "https://ci.example/lint"])]);
+    assert.deepEqual(report.next.failedRuns, [
+      JSON.stringify(["lint", null, "https://ci.example/lint", null]),
+    ]);
   });
 
   it("reports passed once the required checks pass, whatever the others do", () => {
