@@ -15435,6 +15435,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("settles a prompt a hook drops inside Claude's own wake turn", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      const stamp = (frame: SDKMessage) =>
+        claudeSdkFrame({ ...frame, user_message_uuid: harness.promptUuid(0) });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-before-dropped-prompt"),
+          text: "Run the build in the background.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        stamp(
+          makeAssistantTextFrame({ uuid: "00000000-0000-4000-8000-000000000830", text: "On it." }),
+        ),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        stamp(makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000831", result: "On it." })),
+      );
+      yield* harness.awaitTerminal(1);
+
+      // The build finishes as the turn ends, so Claude opens its own turn before the next prompt.
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-dropped-prompt"),
+          text: "Check your inbox.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+        }),
+      );
+      const lifecycle = (state: string, uuid: string) =>
+        claudeSdkFrame({
+          type: "command_lifecycle",
+          command_uuid: harness.promptUuid(1),
+          state,
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        });
+      const notice = "UserPromptSubmit operation blocked by hook: nothing new in the inbox.";
+      yield* Queue.offer(
+        harness.sdkMessages,
+        lifecycle("queued", "00000000-0000-4000-8000-000000000832"),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeAssistant);
+      // Claude dequeues the prompt mid-turn and the hook drops it: no result ever echoes it.
+      yield* Queue.offer(
+        harness.sdkMessages,
+        lifecycle("started", "00000000-0000-4000-8000-000000000833"),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        lifecycle("completed", "00000000-0000-4000-8000-000000000834"),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "informational",
+          content: notice,
+          level: "warning",
+          prevent_continuation: true,
+          prompt_submit_outcome: { kind: "blocked_by_hook", prompt_kept: false },
+          session_id: WAKE_NATIVE_SESSION,
+          uuid: "00000000-0000-4000-8000-000000000835",
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeResult);
+      yield* harness.awaitTerminal(2);
+      assert.equal(harness.terminalEvents()[1]?.status, "completed");
+      // The wake turn's output stays out of the dropped prompt's run, for its own continuation.
+      assert.lengthOf(harness.continuationRequests, 1);
+      assert.include(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem.message]
+            : [],
+        ),
+        notice,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("buffers wake output and requests a single continuation run", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
