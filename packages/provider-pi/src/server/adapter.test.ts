@@ -180,6 +180,11 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly promptModels: ReadonlyArray<string>;
+  /** An extension's pi.setModel or pi.setThinkingLevel, which Pi reports to no RPC client. */
+  readonly changeNatively: (change: {
+    readonly model?: string;
+    readonly thinking?: string;
+  }) => void;
   /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
   readonly promptServiceTiers: ReadonlyArray<string | null>;
   /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
@@ -281,6 +286,15 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           ...base,
           data: {
             ...recordedIdleState(sessionFile),
+            thinkingLevel,
+            ...(currentModel === "default"
+              ? {}
+              : {
+                  model: {
+                    provider: currentModel.slice(0, currentModel.indexOf("/")),
+                    id: currentModel.slice(currentModel.indexOf("/") + 1),
+                  },
+                }),
             isStreaming: isStreaming ?? false,
             ...stateQueue.shift(),
           },
@@ -432,6 +446,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     promptThinkingLevels,
     promptModels,
+    changeNatively: (change) => {
+      currentModel = change.model ?? currentModel;
+      thinkingLevel = change.thinking ?? thinkingLevel;
+    },
     promptServiceTiers,
     reloadExtensions: (newSessionFile) => {
       serviceTier = null;
@@ -3878,6 +3896,86 @@ describe("PiAdapterV2", () => {
         strength: "strong",
       });
       assert.isUndefined(promptC.retained);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  // /preset runs as its own command turn with no assistant message; a mid-turn extension switch reports one.
+  it.effect.each([false, true])(
+    "reapplies the selected model and thinking after an extension changes them (reported: %s)",
+    (reported) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const selection: ModelSelection = {
+          instanceId: PI_INSTANCE_ID,
+          model: "anthropic/model-a",
+          options: [{ id: "thinking", value: "high" }],
+        };
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: selection,
+          runtimePolicy,
+        });
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "anthropic/model-a",
+          [],
+          "/preset fast",
+          selection,
+        );
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        fake.changeNatively({ model: "openai/model-b", thinking: "minimal" });
+        if (reported) {
+          yield* fake.emit({
+            type: "message_end",
+            message: {
+              role: "assistant",
+              provider: "openai",
+              model: "model-b",
+              stopReason: "stop",
+            },
+          });
+        }
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
+        yield* fake.takeRequest("prompt");
+        assert.deepEqual(fake.promptModels, ["anthropic/model-a", "anthropic/model-a"]);
+        assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reapplies the selected thinking after an extension changes it on the same model", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const selection: ModelSelection = {
+        instanceId: PI_INSTANCE_ID,
+        model: "anthropic/model-a",
+        options: [{ id: "thinking", value: "high" }],
+      };
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: selection,
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Hello pi", selection);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      fake.changeNatively({ thinking: "minimal" });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
+      yield* fake.takeRequest("prompt");
+      assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+      assert.equal(
+        fake.allRequests().filter((request) => request["type"] === "set_model").length,
+        1,
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
