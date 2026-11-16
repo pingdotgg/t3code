@@ -276,6 +276,12 @@ export const OpenCodeDriver: ProviderDriver<
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
+    // OpenCode loads (and 2.x watches) the directory it serves; the server's cwd is $HOME on packaged desktop.
+    const machineDirectory = pathService.join(
+      host.paths.providerStatusCacheDir,
+      "opencode-machine",
+    );
+    yield* fileSystem.makeDirectory(machineDirectory, { recursive: true }).pipe(Effect.ignore);
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
@@ -380,7 +386,7 @@ export const OpenCodeDriver: ProviderDriver<
       binaryPath: effectiveConfig.binaryPath,
       serverUrl: effectiveConfig.serverUrl,
       serverPassword: effectiveConfig.serverPassword,
-      directory: host.paths.cwd,
+      directory: machineDirectory,
       environment: processEnv,
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
@@ -398,7 +404,9 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      openCode2Server.withConnection(({ client }) =>
+        loadOpenCode2Catalog(client, machineDirectory),
+      ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
@@ -449,7 +457,7 @@ export const OpenCodeDriver: ProviderDriver<
       );
     const serverOwner = yield* OpenCodeServerOwner.make({
       binaryPath: effectiveConfig.binaryPath,
-      directory: host.paths.cwd,
+      directory: machineDirectory,
       ...(effectiveConfig.serverPassword ? { serverPassword: effectiveConfig.serverPassword } : {}),
       environment: processEnv,
     });
@@ -480,7 +488,7 @@ export const OpenCodeDriver: ProviderDriver<
       if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
         return yield* legacyUsageLimits;
       const limits = yield* openCode2Server.withConnection((connection) =>
-        connection.usageLimits(host.paths.cwd),
+        connection.usageLimits(machineDirectory),
       );
       if (limits === undefined) unsupportedUsageVersion = runtime.version;
       if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
@@ -517,7 +525,7 @@ export const OpenCodeDriver: ProviderDriver<
             : Effect.void,
         provider: checkOpenCodeProviderStatus(
           effectiveConfig,
-          host.paths.cwd,
+          machineDirectory,
           runtimeProbe.refresh,
           loadOpenCode2Models,
           processEnv,
