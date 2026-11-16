@@ -109,6 +109,8 @@ interface PaneStrip {
   slide: Animation | null;
   /** The holding header's panel animation duration, for a slide begun on a press. */
   motionMs: number;
+  readonly litProperties: readonly [start: string, end: string];
+  lit: { host: HTMLElement; offset: number; width: number } | null;
 }
 
 const paneStrips = new Map<string, PaneStrip>();
@@ -157,7 +159,7 @@ function joinCap(side: "l" | "r"): HTMLElement {
   return cap;
 }
 
-function createPaneStrip(): PaneStrip {
+function createPaneStrip(role?: "panel"): PaneStrip {
   const strip = document.createElement("div");
   strip.dataset.layoutTabStrip = "";
   strip.className =
@@ -172,7 +174,19 @@ function createPaneStrip(): PaneStrip {
   body.append(joinCap("l"), joinPiece("data-jm"), joinCap("r"));
   join.append(body);
   strip.append(join);
-  const entry: PaneStrip = { strip, join, shown: null, joinedId: null, slide: null, motionMs: 0 };
+  const entry: PaneStrip = {
+    strip,
+    join,
+    shown: null,
+    joinedId: null,
+    slide: null,
+    motionMs: 0,
+    litProperties:
+      role === "panel"
+        ? ["--pane-lit-panel-start", "--pane-lit-panel-end"]
+        : ["--pane-lit-start", "--pane-lit-end"],
+    lit: null,
+  };
   stripEntries.set(strip, entry);
   strip.addEventListener(
     "wheel",
@@ -219,20 +233,63 @@ function createPaneStrip(): PaneStrip {
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
   const row = strip.closest("[data-pane-header]");
-  const overflow = strip.scrollWidth > strip.clientWidth;
+  const { scrollLeft, scrollWidth, clientWidth } = strip;
+  const overflow = scrollWidth > clientWidth;
   if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
     row.toggleAttribute("data-tab-row-overflow", overflow);
   }
-  const end = strip.scrollWidth - strip.clientWidth - strip.scrollLeft;
-  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, strip.scrollLeft)}px`);
+  const end = scrollWidth - clientWidth - scrollLeft;
+  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
   strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  const entry = stripEntries.get(strip);
+  if (entry) markPaneLit(entry, scrollLeft);
 }
 
-function paneStripFor(key: string): PaneStrip {
+function measurePaneLit(entry: PaneStrip): void {
+  const host = entry.strip.closest<HTMLElement>("[data-layout-pane-id]");
+  if (entry.lit && entry.lit.host !== host) {
+    clearPaneLit(entry);
+    entry.lit = null;
+  }
+  if (!host) return;
+  const hostBox = host.getBoundingClientRect();
+  const scale = host.offsetWidth > 0 ? hostBox.width / host.offsetWidth : 0;
+  if (scale <= 0) return;
+  entry.lit = {
+    host,
+    offset: (entry.strip.getBoundingClientRect().left - hostBox.left) / scale,
+    width: entry.strip.clientWidth,
+  };
+}
+
+function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
+  const { lit, shown } = entry;
+  if (!lit) return;
+  const start = shown ? Math.max(0, shown.x - scrollLeft - PANE_JOIN_EAR_PX) : 0;
+  const end = shown ? Math.min(lit.width, shown.x + shown.w - scrollLeft + PANE_JOIN_EAR_PX) : 0;
+  if (entry.join.hidden || end <= start) {
+    clearPaneLit(entry);
+    return;
+  }
+  const [startProperty, endProperty] = entry.litProperties;
+  setPaneLitProperty(lit.host, startProperty, `${Math.round(lit.offset + start)}px`);
+  setPaneLitProperty(lit.host, endProperty, `${Math.round(lit.offset + end)}px`);
+}
+
+function setPaneLitProperty(host: HTMLElement, property: string, value: string): void {
+  if (host.style.getPropertyValue(property) !== value) host.style.setProperty(property, value);
+}
+
+function clearPaneLit(entry: PaneStrip): void {
+  if (!entry.lit) return;
+  for (const property of entry.litProperties) entry.lit.host.style.removeProperty(property);
+}
+
+function paneStripFor(key: string, role?: "panel"): PaneStrip {
   let entry = paneStrips.get(key);
   if (!entry) {
-    entry = createPaneStrip();
+    entry = createPaneStrip(role);
     paneStrips.set(key, entry);
   }
   return entry;
@@ -253,6 +310,7 @@ function holdPaneStrip(
 function releasePaneStrip(key: string, entry: PaneStrip): void {
   queueMicrotask(() => {
     if (entry.strip.isConnected || paneStrips.get(key) !== entry) return;
+    clearPaneLit(entry);
     setWheelScroller(entry.strip, null);
     paneStrips.delete(key);
   });
@@ -321,6 +379,7 @@ function moveJoin(
   const was = entry.shown;
   // Already heading there (a slide begun on the press): let it land.
   if (entry.slide && was?.tabId === to.tabId && was.x === to.x && was.w === to.w) return;
+  measurePaneLit(entry);
   entry.shown = to;
   join.hidden = false;
   const middle = (width: number) => Math.max(0, width - 2 * PANE_JOIN_RADIUS_PX);
@@ -391,6 +450,7 @@ function placePaneJoin(entry: PaneStrip, tabId: string | null, motionMs: number)
     entry.shown = null;
     entry.joinedId = null;
     markJoinedLabel(entry);
+    clearPaneLit(entry);
     return;
   }
   const box = stripBoxOf(strip, active);
@@ -457,7 +517,7 @@ export function LayoutPaneTabStrip({
   const { tabId, paneId, visible } = useLayoutPane();
   const key = paneId === null ? null : role ? `${paneId}:${role}` : paneId;
   const [own] = useState(() => (key === null ? createPaneStrip() : null));
-  const entry = own ?? paneStripFor(key!);
+  const entry = own ?? paneStripFor(key!, role);
   const holds = own !== null || visible;
   const motionMs = usePaneJoinMotionMs();
   const slotRef = useRef<HTMLSpanElement>(null);

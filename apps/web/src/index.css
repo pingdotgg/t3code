@@ -6317,6 +6317,23 @@ body {
    where it fades. An unfocused pane keeps the shape with a quieter rim.
    [data-pane-join] (PaneTabs.tsx) is that tab: one shape per pane strip that
    slides to the active tab. Light, black chrome keeps the notch instead. */
+@property --pane-lit-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-lit-panel-end {
+  syntax: "*";
+  inherits: false;
+}
+
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
   --pane-join-fill: var(--background);
@@ -6506,6 +6523,30 @@ body {
     }
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut="end-notch"] {
       right: 0;
+    }
+    & [data-layout-pane-id] > [data-pane-cut$="notch"] {
+      --pane-lit-start: inherit;
+      --pane-lit-end: inherit;
+      --pane-lit-panel-start: inherit;
+      --pane-lit-panel-end: inherit;
+      --pane-lit-x: 0px;
+      mask:
+        linear-gradient(
+          to right,
+          #000 calc(var(--pane-lit-start, 0px) - var(--pane-lit-x)),
+          transparent 0 calc(var(--pane-lit-end, 0px) - var(--pane-lit-x)),
+          #000 0
+        ),
+        linear-gradient(
+          to right,
+          #000 calc(var(--pane-lit-panel-start, 0px) - var(--pane-lit-x)),
+          transparent 0 calc(var(--pane-lit-panel-end, 0px) - var(--pane-lit-x)),
+          #000 0
+        );
+      mask-composite: intersect;
+    }
+    & [data-layout-pane-id] > [data-pane-cut="end-notch"] {
+      --pane-lit-x: var(--pane-cut);
     }
 
     & [data-pane-notch=""] [data-pane-join] {
