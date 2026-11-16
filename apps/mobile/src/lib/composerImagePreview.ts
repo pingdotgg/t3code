@@ -34,6 +34,48 @@ async function materializeDataUrlPreview(id: string, dataUrl: string): Promise<s
 
 const inFlightPreviews = new Map<string, Promise<string | null>>();
 
+// Mounted previews and sent-image handoffs each hold the cached file they show; the last
+// release deletes it. Deletion waits a task so a preview rebuilt mid-write can take it over.
+const previewFileHolders = new Map<string, number>();
+
+/** Holds a cached preview file; false when the uri is not one, so there is nothing to release. */
+export function retainComposerImagePreviewFile(uri: string): boolean {
+  const holders = previewFileHolders.get(uri);
+  if (holders === undefined) return false;
+  previewFileHolders.set(uri, holders + 1);
+  return true;
+}
+
+export function releaseComposerImagePreviewFile(uri: string): void {
+  const holders = previewFileHolders.get(uri);
+  if (holders === undefined) return;
+  previewFileHolders.set(uri, holders - 1);
+  if (holders > 1) return;
+  setTimeout(() => {
+    if (previewFileHolders.get(uri) !== 0) return;
+    previewFileHolders.delete(uri);
+    void deletePreviewFile(uri);
+  }, 0);
+}
+
+async function deletePreviewFile(uri: string): Promise<void> {
+  try {
+    const { Directory, File, Paths } = await import("expo-file-system");
+    const file = new File(
+      new Directory(Paths.cache, PREVIEW_CACHE_DIRECTORY),
+      uri.slice(uri.lastIndexOf("/") + 1),
+    );
+    if (file.exists) file.delete();
+  } catch (error) {
+    console.warn("[composer-attachments] could not remove a cached image preview", error);
+  }
+}
+
+const holdPreviewFile = (uri: string | null) => {
+  if (uri !== null) previewFileHolders.set(uri, (previewFileHolders.get(uri) ?? 0) + 1);
+  return uri;
+};
+
 // A render reads the atom before its effect subscribes, so the registry can drop and rebuild it
 // mid-write; a second writer would delete the first one's partial file and fail its own move.
 function materializePreviewOnce(id: string, dataUrl: string): Promise<string | null> {
@@ -70,10 +112,15 @@ export class MaterializedPreviewKey implements Equal.Equal {
 
 export const materializedPreviewAtom = Atom.family(({ attachment }: MaterializedPreviewKey) =>
   Atom.make(
-    Effect.tryPromise({
-      try: () => materializePreviewOnce(attachment.id, attachment.previewUri),
-      catch: (cause) => new ImagePreviewCacheError({ cause }),
-    }).pipe(
+    Effect.acquireRelease(
+      Effect.tryPromise({
+        try: () =>
+          materializePreviewOnce(attachment.id, attachment.previewUri).then(holdPreviewFile),
+        catch: (cause) => new ImagePreviewCacheError({ cause }),
+      }),
+      (uri) =>
+        uri === null ? Effect.void : Effect.sync(() => releaseComposerImagePreviewFile(uri)),
+    ).pipe(
       Effect.catch((error) =>
         Effect.logWarning("[composer-attachments] could not cache an image preview", error).pipe(
           Effect.as(null),
