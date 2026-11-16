@@ -1197,7 +1197,7 @@ export function buildThreadListV2Items(input: {
         (thread) =>
           !snoozedThreads.has(thread) && !settledThreads.has(thread) && canSnooze(thread, { now }),
       ).length,
-      snoozedCount: block.threads.filter((thread) => thread.snoozedUntil != null).length,
+      snoozedCount: block.threads.filter((thread) => snoozedThreads.has(thread)).length,
       tally: resolveThreadListV2FolderTally(
         block.threads.filter(
           (thread) => !snoozedThreads.has(thread) && !settledThreads.has(thread),

@@ -146,8 +146,8 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
 
 const SIDEBAR_THREAD_FOLDER_STYLE_LABELS: Record<SidebarThreadFolderStyle, string> = {
-  cards: "Cards",
-  tabs: "Tab groups",
+  cards: msg("Cards"),
+  tabs: msg("Tab groups"),
 };
 const isSidebarThreadFolderStyle = Schema.is(SidebarThreadFolderStyle);
 
@@ -942,8 +942,13 @@ export function GeneralSettingsPanel() {
           }
         />
         <SettingsRow
-          {...searchableSetting("thread-folder-style")}
-          description="Cards tint each folder. Tab groups color the folder name and draw a line beside its threads."
+          {...setting("thread-folder-style")}
+          description={
+            <T>
+              Cards tint each folder. Tab groups color the folder name and draw a line beside its
+              threads.
+            </T>
+          }
           resetAction={
             settings.sidebarThreadFolderStyle !==
             DEFAULT_UNIFIED_SETTINGS.sidebarThreadFolderStyle ? (
@@ -966,15 +971,15 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Folder style">
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={gt("Folder style")}>
                 <SelectValue>
-                  {SIDEBAR_THREAD_FOLDER_STYLE_LABELS[settings.sidebarThreadFolderStyle]}
+                  {m(SIDEBAR_THREAD_FOLDER_STYLE_LABELS[settings.sidebarThreadFolderStyle])}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SidebarThreadFolderStyle.literals.map((style) => (
                   <SelectItem hideIndicator key={style} value={style}>
-                    {SIDEBAR_THREAD_FOLDER_STYLE_LABELS[style]}
+                    {m(SIDEBAR_THREAD_FOLDER_STYLE_LABELS[style])}
                   </SelectItem>
                 ))}
               </SelectPopup>

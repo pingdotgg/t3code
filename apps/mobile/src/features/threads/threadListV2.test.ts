@@ -2100,6 +2100,12 @@ describe("thread folders", () => {
       threads: [later, { ...soon, snoozedUntil: null }],
     });
     expect(woken.folderHeaders[0]).toMatchObject({ placement: "open", snoozableCount: 1 });
+    // A snooze that has passed no longer counts toward Wake folder.
+    const expired = buildThreadListV2Items({
+      ...input,
+      threads: [later, { ...soon, snoozedUntil: "2026-01-01T00:00:00.000Z" }],
+    });
+    expect(expired.folderHeaders[0]?.snoozedCount).toBe(1);
     expect(woken.snoozedCount).toBe(0);
     expect(ids(woken)[0]).toBe("v2-folder-header");
   });

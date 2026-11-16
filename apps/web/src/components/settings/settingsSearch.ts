@@ -467,7 +467,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "thread-folder-style",
-    title: "Folder style",
+    title: msg("Folder style"),
     to: "/settings/general",
     searchTerms: ["thread folders cards tabs tab groups helium color line sidebar look"],
   },

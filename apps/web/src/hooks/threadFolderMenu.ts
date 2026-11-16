@@ -149,7 +149,7 @@ export function runThreadFolderMenuAction(
     const folder = readThreadFolders().find(
       (candidate) => candidate.environmentId === environmentId && candidate.id === folderId,
     );
-    if (!folder || threadIds.every((threadId) => folder.threadIds.includes(threadId))) return true;
+    if (!folder) return true;
     void moveThreadBatches({ environmentId, threadIds, folderId });
     return true;
   }

@@ -73,6 +73,20 @@ describe("isThreadFolderMenuId", () => {
   });
 });
 
+it("pins threads already in the chosen folder so auto-filing leaves them there", async () => {
+  vi.clearAllMocks();
+  const target = folder("a", ["t1"]);
+  vi.mocked(readThreadFolders).mockReturnValue([target]);
+  vi.mocked(moveThreadsToFolder).mockResolvedValue({ folders: [target] });
+  const threadIds = [ThreadId.make("t1")];
+  expect(runThreadFolderMenuAction("folder:id:a", { environmentId, threadIds })).toBe(true);
+  await vi.waitFor(() =>
+    expect(moveThreadsToFolder).toHaveBeenCalledWith(
+      expect.objectContaining({ threadIds, folderId: target.id }),
+    ),
+  );
+});
+
 it.each(["folder:new", "folder:new-from-selection", "folder:id:b", "folder:remove"])(
   "batches a large selection for %s without creating extra folders",
   async (action) => {
