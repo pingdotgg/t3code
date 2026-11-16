@@ -536,9 +536,9 @@ export function mergePullRequestLists(
 ): MergedPullRequestList | null {
   if (answers.length === 0) return null;
   const viewers: Record<string, string> = {};
-  const truncatedEnvironments: string[] = [];
+  const truncatedEnvironments = new Set<string>();
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
-  const entries: EnvironmentPullRequestEntry[] = [];
+  const entries = new Map<string, EnvironmentPullRequestEntry>();
   const errors: EnvironmentPullRequestError[] = [];
   const nextCursors: Record<string, PullRequestListCursors> = {};
   let truncated = false;
@@ -560,22 +560,28 @@ export function mergePullRequestLists(
             },
       );
     }
-    entries.push(...answer.entries.map((entry) => ({ ...entry, environmentId })));
+    for (const entry of answer.entries) {
+      const key = JSON.stringify([environmentId, entry.url]);
+      const held = entries.get(key);
+      if (held === undefined || entry.updatedAt > held.updatedAt) {
+        entries.set(key, { ...entry, environmentId });
+      }
+    }
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
     truncated ||= answer.truncated;
-    if (answer.truncated) truncatedEnvironments.push(environmentId);
+    if (answer.truncated) truncatedEnvironments.add(environmentId);
     if (Object.keys(answer.nextCursors).length > 0) {
-      nextCursors[environmentId] = answer.nextCursors;
+      nextCursors[environmentId] = { ...nextCursors[environmentId], ...answer.nextCursors };
     }
   }
   return {
     viewers,
     providers: [...providers.values()],
-    entries: entries.toSorted(comparePullRequestsByRecency),
+    entries: [...entries.values()].toSorted(comparePullRequestsByRecency),
     errors,
     truncated,
     nextCursors,
-    truncatedEnvironments,
+    truncatedEnvironments: [...truncatedEnvironments],
   };
 }
 
@@ -646,7 +652,7 @@ export function scorePullRequestMatch(entry: PullRequestListEntry, query: string
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return 0;
   const number = needle.replace(/^#/u, "");
-  if (/^\d+$/u.test(number)) return String(entry.number) === number ? 100 : 0;
+  if (String(entry.number) === number) return 100;
 
   const title = entry.title.toLowerCase();
   const terms = needle.split(/\s+/u).filter((term) => term.length > 0);
