@@ -292,6 +292,11 @@ Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
 access to the environment and is not available on Windows.
 
+Thread details show under the open thread in the sidebar. **Thread details** above
+them hides or shows them, as does the details button in the chat header. While the
+sidebar is hidden, the card moves back over the chat. To keep it over the chat, turn
+off **Settings → Appearance → Thread details in sidebar**.
+
 To choose what the thread details card shows, right-click the card or open
 **Settings → Appearance → Thread details**. Hidden rows keep their keyboard
 shortcuts, such as Open in editor and project scripts. **Reset to default** brings

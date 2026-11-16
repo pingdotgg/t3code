@@ -2640,3 +2640,34 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
+
+/* The wallpaper paints once on a fixed layer behind the app. Its blur is a filter on that layer,
+   never a backdrop-filter, so scrolling and streaming never re-blur it. */
+:root[data-wallpaper] body::before {
+  content: "";
+  position: fixed;
+  inset: calc(var(--wallpaper-blur) * -2);
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--background) var(--wallpaper-dim), transparent),
+      color-mix(in srgb, var(--background) var(--wallpaper-dim), transparent)
+    ),
+    var(--wallpaper-image) center / cover no-repeat;
+  filter: blur(var(--wallpaper-blur));
+}
+
+/* The theme also writes the chrome color inline on body, for the window background. */
+:root[data-wallpaper] body {
+  background-color: transparent !important;
+}
+
+:root[data-wallpaper] [data-slot="sidebar-inset"],
+:root[data-wallpaper] [data-wallpaper-surface] {
+  background-color: transparent;
+}
+
+:root[data-wallpaper] [data-slot="sidebar-inner"] {
+  background-color: color-mix(in srgb, var(--sidebar) 72%, transparent);
+}

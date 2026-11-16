@@ -3,10 +3,11 @@ import {
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2CommandProgressFrame,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ThreadId,
+  ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import {
@@ -261,6 +262,51 @@ layer("CommandOutputHub", (it) => {
       assert.equal(next.kind, "replace");
       client = applyFrame(client, next);
       assert.equal(client.text, "X");
+    }),
+  );
+
+  it.effect("a thread's progress follows the counts its running commands print", () =>
+    Effect.gen(function* () {
+      const hub = yield* CommandOutputHub.CommandOutputHub;
+      const threadId = yield* seedThread;
+      const frames = yield* Queue.unbounded<OrchestrationV2CommandProgressFrame>();
+      yield* hub.subscribeProgress(threadId).pipe(
+        Stream.runForEach((frame) => Queue.offer(frames, frame)),
+        Effect.forkScoped,
+      );
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.append({
+        threadId,
+        itemId: ITEM_ID,
+        chunk: " ✓ guard.spec.ts (4)\n❯ refresh.spec.ts 24/31",
+      });
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        items: [{ itemId: ITEM_ID, completed: 24, total: 31 }],
+      });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.finish({ threadId, itemId: ITEM_ID });
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
+
+      yield* TestClock.adjust("1 second");
+      yield* hub.append({ threadId, itemId: ITEM_ID, chunk: "❯ refresh.spec.ts 25/31" });
+      assert.deepStrictEqual(yield* Queue.take(frames), {
+        items: [{ itemId: ITEM_ID, completed: 25, total: 31 }],
+      });
+
+      // Newer commands in another thread evict this one's tail, and its count with it.
+      yield* TestClock.adjust("1 second");
+      const otherThreadId = ThreadId.make("thread-other");
+      for (let index = 0; index < 64; index += 1) {
+        yield* hub.append({
+          threadId: otherThreadId,
+          itemId: TurnItemId.make(`turn-item:other-${index}`),
+          chunk: "x",
+        });
+      }
+      assert.deepStrictEqual(yield* Queue.take(frames), { items: [] });
     }),
   );
 

@@ -2,8 +2,12 @@ import {
   isOrchestrationV2WorkActive,
   OrchestrationV2CommandOutputError,
   type OrchestrationV2CommandOutputFrame,
+  type OrchestrationV2CommandProgress,
+  type OrchestrationV2CommandProgressFrame,
   type OrchestrationV2SubscribeCommandOutputInput,
   type OrchestrationV2TurnItem,
+  ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import {
   appendTerminalOutput,
@@ -25,9 +29,12 @@ import * as Stream from "effect/Stream";
 
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { commandOutputProgress } from "./commandOutputProgress.ts";
 
 /** Output bypasses orchestration events; expanded rows receive tails, coalesced appends, then persisted output. */
 
+/** Fastest a thread's progress subscriber re-reads its commands' tails. */
+const COMMAND_PROGRESS_FRAME_INTERVAL_MS = 250;
 /** Fastest a subscriber receives frames while output flows. */
 const COMMAND_OUTPUT_FRAME_INTERVAL_MS = 100;
 /** After a subscriber falls behind and is sent the whole tail, it waits this long. */
@@ -57,6 +64,10 @@ export interface CommandOutputHubShape {
   readonly subscribe: (
     input: CommandOutputTarget,
   ) => Stream.Stream<OrchestrationV2CommandOutputFrame, OrchestrationV2CommandOutputError>;
+  /** Counts the thread's running commands print, read from the same tails, so no output crosses the wire. */
+  readonly subscribeProgress: (
+    threadId: ThreadId,
+  ) => Stream.Stream<OrchestrationV2CommandProgressFrame>;
 }
 
 export class CommandOutputHub extends Context.Service<CommandOutputHub, CommandOutputHubShape>()(
@@ -65,8 +76,16 @@ export class CommandOutputHub extends Context.Service<CommandOutputHub, CommandO
 
 const isCommandOutputError = Schema.is(OrchestrationV2CommandOutputError);
 
+function threadKeyPrefix(threadId: ThreadId): string {
+  return `${threadId}\u0000`;
+}
+
+function commandKeyThreadId(key: string): ThreadId {
+  return ThreadId.make(key.slice(0, key.indexOf("\u0000")));
+}
+
 function commandKey(target: CommandOutputTarget): string {
-  return `${target.threadId}\u0000${target.itemId}`;
+  return `${threadKeyPrefix(target.threadId)}${target.itemId}`;
 }
 
 function persistedCommandOutput(output: string | undefined): {
@@ -109,6 +128,28 @@ export const make = Effect.gen(function* () {
   const tails = new Map<string, TerminalOutputState>();
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
+  const progressSubscribers = new Map<ThreadId, Set<Queue.Queue<void>>>();
+
+  const wakeProgress = (threadId: ThreadId) =>
+    Effect.forEach(
+      progressSubscribers.get(threadId) ?? [],
+      (wake) => Queue.offer(wake, undefined),
+      {
+        discard: true,
+      },
+    );
+
+  const threadProgress = (threadId: ThreadId): Array<OrchestrationV2CommandProgress> => {
+    const prefix = threadKeyPrefix(threadId);
+    const items: Array<OrchestrationV2CommandProgress> = [];
+    for (const [key, tail] of tails) {
+      if (!key.startsWith(prefix)) continue;
+      const progress = commandOutputProgress(tail.text);
+      if (progress) items.push({ itemId: TurnItemId.make(key.slice(prefix.length)), ...progress });
+    }
+    // Appends reorder `tails`, so sort to keep unchanged counts from looking like a new frame.
+    return items.toSorted((left, right) => left.itemId.localeCompare(right.itemId));
+  };
 
   const wakeAll = (key: string, chunk: string) =>
     Effect.forEach(
@@ -132,24 +173,77 @@ export const make = Effect.gen(function* () {
       if (chunk.length === 0) return Effect.void;
       const key = commandKey(target);
       const tail = appendTerminalOutput(tails.get(key) ?? EMPTY_TERMINAL_OUTPUT, chunk);
+      let evictedThreadId: ThreadId | undefined;
       setBounded(tails, key, tail, MAX_LIVE_COMMANDS, (oldest) => {
+        evictedThreadId = commandKeyThreadId(oldest);
         // Eviction invalidates viewers' state; resync on their next frame.
         for (const subscriber of subscribers.get(oldest) ?? []) {
           subscriber.needsReplace = true;
           subscriber.pendingAppend = "";
         }
       });
-      return wakeAll(key, chunk);
+      return wakeAll(key, chunk).pipe(
+        Effect.andThen(wakeProgress(target.threadId)),
+        Effect.andThen(
+          evictedThreadId === undefined || evictedThreadId === target.threadId
+            ? Effect.void
+            : wakeProgress(evictedThreadId),
+        ),
+      );
     });
 
   const finish: CommandOutputHubShape["finish"] = (target) =>
-    Effect.sync(() => {
+    Effect.suspend(() => {
       const key = commandKey(target);
       const tail = tails.get(key);
-      if (tail === undefined) return;
+      if (tail === undefined) return Effect.void;
       tails.delete(key);
       setBounded(finished, key, tail, MAX_FINISHED_COMMANDS);
+      return wakeProgress(target.threadId);
     });
+
+  const subscribeProgress: CommandOutputHubShape["subscribeProgress"] = (threadId) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const wake = yield* Queue.sliding<void>(1);
+        const threadSubscribers = progressSubscribers.get(threadId) ?? new Set<Queue.Queue<void>>();
+        threadSubscribers.add(wake);
+        progressSubscribers.set(threadId, threadSubscribers);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            threadSubscribers.delete(wake);
+            if (
+              threadSubscribers.size === 0 &&
+              progressSubscribers.get(threadId) === threadSubscribers
+            ) {
+              progressSubscribers.delete(threadId);
+            }
+          }),
+        );
+        yield* Queue.offer(wake, undefined);
+        let sent: string | undefined;
+        let lastReadAt: number | undefined;
+        const nextFrame = Effect.gen(function* () {
+          while (true) {
+            yield* Queue.take(wake);
+            const now = yield* Clock.currentTimeMillis;
+            if (lastReadAt !== undefined && now - lastReadAt < COMMAND_PROGRESS_FRAME_INTERVAL_MS) {
+              yield* Effect.sleep(COMMAND_PROGRESS_FRAME_INTERVAL_MS - (now - lastReadAt));
+            }
+            lastReadAt = yield* Clock.currentTimeMillis;
+            const items = threadProgress(threadId);
+            const signature = items
+              .map((item) => `${item.itemId}:${item.completed}/${item.total}`)
+              .join("\n");
+            if (signature !== sent) {
+              sent = signature;
+              return { items } satisfies OrchestrationV2CommandProgressFrame;
+            }
+          }
+        });
+        return Stream.fromEffectRepeat(nextFrame);
+      }),
+    );
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
     Stream.unwrap(
@@ -297,7 +391,7 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return CommandOutputHub.of({ append, finish, subscribe });
+  return CommandOutputHub.of({ append, finish, subscribe, subscribeProgress });
 });
 
 export const layer: Layer.Layer<

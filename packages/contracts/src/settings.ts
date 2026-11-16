@@ -147,6 +147,21 @@ export const GlassOpacity = Schema.Int.check(
 export type GlassOpacity = typeof GlassOpacity.Type;
 const DEFAULT_GLASS_OPACITY: GlassOpacity = 80;
 
+export const AppWallpaper = Schema.Literals(["none", "f1-race"]);
+export type AppWallpaper = typeof AppWallpaper.Type;
+export const MAX_WALLPAPER_BLUR = 40;
+export const WallpaperBlur = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: MAX_WALLPAPER_BLUR }),
+);
+export type WallpaperBlur = typeof WallpaperBlur.Type;
+const DEFAULT_WALLPAPER_BLUR: WallpaperBlur = 8;
+export const MAX_WALLPAPER_DIM = 90;
+export const WallpaperDim = Schema.Int.check(
+  Schema.isBetween({ minimum: 0, maximum: MAX_WALLPAPER_DIM }),
+);
+export type WallpaperDim = typeof WallpaperDim.Type;
+const DEFAULT_WALLPAPER_DIM: WallpaperDim = 40;
+
 export const MIN_APPEARANCE_CONTRAST = 50;
 export const MAX_APPEARANCE_CONTRAST = 200;
 export const AppearanceContrast = Schema.Int.check(
@@ -480,6 +495,13 @@ export const ClientSettingsSchema = Schema.Struct({
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
   ),
+  wallpaper: AppWallpaper.pipe(Schema.withDecodingDefault(Effect.succeed("none" as const))),
+  wallpaperBlur: WallpaperBlur.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WALLPAPER_BLUR)),
+  ),
+  wallpaperDim: WallpaperDim.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WALLPAPER_DIM)),
+  ),
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
   ),
@@ -544,6 +566,7 @@ export const ClientSettingsSchema = Schema.Struct({
   threadDetailsItems: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  threadDetailsInSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -2066,6 +2089,9 @@ export const ClientSettingsPatch = Schema.Struct({
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
+  wallpaper: Schema.optionalKey(AppWallpaper),
+  wallpaperBlur: Schema.optionalKey(WallpaperBlur),
+  wallpaperDim: Schema.optionalKey(WallpaperDim),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),
@@ -2095,6 +2121,7 @@ export const ClientSettingsPatch = Schema.Struct({
   screenReaderWindowTitle: Schema.optionalKey(Schema.Boolean),
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
+  threadDetailsInSidebar: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

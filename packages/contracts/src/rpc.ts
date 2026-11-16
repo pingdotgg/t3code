@@ -1983,6 +1983,16 @@ const WsOrchestrationV2SubscribeCommandOutputRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2SubscribeCommandProgressRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeCommandProgress,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeCommandProgress.input,
+    success: OrchestrationV2RpcSchemas.subscribeCommandProgress.output,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
+
 const WsOrchestrationV2SubscribePromptSuggestionRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
   {
@@ -2341,5 +2351,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  WsOrchestrationV2SubscribeCommandProgressRpc,
   WsOrchestrationV2SubscribePromptSuggestionRpc,
 ).middleware(RpcScopeAuthorization);

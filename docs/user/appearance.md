@@ -29,6 +29,13 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Wallpaper
+
+On web and desktop, choose a picture under **Wallpaper** in **Settings → Appearance** to show it
+behind the sidebar and chat. If text is hard to read over it, raise **Wallpaper blur** or
+**Wallpaper dimming**. Dimming darkens toward your theme's background, so it lightens the picture
+in a light theme. Choose **None** to turn the wallpaper off.
+
 ## Math
 
 Turn on **Render math** in **Settings → Appearance** to typeset LaTeX in messages and Markdown

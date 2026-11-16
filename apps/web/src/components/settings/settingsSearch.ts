@@ -336,6 +336,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "wallpaper",
+    title: "Wallpaper",
+    to: "/settings/appearance",
+    searchTerms: ["background image picture photo formula 1 f1 race cars"],
+  },
+  {
+    // Prefixed because the slider control already owns the `wallpaper-blur` id.
+    id: "setting-wallpaper-blur",
+    // The row shows only while a wallpaper is set; the picker is always there.
+    targetId: "wallpaper",
+    title: "Wallpaper blur",
+    to: "/settings/appearance",
+    searchTerms: ["background blur difuminado soften readability"],
+  },
+  {
+    // Prefixed because the slider control already owns the `wallpaper-dim` id.
+    id: "setting-wallpaper-dim",
+    targetId: "wallpaper",
+    title: "Wallpaper dimming",
+    to: "/settings/appearance",
+    searchTerms: ["background darken dim brightness readability"],
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/diffs",
@@ -354,6 +377,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "customize show hide panel card environment editor scripts branch pull request git changes servers automations lineage usage limits 5 hour weekly quota tokens context window",
     ],
+  },
+  {
+    id: "thread-details-in-sidebar",
+    title: "Thread details in sidebar",
+    to: "/settings/appearance",
+    searchTerms: ["panel card sidebar under thread row placement location"],
   },
   {
     id: "effort-display",

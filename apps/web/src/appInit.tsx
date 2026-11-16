@@ -9,6 +9,7 @@ import { createBrowserHistory, createHashHistory } from "@tanstack/react-router"
 import * as Schema from "effect/Schema";
 
 import { applyAppearanceContrast } from "./appearanceContrast";
+import { applyWallpaper } from "./appearanceWallpaper";
 import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "./appearanceFonts";
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
@@ -97,6 +98,13 @@ function startClientAppearance(): void {
       } else {
         root.style.removeProperty("--glass-blur");
       }
+    }
+    if (
+      previous?.wallpaper !== settings.wallpaper ||
+      previous.wallpaperBlur !== settings.wallpaperBlur ||
+      previous.wallpaperDim !== settings.wallpaperDim
+    ) {
+      applyWallpaper(root, settings);
     }
     if (
       previous?.fontFamilySans !== settings.fontFamilySans ||

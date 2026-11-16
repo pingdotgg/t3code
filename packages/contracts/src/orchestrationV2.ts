@@ -3883,6 +3883,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
+  subscribeCommandProgress: "orchestration.subscribeCommandProgress",
   subscribePromptSuggestion: "orchestration.subscribePromptSuggestion",
 } as const;
 
@@ -3903,6 +3904,26 @@ export const OrchestrationV2CommandOutputFrame = Schema.Struct({
   running: Schema.Boolean,
 });
 export type OrchestrationV2CommandOutputFrame = typeof OrchestrationV2CommandOutputFrame.Type;
+
+export const OrchestrationV2SubscribeCommandProgressInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2SubscribeCommandProgressInput =
+  typeof OrchestrationV2SubscribeCommandProgressInput.Type;
+
+/** A count a running command last printed, such as a test runner's `24/31` or a build's `42%`. */
+export const OrchestrationV2CommandProgress = Schema.Struct({
+  itemId: TurnItemId,
+  completed: NonNegativeInt,
+  total: PositiveInt,
+});
+export type OrchestrationV2CommandProgress = typeof OrchestrationV2CommandProgress.Type;
+
+/** Unpersisted: every running command in the thread that printed a count, replaced whole on each frame. */
+export const OrchestrationV2CommandProgressFrame = Schema.Struct({
+  items: Schema.Array(OrchestrationV2CommandProgress),
+});
+export type OrchestrationV2CommandProgressFrame = typeof OrchestrationV2CommandProgressFrame.Type;
 
 export class OrchestrationV2CommandOutputError extends Schema.TaggedError<OrchestrationV2CommandOutputError>()(
   "OrchestrationV2CommandOutputError",
@@ -4610,6 +4631,10 @@ export const OrchestrationV2RpcSchemas = {
   subscribeCommandOutput: {
     input: OrchestrationV2SubscribeCommandOutputInput,
     output: OrchestrationV2CommandOutputFrame,
+  },
+  subscribeCommandProgress: {
+    input: OrchestrationV2SubscribeCommandProgressInput,
+    output: OrchestrationV2CommandProgressFrame,
   },
   subscribePromptSuggestion: {
     input: OrchestrationV2SubscribePromptSuggestionInput,
