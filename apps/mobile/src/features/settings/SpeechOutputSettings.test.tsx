@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   preferences: {} as { speechOutputDestination?: SpeechOutputDestination | null },
   save: vi.fn(),
   update: vi.fn(),
+  alert: vi.fn(),
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => AsyncResult.success(mocks.preferences),
@@ -26,7 +27,7 @@ vi.mock("../../state/preferences", () => ({
 vi.mock("expo-constants", () => ({ default: { expoConfig: { extra: {} } } }));
 vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
 vi.mock("../../components/ProviderIcon", () => ({ ProviderIcon: () => null }));
-vi.mock("../../components/ui/Dialog", () => ({ confirm: () => {} }));
+vi.mock("../../components/ui/Dialog", () => ({ confirm: () => {}, alert: mocks.alert }));
 vi.mock("../voice-output/useElevenLabsVoices", () => ({
   useElevenLabsVoices: () => ({ voices: [], loading: false, failed: false, connected: true }),
 }));
@@ -94,8 +95,9 @@ vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
 
-it("defaults off and changes the playback destination on this device without changing server settings", () => {
+it("defaults off and changes the playback destination on this device without changing server settings", async () => {
   mocks.preferences = {};
+  mocks.alert.mockReset();
   mocks.update.mockReset();
   mocks.save.mockReset();
   mocks.save.mockImplementation((patch: typeof mocks.preferences) => {
@@ -170,6 +172,16 @@ it("defaults off and changes the playback destination on this device without cha
     click("Read aloud with: ElevenLabs via Server");
     click("Off");
     expect(mocks.preferences.speechOutputDestination).toBeNull();
+    mocks.save.mockRejectedValueOnce(new Error("storage unavailable"));
+    click("Read aloud with: Off");
+    await act(async () => {
+      click("OpenAI");
+    });
+    expect(mocks.preferences.speechOutputDestination).toBeNull();
+    expect(mocks.alert).toHaveBeenCalledWith(
+      "Could not save speech output choice",
+      "Your previous destination is still selected. Please try again.",
+    );
     expect(mocks.update).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount());

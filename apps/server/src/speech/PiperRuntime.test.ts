@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -66,8 +67,23 @@ it.effect(
       const fetch = vi.fn<typeof globalThis.fetch>(
         async () => new Response(corrupt ? "bad archive" : bytes),
       );
+      let failFilesystem = false;
+      const denied = PlatformError.systemError({
+        _tag: "PermissionDenied",
+        module: "FileSystem",
+        method: "mkdir",
+        description: "denied",
+      });
       const context = yield* Layer.build(
         PiperRuntime.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FileSystem.FileSystem, {
+              ...fs,
+              makeDirectory: (...args) =>
+                failFilesystem ? Effect.fail(denied) : fs.makeDirectory(...args),
+              remove: (...args) => (failFilesystem ? Effect.fail(denied) : fs.remove(...args)),
+            }),
+          ),
           Layer.provide(Config.ServerConfig.layerTest(".", { prefix: "t3-piper-runtime-" })),
           Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, { run })),
           Layer.provide(FetchHttpClient.layer),
@@ -77,11 +93,26 @@ it.effect(
       const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.provideService(FetchHttpClient.Fetch, fetch));
       expect((yield* runtime.status).state).toBe("not-installed");
+      failFilesystem = true;
+      expect(yield* Effect.flip(runtime.install)).toMatchObject({
+        operation: "create-directory",
+        cause: denied,
+      });
+      expect(yield* Effect.flip(runtime.remove)).toMatchObject({
+        operation: "remove",
+        cause: denied,
+      });
+      failFilesystem = false;
+      fetch.mockRejectedValueOnce(new Error("network unavailable"));
+      expect(yield* Effect.flip(provided(runtime.install))).toMatchObject({
+        _tag: "PiperRuntimeOperationError",
+        cause: { _tag: "HttpClientError" },
+      });
       expect((yield* provided(runtime.install)).state).toBe("ready");
       const binary = yield* runtime.executable;
       expect(yield* fs.exists(binary)).toBe(true);
       yield* provided(runtime.install);
-      expect(fetch).toHaveBeenCalledOnce();
+      expect(fetch).toHaveBeenCalledTimes(2);
       expect((yield* runtime.remove).state).toBe("not-installed");
       corrupt = true;
       expect(yield* Effect.flip(provided(runtime.install))).toMatchObject({
@@ -106,7 +137,8 @@ it.effect(
         ),
       );
       expect(yield* Effect.flip(provided(runtime.install))).toMatchObject({
-        reason: "unavailable",
+        _tag: "PiperRuntimeOperationError",
+        cause: { _tag: "SpeechBodyTooLarge" },
       });
       expect(cancelled).toHaveBeenCalledOnce();
       expect(chunks).toBe(2);

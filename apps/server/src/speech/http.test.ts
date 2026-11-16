@@ -27,6 +27,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
+import * as PiperRuntime from "./PiperRuntime.ts";
 import * as SpeechSynthesisService from "./SpeechSynthesisService.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -440,6 +441,10 @@ effectIt.effect.each([false, true])(
   (write) =>
     Effect.gen(function* () {
       const voices = { voices: [] };
+      let runtimeFailure: PiperRuntime.PiperRuntimeOperationError | undefined;
+      const runtimeMutation = Effect.suspend(() =>
+        runtimeFailure ? Effect.fail(runtimeFailure) : Effect.succeed(voices),
+      );
       const mutation = vi.fn(() => Effect.succeed(voices));
       const { handler, dispose } = HttpRouter.toWebHandler(
         HttpApiBuilder.layer(HttpApi.make("environment").add(EnvironmentVoiceHttpApi)).pipe(
@@ -450,9 +455,9 @@ effectIt.effect.each([false, true])(
           Layer.provide(
             Layer.mock(SpeechSynthesisService.SpeechSynthesisService)({
               voices: Effect.succeed(voices),
-              installRuntime: Effect.suspend(mutation),
+              installRuntime: runtimeMutation,
               cancelRuntime: Effect.suspend(mutation),
-              removeRuntime: Effect.suspend(mutation),
+              removeRuntime: runtimeMutation,
               downloadVoice: mutation,
               selectVoice: mutation,
               removeVoice: mutation,
@@ -495,6 +500,23 @@ effectIt.effect.each([false, true])(
           ),
         );
         expect(response.status).toBe(write ? 200 : 403);
+      }
+      if (write) {
+        runtimeFailure = new PiperRuntime.PiperRuntimeOperationError({
+          operation: "install",
+          cause: new Error("private filesystem path"),
+        });
+        const failed = yield* Effect.promise(() =>
+          handler(
+            new Request("http://localhost/api/voice/synthesis/runtime/install", { method: "POST" }),
+            context,
+          ),
+        );
+        expect(failed.status).toBe(400);
+        expect(yield* Effect.promise(() => failed.json())).toEqual({
+          _tag: "SpeechSynthesisError",
+          reason: "unavailable",
+        });
       }
       if (!write) expect(mutation).not.toHaveBeenCalled();
     }).pipe(Effect.scoped),

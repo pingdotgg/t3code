@@ -211,8 +211,13 @@ it.effect.each(["openai", "elevenlabs"] as const)(
         [401, "rejected-key"],
         [429, "rate-limit"],
       ] as const) {
-        upstream.mockResolvedValueOnce(new Response("private upstream details", { status }));
+        let signal: AbortSignal | undefined;
+        upstream.mockImplementationOnce(async (_url, init) => {
+          signal = init?.signal ?? undefined;
+          return new Response(new ReadableStream(), { status });
+        });
         expect(yield* Effect.flip(synthesize)).toMatchObject({ reason });
+        expect(signal?.aborted).toBe(true);
       }
       upstream.mockResolvedValueOnce(new Response("invalid audio"));
       expect(yield* Effect.flip(synthesize)).toMatchObject({ reason: "invalid-audio" });

@@ -73,12 +73,12 @@ export class SpeechSynthesisService extends Context.Service<
   {
     readonly installRuntime: Effect.Effect<
       SpeechSynthesisVoices,
-      SpeechSynthesisError | SpeechSynthesisOperationError
+      SpeechSynthesisError | SpeechSynthesisOperationError | PiperRuntime.PiperRuntimeOperationError
     >;
     readonly cancelRuntime: Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
     readonly removeRuntime: Effect.Effect<
       SpeechSynthesisVoices,
-      SpeechSynthesisError | SpeechSynthesisOperationError
+      SpeechSynthesisError | SpeechSynthesisOperationError | PiperRuntime.PiperRuntimeOperationError
     >;
     readonly voices: Effect.Effect<SpeechSynthesisVoices, SpeechSynthesisOperationError>;
     readonly elevenLabsVoices: (
@@ -107,7 +107,7 @@ const make = Effect.gen(function* () {
   const process = yield* ProcessRunner.ProcessRunner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const http = yield* HttpClient.HttpClient;
+  const http = HttpClient.withScope(yield* HttpClient.HttpClient);
   const resolver = yield* SecretResolver.SecretResolver;
   const synthesis = yield* Semaphore.make(1);
   const store = yield* SpeechModelStore.SpeechModelStore;
