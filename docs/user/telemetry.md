@@ -17,8 +17,9 @@ which is off unless you turn it on.
 
 Agent feedback lets agents tell the T3 team when T3 Code itself got in their way: a T3 tool or `t3`
 command that did not do what they expected, a confusing instruction, or a missing capability. It is
-off by default. Turn on **Agent feedback** in **Settings > Maintenance**, or ask your agent to send
-feedback about T3 Code and it will turn the setting on. Turn it off in the same place.
+off by default, and only you can turn it on: use **Agent feedback** in **Settings > Labs**. Turn it
+off in the same place. While it is off, agents do not see the feedback tools and `t3 feedback`
+stops with a message pointing to Labs.
 
 While it is on, agents are told to report these problems, and you can send one yourself with
 `t3 feedback --kind bug --subject "t3 thread send" --expected "…" --actual "…"`. Each report has

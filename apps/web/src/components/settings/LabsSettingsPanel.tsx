@@ -25,6 +25,7 @@ export function LabsSettingsPanel() {
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
+        <AgentFeedbackRow />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -257,6 +258,40 @@ function FastWorktreeCheckoutRow() {
           checked={settings.fastWorktreeCheckout}
           onCheckedChange={(checked) => updateSettings({ fastWorktreeCheckout: Boolean(checked) })}
           aria-label="Fast worktree checkout"
+        />
+      }
+    />
+  );
+}
+
+/** Shows only when every machine in scope honors it; older servers drop the setting. */
+function AgentFeedbackRow() {
+  const { scope, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (
+    scope.kind === "project" ||
+    scope.kind === "checkout" ||
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.agentFeedback !== true,
+    )
+  )
+    return null;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("agent-feedback")}
+      settingKeys={["agentFeedback"]}
+      description="Let agents send short reports about T3 Code problems they hit to the T3 team."
+      control={
+        <ScopedSwitch
+          settingKeys={["agentFeedback"]}
+          checked={settings.agentFeedback.enabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ agentFeedback: { enabled: Boolean(checked) } })
+          }
+          aria-label="Agent feedback"
         />
       }
     />

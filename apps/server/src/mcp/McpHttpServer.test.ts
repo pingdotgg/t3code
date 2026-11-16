@@ -59,6 +59,10 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
+import * as Feedback from "../feedback/FeedbackService.ts";
+import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
+import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -1691,6 +1695,136 @@ it.effect("hides tools for links and refuses another environment while the beta 
         isError: true,
         content: [{ text: expect.stringContaining("cannot reach linked environments") }],
       });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("offers agent feedback tools only while the setting is on, except to `t3 feedback`", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const agentScope: McpInvocationContext.McpThreadInvocationScope = {
+        environmentId,
+        requestNamespace: "agentToken",
+        thread: {
+          threadId: ThreadId.make("thread-feedback"),
+          providerSessionId: "agentToken",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const cliScope: McpInvocationContext.McpInvocationScope = {
+        environmentId,
+        requestNamespace: "cliToken",
+        thread: undefined,
+        client: { sessionId: "cli", label: FEEDBACK_CLI_CLIENT_LABEL, access: "full-access" },
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+      const settingsContext = yield* Layer.build(ServerSettings.layerTest());
+      const settings = Context.get(settingsContext, ServerSettings.ServerSettingsService);
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(FeedbackToolkit, FeedbackHandlers.layer),
+          McpHttpServer.layerToolSearch,
+        ),
+      ).pipe(
+        Layer.provide(Layer.succeedContext(settingsContext)),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(Feedback.FeedbackService)({
+            submit: () => Effect.fail(new Feedback.FeedbackOffError({})),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: (token) => Effect.succeed(token === "agentToken" ? agentScope : undefined),
+          }),
+        ),
+        // `t3 feedback` signs in as a client, not a provider session.
+        Layer.provide(
+          Layer.succeed(McpHttpServer.McpClientAuthenticator)({
+            authenticate: (request) =>
+              Effect.succeed(
+                request.headers.authorization === "Bearer cliToken" ? cliScope : undefined,
+              ),
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const rpc = (token: string, method: string, params: object) =>
+        Effect.gen(function* () {
+          const headers = {
+            accept: "application/json, text/event-stream",
+            authorization: `Bearer ${token}`,
+          };
+          const initialize = yield* httpClient.post("/mcp", {
+            headers,
+            body: HttpBody.text(
+              `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+              "application/json",
+            ),
+          });
+          const response = yield* httpClient.post("/mcp", {
+            headers: {
+              ...headers,
+              "mcp-session-id": initialize.headers["mcp-session-id"]!,
+              "mcp-protocol-version": "2025-06-18",
+            },
+            body: HttpBody.text(
+              JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+              "application/json",
+            ),
+          });
+          // tool_search answers as a stream, its result after the list_changed notice.
+          const text = yield* response.text;
+          const messages = text.startsWith("data:")
+            ? text
+                .split("\n")
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => JSON.parse(line.slice(5)) as { readonly id?: number })
+            : [JSON.parse(text) as { readonly id?: number }];
+          return messages.find((message) => message.id === 2) as {
+            readonly result?: {
+              readonly tools?: ReadonlyArray<{ readonly name: string }>;
+              readonly structuredContent?: { readonly tools?: ReadonlyArray<{ name: string }> };
+              readonly content?: ReadonlyArray<{ readonly text: string }>;
+            };
+            readonly error?: unknown;
+          };
+        });
+      const listed = (token: string) =>
+        rpc(token, "tools/list", {}).pipe(
+          Effect.map((body) => body.result?.tools?.map((tool) => tool.name)),
+        );
+      const found = rpc("agentToken", "tools/call", {
+        name: "tool_search",
+        arguments: { query: "t3_feedback feedback report" },
+      }).pipe(
+        Effect.map((body) => body.result?.structuredContent?.tools?.map((tool) => tool.name)),
+      );
+      const report = (token: string) =>
+        rpc(token, "tools/call", {
+          name: "t3_feedback",
+          arguments: { kind: "bug", subject: "", expected: "a", actual: "b", workaround: "" },
+        });
+
+      expect(yield* listed("agentToken")).toEqual([]);
+      expect(yield* found).toEqual([]);
+      expect(yield* report("agentToken")).toMatchObject({ error: expect.anything() });
+      // The CLI reaches the tool, so the service's off error tells the user where to turn it on.
+      expect(yield* listed("cliToken")).toEqual(["t3_feedback", "t3_feedback_list"]);
+      expect(yield* report("cliToken")).toMatchObject({
+        result: { content: [{ text: expect.stringContaining("Settings > Labs") }] },
+      });
+
+      yield* settings.updateSettings({ agentFeedback: { enabled: true } });
+      expect(yield* listed("agentToken")).toEqual(["t3_feedback", "t3_feedback_list"]);
+      expect(yield* found).toEqual(expect.arrayContaining(["t3_feedback", "t3_feedback_list"]));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

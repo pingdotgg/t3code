@@ -114,14 +114,9 @@ const SETTINGS_SEARCH_TERMS = {
     "link machine",
     "fast worktree checkout",
     "clone cache",
-  ],
-  SettingsEnvironmentMaintenance: [
-    "updates",
-    "provider updates",
-    "restart",
-    "manage environments",
     "agent feedback",
   ],
+  SettingsEnvironmentMaintenance: ["updates", "provider updates", "restart", "manage environments"],
   SettingsAbout: [
     "version",
     "diagnostics",

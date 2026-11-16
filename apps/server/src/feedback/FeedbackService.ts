@@ -29,7 +29,7 @@ export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
   {},
 ) {
   override get message() {
-    return "Agent feedback is off. Only if the user asked you to send feedback: turn it on with t3_environment_preferences_update (agentFeedback: { enabled: true }), send again, leave it on, and tell the user you turned on agent feedback and that Settings > Maintenance turns it off.";
+    return "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
   }
 }
 
@@ -67,7 +67,10 @@ export class FeedbackService extends Context.Service<
       FeedbackOffError | FeedbackLimitError | FeedbackStorageError
     >;
     /** Newest first. */
-    readonly list: Effect.Effect<ReadonlyArray<FeedbackReport>, FeedbackStorageError>;
+    readonly list: Effect.Effect<
+      ReadonlyArray<FeedbackReport>,
+      FeedbackOffError | FeedbackStorageError
+    >;
   }
 >()("t3/feedback/FeedbackService") {}
 
@@ -86,13 +89,18 @@ const make = Effect.fn("FeedbackService.make")(function* (
   const random = yield* SecureRandom.SecureRandom;
   // Serializes the limit check with its insert.
   const lock = yield* Semaphore.make(1);
+  const requireOn = settings.getSettings.pipe(
+    Effect.mapError(storageError),
+    Effect.flatMap((current) =>
+      current.agentFeedback.enabled ? Effect.void : Effect.fail(new FeedbackOffError({})),
+    ),
+  );
 
   const submit = Effect.fn("FeedbackService.submit")(function* (
     input: FeedbackInput,
     caller: FeedbackCaller,
   ) {
-    const current = yield* settings.getSettings.pipe(Effect.mapError(storageError));
-    if (!current.agentFeedback.enabled) return yield* new FeedbackOffError({});
+    yield* requireOn;
 
     const thread =
       caller.threadId === undefined
@@ -197,14 +205,16 @@ const make = Effect.fn("FeedbackService.make")(function* (
     return { ...report, sent };
   });
 
-  const list = Effect.suspend(
-    () => sql<Omit<FeedbackReport, "sent"> & { readonly sent: number }>`
+  const list = requireOn.pipe(
+    Effect.andThen(() =>
+      sql<Omit<FeedbackReport, "sent"> & { readonly sent: number }>`
       SELECT id, thread_id AS "threadId", created_at AS "createdAt", kind, subject,
         expected, actual, workaround, source, sent
-      FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`,
-  ).pipe(
+      FROM agent_feedback ORDER BY rowid DESC LIMIT ${LIST_LIMIT}`.pipe(
+        Effect.mapError(storageError),
+      ),
+    ),
     Effect.map((rows) => rows.map((row) => ({ ...row, sent: row.sent === 1 }))),
-    Effect.mapError(storageError),
   );
 
   return FeedbackService.of({ submit, list });

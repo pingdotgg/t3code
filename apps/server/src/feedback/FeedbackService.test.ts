@@ -109,8 +109,8 @@ it.effect("stores nothing and fails when agent feedback is off", () =>
       const feedback = yield* Feedback.FeedbackService;
       const error = yield* Effect.flip(feedback.submit(input, fromThread));
       expect(error._tag).toBe("FeedbackOffError");
-      expect(error.message).toContain("t3_environment_preferences_update");
-      expect(yield* feedback.list).toEqual([]);
+      expect(error.message).toContain("Settings > Labs");
+      expect((yield* Effect.flip(feedback.list))._tag).toBe("FeedbackOffError");
     }).pipe(Effect.provide(layer));
     expect(yield* Ref.get(events)).toEqual([]);
   }),

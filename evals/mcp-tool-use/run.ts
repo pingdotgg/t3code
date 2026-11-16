@@ -58,7 +58,6 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
 import { FeedbackInput } from "../../apps/server/src/feedback/FeedbackReport.ts";
-import { FeedbackOffError } from "../../apps/server/src/feedback/FeedbackService.ts";
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -283,7 +282,7 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceAgentAccess: Schema.optional(Schema.Boolean),
     /** false: agent browser access is off. T3 denies every preview call and drops its browser text. */
     browserAgentAccess: Schema.optional(Schema.Boolean),
-    /** Agent feedback is on: T3's text tells agents to report, and `t3_feedback` saves reports. */
+    /** Agent feedback is on: T3 lists its tools and its text tells agents to report. */
     agentFeedbackEnabled: Schema.optional(Schema.Boolean),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
@@ -526,10 +525,17 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+// Agent feedback starts off, and T3 lists its tools only while it is on.
+const hiddenWhileFeedbackOff = enabledWhen(McpInvocationContext.hiddenWhileFeedbackOff);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly agentFeedbackEnabled?: boolean;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.agentFeedbackEnabled === true || !hiddenWhileFeedbackOff.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -657,7 +663,7 @@ export const buildBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-    /** true: agent feedback is on, so T3's text includes the feedback line. */
+    /** true: agent feedback is on, so T3 lists its tools and its text includes the feedback line. */
     readonly agentFeedbackEnabled?: boolean;
   },
 ) => {
@@ -758,7 +764,7 @@ const buildCodexBase = (
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
     readonly browserAccess?: boolean;
-    /** true: agent feedback is on, so T3's text includes the feedback line. */
+    /** true: agent feedback is on, so T3 lists its tools and its text includes the feedback line. */
     readonly agentFeedbackEnabled?: boolean;
   },
 ): Base => {
@@ -914,8 +920,6 @@ type Sample = {
   backgroundWait?: BackgroundWait;
   /** Calls so far per mocked tool, for mocks that answer in sequence. */
   readonly mockCalls: Map<string, number>;
-  /** Starts at `world.agentFeedbackEnabled`; the agent may turn it on with preferences_update. */
-  agentFeedbackEnabled: boolean;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -962,7 +966,6 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     priorErrors: new Set(),
     mockCalls: new Map(),
-    agentFeedbackEnabled: testCase.setup.world?.agentFeedbackEnabled === true,
   };
 };
 
@@ -1733,16 +1736,9 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.backgroundWait(input);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
-  if (isT3Name(call.name) && name === "t3_environment_preferences_update") {
-    const feedback = input.agentFeedback;
-    if (isRecord(feedback) && typeof feedback.enabled === "boolean")
-      sample.agentFeedbackEnabled = feedback.enabled;
-  }
   if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
-    // T3 decodes the arguments before its handler checks the setting.
     const decoded = decodeFeedbackInput(input);
     if (Result.isFailure(decoded)) return failed(decoded.failure.message);
-    if (!sample.agentFeedbackEnabled) return failed(new FeedbackOffError({}).message);
     const report = decoded.success;
     return toolResult(call.id, {
       ...report,

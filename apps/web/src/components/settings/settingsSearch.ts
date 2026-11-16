@@ -937,7 +937,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "agent-feedback",
     title: "Agent feedback",
-    to: "/settings/maintenance",
+    to: "/settings/labs",
     scope: "environment-defaults",
     agentFeedbackOnly: true,
     searchTerms: ["report bug problem t3 team send feedback agents tools"],

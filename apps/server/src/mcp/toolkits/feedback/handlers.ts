@@ -35,7 +35,10 @@ export const layer = McpToolAccess.toLayer(FeedbackToolkit, {
       Effect.map((reports) => ({ reports })),
       Effect.mapError(
         (error) =>
-          new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+          new OrchestratorMcpFailure({
+            code: error._tag === "FeedbackStorageError" ? "orchestration_error" : "invalid_request",
+            message: error.message,
+          }),
       ),
     ),
   ),
