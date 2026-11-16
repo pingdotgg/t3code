@@ -169,7 +169,7 @@ export const NO_DEVICE_PROBE_ATOM = Atom.make(AsyncResult.initial<void, never>()
 );
 
 /**
- * The Expo account an EAS host editor shows as it opens, for the saved
+ * The Expo account an Expo host editor shows as it opens, for the saved
  * credential. Each open checks again; edits and manual checks use the command.
  */
 export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
