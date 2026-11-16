@@ -458,7 +458,7 @@ function AssistantForkButton(props: {
             if (result._tag !== "Success") {
               const error = squashAtomCommandFailure(result);
               Dialog.alert(
-                "Could not fork",
+                "Could not confirm fork",
                 error instanceof Error
                   ? error.message
                   : "Reconnect and check the thread list before trying again.",
