@@ -15,6 +15,7 @@ import {
 import {
   emptySelection,
   isSelected,
+  changeBatches,
   selectionChanges,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
@@ -148,11 +149,10 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
             latest?.find((entry) => `${entry.kind}:${entry.id}` === key)?.isRequested ??
             person.isRequested,
         );
-        const send = async (
+        const sendBatch = async (
           people: ReadonlyArray<PullRequestReviewerCandidate>,
           requested: boolean,
         ) => {
-          if (people.length === 0) return;
           const response = await request({
             ...target,
             input: {
@@ -170,6 +170,12 @@ export function PullRequestReviewersScreen({ route }: StaticScreenProps<PullRequ
               : `Couldn't remove the review request from ${logins}`,
             cause instanceof Error ? cause.message : "The provider refused the change.",
           );
+        };
+        const send = async (
+          people: ReadonlyArray<PullRequestReviewerCandidate>,
+          requested: boolean,
+        ) => {
+          for (const batch of changeBatches(people)) await sendBatch(batch, requested);
         };
         // Removing first lets a host that keeps one reviewer take the new one.
         void send(remove, false).then(() => send(add, true));

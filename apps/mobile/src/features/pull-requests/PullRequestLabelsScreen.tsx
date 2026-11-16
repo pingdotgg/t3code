@@ -6,6 +6,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   emptySelection,
   isSelected,
+  changeBatches,
   selectionChanges,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
@@ -71,8 +72,10 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
           (name, label) =>
             latest?.find((entry) => entry.name === name)?.isApplied ?? label.isApplied,
         );
-        const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
-          if (labels.length === 0) return;
+        const sendBatch = async (
+          labels: ReadonlyArray<PullRequestLabelCandidate>,
+          applied: boolean,
+        ) => {
           const names = labels.map((label) => label.name);
           const response = await setLabels({
             ...target,
@@ -84,6 +87,9 @@ export function PullRequestLabelsScreen({ route }: StaticScreenProps<PullRequest
             applied ? `Couldn't add ${names.join(", ")}` : `Couldn't remove ${names.join(", ")}`,
             cause instanceof Error ? cause.message : "The provider refused the change.",
           );
+        };
+        const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
+          for (const batch of changeBatches(labels)) await sendBatch(batch, applied);
         };
         // Adding first keeps the Labels row from showing empty between the two writes.
         void send(add, true).then(() => send(remove, false));

@@ -12,6 +12,7 @@ import {
 import {
   emptySelection,
   isSelected,
+  changeBatches,
   selectionChanges,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
@@ -79,7 +80,12 @@ export function PullRequestReviewerPicker({
   });
 
   const send = async (people: ReadonlyArray<PullRequestReviewerCandidate>, requested: boolean) => {
-    if (people.length === 0) return;
+    for (const batch of changeBatches(people)) await sendBatch(batch, requested);
+  };
+  const sendBatch = async (
+    people: ReadonlyArray<PullRequestReviewerCandidate>,
+    requested: boolean,
+  ) => {
     const result = await requestReviewers({
       environmentId,
       input: {

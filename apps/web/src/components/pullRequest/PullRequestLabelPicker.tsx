@@ -9,6 +9,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   emptySelection,
   isSelected,
+  changeBatches,
   selectionChanges,
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
@@ -52,7 +53,9 @@ export function PullRequestLabelPicker({
   );
 
   const send = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
-    if (labels.length === 0) return;
+    for (const batch of changeBatches(labels)) await sendBatch(batch, applied);
+  };
+  const sendBatch = async (labels: ReadonlyArray<PullRequestLabelCandidate>, applied: boolean) => {
     const names = labels.map((label) => label.name);
     const result = await setLabels({
       environmentId,

@@ -1,3 +1,5 @@
+import { PULL_REQUEST_CHANGE_BATCH_LIMIT } from "@t3tools/contracts";
+
 /** Picks that differ from the host, keyed by candidate. Nothing is sent until the picker closes. */
 export type SelectionDraft<T> = ReadonlyMap<
   string,
@@ -40,4 +42,13 @@ export function selectionChanges<T>(
     (selected ? add : remove).push(item);
   }
   return { add, remove };
+}
+
+/** Splits a change into writes the contract accepts. */
+export function changeBatches<T>(items: ReadonlyArray<T>): ReadonlyArray<ReadonlyArray<T>> {
+  const batches: Array<ReadonlyArray<T>> = [];
+  for (let start = 0; start < items.length; start += PULL_REQUEST_CHANGE_BATCH_LIMIT) {
+    batches.push(items.slice(start, start + PULL_REQUEST_CHANGE_BATCH_LIMIT));
+  }
+  return batches;
 }

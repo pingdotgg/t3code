@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  changeBatches,
   emptySelection,
   isSelected,
   selectionChanges,
@@ -37,5 +38,11 @@ describe("pull request selection draft", () => {
     const draft = pick(pick(emptySelection(), "docs"), "bug");
     const refreshed = new Set(["docs"]);
     expect(selectionChanges(draft, (key) => refreshed.has(key))).toEqual({ add: [], remove: [] });
+  });
+
+  it("splits a change into writes the contract accepts", () => {
+    const labels = Array.from({ length: 26 }, (_, index) => `label-${index}`);
+    expect(changeBatches(labels).map((batch) => batch.length)).toEqual([25, 1]);
+    expect(changeBatches([])).toEqual([]);
   });
 });
