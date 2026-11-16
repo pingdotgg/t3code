@@ -1598,6 +1598,7 @@ function createTerminalSpawnEnv(
   runtimeEnv: Record<string, string> | null | undefined,
   platform: NodeJS.Platform,
   home: string,
+  threadContext: { readonly threadId: string; readonly baseDir?: string },
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1629,6 +1630,11 @@ function createTerminalSpawnEnv(
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
+  // Project scripts share the thread's terminal, so `t3 thread send` can target it.
+  spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadContext.threadId;
+  if (threadContext.baseDir !== undefined) {
+    spawnEnv.T3CODE_HOME = threadContext.baseDir;
+  }
   // fish 4.1+ can wait 10s at startup for a DA1 reply before a renderer can answer.
   // Skip the query unless the user or provider already chose `query-term` or `no-query-term`.
   const fishFeaturesKey =
@@ -1654,6 +1660,7 @@ function normalizedRuntimeEnv(
 
 interface TerminalManagerOptions {
   logsDir: string;
+  baseDir?: string;
   historyLineLimit?: number;
   historyByteLimit?: number;
   ptyAdapter: PtyAdapter.PtyAdapter["Service"];
@@ -1753,6 +1760,7 @@ export const make = Effect.fn("TerminalManager.make")(function* (
   );
   return yield* makeWithOptions({
     logsDir: terminalLogsDir,
+    baseDir,
     ptyAdapter,
     processTable: nativeTelemetry.processTable.pipe(
       Effect.mapError(
@@ -1776,6 +1784,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const runFork = Effect.runForkWith(context);
 
   const logsDir = options.logsDir;
+  const baseDir = options.baseDir;
   const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;
   const historyByteLimit = options.historyByteLimit ?? DEFAULT_HISTORY_BYTE_LIMIT;
   const platform = yield* HostProcess.Platform;
@@ -2812,6 +2821,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               session.runtimeEnv,
               platform,
               yield* HostProcess.HomeDirectory,
+              {
+                threadId: session.threadId,
+                ...(baseDir === undefined ? {} : { baseDir }),
+              },
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (

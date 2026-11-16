@@ -185,6 +185,15 @@ on each selected environment, and reset returns to the environment's shared list
 `t3.json` actions can be imported there. When a project has several checkouts on one environment,
 choose one in the scope line at the top to see or change only that checkout's settings.
 
+Actions run as shell commands in the thread's terminal and receive `T3CODE_THREAD_ID` and
+`T3CODE_HOME`. An action can therefore queue a prompt for its own thread with the `t3` CLI:
+
+```sh
+t3 thread send "$T3CODE_THREAD_ID" "Review the test output"
+```
+
+A busy thread gets the prompt as its next turn; `--wait` prints the reply for a script that needs it.
+
 Settings a repository can also declare in `t3.json`, such as the workspace for new threads,
 resolve in one order: a project override, then the environment setting, then `t3.json`, then the
 built-in default. Leave a setting on **Inherit** to let the next tier decide.
