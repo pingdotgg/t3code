@@ -173,6 +173,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
         usage={{} as never}
+        taskList={null}
       />
     </ChatCanvasContext>
   );
