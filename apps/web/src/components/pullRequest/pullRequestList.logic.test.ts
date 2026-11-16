@@ -388,6 +388,18 @@ describe("partitioning with the hosts' own priority reads", () => {
     expect(groups[0]!.entries.map((item) => item.number)).toEqual([1]);
     expect(groups[1]!.entries.map((item) => item.number)).toEqual([2, 3]);
   });
+
+  it("lists a pull request once when another environment's authored read supplies it", () => {
+    const mine = authoredRow(4, "2026-07-01T00:00:00Z");
+    const groups = partitionPullRequestsWithPriority(
+      [{ ...mine, environmentId: ENV_1 }],
+      [{ ...mine, environmentId: ENV_2 }],
+      [],
+    );
+    expect(groups.map((group) => [group.key, group.entries])).toEqual([
+      ["authored", [{ ...mine, environmentId: ENV_1 }]],
+    ]);
+  });
 });
 
 describe("remembered pull request list controls", () => {
