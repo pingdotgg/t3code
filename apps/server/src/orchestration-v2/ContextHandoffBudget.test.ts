@@ -1201,4 +1201,102 @@ describe("handoff delivery", () => {
       assert.equal(calls, 0);
     }),
   );
+
+  const summaryId = `summary:${"a".repeat(64)}` as const;
+  const summaryTools = "t3_conversation_summary_list and t3_conversation_summary_expand";
+
+  it.effect("names the summaries a delivery sent and how to read one", () =>
+    Effect.gen(function* () {
+      const history = Array.from({ length: 30 }, (_, index) =>
+        message(`item:receipt-${index}`, index % 2 === 0 ? "user" : "assistant", "x".repeat(700)),
+      );
+      const covered = history.slice(16, 24).map((entry) => entry.itemId);
+      const source: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:summary-receipt"),
+        summaryText: "Coverage.",
+        history: { messages: history, coverage: "Coverage.", omittedItems: 0 },
+      };
+      let durable = source;
+      let context = "";
+      const delivery = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread,
+        budget: 16_000,
+        alreadyDeliveredItemIds: new Set(),
+        summaries: () =>
+          Effect.succeed([
+            {
+              id: summaryId,
+              coveredItemIds: covered,
+              text: `RECENT ${"r".repeat(1_200)}`,
+            },
+          ]),
+        inject: (input) => {
+          context = input.context;
+          return Effect.succeed(true);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      yield* delivery.delivered;
+      const line = `Replaced earlier spans with ${summaryId}; read one with ${summaryTools}.`;
+      assert.deepEqual(durable.delivery?.summaryIds, [summaryId]);
+      assert.equal(durable.summaryText, `Coverage.\n${line}`);
+      assert.notInclude(durable.summaryText, "RECENT");
+      assert.include(context, line);
+      assert.equal(context.split(line).length - 1, 1);
+    }),
+  );
+
+  it.effect("names the summary tools when an omitted item has a summary that was not sent", () =>
+    Effect.gen(function* () {
+      const omitted = message("item:receipt-omitted", "assistant", "o".repeat(20_000));
+      const kept = message("item:receipt-kept", "user", "kept");
+      const source: OrchestrationV2ContextHandoff = {
+        ...handoff,
+        id: ContextHandoffId.make("handoff:omitted-summary"),
+        summaryText: "Coverage.",
+        history: {
+          messages: [omitted, kept],
+          coverage: "Coverage.",
+          omittedItems: 0,
+        },
+      };
+      let durable = source;
+      let context = "";
+      const delivery = yield* deliverContextHandoffs({
+        handoffs: [source],
+        providerThread,
+        budget: 8_000,
+        alreadyDeliveredItemIds: new Set(),
+        summaries: () =>
+          Effect.succeed([
+            {
+              id: summaryId,
+              coveredItemIds: [omitted.itemId],
+              text: "S".repeat(40_000),
+            },
+          ]),
+        inject: (input) => {
+          context = input.context;
+          return Effect.succeed(false);
+        },
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      yield* delivery.delivered;
+      const line = `Omitted items have conversation summaries; read one with ${summaryTools}.`;
+      assert.isUndefined(durable.delivery?.summaryIds);
+      assert.isAbove(delivery.uncoveredItems, 0);
+      assert.equal(durable.summaryText, `Coverage.\n${line}`);
+      assert.notInclude(durable.summaryText, summaryId);
+      assert.include(context, line);
+      assert.notInclude(context, "SSSS");
+    }),
+  );
 });
