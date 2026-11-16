@@ -402,6 +402,12 @@ describe("scoreThreadSearch beyond Latin text and titles", () => {
     expect(rankTitles('"fix the sidebar"', threads)).toEqual([]);
     // Without its closing quote the query is still being typed.
     expect(rankTitles('"sidebar lag', threads)).toHaveLength(4);
+    // Whitespace runs in a title do not hide the phrase.
+    expect(rankTitles('"sidebar lag"', [thread("Fix sidebar  lag")])).toEqual(["Fix sidebar  lag"]);
+    // A long run of quotes inside a query folds at once, and quotes around nothing match nothing.
+    const quotes = '"'.repeat(34);
+    expect(foldSearchQuery(`a${quotes}x`)).toBe(`a${quotes}x`);
+    expect(scoreThreadSearch(foldSearchQuery('"#"'), thread('Fix "" handling'), NOW)).toBeNull();
     const subject = thread("Trim model lists", {
       branch: "t3/cleanup-payloads",
       pullRequests: [{ number: 22889, title: "Smaller MCP payloads" }],
@@ -734,6 +740,9 @@ describe("findSearchTokenRanges", () => {
     expect(
       findSearchTokenRanges("files, then the Missing osprey  files", '"missing osprey files"'),
     ).toEqual([{ start: 16, end: 37 }]);
+    expect(findSearchTokenRanges("models and the model", '"model"')).toEqual([
+      { start: 15, end: 20 },
+    ]);
   });
 });
 
@@ -769,6 +778,8 @@ describe("scoreMessageMatch", () => {
       ["Missing osprey\n  files", "“missing osprey files”", { quality: 1.25, offset: 0 }],
       ["missing the osprey files", '"missing osprey files"', null],
       ["osprey files missing", '"missing osprey files"', null],
+      // No further apart than the server's index reads.
+      [`missing${" ".repeat(17)}osprey files`, '"missing osprey files"', null],
       ["changed file", '"file"', { quality: 1, offset: 8 }],
       ["changed files", '"file"', null],
     ] as const) {

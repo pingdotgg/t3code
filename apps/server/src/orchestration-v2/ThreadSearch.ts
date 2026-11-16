@@ -24,6 +24,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import {
+  EXACT_PHRASE_GAP,
   messageSearchTokens,
   foldSearchQuery,
   rankMessageMatches,
@@ -109,9 +110,6 @@ const MESSAGE_CANDIDATE_LIMIT = 10_000;
 // Without the index, how many of the newest messages a search scans.
 const MESSAGE_SCAN_LIMIT = 20_000;
 const NON_ASCII = /[\u0080-\uffff]/;
-// Index tokens an exact phrase may span beyond its own length: line breaks and
-// indentation between its words.
-const EXACT_PHRASE_SLACK = 16;
 
 /** SQLite's lower() folds ASCII only, so a short word is checked as each spelling it can match. */
 function shortTokenSpellings(token: string): ReadonlyArray<string> {
@@ -174,8 +172,12 @@ function buildMessageSearch(
   const narrowing = short.filter((token) => !NON_ASCII.test(token));
   const phrases = long.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ");
   // An exact query's words sit together, so the index reads only hits that hold them that
-  // close: words spread over a message would otherwise use up the hit limit.
-  const near = exact && long.length > 1 ? words.join(" ").length + EXACT_PHRASE_SLACK : null;
+  // close: words spread over a message would otherwise use up the hit limit. The distance
+  // covers the widest phrase the matcher accepts, so it never drops a match.
+  const near =
+    exact && long.length > 1
+      ? words.join(" ").length + (words.length - 1) * EXACT_PHRASE_GAP
+      : null;
   return {
     match: !indexed ? null : near === null ? phrases : `NEAR(${phrases}, ${near})`,
     substrings: (indexed ? narrowing : [...long, ...narrowing]).map((token) => ({

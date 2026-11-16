@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { EXACT_PHRASE_GAP } from "@t3tools/shared/paletteSearch";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { rebuildMessageSearch } from "./messageSearchIndex.ts";
@@ -705,13 +706,17 @@ it.layer(layerTest)("ThreadSearch filters before it ranks", (it) => {
       const wrapped = ThreadId.make("thread:exact-wrapped");
       const apart = ThreadId.make("thread:exact-apart");
       const apartText = `missing notes. ${"Other words. ".repeat(8)}The osprey files`;
+      // Wrapped as far apart as the matcher accepts: the index must still read it.
+      const wrappedText = ["still missing", "osprey", "files"].join(
+        `\n${" ".repeat(EXACT_PHRASE_GAP - 1)}`,
+      );
       yield* createProject(project);
       yield* Effect.forEach(
         [
           thread(together, project),
           message(together, "exact-together", "user", "the Missing osprey files turned up"),
           thread(wrapped, project),
-          message(wrapped, "exact-wrapped", "assistant", "still missing\n    osprey files"),
+          message(wrapped, "exact-wrapped", "assistant", wrappedText),
           thread(apart, project),
           message(apart, "exact-apart", "user", apartText),
         ],

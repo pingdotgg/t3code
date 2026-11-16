@@ -131,9 +131,19 @@ function prepareSearchField(source: string): SearchField {
   return field;
 }
 
-// Every quote around a query, so its words never start or end with one: 'fix sidebar'.
-const WRAPPING_QUOTES = /^(?:\s*["'`“”‘’]+)+|(?:["'`“”‘’]+\s*)+$/g;
+const QUOTE_OR_SPACE = /["'`“”‘’\s]/;
 const DOUBLE_QUOTE = /["“”]/;
+const WHITESPACE = /\s/;
+
+// Without the quotes and spaces around a query, so its words never start or end with a
+// quote: 'fix sidebar'. A loop: a pattern for mixed runs backtracks on a long run of quotes.
+function unwrapQuery(query: string): string {
+  let start = 0;
+  let end = query.length;
+  while (start < end && QUOTE_OR_SPACE.test(query[start]!)) start++;
+  while (end > start && QUOTE_OR_SPACE.test(query[end - 1]!)) end--;
+  return query.slice(start, end);
+}
 
 /** Double quotes around the whole query ask for its words together, as typed: "fix sidebar". */
 function isExactQuery(query: string): boolean {
@@ -142,7 +152,7 @@ function isExactQuery(query: string): boolean {
 }
 
 function foldQueryWords(query: string): string {
-  return foldInPlace(query.replace(WRAPPING_QUOTES, "").normalize("NFC"))
+  return foldInPlace(unwrapQuery(query).normalize("NFC"))
     .split(/\s+/)
     .filter((token) => token.length > 0)
     .join(" ");
@@ -416,23 +426,26 @@ function queryTokens(normalizedQuery: string) {
   return lastQuery;
 }
 
-// Where `phrase` sits in `field` as whole words, or -1.
-function findWholePhrase(field: SearchField, phrase: string): number {
+// Where `words` sit side by side in `field` as whole words, whatever whitespace is between them.
+function findWholePhrase(field: SearchField, words: ReadonlyArray<string>): SearchRange | null {
+  const { text } = field;
+  const first = words[0]!;
   // A phrase that opens with punctuation ("#12 fix") brings its own boundary, as a token does.
-  const ownBoundary = !ALPHANUMERIC.test(phrase[0]!) && !SYMBOL.test(phrase[0]!);
-  for (
-    let index = field.text.indexOf(phrase);
-    index !== -1;
-    index = field.text.indexOf(phrase, index + 1)
-  ) {
-    const end = index + phrase.length;
+  const ownBoundary = !ALPHANUMERIC.test(first[0]!) && !SYMBOL.test(first[0]!);
+  for (let start = text.indexOf(first); start !== -1; start = text.indexOf(first, start + 1)) {
+    if (!field.wordStarts[start] && !ownBoundary) continue;
+    let end = start + first.length;
+    for (let word = 1; word < words.length && end !== -1; word++) {
+      let next = end;
+      while (next < text.length && WHITESPACE.test(text[next]!)) next++;
+      end = next > end && text.startsWith(words[word]!, next) ? next + words[word]!.length : -1;
+    }
+    if (end === -1) continue;
     const endsWord =
-      end >= field.text.length ||
-      field.wordStarts[end] === 1 ||
-      !ALPHANUMERIC.test(field.text[end]!);
-    if ((field.wordStarts[index] || ownBoundary) && endsWord) return index;
+      end >= text.length || field.wordStarts[end] === 1 || !ALPHANUMERIC.test(text[end]!);
+    if (endsWord) return { start, end };
   }
-  return -1;
+  return null;
 }
 
 /**
@@ -443,20 +456,22 @@ function matchExactPhrase(
   phrase: string,
   fields: ReadonlyArray<WeightedSearchField>,
 ): SearchFieldsMatch | null {
+  const words = phrase.split(" ");
   let best = 0;
   let primaryRange: SearchRange | undefined;
   for (const [position, weighted] of fields.entries()) {
     if (weighted.value.length === 0) continue;
-    const start = findWholePhrase(preparedField(weighted), phrase);
-    if (start === -1) continue;
+    const range = findWholePhrase(preparedField(weighted), words);
+    if (range === null) continue;
     best = Math.max(best, weighted.weight);
-    if (position === 0) primaryRange = { start, end: start + phrase.length };
+    if (position === 0) primaryRange = range;
   }
   if (best === 0) return null;
-  const wholeName = primaryRange !== undefined && preparedField(fields[0]!).text === phrase;
+  const wholeName =
+    primaryRange?.start === 0 && primaryRange.end === preparedField(fields[0]!).text.length;
   const bonus = wholeName
     ? WHOLE_NAME - WHOLE_WORD
-    : primaryRange !== undefined && phrase.includes(" ")
+    : primaryRange !== undefined && words.length > 1
       ? 0.25
       : 0;
   return {
@@ -547,8 +562,7 @@ export function messageSearchTokens(query: string): {
   /** The query is in double quotes: only its words together, as typed, match. */
   readonly exact: boolean;
 } {
-  const tokens = query
-    .replace(WRAPPING_QUOTES, "")
+  const tokens = unwrapQuery(query)
     // The index stores apostrophes straight, as `indexedMessageText` writes them.
     .replace(CURLY_APOSTROPHES, "'")
     .normalize("NFC")
@@ -568,19 +582,31 @@ export function messageSearchTokens(query: string): {
 }
 
 /**
- * Matches the query's words side by side as whole words, as typed, whatever
- * whitespace is between them and ignoring case; null for a single word.
+ * The most whitespace between two words of an exact query in a message: a line
+ * break and its indentation. The server's index reads only hits that close, so
+ * the matcher must not accept more.
  */
-export function messagePhrase(query: string): RegExp | null {
-  const { words } = messageSearchTokens(query);
+export const EXACT_PHRASE_GAP = 16;
+
+function wordsTogether(words: ReadonlyArray<string>, exact: boolean): RegExp | null {
   return words.length > 1
     ? new RegExp(
         `(?<![\\p{L}\\p{N}])${words
           .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-          .join("\\s+")}(?![\\p{L}\\p{N}])`,
+          .join(exact ? `\\s{1,${EXACT_PHRASE_GAP}}` : "\\s+")}(?![\\p{L}\\p{N}])`,
         "iu",
       )
     : null;
+}
+
+/**
+ * Matches the query's words side by side as whole words, as typed, whatever
+ * whitespace is between them and ignoring case; null for a single word.
+ * An exact query allows EXACT_PHRASE_GAP of whitespace between two words.
+ */
+export function messagePhrase(query: string): RegExp | null {
+  const { words, exact } = messageSearchTokens(query);
+  return wordsTogether(words, exact);
 }
 
 // Words written together, as typed, rank above the same words apart, as in
@@ -689,8 +715,9 @@ export function messageMatcher(query: string): (text: string) => MessageMatch | 
   const phrase = messagePhrase(query);
   // Accents typed or left out still read as written together: "cafe open"
   // in "Café open".
-  const foldedPhrase = messagePhrase(
-    words.map((word) => foldInPlace(word).replace(COMBINING_MARKS, "")).join(" "),
+  const foldedPhrase = wordsTogether(
+    words.map((word) => foldInPlace(word).replace(COMBINING_MARKS, "")),
+    exact,
   );
   const queryNonAscii = NON_ASCII.test(query);
   return (text) => {
@@ -779,7 +806,12 @@ function shortestSpan(places: ReadonlyArray<ReadonlyArray<number>>): {
 export function findSearchTokenRanges(text: string, query: string): SearchRange[] {
   const { long, words, exact } = messageSearchTokens(query);
   // An exact query lights up only where its words are written together.
-  const phrase = exact ? messagePhrase(words.map((word) => foldInPlace(word)).join(" ")) : null;
+  const phrase = exact
+    ? wordsTogether(
+        words.map((word) => foldInPlace(word)),
+        true,
+      )
+    : null;
   if (phrase) {
     return Array.from(foldInPlace(text).matchAll(new RegExp(phrase, "giu")), (match) => ({
       start: match.index,
@@ -802,7 +834,11 @@ export function findSearchTokenRanges(text: string, query: string): SearchRange[
     // A token that opens with punctuation brings its own boundary, as in scoring.
     const ownBoundary = !ALPHANUMERIC.test(token[0]!) && !SYMBOL.test(token[0]!);
     for (let index = field.text.indexOf(token); index !== -1;) {
-      if (needsWordStart && !ownBoundary && !field.wordStarts[index]) {
+      // An exact single word lights up only as a whole word, as it matches.
+      const skipped = exact
+        ? !startsWordAt(text, index) || !endsWordAt(text, index + token.length)
+        : needsWordStart && !ownBoundary && !field.wordStarts[index];
+      if (skipped) {
         index = field.text.indexOf(token, index + 1);
         continue;
       }
@@ -1108,7 +1144,7 @@ function threadFieldQuery(normalizedQuery: string): string {
       .replace(FLAT_BRANCH_QUERY_PREFIX_PATTERN, "$1");
     lastFieldQuery = {
       query: normalizedQuery,
-      fieldQuery: phrase === null ? stripped : `"${stripped}"`,
+      fieldQuery: phrase === null || stripped.length === 0 ? stripped : `"${stripped}"`,
     };
   }
   return lastFieldQuery.fieldQuery;
