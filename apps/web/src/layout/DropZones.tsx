@@ -2,7 +2,7 @@ import { AppWindowIcon, AtSignIcon, Columns2Icon, Layers2Icon, Rows2Icon } from 
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-import { PANE_TAB_CLASS } from "../components/PaneNotch";
+import { PANE_TAB_SHAPE_CLASS } from "../components/PaneNotch";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn } from "../lib/utils";
@@ -253,7 +253,7 @@ function DraggedTabGhostBody({
 }) {
   return (
     <div
-      className={cn(PANE_TAB_CLASS, "absolute left-0 top-0 surface-popover")}
+      className={cn(PANE_TAB_SHAPE_CLASS, "absolute left-0 top-0 surface-popover")}
       style={{ transform: `translate(${point.x - 24}px, ${point.y - 14}px) rotate(-2deg)` }}
     >
       {children}
