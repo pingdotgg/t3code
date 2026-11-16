@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -93,6 +94,7 @@ export class ServerConfig extends Context.Service<
     readonly staticDir: string | undefined;
     readonly devUrl: URL | undefined;
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
+    readonly mcpClientSessionTtl?: Duration.Duration;
     readonly devAllowedOrigins: ReadonlyArray<string>;
     readonly noBrowser: boolean;
     readonly startupPresentation: StartupPresentation;
