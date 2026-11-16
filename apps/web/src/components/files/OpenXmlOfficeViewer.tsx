@@ -1,11 +1,7 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
 import { lazy, Suspense, useEffect, useState } from "react";
-import {
-  FileSurfaceLoading,
-  FileSurfaceNotice,
-  FILE_SURFACE_SUBHEADER_CLASS,
-} from "./fileSurfaceChrome";
+import { FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { OFFICE_PREVIEW_MAX_BYTES, type OfficeWorkerResult } from "./officePreviewProtocol";
 const WordDocument = lazy(() => import("./office/WordDocument"));
 const Spreadsheet = lazy(() => import("./office/Spreadsheet"));
@@ -41,9 +37,15 @@ export default function OfficeViewer(props: {
 }) {
   const [error, setError] = useState<string | null>(null);
   const [prepared, setPrepared] = useState<Extract<OfficeWorkerResult, { bytes: ArrayBuffer }>>();
-  const [details, setDetails] = useState("");
+  const onDetails = useStableCallback(() => {});
   const fail = useStableCallback((cause: unknown) =>
-    setError(cause instanceof Error ? cause.message : "Could not render this Office document."),
+    setError(
+      cause instanceof Error
+        ? cause.message
+        : cause instanceof ErrorEvent
+          ? cause.message
+          : "Could not render this Office document.",
+    ),
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the Open XML fetch, preparation worker, and timeout for this source and release them on cleanup.
   useEffect(() => {
@@ -107,14 +109,6 @@ export default function OfficeViewer(props: {
   const Viewer = props.kind === "docx" ? WordDocument : Presentation;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {details ? (
-        <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {details}
-            {props.kind !== "xlsx" ? " · Fit to width" : ""}
-          </span>
-        </div>
-      ) : null}
       {prepared.truncated ? (
         <FileSurfaceNotice>
           Preview limited. Save it or open it in another app to read the full document.
@@ -125,11 +119,11 @@ export default function OfficeViewer(props: {
           <Spreadsheet
             bytes={prepared.bytes}
             view={prepared.view}
-            onDetails={setDetails}
+            onDetails={onDetails}
             onError={fail}
           />
         ) : (
-          <Viewer bytes={prepared.bytes} onDetails={setDetails} onError={fail} />
+          <Viewer bytes={prepared.bytes} onDetails={onDetails} onError={fail} />
         )}
       </Suspense>
     </div>

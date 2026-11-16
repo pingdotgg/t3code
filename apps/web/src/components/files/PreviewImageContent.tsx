@@ -1,5 +1,6 @@
+import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "./FileZoomControls";
 import { useLayoutEffect, useRef, useState } from "react";
-import { MaximizeIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
+import { MaximizeIcon } from "lucide-react";
 import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import { observeResize } from "~/lib/observeResize";
 import { AttachmentImage } from "../media/AttachmentImage";
@@ -37,7 +38,6 @@ export default function PreviewImageContent(props: {
       )
     : 1;
   const scale = zoom ?? fit;
-  const changeZoom = (factor: number) => setZoom(Math.max(0.05, Math.min(8, scale * factor)));
   // Pinch steps that arrive before React commits build on the uncommitted scale.
   const pendingScale = useRef<number | null>(null);
   const anchor = useRef<{ x: number; y: number; fx: number; fy: number } | null>(null);
@@ -74,35 +74,22 @@ export default function PreviewImageContent(props: {
   if (failed) return <FileSurfaceFailure message="Unable to load image." />;
   return (
     <>
-      <div className="flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
-        <span className="tabular-nums">
+      <div className={FILE_ZOOM_TOOLBAR_CLASS}>
+        <span className="mr-auto px-1 tabular-nums">
           {natural.width
             ? `${natural.width.toLocaleString()} × ${natural.height.toLocaleString()}`
             : "Loading image…"}
         </span>
         <div className="flex items-center gap-1">
-          <FileSurfaceAction
-            label="Zoom out"
-            disabled={!natural.width || scale <= 0.05}
-            onPress={() => changeZoom(1 / 1.25)}
-          >
-            <MinusIcon className="size-3.5" />
-          </FileSurfaceAction>
-          <span className="min-w-10 text-center tabular-nums">{Math.round(scale * 100)}%</span>
-          <FileSurfaceAction
-            label="Zoom in"
-            disabled={!natural.width || scale >= 8}
-            onPress={() => changeZoom(1.25)}
-          >
-            <PlusIcon className="size-3.5" />
-          </FileSurfaceAction>
-          <FileSurfaceAction
-            label="Fit image"
-            pressed={zoom === null}
-            onPress={() => setZoom(null)}
-          >
-            <ScanIcon className="size-3.5" />
-          </FileSurfaceAction>
+          <FileZoomControls
+            zoom={scale}
+            min={0.05}
+            max={8}
+            disabled={!natural.width}
+            onChange={setZoom}
+            onReset={() => setZoom(null)}
+            resetLabel="Fit image"
+          />
           <FileSurfaceAction
             label="Actual image size"
             pressed={zoom === 1}

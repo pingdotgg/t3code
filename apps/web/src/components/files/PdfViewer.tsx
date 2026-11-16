@@ -1,3 +1,4 @@
+import { FileZoomControls } from "./FileZoomControls";
 import {
   useEffect,
   useEffectEvent,
@@ -7,7 +8,7 @@ import {
   type CSSProperties,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
-import { ChevronDownIcon, ChevronUpIcon, MinusIcon, PlusIcon, ScanIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Input } from "~/components/ui/input";
 import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
@@ -25,7 +26,6 @@ import {
   pdfRestoredScrollTop,
   PDF_MAX_ZOOM,
   PDF_MIN_ZOOM,
-  stepPdfZoom,
   visiblePdfPages,
 } from "./pdfLayout";
 import "./pdfViewer.css";
@@ -424,32 +424,19 @@ export default function PdfViewer(props: {
         >
           <ChevronDownIcon className="size-3.5" />
         </FileSurfaceAction>
-        <FileSurfaceAction
-          label="Zoom out"
-          disabled={scale <= PDF_MIN_ZOOM}
-          onPress={() => changeZoom(stepPdfZoom(scale, -1))}
-        >
-          <MinusIcon className="size-3.5" />
-        </FileSurfaceAction>
-        <span className="min-w-14 text-center tabular-nums">
-          {zoom === null ? "Fit width" : `${Math.round(scale * 100)}%`}
-        </span>
-        <FileSurfaceAction
-          label="Zoom in"
-          disabled={scale >= PDF_MAX_ZOOM}
-          onPress={() => changeZoom(stepPdfZoom(scale, 1))}
-        >
-          <PlusIcon className="size-3.5" />
-        </FileSurfaceAction>
-        <FileSurfaceAction
-          label="Fit width"
-          onPress={() => {
+        <FileZoomControls
+          zoom={scale}
+          min={PDF_MIN_ZOOM}
+          max={PDF_MAX_ZOOM}
+          disabled={!pdf}
+          displayValue={zoom === null ? "Fit width" : undefined}
+          onChange={changeZoom}
+          onReset={() => {
             changeZoom(null);
             scroll.current?.scrollTo({ left: 0 });
           }}
-        >
-          <ScanIcon className="size-3.5" />
-        </FileSurfaceAction>
+          resetLabel="Fit width"
+        />
         <div className="w-28">
           <Input
             ref={find}

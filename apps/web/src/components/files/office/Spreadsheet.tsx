@@ -1,3 +1,4 @@
+import { ZoomableMediaViewport } from "../ZoomableMediaViewport";
 import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
 import { useEffect, useRef, useState } from "react";
@@ -102,16 +103,18 @@ export default function Spreadsheet(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {error ? <FileSurfaceNotice>{error}</FileSurfaceNotice> : null}
-      <SpreadsheetGrid
-        key={opened.layout.info.activeSheet}
-        engine={opened.engine}
-        layout={opened.layout}
-        initialCell={opened.target}
-        onNavigate={(name, cell) => {
-          const tab = opened.tabs.find((tab) => tab.name.toLowerCase() === name.toLowerCase());
-          if (tab) show(tab.index, cell);
-        }}
-      />
+      <ZoomableMediaViewport minZoom={0.25} maxZoom={5} label="Spreadsheet zoom">
+        <SpreadsheetGrid
+          key={opened.layout.info.activeSheet}
+          engine={opened.engine}
+          layout={opened.layout}
+          initialCell={opened.target}
+          onNavigate={(name, cell) => {
+            const tab = opened.tabs.find((tab) => tab.name.toLowerCase() === name.toLowerCase());
+            if (tab) show(tab.index, cell);
+          }}
+        />
+      </ZoomableMediaViewport>
       <div
         role="tablist"
         aria-label="Sheets"
@@ -441,8 +444,9 @@ function SpreadsheetGrid(props: {
     const hit = (event: PointerEvent) => {
       if (!grid) return;
       const rect = target.getBoundingClientRect();
-      const x = event.clientX - rect.left - headers.width;
-      const y = event.clientY - rect.top - headers.height;
+      const scale = rect.width / target.clientWidth;
+      const x = (event.clientX - rect.left) / scale - headers.width;
+      const y = (event.clientY - rect.top) / scale - headers.height;
       const frame = painted?.frame;
       if (
         frame &&
@@ -460,8 +464,9 @@ function SpreadsheetGrid(props: {
     const resizeHit = (event: PointerEvent) => {
       if (!grid || resizingPending) return;
       const rect = target.getBoundingClientRect();
-      const x = event.clientX - rect.left - headers.width;
-      const y = event.clientY - rect.top - headers.height;
+      const scale = rect.width / target.clientWidth;
+      const x = (event.clientX - rect.left) / scale - headers.width;
+      const y = (event.clientY - rect.top) / scale - headers.height;
       const axis: "row" | "column" | undefined =
         x >= 0 && y < 0 ? "column" : y >= 0 && x < 0 ? "row" : undefined;
       if (!axis) return;
@@ -520,7 +525,9 @@ function SpreadsheetGrid(props: {
       if (resizing) {
         if (event.pointerId !== resizing.pointerId) return;
         const point = resizing.axis === "column" ? event.clientX : event.clientY;
-        resizing.delta = Math.round(point - resizing.start);
+        resizing.delta = Math.round(
+          (point - resizing.start) / (target.getBoundingClientRect().width / target.clientWidth),
+        );
         schedule();
         return;
       }
@@ -704,7 +711,7 @@ function SpreadsheetGrid(props: {
     };
   }, [engine, layout, initialCell]);
   return (
-    <div className="relative flex min-h-0 flex-1">
+    <div className="relative flex h-full w-full min-h-0 flex-1">
       <div
         ref={scroller}
         dir="ltr"

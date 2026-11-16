@@ -1,6 +1,6 @@
+import { FileZoomControls, FILE_ZOOM_TOOLBAR_CLASS } from "../FileZoomControls";
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
 import { observeResize } from "~/lib/observeResize";
-import { RotateCcwIcon } from "lucide-react";
 import {
   useEffect,
   useImperativeHandle,
@@ -35,6 +35,7 @@ function fitScale(page: PageSize, available: number) {
 
 export function OfficePages(props: {
   pages: readonly PageSize[];
+  toolbar?: ReactNode;
   paint: PaintPage;
   label: string;
   overlay?: (index: number) => ReactNode;
@@ -142,6 +143,22 @@ export function OfficePages(props: {
   );
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className={FILE_ZOOM_TOOLBAR_CLASS}>
+        {props.toolbar ?? (
+          <span className="mr-auto px-1 tabular-nums">
+            {props.pages.length} {props.label.toLowerCase()}
+            {props.pages.length === 1 ? "" : "s"}
+          </span>
+        )}
+        <FileZoomControls
+          zoom={zoom}
+          min={MIN_ZOOM}
+          max={MAX_ZOOM}
+          onChange={setZoom}
+          onReset={() => setZoom(1)}
+          resetLabel="Fit to width"
+        />
+      </div>
       <div
         ref={scroller}
         className="relative min-h-0 flex-1 overflow-auto bg-muted/60"
@@ -183,20 +200,6 @@ export function OfficePages(props: {
           ))}
         </div>
       </div>
-      {zoom !== 1 ? (
-        <button
-          type="button"
-          aria-label="Fit to width"
-          className="absolute right-4 bottom-4 flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs tabular-nums shadow-sm hover:bg-accent"
-          onClick={() => {
-            pendingZoom.current = null;
-            setZoom(1);
-          }}
-        >
-          {Math.round(zoom * 100)}%
-          <RotateCcwIcon className="size-3" />
-        </button>
-      ) : null}
     </div>
   );
 }

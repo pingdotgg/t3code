@@ -1,3 +1,4 @@
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
@@ -66,4 +67,30 @@ it("consumes pinch inside the document frame and updates reading size", async ()
       Number(frame.contentDocument!.documentElement.style.getPropertyValue("--reading-zoom")),
     ).toBeGreaterThan(1),
   );
+});
+
+it("zooms video from a fitted 100 percent to 500 percent and resets", async () => {
+  await using screen = await render(
+    <div className="flex h-[400px] w-[500px]">
+      <ZoomableMediaViewport>
+        <video aria-label="Zoom video" style={{ width: 400, height: 300 }} />
+      </ZoomableMediaViewport>
+    </div>,
+  );
+  const locator = screen.getByLabelText("Zoom video");
+  const video = locator.element();
+  const width = video.getBoundingClientRect().width;
+  const slider = screen.getByRole("slider", { name: "Video zoom" }).element();
+  expect(slider.getAttribute("min")).toBe("100");
+  expect(slider.getAttribute("max")).toBe("500");
+  await userEvent.keyboard("{Control>}");
+  await userEvent.wheel(locator, { delta: { y: 30 } });
+  await userEvent.keyboard("{/Control}");
+  expect(video.getBoundingClientRect().width).toBe(width);
+  await userEvent.keyboard("{Control>}");
+  await userEvent.wheel(locator, { delta: { y: -1000 } });
+  await userEvent.keyboard("{/Control}");
+  await vi.waitFor(() => expect(video.getBoundingClientRect().width).toBe(width * 5));
+  await screen.getByRole("button", { name: "Reset zoom to 100%", exact: true }).click();
+  await vi.waitFor(() => expect(video.getBoundingClientRect().width).toBe(width));
 });

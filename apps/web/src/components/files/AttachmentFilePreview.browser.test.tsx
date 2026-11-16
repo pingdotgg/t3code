@@ -1131,22 +1131,26 @@ describe("attachment HTML preview recovery", () => {
       vi.fn(async () => new Response("<p>Captured HTML</p>")),
     );
     await using screen = await openRemote();
-    expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(originalUrl);
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(originalUrl),
+    );
     now = 61 * 60_000;
     await toggleMode(screen, "Show HTML source");
     await act(async () => {
       await import("./ReadOnlySourcePreview");
     });
-    expect(attachmentFetches()).toEqual([renewedUrl]);
+    expect(attachmentFetches()).toEqual([originalUrl, renewedUrl]);
     await vi.waitFor(() =>
       expect(screen.container.querySelector("pre")?.textContent).toBe("<p>Captured HTML</p>"),
     );
 
     await toggleMode(screen, "Show rendered page");
-    expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(renewedUrl);
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(renewedUrl),
+    );
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(2);
-    expect(attachmentFetches()).toEqual([renewedUrl, renewedUrl]);
+    expect(attachmentFetches()).toEqual([originalUrl, renewedUrl, renewedUrl, renewedUrl]);
   });
 
   it("does not fetch or mark an expired URL fresh when reauthorization is unavailable", async () => {
@@ -1161,13 +1165,16 @@ describe("attachment HTML preview recovery", () => {
     now = 61 * 60_000;
     refresh.mockResolvedValue(null);
     await toggleMode(screen, "Show HTML source");
-    expect(attachmentFetches()).toEqual([]);
+    expect(attachmentFetches()).toEqual([originalUrl]);
     expect(alert(screen)?.textContent).toContain("Reconnect to the environment and try again.");
 
     await toggleMode(screen, "Show rendered page");
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("iframe")?.getAttribute("src")).toBe(originalUrl),
+    );
     await toggleMode(screen, "Show HTML source");
     expect(refresh).toHaveBeenCalledTimes(3);
-    expect(attachmentFetches()).toEqual([]);
+    expect(attachmentFetches()).toEqual([originalUrl, originalUrl]);
   });
 
   it("can return to rendered HTML after local source decoding fails", async () => {
@@ -1192,7 +1199,9 @@ describe("attachment HTML preview recovery", () => {
 
     await toggleMode(screen, "Show rendered page");
     expect(alert(screen)).toBeNull();
-    expect(screen.container.querySelector("iframe")?.title).toBe("document.html");
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector("iframe")?.title).toBe("document.html"),
+    );
   });
 });
 
@@ -1570,8 +1579,12 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
   );
   assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,original", expiresAt: 0 });
   await using screen = await render(preview("first"));
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+      /^data:text\/html,original/,
+    ),
+  );
   const opened = screen.container.querySelector("iframe");
-  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
 
   assetUrlState.mockReturnValue({
     _tag: "Success",
@@ -1585,8 +1598,10 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
 
   assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,edited", expiresAt: 0 });
   await screen.rerender(preview("second"));
-  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
-    /^data:text\/html,edited/,
+  await vi.waitFor(() =>
+    expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+      /^data:text\/html,edited/,
+    ),
   );
 });
 

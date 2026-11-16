@@ -1,3 +1,4 @@
+import { ZoomableMediaViewport } from "./ZoomableMediaViewport";
 /* oxlint-disable react/no-array-index-key -- Spreadsheet rows and columns retain their source positions. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import type { OfficePreviewKind } from "@t3tools/shared/filePreview";
@@ -286,19 +287,25 @@ function ExtendedOfficeViewer(props: {
           {sheet.rowCount === 0 ? (
             <p className="p-6 text-xs text-muted-foreground">This sheet is empty.</p>
           ) : (
-            <VirtualTablePreview
-              key={page}
-              name={`${props.name}: ${sheet.name}`}
-              count={sheet.rowCount}
-              columns={sheet.columns}
-              getRows={(index) => (index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`))}
-              loadPage={(index) => {
-                const key = `${page}:${index}`;
-                if (pendingPages.current.has(key)) return;
-                pendingPages.current.add(key);
-                workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
-              }}
-            />
+            <ZoomableMediaViewport minZoom={0.25} maxZoom={5} label="Table zoom">
+              <div className="flex h-full w-full min-h-0">
+                <VirtualTablePreview
+                  key={page}
+                  name={`${props.name}: ${sheet.name}`}
+                  count={sheet.rowCount}
+                  columns={sheet.columns}
+                  getRows={(index) =>
+                    index === 0 ? sheet.rows : sheetPages.get(`${page}:${index}`)
+                  }
+                  loadPage={(index) => {
+                    const key = `${page}:${index}`;
+                    if (pendingPages.current.has(key)) return;
+                    pendingPages.current.add(key);
+                    workerRef.current?.postMessage({ type: "sheet-page", sheet: page, index });
+                  }}
+                />
+              </div>
+            </ZoomableMediaViewport>
           )}
         </>
       ) : (

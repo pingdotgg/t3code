@@ -1,3 +1,4 @@
+import { FileHtmlPreview } from "./FileHtmlPreview";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type KeybindingCommand,
@@ -163,16 +164,7 @@ export function BrowserDocumentFrame(props: {
 
 // URL renewals must not discard form input or scroll; a new key mounts a fresh document.
 function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
-  return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0"
-      style={{ backgroundColor: "Canvas" }}
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
-  );
+  return <FileHtmlPreview {...props} />;
 }
 
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
