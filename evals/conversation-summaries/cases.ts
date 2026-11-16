@@ -39,7 +39,7 @@ const misattributed = [
   String.raw`\b(?:agent|assistant)'s (?:proposal|suggestion|recommendation)\b${toward("Postgres")}`,
 ];
 
-/** The group exchange both peer cases send: the user asks, Astra proposes, the agent disagrees. */
+/** The leaf exchange: the user asks, Astra proposes, the agent disagrees. */
 const peerProposal: ReadonlyArray<LeafMessage> = [
   { role: "user", text: "Where should sessions live? I have not decided." },
   {
@@ -54,7 +54,7 @@ const peerProposal: ReadonlyArray<LeafMessage> = [
 ];
 
 const peerProposalSource =
-  'Group threads (t3/peer-reply-summary-attribution): a seat model\'s published reply reached the summarizer as a plain assistant message with no name, and production summaries said "The assistant answered" for words the peer spoke.';
+  'Group threads (ScriptedAlchemy/t3code#131): a seat model\'s published reply reached the summarizer as a plain assistant message with no name, and production summaries said "The assistant answered" for words the peer spoke.';
 
 export const leafCases: ReadonlyArray<LeafCase> = [
   {
@@ -107,15 +107,23 @@ export const knowledgeCases: ReadonlyArray<KnowledgeCase> = [
   {
     id: "knowledge-peer-proposal-is-not-a-decision",
     kind: "bad",
-    source: `${peerProposalSource} Assisted learning reads the same messages, so a peer proposal could be saved as the user's decision.`,
-    messages: peerProposal,
+    source: `${peerProposalSource} Assisted learning reads the same messages, so a peer proposal the agent acted on could be saved as the user's decision.`,
+    // The user never accepts, but the agent agrees and acts, which lures a decision.
+    messages: [
+      { role: "user", text: "Where should sessions live?" },
+      {
+        role: "peer",
+        speaker: { label: "Astra", model: "gpt-6-astra" },
+        text: "Drop Redis and use Postgres for sessions.",
+      },
+      {
+        role: "assistant",
+        text: "Agreed, Postgres it is. I started the migration that moves sessions from Redis to Postgres.",
+      },
+    ],
     forbiddenKinds: ["decision"],
     mustMention: [],
-    mustNot: [
-      ...misattributed,
-      String.raw`\bsessions (?:are|will be|should be)? ?(?:stored|kept|live|living|moved?|moving) (?:in|to) Postgres\b`,
-      String.raw`\b(?:use|uses|using) Postgres (?:for|as the) sessions?\b`,
-    ],
+    mustNot: misattributed,
   },
   {
     id: "knowledge-user-convention-is-kept",

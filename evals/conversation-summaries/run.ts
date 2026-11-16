@@ -18,8 +18,9 @@ import { gradeCondensed, gradeKnowledge, gradeLeaf } from "./grade.ts";
 
 /**
  * How a peer reply reaches the model. `main` sends it as a nameless assistant message, as main
- * does. `peer-as-user` renders it as a historical user message, as b71f68c2d3 did. `no-rule` names
- * the peer without the prompt's peer rule. `full` is this checkout.
+ * does. `peer-as-user` renders it as a historical user message with the speaker in its header, as
+ * handoff history does; summaries only. `no-rule` names the peer without the prompt's peer rule.
+ * `full` is this checkout.
  */
 const arms = ["main", "peer-as-user", "no-rule", "full"] as const;
 
@@ -48,7 +49,8 @@ const selected = <T extends { readonly id: string }>(fixtures: ReadonlyArray<T>)
   fixtures.filter((fixture) => selectedIds === undefined || selectedIds.includes(fixture.id));
 const selectedCondensed = selected(condensedCases);
 const selectedLeaf = selected(leafCases);
-const selectedKnowledge = selected(knowledgeCases);
+// Assisted learning never rendered a peer as a user, so that arm has no knowledge baseline.
+const selectedKnowledge = arm === "peer-as-user" ? [] : selected(knowledgeCases);
 if (selectedCondensed.length + selectedLeaf.length + selectedKnowledge.length === 0)
   throw new Error(
     `Unknown --case ${values.case}. Available cases: ${[...condensedCases, ...leafCases, ...knowledgeCases].map((fixture) => fixture.id).join(", ")}`,
@@ -84,12 +86,11 @@ const decodeMorphReply = Schema.decodeUnknownEffect(
 
 const MORPH_ATTEMPTS = 8;
 const PEER_RULE = "- a peer is another model";
-const withoutPeerRule = (prompt: string) => {
-  const lines = prompt.split("\n");
-  const kept = lines.filter((line) => !line.startsWith(PEER_RULE));
-  if (kept.length === lines.length) throw new Error("The prompt has no peer rule to drop.");
-  return kept.join("\n");
-};
+const withoutPeerRule = (prompt: string) =>
+  prompt
+    .split("\n")
+    .filter((line) => !line.startsWith(PEER_RULE))
+    .join("\n");
 
 /** Morph's free Responses API, given the production prompt as OpenCode sends it: text only. */
 const morphRunner = (): TextGenerationOperations.Runner => {

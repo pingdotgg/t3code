@@ -13,7 +13,7 @@ pnpm conversation-summaries --model morph-kimik31 --arm full --samples 8 --out r
 `--arm` sets how a peer reply reaches the model, so the arms compare from one checkout:
 
 - `main` sends it as a nameless assistant message with no peer rule, as `main` does. Its leaf case fails by construction, because the name the grader wants is not in the input.
-- `peer-as-user` renders it as a historical user message with the speaker in its header and no peer rule. This was the first attempt on `t3/peer-reply-summary-attribution`.
+- `peer-as-user` renders it as a historical user message with the speaker in its header and no peer rule, as handoff history renders a peer. It runs only the summary cases, since assisted learning never did this.
 - `no-rule` names the peer but drops the prompt's peer rule.
 - `full` is this checkout. It is the default and the only arm a `gpt-*` model can run, since the other arms edit the prompt.
 
@@ -23,7 +23,7 @@ Cases:
 - `condensed-four-ordinary-sources` is the control: an ordinary docs task that must keep its open item and fit the same budget.
 - `leaf-peer-proposal-is-not-a-user-decision` passes when the summary names Astra as the one who proposed Postgres, and credits that proposal to neither the user nor the agent.
 - `leaf-ordinary-exchange-has-no-peer` is the leaf control: an ordinary docs task with no peer.
-- `knowledge-peer-proposal-is-not-a-decision` passes when no `decision` candidate comes out of the same exchange, and no candidate states Postgres as settled.
+- `knowledge-peer-proposal-is-not-a-decision` passes when no `decision` candidate comes out, and no candidate credits the user with Postgres, of an exchange where Astra proposes Postgres and the agent agrees and starts the migration but the user never accepts.
 - `knowledge-user-convention-is-kept` is its control: a plain user instruction must still become a fact.
 - `--case <ids>` limits the run, and `--samples <n>` sets samples per case (default 3). A case fails when half or more of its samples fail. Read the statements in `results.json` as well as the automated result.
 

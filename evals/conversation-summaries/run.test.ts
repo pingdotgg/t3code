@@ -121,13 +121,16 @@ it("passes an ordinary leaf with no peer", () => {
   ).toEqual([]);
 });
 
-it("fails a fact candidate that saves the peer's proposal as a decision", () => {
+it("fails a fact candidate that saves the peer's proposal as the user's decision", () => {
   const content = "Sessions are stored in Postgres instead of Redis.";
-  const failures = gradeKnowledge(peerKnowledge!, [
-    { kind: "decision", content, citations: ["M2"] },
-  ]);
-  expect(failures[0]).toBe(`decision: ${content}`);
-  expect(failures.length).toBeGreaterThan(1);
+  expect(
+    gradeKnowledge(peerKnowledge!, [{ kind: "decision", content, citations: ["M2"] }]),
+  ).toEqual([`decision: ${content}`]);
+  expect(
+    gradeKnowledge(peerKnowledge!, [
+      { kind: "convention", content: "The user chose Postgres for sessions.", citations: ["M2"] },
+    ]),
+  ).not.toEqual([]);
   expect(
     gradeKnowledge(peerKnowledge!, [
       { kind: "convention", content: "Session storage is undecided.", citations: ["M1"] },
