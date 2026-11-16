@@ -23,7 +23,7 @@ The four judge criteria are distinct useful ideas, explicit engagement with a pe
 
 ## Run
 
-Put `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the repo root `.env`. The package script loads that file. Direct APIs are the default. `--proxy` explicitly uses the existing MCP eval's `vibeproxy` configuration for GPT models instead. Missing credentials produce error rows, never model substitutions or passing samples.
+Put `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the repo root `.env`. The package script loads that file. Direct APIs are the default. `--proxy` explicitly uses the existing MCP eval's `vibeproxy` configuration for GPT models instead. `morph-` models, such as `morph-kimik31` and `morph-dsv41flash`, call Morph's free OpenAI-compatible API with `MORPH_API_KEY`, or the `morph` provider in `~/.config/opencode/opencode.json`. Missing credentials produce error rows, never model substitutions or passing samples.
 
 The model IDs below are the intended design pairings. They are not cheap shell models.
 

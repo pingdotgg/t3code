@@ -3,7 +3,7 @@ import * as NodePerfHooks from "node:perf_hooks";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
-import { proxyConfig } from "../shared/proxy.ts";
+import { morphConfig, proxyConfig } from "../shared/proxy.ts";
 
 export interface ApiTool {
   readonly name: string;
@@ -78,6 +78,14 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
       return process.env.ANTHROPIC_API_KEY
         ? null
         : "ANTHROPIC_API_KEY missing from repo-root .env and process environment.";
+    if (model.startsWith("morph-")) {
+      try {
+        morphConfig();
+        return null;
+      } catch {
+        return "Morph unavailable; set MORPH_API_KEY or add a morph provider to ~/.config/opencode/opencode.json. No substitution.";
+      }
+    }
     if (!model.startsWith("gpt-")) return `Unsupported model family for ${model}. No substitution.`;
     if (!options.proxy)
       return process.env.OPENAI_API_KEY
@@ -101,7 +109,9 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
     const missing = unavailable(model);
     if (missing) throw new Error(missing);
     const claude = model.startsWith("claude-");
-    const proxy = !claude && options.proxy ? proxyConfig() : undefined;
+    const morph = model.startsWith("morph-");
+    const proxy = morph ? undefined : !claude && options.proxy ? proxyConfig() : undefined;
+    const responsesEndpoint = morph ? morphConfig() : proxy;
     const request = claude
       ? {
           model,
@@ -182,14 +192,14 @@ export function makeClient(options: { readonly proxy: boolean; readonly effort: 
     attempts.push(attempt);
     const headers = claude
       ? { "x-api-key": process.env.ANTHROPIC_API_KEY!, "anthropic-version": "2023-06-01" }
-      : (proxy?.headers ?? { Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` });
+      : (responsesEndpoint?.headers ?? { Authorization: `Bearer ${process.env.OPENAI_API_KEY!}` });
     const body = await Effect.runPromise(
       Effect.gen(function* () {
         const client = yield* HttpClient.HttpClient;
         const response = yield* HttpClientRequest.post(
           claude
             ? "https://api.anthropic.com/v1/messages"
-            : `${proxy?.url ?? "https://api.openai.com/v1"}/responses`,
+            : `${responsesEndpoint?.url ?? "https://api.openai.com/v1"}/responses`,
         ).pipe(
           HttpClientRequest.setHeaders(headers),
           HttpClientRequest.bodyJson(request),
