@@ -178,6 +178,26 @@ describe("sidebar thread lineage helpers", () => {
     const loopB = subagentOf("thread-loop-b", loopA.id);
     expect(resolveSidebarRowThreadId(loopA.id, environmentId, [loopA, loopB])).toBe(loopA.id);
   });
+
+  it("maps an open task a linked environment delegated to its listed parent's row", () => {
+    const parentEnvironmentId = EnvironmentId.make("environment-parent");
+    const taskEnvironmentId = EnvironmentId.make("environment-task");
+    const parent = makeThreadFixture({
+      id: ThreadId.make("thread-parent"),
+      environmentId: parentEnvironmentId,
+    });
+    const task = makeThreadFixture({
+      id: ThreadId.make("thread-task"),
+      environmentId: taskEnvironmentId,
+      delegatedFrom: {
+        environmentId: parentEnvironmentId,
+        threadId: parent.id,
+        title: parent.title,
+      },
+    });
+
+    expect(resolveSidebarRowThreadId(task.id, taskEnvironmentId, [parent, task])).toBe(parent.id);
+  });
 });
 
 function makeLatestRun(overrides?: {
