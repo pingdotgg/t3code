@@ -344,6 +344,43 @@ it.live("adopts the checkouts a project's own layout command makes, and runs its
   ),
 );
 
+it.live("runs the layout command of a project that tracks no other repository", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, run, repository, worktreeCount } = yield* fixture;
+      const mono = yield* repository("mono");
+      yield* fileSystem.writeFileString(
+        path.join(mono, "t3.json"),
+        JSON.stringify({
+          worktreeLayout: {
+            create:
+              'git worktree add -q -b "$T3_WORKTREE_BRANCH" "$T3_WORKTREE_PROJECT_PATH" && touch "$T3_WORKTREE_PROJECT_PATH/prepared"',
+          },
+        }),
+      );
+      state.workspaceRoot = mono;
+      state.trackedFolders = [];
+
+      const { taskFolder } = yield* create("feature");
+
+      assert.isTrue(taskFolder.projectIsWorktree);
+      assert.deepEqual(taskFolder.repositories, []);
+      assert.equal(
+        yield* run(taskFolder.projectPath, "symbolic-ref", "--short", "HEAD"),
+        "feature",
+      );
+      assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.projectPath, "prepared")));
+
+      yield* (yield* TaskFolders.TaskFolders).remove({
+        root: taskFolder.root,
+        force: true,
+        forget: true,
+      });
+      assert.equal(yield* worktreeCount(mono), 1);
+    }),
+  ),
+);
+
 it.live("starts each repository from the base branch where it has one", () =>
   withState((state) =>
     Effect.gen(function* () {

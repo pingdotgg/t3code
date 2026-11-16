@@ -259,7 +259,7 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { TrackedFoldersDialog } from "./TrackedFoldersDialog";
-import { followedTrackedFolders } from "./TrackedFoldersDialog.logic";
+import { followedTrackedFolders } from "@t3tools/client-runtime/state/projects";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
@@ -3097,10 +3097,7 @@ function OpenCommandPaletteDialog(props: {
           onConfirm={(checked, follow) =>
             trackedFoldersRequest.resolve(
               follow
-                ? followedTrackedFolders({
-                    workspaceRoot: trackedFoldersRequest.scan.workspaceRoot,
-                    scanned: checked,
-                  })
+                ? followedTrackedFolders({ scanned: checked })
                 : checked.map(({ path, name }) => ({ path, name })),
             )
           }

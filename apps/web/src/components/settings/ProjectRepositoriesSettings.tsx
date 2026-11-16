@@ -5,6 +5,7 @@ import {
 import {
   appendBrowsePathSegment,
   ensureBrowseDirectoryPath,
+  followedTrackedFolders,
   getBrowseParentPath,
 } from "@t3tools/client-runtime/state/projects";
 import {
@@ -37,7 +38,6 @@ import {
   resolveTrackedFolderInput,
   trackedFolderDisplayPath,
   untrackedScannedPaths,
-  followedTrackedFolders,
 } from "../TrackedFoldersDialog.logic";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -171,7 +171,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
           ...mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked: [] }).filter(
             (folder) => !isTrackedFolderRule(folder.path),
           ),
-          ...followedTrackedFolders({ workspaceRoot: scan.workspaceRoot, scanned: checked }),
+          ...followedTrackedFolders({ scanned: checked }),
         ]
       : mergeScannedTrackedFolders({ tracked, scanned: scan.folders, checked });
     if (await save(next, "Failed to save repositories")) setRescan(null);

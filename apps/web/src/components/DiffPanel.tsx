@@ -108,6 +108,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
+import { filesystemEnvironment } from "../state/filesystem";
 import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
@@ -121,6 +122,7 @@ import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
 import {
   repositorySectionForPath,
   threadChangedRepositories,
+  threadGitRepositories,
   turnDiffSections,
   type TurnDiffSection,
 } from "@t3tools/client-runtime/state/thread-repositories";
@@ -307,10 +309,34 @@ export default function DiffPanel({
   // The checkout the Git scopes read: the thread's folder, or a repository the thread changed.
   // A plain folder has no history of its own, so it starts on the latest one changed.
   const repositoryStructure = useQuietThreadProjection(routeThreadRef);
-  const gitRepositories =
-    repositoryStructure === null
-      ? NO_GIT_REPOSITORIES
-      : threadChangedRepositories(repositoryStructure.projection);
+  const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
+  const threadWorktreePath = activeThread?.worktreePath ?? null;
+  // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
+  const taskFolderQuery = useEnvironmentQuery(
+    visible && tracksFolders && activeThread != null && threadWorktreePath !== null
+      ? filesystemEnvironment.taskFolder({
+          environmentId: activeThread.environmentId,
+          input: { worktreePath: threadWorktreePath },
+        })
+      : null,
+  );
+  const projectFoldersQuery = useEnvironmentQuery(
+    visible && tracksFolders && activeThread != null && threadWorktreePath === null
+      ? filesystemEnvironment.listFolders({
+          environmentId: activeThread.environmentId,
+          input: { projectId: activeThread.projectId },
+        })
+      : null,
+  );
+  const gitRepositories = threadGitRepositories({
+    changed:
+      repositoryStructure === null
+        ? NO_GIT_REPOSITORIES
+        : threadChangedRepositories(repositoryStructure.projection),
+    taskFolder: taskFolderQuery.data?.taskFolder ?? null,
+    folders: projectFoldersQuery.data?.folders ?? null,
+    threadCwd: activeCwd ?? null,
+  });
   const [gitRepositoryPath, setGitRepositoryPath] = useState<string | null>(null);
   const gitRepository =
     gitRepositories.find((repository) => repository.repositoryPath === gitRepositoryPath) ??

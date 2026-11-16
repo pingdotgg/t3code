@@ -24,6 +24,7 @@ import {
   rewindFileRestore,
   THREAD_REPOSITORY_SECTIONS_VISIBLE,
   threadChangedRepositories,
+  threadGitRepositories,
   threadRepositoryScopes,
   threadRepositorySections,
   unpinThreadRepository,
@@ -242,6 +243,30 @@ describe("threadRepositorySections", () => {
         ],
       }),
     ).toEqual([{ repositoryPath: "/work/wrapper/cli", name: "cli" }]);
+  });
+
+  it("offers Git changes of every repository a thread reaches, changed ones first", () => {
+    const changed = [{ repositoryPath: "/work/web", name: "web", cwd: "/work/web" }];
+    const folders = [
+      { path: "/work", name: "work", state: "git" as const },
+      { path: "/work/api", name: "api", state: "git" as const },
+      { path: "/work/web", name: "web", state: "git" as const },
+      { path: "/work/notes", name: "notes", state: "plain" as const },
+    ];
+    expect(
+      threadGitRepositories({ changed, taskFolder: null, folders, threadCwd: "/work" }),
+    ).toEqual([...changed, { repositoryPath: "/work/api", name: "api", cwd: "/work/api" }]);
+    // A worktree thread reads its own checkouts, never the shared ones.
+    expect(
+      threadGitRepositories({
+        changed: [],
+        taskFolder: {
+          repositories: [{ repositoryPath: "/work/api", worktreePath: "/wt/api", name: "api" }],
+        },
+        folders,
+        threadCwd: "/wt",
+      }),
+    ).toEqual([{ repositoryPath: "/work/api", name: "api", cwd: "/wt/api" }]);
   });
 
   it("lists a task folder's worktrees, changed first, and never a shared checkout", () => {

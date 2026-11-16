@@ -308,7 +308,8 @@ const make = Effect.gen(function* () {
     const tracked = classified.filter(
       (folder) => folder.git && !folder.submodule && folder.path !== projectRoot,
     );
-    if (tracked.length === 0) return null;
+    // A project that lays its own thread folder out gets one even with nothing else to check out.
+    if (tracked.length === 0 && (yield* worktreeLayout(projectRoot)) === null) return null;
     let repositories: ReadonlyArray<ProjectTrackedFolder>;
     if (input.repositories === undefined) {
       repositories = tracked.length <= TASK_FOLDER_DEFAULT_REPOSITORIES_MAX ? tracked : [];

@@ -71,6 +71,7 @@ vi.mock("~/state/entities", () => ({
 }));
 vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
+  filesystemEnvironment: {},
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({

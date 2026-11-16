@@ -3,6 +3,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   appendTrackedFolders,
+  followedTrackedFolders,
+  trackedFoldersFollowingScan,
   trackedFoldersFromSelection,
   untrackedScannedFolders,
 } from "./projectTrackedFolders.ts";
@@ -73,5 +75,37 @@ describe("appendTrackedFolders", () => {
     }));
     expect(appendTrackedFolders(tracked, [{ path: "/work/0", name: "0" }])).toEqual(tracked);
     expect(appendTrackedFolders(tracked, [{ path: "/work/extra", name: "extra" }])).toBeNull();
+  });
+});
+
+describe("followedTrackedFolders", () => {
+  it("turns scanned children into one rule per folder and keeps listed folders named", () => {
+    const scanned = [
+      { path: "/work/shop/api", name: "api", isGitRepository: true, source: "child" as const },
+      { path: "/work/shop/web", name: "web", isGitRepository: true, source: "child" as const },
+      { path: "/work/shop/src/svc", name: "svc", isGitRepository: true, source: "child" as const },
+      { path: "/work/lib", name: "Lib", isGitRepository: true, source: "code-workspace" as const },
+    ];
+    expect(followedTrackedFolders({ scanned })).toEqual([
+      { path: "/work/shop/*", name: "shop/*" },
+      { path: "/work/shop/src/*", name: "src/*" },
+      { path: "/work/lib", name: "Lib" },
+    ]);
+  });
+
+  it("follows a scan in place of the entries it covers, keeping folders it did not reach", () => {
+    expect(
+      trackedFoldersFollowingScan({
+        tracked: [
+          { path: "/work/shop/api", name: "api" },
+          { path: "/elsewhere/lib", name: "lib" },
+          { path: "/work/shop/old/*", name: "old/*" },
+        ],
+        scanned: [scanned("api", "/work/shop/api"), scanned("web", "/work/shop/web")],
+      }),
+    ).toEqual([
+      { path: "/elsewhere/lib", name: "lib" },
+      { path: "/work/shop/*", name: "shop/*" },
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 import {
   appendTrackedFolders,
+  trackedFoldersFollowingScan,
   trackedFoldersFromSelection,
   untrackedScannedFolders,
 } from "@t3tools/client-runtime/state/projects";
@@ -25,7 +26,11 @@ import { AppText as Text } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
-import { ScannedFolderRows, scannedFolderCountLabel } from "../projects/ScannedFolderRows";
+import {
+  FollowFolderRow,
+  ScannedFolderRows,
+  scannedFolderCountLabel,
+} from "../projects/ScannedFolderRows";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
@@ -67,6 +72,9 @@ export function ProjectRepositoriesSection(props: {
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const [isBusy, setIsBusy] = useState(false);
   const [found, setFound] = useState<ReadonlyArray<WorkspaceScannedFolder> | null>(null);
+  // The whole scan: following replaces the entries of every folder it found, tracked or not.
+  const [scanned, setScanned] = useState<ReadonlyArray<WorkspaceScannedFolder>>([]);
+  const [follow, setFollow] = useState(false);
   const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(new Set());
 
   const save = async (trackedFolders: ReadonlyArray<ProjectTrackedFolder>) => {
@@ -118,6 +126,21 @@ export function ProjectRepositoriesSection(props: {
       return;
     }
     const untracked = untrackedScannedFolders(tracked, scan.value.folders);
+    const following = trackedFoldersFollowingScan({ tracked, scanned: scan.value.folders });
+    // Everything is tracked by name: following is the only thing left to offer.
+    if (
+      untracked.length === 0 &&
+      following.some((folder) => isTrackedFolderRule(folder.path)) &&
+      !tracked.some((folder) => isTrackedFolderRule(folder.path))
+    ) {
+      Dialog.confirm({
+        title: "Nothing new found",
+        message: `Every repository in ${member.workspaceRoot} is tracked. Keep following the folder, so repositories cloned there later are tracked too?`,
+        confirmText: "Follow",
+        onConfirm: () => void save(following),
+      });
+      return;
+    }
     if (untracked.length === 0) {
       Dialog.alert(
         "Nothing new found",
@@ -126,12 +149,17 @@ export function ProjectRepositoriesSection(props: {
       return;
     }
     setDeselectedPaths(new Set());
+    setFollow(false);
+    setScanned(scan.value.folders);
     setFound(untracked);
   };
 
   const selected = found === null ? [] : trackedFoldersFromSelection(found, deselectedPaths);
+  const follows = follow && deselectedPaths.size === 0;
   const addSelected = async () => {
-    const next = appendTrackedFolders(tracked, selected);
+    const next = follows
+      ? trackedFoldersFollowingScan({ tracked, scanned })
+      : appendTrackedFolders(tracked, selected);
     if (next === null) {
       Dialog.alert(
         "Too many repositories",
@@ -219,6 +247,12 @@ export function ProjectRepositoriesSection(props: {
             label="Cancel"
             disabled={isBusy}
             onPress={() => setFound(null)}
+          />
+          <FollowFolderRow
+            value={follows}
+            canFollow={deselectedPaths.size === 0}
+            disabled={isBusy}
+            onValueChange={setFollow}
           />
           <ScannedFolderRows
             folders={found}

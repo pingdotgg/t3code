@@ -32,3 +32,27 @@ export function ScannedFolderRows(props: {
     />
   ));
 }
+
+/** Tracks whatever the scanned folders hold from now on, instead of the list as it is today. */
+export function FollowFolderRow(props: {
+  readonly value: boolean;
+  /** Following covers every repository found, so it needs them all selected. */
+  readonly canFollow: boolean;
+  readonly disabled?: boolean;
+  readonly onValueChange: (follow: boolean) => void;
+}) {
+  return (
+    <ListToggleRow
+      icon="arrow.clockwise"
+      label="Keep following this folder"
+      description={
+        props.canFollow
+          ? "Repositories cloned here later are tracked too"
+          : "Select every repository to follow the folder"
+      }
+      disabled={props.disabled || !props.canFollow}
+      value={props.value}
+      onValueChange={props.onValueChange}
+    />
+  );
+}

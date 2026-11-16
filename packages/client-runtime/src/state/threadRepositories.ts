@@ -425,6 +425,40 @@ export function threadChangedRepositories(
   );
 }
 
+/** A repository whose uncommitted and branch changes a thread can show. */
+export type ThreadGitRepository = Pick<ThreadRepositoryScope, "repositoryPath" | "name" | "cwd">;
+
+/**
+ * Every repository a thread can read Git changes of: the ones it changed first, then the rest of
+ * its task folder's worktrees, or of the project's tracked repositories when it runs in place.
+ */
+export function threadGitRepositories(input: {
+  readonly changed: ReadonlyArray<ThreadGitRepository>;
+  readonly taskFolder: Pick<TaskFolder, "repositories"> | null;
+  /** The project's folders, for a thread in the project folder itself; null otherwise. */
+  readonly folders: ReadonlyArray<Pick<WorkspaceFolder, "path" | "name" | "state">> | null;
+  readonly threadCwd: string | null;
+}): ReadonlyArray<ThreadGitRepository> {
+  const reached: ReadonlyArray<ThreadGitRepository> =
+    input.taskFolder !== null
+      ? input.taskFolder.repositories.map((repository) => ({
+          repositoryPath: repository.repositoryPath,
+          name: repository.name,
+          cwd: repository.worktreePath,
+        }))
+      : (input.folders ?? []).flatMap((folder) =>
+          folder.state === "git" && folder.path !== input.threadCwd
+            ? [{ repositoryPath: folder.path, name: folder.name, cwd: folder.path }]
+            : [],
+        );
+  if (reached.length === 0) return input.changed;
+  const listed = new Set(input.changed.map((repository) => repository.repositoryPath));
+  return [
+    ...input.changed,
+    ...reached.filter((repository) => !listed.has(repository.repositoryPath)),
+  ];
+}
+
 /**
  * A task folder's repositories, each bound to its worktree: changed ones first, then the rest.
  * A changed repository inside one of those worktrees, such as a submodule, follows them.

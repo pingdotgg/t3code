@@ -102,7 +102,8 @@ project folder:
 `T3_WORKTREE_PROJECT_PATH` (where the project folder goes inside it), `T3_WORKTREE_BRANCH`,
 `T3_WORKTREE_BASE`, and `T3_PROJECT_ROOT` set. Every tracked repository it checks out at the same
 relative place becomes the thread's checkout of it. `remove` is optional and runs before T3 Code
-removes whatever is left. The repositories control is ignored for such a project.
+removes whatever is left. The repositories control is ignored for such a project. A project that
+tracks no other repository can declare it too, for example to prepare its submodules.
 
 ## Pin and archive projects
 

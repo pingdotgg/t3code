@@ -46,6 +46,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  followedTrackedFolders,
   inferProjectTitleFromPath,
   isWindowsPlatform,
   trackedFoldersFromSelection,
@@ -89,7 +90,7 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ErrorBanner } from "../../components/ui/ErrorBanner";
-import { ScannedFolderRows, scannedFolderCountLabel } from "./ScannedFolderRows";
+import { FollowFolderRow, ScannedFolderRows, scannedFolderCountLabel } from "./ScannedFolderRows";
 import { SourceControlIcon } from "./SourceControlIcon";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
@@ -1401,6 +1402,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
     readonly folders: ReadonlyArray<WorkspaceScannedFolder>;
   } | null>(null);
   const [deselectedPaths, setDeselectedPaths] = useState<ReadonlySet<string>>(new Set());
+  const [follow, setFollow] = useState(false);
 
   const addProject = async (
     workspaceRoot: string,
@@ -1452,7 +1454,10 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   };
 
   if (environment && found) {
-    const selected = trackedFoldersFromSelection(found.folders, deselectedPaths);
+    const follows = follow && deselectedPaths.size === 0;
+    const selected = follows
+      ? followedTrackedFolders({ scanned: found.folders })
+      : trackedFoldersFromSelection(found.folders, deselectedPaths);
     const selectedFolders = found.folders.filter((folder) => !deselectedPaths.has(folder.path));
     return (
       <AddProjectShell title="Local folder">
@@ -1497,6 +1502,12 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
           }}
         />
         <ListSection>
+          <FollowFolderRow
+            value={follows}
+            canFollow={deselectedPaths.size === 0}
+            disabled={isSubmitting}
+            onValueChange={setFollow}
+          />
           <ScannedFolderRows
             folders={found.folders}
             deselectedPaths={deselectedPaths}

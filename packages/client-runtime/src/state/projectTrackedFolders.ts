@@ -1,4 +1,5 @@
 import {
+  isTrackedFolderRule,
   PROJECT_TRACKED_FOLDERS_MAX,
   type ProjectTrackedFolder,
   type WorkspaceScannedFolder,
@@ -48,4 +49,45 @@ export function appendTrackedFolders(
     next.push(folder);
   }
   return next.length > PROJECT_TRACKED_FOLDERS_MAX ? null : next;
+}
+
+/**
+ * The tracked list that keeps following a scanned folder: one rule per folder the repositories
+ * sit in, so later clones are picked up. Folders a workspace file lists stay named.
+ */
+export function followedTrackedFolders(input: {
+  readonly scanned: ReadonlyArray<WorkspaceScannedFolder>;
+}): ReadonlyArray<ProjectTrackedFolder> {
+  const followed: ProjectTrackedFolder[] = [];
+  const seen = new Set<string>();
+  for (const folder of input.scanned) {
+    const cut = Math.max(folder.path.lastIndexOf("/"), folder.path.lastIndexOf("\\"));
+    const rule = `${folder.path.slice(0, cut + 1)}*`;
+    const entry =
+      folder.source === "child" && cut > 0
+        ? // Named by its last two segments: `src/*` says more than `*`.
+          { path: rule, name: rule.split(/[\\/]/).slice(-2).join("/") }
+        : { path: folder.path, name: folder.name };
+    if (seen.has(entry.path)) continue;
+    seen.add(entry.path);
+    followed.push(entry);
+  }
+  return followed;
+}
+
+/**
+ * A project's tracked list once it follows a scan: the rules that cover what the scan found, and
+ * the folders the scan did not reach. Older rules and the scanned folders' own entries go.
+ */
+export function trackedFoldersFollowingScan(input: {
+  readonly tracked: ReadonlyArray<ProjectTrackedFolder>;
+  readonly scanned: ReadonlyArray<WorkspaceScannedFolder>;
+}): ReadonlyArray<ProjectTrackedFolder> {
+  const scannedPaths = new Set(input.scanned.map((folder) => folder.path));
+  return [
+    ...input.tracked.filter(
+      (folder) => !isTrackedFolderRule(folder.path) && !scannedPaths.has(folder.path),
+    ),
+    ...followedTrackedFolders(input),
+  ];
 }
