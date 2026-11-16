@@ -27,6 +27,25 @@ export function toggleSelection<T>(
   return next;
 }
 
+/** For a host that keeps one reviewer: picking someone takes everyone else off. */
+export function toggleOnlySelection<T>(
+  draft: SelectionDraft<T>,
+  key: string,
+  item: T,
+  hostSelected: boolean,
+  listed: ReadonlyArray<{ readonly key: string; readonly item: T; readonly hostSelected: boolean }>,
+): SelectionDraft<T> {
+  const next = toggleSelection(draft, key, item, hostSelected);
+  if (!isSelected(next, key, hostSelected)) return next;
+  const only = new Map([...next].filter(([other, pick]) => other === key || !pick.selected));
+  for (const other of listed) {
+    if (other.key !== key && other.hostSelected) {
+      only.set(other.key, { item: other.item, selected: false });
+    }
+  }
+  return only;
+}
+
 /**
  * What to send on close, diffed against the host's latest state rather than the state when the
  * pick was made, so a refresh while the picker was open does not resend anything.
