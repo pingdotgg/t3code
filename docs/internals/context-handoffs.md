@@ -47,19 +47,10 @@ again. The pass rolls up a run of four current roots when that run ends before t
 gap, and makes a new leaf only after those runs. A gap keeps the roots on its far side out of
 that run, so the neighbours of a replaced leaf never roll up without the replacement. Rolling
 them up early would summarize more than the broken path, which could then not be rebuilt alone.
-A stretch is skipped after its summary comes back empty or unreadable twice, and a failure counts
-only when another summary succeeds in the same pass. A pass where nothing succeeds may be a model
-outage, so none of its failures count, and the stretches it tried become suspects. Until a pass has
-a success, suspects go after other work and only one is tried, so stretches that fail together
-cannot hold the front of every pass, and an outage that has made every stretch a suspect costs one
-call a pass. After a success, suspects are tried like other work. A suspect counts only a failure
-of its own beside a success, so a suspect the pass never reaches counts nothing. An outage neither
-adds to a stretch's count nor clears it: a stretch that failed once before the outage is skipped by
-its next failure beside a success. A skipped stretch gets no leaf, so it is not a gap: roll-ups
-proceed past it. Its items stay uncovered, and delivery replays them verbatim. Skips are keyed by
-the summary model, so choosing another model tries the stretch again. The per-thread failure record
-is bounded and keeps fewer skips than entries, so a failure still being counted always has room.
-When skips overflow, the oldest fall out and those stretches are tried again.
+A stretch is skipped after two unusable summaries, and a failure counts only when another summary
+succeeds in the same pass, so an outage skips nothing. A skipped stretch gets no leaf, so it is not
+a gap and roll-ups proceed past it; delivery replays its items in full. Skips are keyed by the
+summary model, and turning summaries back on for the project clears them.
 A roll-up offer carries no delivered-knowledge evidence, unlike a leaf offer: the evidence of a few
 hundred items would never fit beside it. Roll-ups are capped by rendered bytes, as delivery
 measures them, so several fit beside the verbatim tail of a 16 KB handoff.
