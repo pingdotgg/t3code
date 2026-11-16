@@ -131,3 +131,16 @@ describe("secretRequestSources", () => {
     ).toBeNull();
   });
 });
+
+describe("secretRequestAnswerInput", () => {
+  it("saves the typed secret exactly, whitespace included", () => {
+    const item = { id: TurnItemId.make("item-1"), threadId: ThreadId.make("thread-1") };
+    for (const secret of ["    ", " pa ss "]) {
+      expect(secretRequestAnswerInput(item, { type: "save", secret })?.answer).toEqual({
+        type: "save",
+        secret,
+      });
+    }
+    expect(secretRequestAnswerInput(item, { type: "save", secret: "" })).toBeNull();
+  });
+});
