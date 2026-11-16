@@ -25,7 +25,7 @@ Open a todolist with one entry per phase before launching anything.
 
 ## Phase B: Fan out
 
-Delegate to all N workers at once (in T3 Code: `delegate_task`) on the chosen model. Brief a worker as read-only when its slice is, which is the common case for coverage and exploration shapes.
+Delegate to all N workers at once (in T3 Code: `delegate_task`) on the chosen model. Give each worker its own output, per `~/.agents/skills/principle-separate-before-serializing-shared-state/SKILL.md`. Brief a worker as read-only when its slice is, which is the common case for coverage and exploration shapes.
 
 When a worker must start from a non-default branch, give it a worktree on that branch (in T3 Code: `isolation: "worktree"`).
 

@@ -14,7 +14,7 @@ Every candidate gets the same prompt, so the prompt is the contract.
 1. State the artifact each candidate is producing.
 2. Derive the rubric, 3-6 concrete gradeable criteria for what success looks like on *this* task. It is the picker's tool in Phase D. Candidates only see the task.
 3. Pick the runners. Default to three: two on your strongest model and one on a different strong model, ideally another provider's, which argues differently. Divergence has to come from the brief, so give each runner a different starting constraint rather than relying on the model to vary. Raise the count only when the arena genuinely covers separate design directions, and say in the report what N you chose and why. N above six is almost never the reason a bakeoff fails.
-4. Give each candidate its own output location (a git worktree where possible, otherwise `/tmp/arena-<slug>/candidate-<n>/`), per the **separate-before-serializing-shared-state** principle skill.
+4. Give each candidate its own output location (a git worktree where possible, otherwise `/tmp/arena-<slug>/candidate-<n>/`), per the **separate-before-serializing-shared-state** principle (`~/.agents/skills/principle-separate-before-serializing-shared-state/SKILL.md`).
 
 ## Phase B: Fan out
 
@@ -34,7 +34,7 @@ Pick the base a future maintainer can extend most easily without breaking invari
 
 ## Phase E: Graft
 
-Walk each losing candidate once more for what is worth porting into the base, usually one or two things per candidate, not most of it. Fold each graft in by hand, per the **redesign-from-first-principles** principle skill, so the result stays coherent under one mental model. Don't paste mechanically.
+Walk each losing candidate once more for what is worth porting into the base, usually one or two things per candidate, not most of it. Fold each graft in by hand, per the **redesign-from-first-principles** principle (`~/.agents/skills/principle-redesign-from-first-principles/SKILL.md`), so the result stays coherent under one mental model. Don't paste mechanically.
 
 If the candidates converge on one shape, that is strong agreement. Note it and ship the consensus shape. No graft is needed. If they wildly diverge, Phase A was under-specified. Reframe and re-run rather than averaging the divergence.
 

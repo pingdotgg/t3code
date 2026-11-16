@@ -6,7 +6,7 @@ paths: ["**/*.ts", "**/*.tsx"]
 
 # TypeScript best practices
 
-Apply the **type-system-discipline** principle skill first.
+Apply the **type-system-discipline** principle (`~/.agents/skills/principle-type-system-discipline/SKILL.md`) first.
 
 | Rule | Summary |
 |------|---------|
@@ -21,7 +21,7 @@ Apply the **type-system-discipline** principle skill first.
 | Type guards | Must verify the claim. A lying guard is worse than `as` because the bug hides behind a name that says it's safe. Name them `isX` or `hasX`. |
 | Exhaustiveness | Inline `const _exhaustive: never = x;` in default arms so the compiler errors when a new variant is added. |
 | `satisfies` over `as` | Validates the value without widening literal types. |
-| Boundary validation | Parse where data crosses in, into a named domain type. `Record<string, unknown>` (however spelled) stops at that parse. Trust types inside. See the **boundary-discipline** principle skill. |
+| Boundary validation | Parse where data crosses in, into a named domain type. `Record<string, unknown>` (however spelled) stops at that parse. Trust types inside. See the **boundary-discipline** principle (`~/.agents/skills/principle-boundary-discipline/SKILL.md`). |
 | Schema-derived types | Reach for `Pick`/`Omit`/`Parameters`/`ReturnType`/`Awaited`/`typeof` before declaring a new interface. |
 | Object args | Pass objects, not positional, so argument order is self-documenting. Skip on hot paths (per-frame render, tokenizers, parsers). |
 | Real tests | Don't mock what you can run. Prefer the framework's real test primitives with leak/disposable checks, and verify UI in a running build. Mock only what you can't run locally. |

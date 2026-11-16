@@ -7,7 +7,7 @@ full license text is kept alongside this file as `LICENSE.pstack`.
 
 ## What was taken
 
-Twenty-three `principle-*` skills, plus `architect`, `arena`, `automate-me`, `benchmark-checklist`,
+Twenty-one `principle-*` skills (twenty-three upstream, two removed after review; see below), plus `architect`, `arena`, `automate-me`, `benchmark-checklist`,
 `blast-radius`, `bro`, `correct`, `create-verification-skill`, `explain-work`, `figure-it-out`, `how`, `interrogate`,
 `maintain-verification-skill`, `no-comments`, `recall`, `reflect`, `show-me-your-work`, `swarm`,
 `technical-writing`, `typescript-best-practices`, `unslop`, `why`, `in-your-own-words`, `sharpen`,
@@ -87,8 +87,21 @@ is all this plugin has. Beyond that:
 - `show-me-your-work`'s transcript audit moved to `~/.claude/projects/<project-slug>/`, and its
   mandatory cross-model review became a reviewer with an assigned skeptic's lens.
 
-- Every vendored skill had `disable-model-invocation` removed. Upstream ships most of them as
-  user-invoked only. Here the agent should reach for them on its own: a principle helps when the
+- The principles were reviewed after the migration. Four stay visible so the agent reaches for
+  them on its own: `test-behavior-not-implementation`, `prove-it-works`, `fix-root-causes`, and
+  `laziness-protocol`. The other seventeen keep upstream's `disable-model-invocation: true`, so they
+  cost nothing in every session's skill list. Skills read them as files instead: every
+  "the **x** principle skill" citation of a hidden principle reads "the **x** principle
+  (`~/.agents/skills/principle-x/SKILL.md`)", a path every provider can open, subagents included.
+  `figure-it-out` reads the matching `principle-*` folders there. Skills in the other groups cite
+  them the same way (`maestro-worker`, `diff-review`, `diagnosing-bugs`, `tdd`, `implement`,
+  `codebase-design`, `retro`, `to-spec`), as do `architect`, `benchmark-checklist`, and `swarm` here.
+- `principle-exhaust-the-design-space` was deleted: its body was one fragment, and `arena`,
+  `architect`, and `codebase-design/DESIGN-IT-TWICE.md` carry the procedure. `architect` now says
+  "design-it-twice". `principle-migrate-callers-then-delete-legacy-apis` was deleted and its one
+  rule folded into `principle-outcome-oriented-execution` as a guardrail. Skip both when syncing.
+- Every other vendored skill had `disable-model-invocation` removed. Upstream ships most of them as
+  user-invoked only. Here the agent should reach for them on its own: a skill helps when the
   situation it describes comes up, not when someone remembers to type its name, and the decision
   trail from `show-me-your-work` is most valuable on exactly the long unattended runs where nobody
   is around to ask for it. `automate-me` still tells the mode skills it writes to set the flag,

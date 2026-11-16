@@ -15,9 +15,9 @@ You are a maestro worker. Your task names the issue `<n>` and the repo. You own 
 ## Implement
 
 5. Implement the issue.
-6. Verify, in order:
+6. Verify against the real artifact, per the `prove-it-works` skill, in order:
    1. The project's lint and tests, until both pass.
-   2. A simplify pass over your diff: reuse, simplification, dead code. Do it yourself or delegate it to a subagent.
+   2. A simplify pass over your diff: reuse, simplification, dead code, per the `laziness-protocol` skill and the subtract-before-you-add principle (`~/.agents/skills/principle-subtract-before-you-add/SKILL.md`). Do it yourself or delegate it to a subagent.
    3. Judge every test you added or changed by the `principle-test-behavior-not-implementation` skill. Rewrite or delete the ones that fail it.
    4. Delegate to a subagent (in T3 Code: `delegate_task`, `role: "review"`) that follows the `diff-review` skill against `origin/main`. Fix what it finds.
    5. Lint and tests again.

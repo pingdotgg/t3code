@@ -27,15 +27,17 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 ## Phase B: Sketch
 
+Sketch per `~/.agents/skills/principle-model-the-domain/SKILL.md` and `~/.agents/skills/principle-type-system-discipline/SKILL.md`.
+
 Delegate to three design runners at once (in T3 Code: `delegate_task`), each with `references/runner-prompt.md` as its prompt plus the Phase A grounding artifacts. Each produces a design package shaped per `references/rationale-template.md`: the caller's usage written first, then the type sketch, function signatures, module map, and prose rationale derived from it.
 
 - Runners are read-only on the codebase. Each writes only its own design package.
 - Model: your strongest, or another provider's strong model for one runner when you want a reader that argues differently
-- Each runner writes to its own path (`/tmp/architect-<slug>/candidate-<n>/`). Three runners writing to one path is shared mutable state and fails the **separate-before-serializing-shared-state** principle skill.
+- Each runner writes to its own path (`/tmp/architect-<slug>/candidate-<n>/`). Three runners writing to one path is shared mutable state and fails the **separate-before-serializing-shared-state** principle (`~/.agents/skills/principle-separate-before-serializing-shared-state/SKILL.md`).
 
 Three is the number because divergence comes from the brief, not the count. Give each runner a different starting constraint so they cannot converge by accident: one optimizing for the smallest public surface, one for the data model first, one for the change that touches the fewest existing callers.
 
-Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
+Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is design-it-twice made concrete. Whole-shape alternatives, not point fixes inside one shape.
 
 Screen every candidate against [`references/design-red-flags.md`](references/design-red-flags.md) before synthesis. Assume the next contributor is an agent that sees only the files it opened, copies the nearest example, and takes the shortest path that compiles. Prefer the design where a change that looks right from one file is right for the whole repo.
 
@@ -49,7 +51,7 @@ Default: proceed directly to implementation with the synthesized design. No huma
 
 Opt in to a checkpoint when the invoker explicitly asks: "/architect with checkpoint," "stop and show me before implementing," or similar. Then surface the synthesized design and pause for sign-off.
 
-The synthesis can ship as its own commit either way, as the "scaffold first" mode of the **foundational-thinking** principle skill. Planned and scoped breakage during fill-in is fine, per the **outcome-oriented-execution** principle skill. For adversarial pressure on the design before implementing, run the **interrogate** skill on the synthesized sketch.
+The synthesis can ship as its own commit either way, as the "scaffold first" mode of the **foundational-thinking** principle (`~/.agents/skills/principle-foundational-thinking/SKILL.md`). Planned and scoped breakage during fill-in is fine, per the **outcome-oriented-execution** principle (`~/.agents/skills/principle-outcome-oriented-execution/SKILL.md`). For adversarial pressure on the design before implementing, run the **interrogate** skill on the synthesized sketch.
 
 If the human pushes back on the shape (in a checkpoint or after the fact), treat that as Phase A evidence. Re-ground and re-run Phase B before writing more code.
 
@@ -59,7 +61,7 @@ Replace `not implemented` bodies with code, pseudocode with logic. The synthesiz
 
 ## Phase E: Scrap when the architecture is wrong
 
-If implementation keeps producing friction the sketch can't absorb, throw the sketch out. Don't bolt fixes onto a wrong design, per the **redesign-from-first-principles** and **fix-root-causes** principle skills.
+If implementation keeps producing friction the sketch can't absorb, throw the sketch out. Don't bolt fixes onto a wrong design, per the **redesign-from-first-principles** and **fix-root-causes** principle skills (the former at `~/.agents/skills/principle-redesign-from-first-principles/SKILL.md`).
 
 The signal is a *pattern*, not single instances. Tells:
 
@@ -76,7 +78,7 @@ When you scrap:
 
 1. Trace what's been built.
 2. Redesign as if the new constraints had been day-one assumptions, per redesign-from-first-principles.
-3. Subtract before adding, per the **subtract-before-you-add** principle skill. The new sketch should be smaller than the old one before it grows.
+3. Subtract before adding, per the **subtract-before-you-add** principle (`~/.agents/skills/principle-subtract-before-you-add/SKILL.md`). The new sketch should be smaller than the old one before it grows.
 4. Return to Phase B and re-run the design runners.
 
 ## Outputs

@@ -89,7 +89,7 @@ Do not proceed until you have reproduced **and** minimised.
 
 Generate **3–5 ranked hypotheses** before testing any of them. Single-hypothesis generation anchors on the first plausible idea.
 
-Each hypothesis must be **falsifiable**: state the prediction it makes.
+Each hypothesis must be **falsifiable**: state the prediction it makes. When two fixes on the same premise have already failed, test the premise first (`~/.agents/skills/principle-attack-the-premise/SKILL.md`).
 
 > Format: "If <X> is the cause, then <changing Y> will make the bug disappear / <changing Z> will make it worse."
 
@@ -112,6 +112,8 @@ Tool preference:
 **Perf branch.** For performance regressions, logs are usually wrong. Instead: establish a baseline measurement (timing harness, `performance.now()`, profiler, query plan), then bisect. Measure first, fix second.
 
 ## Phase 5: Fix + regression test
+
+Fix the first place the system went wrong, per the `principle-fix-root-causes` skill.
 
 Write the regression test **before the fix**, but only if there is a **correct seam** for it.
 

@@ -11,7 +11,7 @@ When exploring the codebase, read `GLOSSARY.md` (if it exists) so test names and
 
 ## What a good test is
 
-Tests verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't. A good test reads like a specification: "user can checkout with valid cart" tells you exactly what capability exists, and it survives refactors because it doesn't care about internal structure.
+Tests verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't. The `principle-test-behavior-not-implementation` skill is the rule; this section shows it. A good test reads like a specification: "user can checkout with valid cart" tells you exactly what capability exists, and it survives refactors because it doesn't care about internal structure.
 
 See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
 
@@ -32,6 +32,8 @@ When the shape of that interface is itself in question (how deep the module is, 
 - **Horizontal slicing**: writing all tests first, then all implementation. Bulk tests verify _imagined_ behavior: you test the _shape_ of things rather than user-facing behavior, the tests go insensitive to real changes, and you commit to test structure before understanding the implementation. Work in **vertical slices** instead: one test → one implementation → repeat, each test a **tracer bullet** that responds to what the last cycle taught you.
 
 ## Rules of the loop
+
+Order the loop's steps and commits per `~/.agents/skills/principle-sequence-verifiable-units/SKILL.md`.
 
 - **Red before green.** Write the failing test first, then only enough code to pass it. Don't anticipate future tests or add speculative features.
 - **One slice at a time.** One seam, one test, one minimal implementation per cycle.

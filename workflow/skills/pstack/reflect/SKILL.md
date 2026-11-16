@@ -31,7 +31,7 @@ Delegate to one subagent on your strongest model. It spot-verifies citations thr
 
 ## 4. Structural enforcement check
 
-Move any Accepted item that a lint rule, script, metadata flag, or runtime check would enforce more reliably to Backlog. See the **encode-lessons-in-structure** principle skill.
+Move any Accepted item that a lint rule, script, metadata flag, or runtime check would enforce more reliably to Backlog. See the **encode-lessons-in-structure** principle (`~/.agents/skills/principle-encode-lessons-in-structure/SKILL.md`).
 
 ## 5. Apply
 
