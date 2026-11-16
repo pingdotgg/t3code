@@ -247,17 +247,20 @@ export function subagentResultForRun(
     failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
       ? (message?.text ?? turnItem.text)
       : undefined;
+  const report = message?.text ?? turnItem?.text;
   const text =
     (failure?.type === "error"
       ? reportBeforeFailure === undefined
         ? failure.failure.message
         : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
       : undefined) ??
-    message?.text ??
-    turnItem?.text ??
     (run.status === "completed"
-      ? withStopNotice(projection, run, "Child task completed without an assistant result.")
-      : `Child task ended with status ${run.status}.`);
+      ? withStopNotice(
+          projection,
+          run,
+          report ?? "Child task completed without an assistant result.",
+        )
+      : (report ?? `Child task ended with status ${run.status}.`));
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,
