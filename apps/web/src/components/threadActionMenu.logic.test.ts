@@ -13,7 +13,6 @@ const baseState: ThreadActionMenuState = {
   canSnoozeNow: true,
   isRegeneratingTitle: false,
   isRunning: false,
-  isWorking: false,
   supports: {
     settlement: true,
     autoSettleOptOut: true,
@@ -70,10 +69,8 @@ describe("buildThreadActionMenuItems", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
       isRunning: true,
-      isWorking: true,
       canTurnIntoProject: true,
     });
-    expect(items.some((item) => item.id === "settle")).toBe(false);
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });

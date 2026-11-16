@@ -297,16 +297,6 @@ describe("resolveThreadListV2SwipeActions", () => {
       }).secondary,
     ).toBe("snooze");
 
-    expect(
-      resolveThreadListV2SwipeActions({
-        variant: "card",
-        settlementSupported: true,
-        snoozeSupported: true,
-        snoozable: true,
-        working: true,
-      }),
-    ).toEqual({ primary: null, secondary: "snooze" });
-
     const layout = buildThreadListV2Items({
       threads: [{ ...thread, snoozedAt: NOW, snoozedUntil: "2026-06-03T00:00:00.000Z" }],
       environmentId: null,

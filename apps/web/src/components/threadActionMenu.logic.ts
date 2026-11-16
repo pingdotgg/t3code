@@ -111,7 +111,6 @@ export interface ThreadActionMenuState {
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
-  readonly isWorking: boolean;
   readonly supports: {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
@@ -166,7 +165,7 @@ export function buildThreadActionMenuItems(
             : { id: "pin" as const, label: resolve(msg("Pin thread")), icon: "pin" },
         ]
       : []),
-    ...(state.supports.settlement && (state.isSettled || !state.isWorking)
+    ...(state.supports.settlement
       ? [
           state.isSettled
             ? {
