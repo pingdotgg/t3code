@@ -978,7 +978,10 @@ function threadDetail(
   nowMs: number,
   firstPage: boolean,
 ): OrchestratorMcpThreadDetail {
-  const latest = ThreadManagementService.latestRun(projection);
+  // A queued run held after a failure waits for Resume; the failed run stays latest, as in thread lists.
+  const latest = ThreadManagementService.latestRun({
+    runs: projection.runs.filter((run) => !(run.status === "queued" && run.queueHeld === true)),
+  });
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
     threadId: projection.thread.id,
