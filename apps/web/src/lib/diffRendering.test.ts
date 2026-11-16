@@ -272,9 +272,11 @@ describe("getRenderablePatch", () => {
     if (reparsed?.kind !== "files") throw new Error("Expected a parsed patch.");
     expect(reparsed.files[0]?.additionLines[1]).toBe(clampedLine);
 
-    const ignoringWhitespace = getRenderablePatch(patch, "review", { ignoreWhitespace: true });
+    // Only whitespace past the cut differs; clamping first would show it as changed.
+    const spaced = patch.replace(`-${long}a`, `-${long} b`);
+    const ignoringWhitespace = getRenderablePatch(spaced, "review", { ignoreWhitespace: true });
     if (ignoringWhitespace?.kind !== "files") throw new Error("Expected a parsed patch.");
-    expect(getDiffLineStat(ignoringWhitespace.files)).toEqual({ additions: 1, deletions: 1 });
+    expect(getDiffLineStat(ignoringWhitespace.files)).toEqual({ additions: 0, deletions: 0 });
   });
 
   it("caches patches that differ only in trailing whitespace separately", () => {
