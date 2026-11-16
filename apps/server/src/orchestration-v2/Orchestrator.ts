@@ -15704,18 +15704,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* messageIntake.withLock(
         message.threadId,
         // Outside the thread lock: the held text commits through the run's provider ingestion.
-        runExecution
-          .flushHeldAssistantText(message.threadId)
-          .pipe(
-            Effect.andThen(
-              mayStartSubagentFollowup(message)
-                ? withSubagentParentLock(message.threadId, dispatch)
-                : dispatch,
-            ),
-          ),
+        runExecution.releaseHeldAssistantText(
+          message.threadId,
+          mayStartSubagentFollowup(message)
+            ? withSubagentParentLock(message.threadId, dispatch)
+            : dispatch,
+        ),
       );
     if (command.type === "queued-message.promote-to-steer")
-      yield* runExecution.flushHeldAssistantText(command.threadId);
+      return yield* runExecution.releaseHeldAssistantText(command.threadId, dispatch);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)

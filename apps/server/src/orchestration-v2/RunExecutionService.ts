@@ -686,10 +686,14 @@ export interface RunExecutionServiceV2Shape {
    */
   readonly forkBaseline: (input: RunBaselineInput) => Effect.Effect<Effect.Effect<void>>;
   /**
-   * Commits the paragraph-mode text the thread's runs hold back. Their timeline positions are
-   * already reserved, so a message stored first would see that text appear above it later.
+   * Runs `effect` after committing the paragraph-mode text the thread's runs hold back, and keeps
+   * them from holding any more until it ends. Held text already has its timeline position, so a
+   * message stored meanwhile would otherwise see that text appear above it later.
    */
-  readonly flushHeldAssistantText: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly releaseHeldAssistantText: <A, E, R>(
+    threadId: ThreadId,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
 }
 
 export class RunExecutionServiceV2 extends Context.Service<
@@ -725,6 +729,7 @@ export const layer: Layer.Layer<
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const heldTextFlushes = new Map<ThreadId, Set<Effect.Effect<void>>>();
+    const heldTextReleases = new Map<ThreadId, number>();
 
     const writeFinalRunEvents = Effect.fn("RunExecutionService.writeFinalRunEvents")(
       function* (input: {
@@ -1076,11 +1081,27 @@ export const layer: Layer.Layer<
     });
 
     return RunExecutionServiceV2.of({
-      flushHeldAssistantText: Effect.fn("RunExecutionService.flushHeldAssistantText")(
-        function* (threadId) {
-          for (const flush of heldTextFlushes.get(threadId) ?? []) yield* flush;
-        },
-      ),
+      releaseHeldAssistantText: (threadId, effect) =>
+        Effect.acquireUseRelease(
+          // Ingestion steps that start after this deliver instead of holding; earlier ones finish
+          // before the flush, which is queued behind them.
+          Effect.sync(() =>
+            heldTextReleases.set(threadId, (heldTextReleases.get(threadId) ?? 0) + 1),
+          ),
+          () =>
+            Effect.gen(function* () {
+              for (const flush of heldTextFlushes.get(threadId) ?? []) yield* flush;
+            }).pipe(
+              Effect.withSpan("RunExecutionService.releaseHeldAssistantText"),
+              Effect.andThen(effect),
+            ),
+          () =>
+            Effect.sync(() => {
+              const count = (heldTextReleases.get(threadId) ?? 1) - 1;
+              if (count === 0) heldTextReleases.delete(threadId);
+              else heldTextReleases.set(threadId, count);
+            }),
+        ),
       forkBaseline: (input) =>
         captureRunBaseline(input).pipe(
           Effect.forkChild({ startImmediately: true }),
@@ -1908,6 +1929,7 @@ export const layer: Layer.Layer<
           const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
+            heldTextReleases.has(input.run.threadId),
           );
           const startedRootTurn =
             event.type === "provider_turn.updated" &&

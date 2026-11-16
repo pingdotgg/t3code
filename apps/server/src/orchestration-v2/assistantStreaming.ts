@@ -170,9 +170,11 @@ export function makeAssistantStreamingFilter(
       nextDueAt = value.dueAt;
   };
   return {
+    /** `release` delivers a paragraph-mode snapshot whole instead of holding any of it back. */
     filter(
       event: ProviderAdapter.ProviderAdapterV2Event,
       now: number,
+      release = false,
     ): ProviderAdapter.ProviderAdapterV2Event | null {
       if (
         event.type === "node.updated" &&
@@ -189,6 +191,11 @@ export function makeAssistantStreamingFilter(
       }
       if (mode === "turn") return null;
       const previous = tracks.get(key);
+      if (release) {
+        const scan = previous?.scan ?? EMPTY_SCAN;
+        track(key, { text: message.text, at: now, held: null, dueAt: now, scan });
+        return event;
+      }
       const delivered = previous?.text ?? "";
       const hold = (scan = previous?.scan ?? EMPTY_SCAN) => {
         track(key, {
