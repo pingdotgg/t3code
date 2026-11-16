@@ -172,6 +172,26 @@ impl EngineHost for Host {
         })
     }
 
+    fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> BoxFuture<'_, ()> {
+        let files = self.files.clone();
+        Box::pin(async move {
+            let Some(files) = files else {
+                return;
+            };
+            let result = tokio::task::spawn_blocking(move || {
+                for (owner, id) in ids {
+                    if let Err(error) = conn_files::html::cleanup(&files, &owner, &id) {
+                        eprintln!("HTML attachment cleanup: {error}");
+                    }
+                }
+            })
+            .await;
+            if let Err(error) = result {
+                eprintln!("HTML attachment cleanup: {error}");
+            }
+        })
+    }
+
     fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
         match reason {
             ThreadClose::Settled => self.terminals.close_on_settle(thread_id),

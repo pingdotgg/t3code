@@ -167,3 +167,42 @@ fn reads_html_documents_only_and_refuses_internal_links_and_hard_links() {
         assert!(html::read_source(&files, &sym.to_string_lossy()).is_err());
     }
 }
+
+#[test]
+fn publication_bounds_titles_for_direct_callers() {
+    let tmp = Scratch::new();
+    let files = Files::open(&tmp.0).unwrap();
+    let limits: serde_json::Value =
+        serde_json::from_str(include_str!("../src/html-bootstrap.json")).unwrap();
+    let max = limits["maxTitleLength"].as_u64().unwrap() as usize;
+    let title = format!("  {}extra  ", "é😀a".repeat(max));
+    let page = html::publish(&files, "title", "<p>Page</p>", &title, 100).unwrap();
+    assert_eq!(page.title.encode_utf16().count(), max);
+    assert_eq!(
+        page.title,
+        String::from_utf16_lossy(&title.trim().encode_utf16().take(max).collect::<Vec<_>>())
+    );
+}
+
+#[test]
+fn cleanup_deletes_only_the_released_owners_html_page() {
+    let tmp = Scratch::new();
+    let files = Files::open(&tmp.0).unwrap();
+    let own = html::publish(&files, "owner", "<p>One</p>", "One", 100).unwrap();
+    let other = html::publish(&files, "other", "<p>Two</p>", "Two", 100).unwrap();
+    html::cleanup(&files, "other", &own.attachment_id).unwrap();
+    assert!(files.attachments.resolve(&own.attachment_id).is_some());
+    html::cleanup(&files, "owner", &own.attachment_id).unwrap();
+    html::cleanup(&files, "owner", &own.attachment_id).unwrap();
+    assert!(files.attachments.resolve(&own.attachment_id).is_none());
+    assert!(files.attachments.resolve(&other.attachment_id).is_some());
+    let image_id = "owner-00000000-0000-4000-8000-000000000001";
+    fs::write(
+        tmp.0.join("attachments").join(format!("{image_id}.png")),
+        b"image",
+    )
+    .unwrap();
+    html::cleanup(&files, "owner", image_id).unwrap();
+    html::cleanup(&files, "owner", "../../outside-html").unwrap();
+    assert!(files.attachments.resolve(image_id).is_some());
+}

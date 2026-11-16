@@ -39,6 +39,7 @@ pub mod fake;
 mod families;
 mod fork;
 mod fresh;
+mod html_cleanup;
 mod output;
 mod projects;
 mod pull_requests;
@@ -183,6 +184,11 @@ pub trait EngineHost: Send + Sync {
     /// names no branch records it. The default knows none.
     fn current_branch(&self, _cwd: &str) -> BoxFuture<'_, Option<String>> {
         Box::pin(std::future::ready(None))
+    }
+
+    /// Removes HTML pages whose owning thread and visible forks no longer use them.
+    fn cleanup_html_attachments(&self, _ids: Vec<(String, String)>) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
     }
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
