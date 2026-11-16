@@ -142,3 +142,34 @@ it("leaves out Registry agents that T3 Code supports as their own providers", as
   expect(page.getByRole("button", { name: "Add Gemini CLI" }).query()).not.toBeNull();
   expect(page.getByRole("button", { name: "Add Codex" }).query()).toBeNull();
 });
+
+it("loads registry icons only from the official CDN before an agent is added", async () => {
+  setup();
+  state.result = {
+    agents: [
+      {
+        ...gemini,
+        id: "icon-boundary-test",
+        name: "Icon boundary test",
+        icon: "https://untrusted.example/track.svg",
+      },
+    ],
+  };
+  using fetchIcon = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    new Response('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>', {
+      headers: { "content-type": "image/svg+xml" },
+    }),
+  );
+  await using _screen = await render(<Step />);
+
+  await vi.waitFor(() => {
+    expect(fetchIcon).toHaveBeenCalledWith(
+      "https://cdn.agentclientprotocol.com/registry/v1/latest/icon-boundary-test.svg",
+      expect.anything(),
+    );
+  });
+  expect(fetchIcon.mock.calls.some(([url]) => String(url).includes("untrusted.example"))).toBe(
+    false,
+  );
+  expect(state.prepare).not.toHaveBeenCalled();
+});
