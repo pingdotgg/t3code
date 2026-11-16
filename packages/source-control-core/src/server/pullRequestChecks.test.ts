@@ -243,6 +243,18 @@ describe("check log excerpts", () => {
       lines: 7,
       truncated: true,
     },
+    {
+      chunks: [
+        [
+          "##[error]TypeError: boom",
+          "    at Object.<anonymous> (/home/runner/work/app/node_modules/foo/index.js:1:1)",
+          "    at Object.<anonymous> (/home/runner/work/app/src/build.js:2:2)",
+        ].join("\n"),
+      ],
+      text: "##[error]TypeError: boom\n    at Object.<anonymous> (/home/runner/work/app/src/build.js:2:2)",
+      lines: 3,
+      truncated: true,
+    },
   ])(
     "strips formatting and counts lines across chunks %#",
     ({ chunks, text, lines, truncated = false }) => {

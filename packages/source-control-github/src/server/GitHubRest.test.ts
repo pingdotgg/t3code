@@ -758,6 +758,7 @@ describe("GitHub check failures", () => {
         attempt: 1,
         failedSteps: ["Run lint"],
         annotations: [
+          { path: ".github", startLine: 0, message: "Process completed with exit code 137." },
           { path: "a.ts", startLine: 4, message: "bad code" },
           { path: "budget.json", startLine: 0, message: "grew" },
         ],
