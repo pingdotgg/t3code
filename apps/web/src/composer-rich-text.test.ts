@@ -76,6 +76,7 @@ describe("composer rich text markdown", () => {
       ["_see src/_a.ts_.", "see src/_a.ts", "italic", "."],
       ["_notes.md_ here", "notes.md", "italic", " here"],
       ["_файл_один.py_ now", "файл_один.py", "italic", " now"],
+      ["_my_file.py is broken_ now", "my_file.py is broken", "italic", " now"],
       ["_e.g._ this", "e.g.", "italic", " this"],
       ["_and_/or", "and", "italic", "/or"],
     ] as const) {
@@ -95,10 +96,6 @@ describe("composer rich text markdown", () => {
         { text: second, marks: [mark] },
       ]);
     }
-    expect(parseInlineMarkdown("edit _файл_один.py then _word_")).toEqual([
-      { text: "edit _файл_один.py then ", marks: [] },
-      { text: "word", marks: ["italic"] },
-    ]);
     expect(parseInlineMarkdown("and/_or_")).toEqual([
       { text: "and/", marks: [] },
       { text: "or", marks: ["italic"] },

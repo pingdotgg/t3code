@@ -44,7 +44,6 @@ function literalUnderscoreRuns(text: string): Set<number> {
     let bodyEnd = token.length;
     while (bodyEnd > 0 && ".:?".includes(token[bodyEnd - 1]!)) bodyEnd -= 1;
     if (EMPHASIS_ALTERNATIVES.test(token.slice(0, bodyEnd))) continue;
-    const tokenEnd = bodyEnd;
     while (bodyEnd > 0 && token[bodyEnd - 1] === "_") bodyEnd -= 1;
     const body = token.slice(0, bodyEnd);
     // A slash alone is prose (`and/_or_`); a path also has a dot, a scheme or port, or a root.
@@ -52,7 +51,6 @@ function literalUnderscoreRuns(text: string): Set<number> {
       ? /^~?\/|[.:]/.test(body)
       : FILE_EXTENSION.test(body.slice(body.lastIndexOf(".")));
     if (!isPath) continue;
-    let hasInnerRun = false;
     let closesInside = false;
     let start = body.indexOf("_");
     while (start !== -1) {
@@ -60,15 +58,12 @@ function literalUnderscoreRuns(text: string): Set<number> {
       while (body[end] === "_") end += 1;
       if (start > 0) {
         literal.add(match.index + start);
-        hasInnerRun = true;
         closesInside ||= !WORD_CHARACTER_AFTER.test(body.slice(end, end + 2));
       }
       start = body.indexOf("_", end);
     }
-    // A leading run pairs with a run inside the name (`__init__.py`) or one wrapping it (`_a_b.py_`),
-    // never with emphasis later in the line.
-    const wrapped = bodyEnd < tokenEnd;
-    if (body[0] === "_" && hasInnerRun && (closesInside || !wrapped)) literal.add(match.index);
+    // A leading run could only pair with a run inside the name, as in `__init__.py`.
+    if (closesInside && body[0] === "_") literal.add(match.index);
   }
   return literal;
 }
