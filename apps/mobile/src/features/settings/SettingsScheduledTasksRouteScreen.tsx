@@ -1286,7 +1286,10 @@ function TaskForm({
                 verbatim
                 hint={cronError === null ? CRON_HELP : `Error: ${cronError}`}
                 onChange={(cronExpression) =>
-                  setDraft({ ...draft, schedule: { ...draft.schedule, cronExpression } })
+                  setDraft((current) => ({
+                    ...current,
+                    schedule: { ...current.schedule, cronExpression },
+                  }))
                 }
               />
               <Text
