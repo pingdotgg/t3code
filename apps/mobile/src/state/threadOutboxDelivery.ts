@@ -219,11 +219,38 @@ function settingsCommandId(message: QueuedThreadMessage, setting: string): Comma
 /** Outbox or draft storage refused a step; the step decides what that means for the message. */
 class ThreadOutboxStorageError extends Schema.TaggedError<ThreadOutboxStorageError>()(
   "ThreadOutboxStorageError",
-  { cause: Schema.Defect() },
-) {}
+  {
+    operation: Schema.Literals([
+      "forget-sign-out-snapshot",
+      "remove-delivered",
+      "remove-acknowledged",
+      "remove-unsendable",
+      "hand-back-to-draft",
+      "restore-to-draft",
+      "undo-draft-merge",
+      "load-drafts",
+      "flush-drafts",
+      "remove-recovered",
+      "remove-restored",
+    ]),
+    messageId: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Queued message ${this.messageId} could not ${this.operation.replaceAll("-", " ")}.`;
+  }
+}
 
-const storage = <A>(write: () => Promise<A>) =>
-  Effect.tryPromise({ try: write, catch: (cause) => new ThreadOutboxStorageError({ cause }) });
+const storage = <A>(
+  operation: ThreadOutboxStorageError["operation"],
+  messageId: MessageId,
+  write: () => Promise<A>,
+) =>
+  Effect.tryPromise({
+    try: write,
+    catch: (cause) => new ThreadOutboxStorageError({ operation, messageId, cause }),
+  });
 
 /** The head was not handled; back off and try it again. */
 export class DeliveryRetry extends Schema.TaggedError<DeliveryRetry>()("DeliveryRetry", {}) {}
@@ -290,7 +317,9 @@ function isQueuedMessagePayloadCurrent(
 }
 
 const forgetCloudQueuedMessage = (queuedMessage: QueuedThreadMessage) =>
-  storage(() => removeDeliveredCloudQueuedMessage(queuedMessage)).pipe(
+  storage("forget-sign-out-snapshot", queuedMessage.messageId, () =>
+    removeDeliveredCloudQueuedMessage(queuedMessage),
+  ).pipe(
     Effect.catch((error) =>
       Effect.logWarning("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,
@@ -314,7 +343,7 @@ export const completeQueuedMessageDelivery = Effect.fn("ThreadOutbox.completeDel
   retainAcknowledgedThreadMessage(
     sequence === undefined ? queuedMessage : { ...queuedMessage, sequence },
   );
-  const removed = yield* storage(() =>
+  const removed = yield* storage("remove-delivered", queuedMessage.messageId, () =>
     removeThreadOutboxMessage(
       queuedMessage,
       deliveryRevision,
@@ -345,7 +374,9 @@ export const removeAcknowledgedExistingThreadMessage = Effect.fn(
   "ThreadOutbox.removeAcknowledgedMessage",
 )(function* (queuedMessage: QueuedThreadMessage, acknowledgedMessageIds: Set<MessageId>) {
   yield* forgetCloudQueuedMessage(queuedMessage);
-  const removed = yield* storage(() => removeThreadOutboxMessage(queuedMessage)).pipe(
+  const removed = yield* storage("remove-acknowledged", queuedMessage.messageId, () =>
+    removeThreadOutboxMessage(queuedMessage),
+  ).pipe(
     Effect.catch((error) =>
       Effect.logWarning("[thread-outbox] failed to remove acknowledged queued message", {
         environmentId: queuedMessage.environmentId,
@@ -372,7 +403,7 @@ export const recoverEditedCreationAfterDelivery = Effect.fn("ThreadOutbox.recove
     const draftKey = scopedThreadKey(kept.environmentId, kept.threadId);
     const handedBack = yield* Effect.gen(function* () {
       // Merge before removal to retain file ownership; allow overflow and let send guards require trimming.
-      yield* storage(() =>
+      yield* storage("hand-back-to-draft", kept.messageId, () =>
         mergeComposerDraftContent(draftKey, {
           text: kept.text,
           context: kept.context,
@@ -395,7 +426,7 @@ export const recoverEditedCreationAfterDelivery = Effect.fn("ThreadOutbox.recove
         ...(kept.interactionMode !== undefined ? { interactionMode: kept.interactionMode } : {}),
       });
       // Flush before removal: append only schedules persistence, leaving the queue as the sole durable copy.
-      yield* storage(() => flushComposerDrafts());
+      yield* storage("flush-drafts", kept.messageId, () => flushComposerDrafts());
       return "handed-back" as const;
     }).pipe(
       Effect.catch((error) =>
@@ -408,7 +439,7 @@ export const recoverEditedCreationAfterDelivery = Effect.fn("ThreadOutbox.recove
     if (handedBack === "edited") return;
     if (handedBack !== "handed-back") return yield* retryDelivery;
     if (isEditingQueuedMessage(kept.messageId)) return;
-    const removed = yield* storage(() =>
+    const removed = yield* storage("remove-recovered", kept.messageId, () =>
       removeThreadOutboxMessage(kept, keptRevision, () => !isEditingQueuedMessage(kept.messageId)),
     ).pipe(
       Effect.catch((error) =>
@@ -435,13 +466,15 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
     let rollback: { readonly snapshot: ComposerDraft; readonly merged: ComposerDraft } | null =
       null;
     const undo = (snapshot: ComposerDraft, merged: ComposerDraft) =>
-      storage(() => undoComposerDraftMerge(draftKey, snapshot, merged));
+      storage("undo-draft-merge", queuedMessage.messageId, () =>
+        undoComposerDraftMerge(draftKey, snapshot, merged),
+      );
     return yield* Effect.gen(function* () {
       if (editing() || !(yield* confirmQueued(queuedMessage)) || editing()) {
         return "deferred" as const;
       }
       const revision = threadOutboxRevision(queuedMessage.messageId);
-      yield* storage(() => waitForComposerDraftsLoaded());
+      yield* storage("load-drafts", queuedMessage.messageId, () => waitForComposerDraftsLoaded());
       if (editing()) return "deferred" as const;
       const originalDraft = getComposerDraftSnapshot(draftKey);
       const existingAttachmentIds = new Set(
@@ -469,7 +502,7 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       }
       stampRecoveryDraftProject(queuedMessage, draftKey);
       // The merge publishes even when persisting it fails, so the rollback is captured either way.
-      yield* storage(() =>
+      yield* storage("restore-to-draft", queuedMessage.messageId, () =>
         mergeComposerDraftContent(draftKey, {
           text: queuedMessage.text,
           context: queuedMessage.context,
@@ -506,11 +539,11 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
       });
       const restoredDraft = getComposerDraftSnapshot(draftKey);
       rollback = { snapshot: originalDraft, merged: restoredDraft };
-      yield* storage(() => flushComposerDrafts());
+      yield* storage("flush-drafts", queuedMessage.messageId, () => flushComposerDrafts());
       if (editing() || !(yield* confirmQueued(queuedMessage)) || editing()) {
         return yield* withdraw(restoredDraft);
       }
-      const removed = yield* storage(() =>
+      const removed = yield* storage("remove-restored", queuedMessage.messageId, () =>
         removeThreadOutboxMessage(queuedMessage, revision, () => !editing()),
       );
       if (!removed) return yield* withdraw(restoredDraft);
@@ -1332,7 +1365,9 @@ export function createThreadOutboxDelivery(): {
     }
 
     const removeQueuedMessage = (warning: string) =>
-      storage(() => removeThreadOutboxMessage(nextQueuedMessage)).pipe(
+      storage("remove-unsendable", messageId, () =>
+        removeThreadOutboxMessage(nextQueuedMessage),
+      ).pipe(
         Effect.catch((error) =>
           Effect.logWarning(warning, {
             environmentId: nextQueuedMessage.environmentId,
