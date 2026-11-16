@@ -589,7 +589,9 @@
   },
   "queuedRuns": {
     "count": "{{count}} queued",
-    "sentBy": "Sent by T3 Code"
+    "sentBy": "Sent by T3 Code",
+    "count_one": "{{count}} queued",
+    "count_other": "{{count}} queued"
   },
   "relations": {
     "contextTransfer": "Context transfer",
@@ -617,7 +619,9 @@
     "stopWorkflowFailed": "Could not stop workflow",
     "subagent": "Subagent",
     "showMore": "Show {{count}} more",
-    "runsOn": "on {{label}}"
+    "runsOn": "on {{label}}",
+    "showMore_one": "Show {{count}} more",
+    "showMore_other": "Show {{count}} more"
   },
   "secretRequest": {
     "decline": "Decline",
