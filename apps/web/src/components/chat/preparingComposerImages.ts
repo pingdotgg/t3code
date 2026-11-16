@@ -107,10 +107,15 @@ export function useSubmitAfterPreparingImages(targetKey: string) {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends only after the render where the compressed images joined the draft
   useEffect(() => {
     const pending = pendingRef.current;
-    if (!pending || preparing.length > 0) return;
+    if (!pending) return;
+    if (pending.targetKey !== targetKey) {
+      pendingRef.current = null;
+      return;
+    }
+    if (preparing.length > 0) return;
     pendingRef.current = null;
     // After the composer's later effects have synced its draft refs to this render.
-    if (pending.targetKey === targetKey) queueMicrotask(pending.submit);
+    queueMicrotask(pending.submit);
   }, [preparing, targetKey]);
   return useStableCallback((submit: () => void) => {
     if (countPreparingComposerImages(targetKey) === 0) return false;

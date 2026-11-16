@@ -78,7 +78,13 @@ it("sends after pasted images finish compressing, with the compressed image in t
 
 it("drops a waiting send when the composer moves to another draft", async () => {
   const target = "submit-after-preparing-old";
-  using _store = { [Symbol.dispose]: () => cancelPreparingComposerImages(target) };
+  const otherTarget = "submit-after-preparing-new";
+  using _store = {
+    [Symbol.dispose]: () => {
+      cancelPreparingComposerImages(target);
+      cancelPreparingComposerImages(otherTarget);
+    },
+  };
   let queueSubmit: QueueSubmit | undefined;
   const onReady = (queue: QueueSubmit) => {
     queueSubmit = queue;
@@ -91,7 +97,10 @@ it("drops a waiting send when the composer moves to another draft", async () => 
   addPreparingComposerImages(target, [preparingImage("pasted")]);
   expect(queueSubmit?.(submit)).toBe(true);
 
-  await screen.rerender(<Probe targetKey="submit-after-preparing-new" onReady={onReady} />);
+  // The other draft is still compressing too, so the switch alone must drop the send.
+  addPreparingComposerImages(otherTarget, [preparingImage("other")]);
+  await screen.rerender(<Probe targetKey={otherTarget} onReady={onReady} />);
   await act(() => removePreparingComposerImages(target, new Set(["pasted"])));
+  await screen.rerender(<Probe targetKey={target} onReady={onReady} />);
   expect(submit).not.toHaveBeenCalled();
 });
