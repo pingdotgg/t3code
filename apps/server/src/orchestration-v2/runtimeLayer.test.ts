@@ -2048,6 +2048,125 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  // regression: #37412 one thread's busy lock held up every other thread's run-end reaction
+  it.effect("starts an idle thread's queued run while another thread's lock is busy", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const now = yield* DateTime.now;
+      const startRun = Effect.fnUntraced(function* (threadId: ThreadId) {
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make("runtime-run-end-isolation-project"),
+          title: threadId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:first`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:first`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* eventSink.write({
+          commandId: CommandId.make(`${threadId}:running`),
+          events: [
+            {
+              id: EventId.make(`${threadId}:running-event`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+          ],
+        });
+        return run;
+      });
+      const endRun = (run: OrchestrationV2Run) =>
+        eventSink.write({
+          commandId: CommandId.make(`${run.threadId}:completed`),
+          events: [
+            {
+              id: EventId.make(`${run.threadId}:completed-event`),
+              type: "run.updated",
+              threadId: run.threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+      const busyThreadId = ThreadId.make("runtime-run-end-isolation-busy");
+      const idleThreadId = ThreadId.make("runtime-run-end-isolation-idle");
+      const busyRun = yield* startRun(busyThreadId);
+      const idleRun = yield* startRun(idleThreadId);
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${idleThreadId}:queue`),
+        threadId: idleThreadId,
+        messageId: MessageId.make(`${idleThreadId}:queued`),
+        text: "Run this after the current turn.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+      });
+      const queuedRun = (yield* orchestrator.getThreadProjection(idleThreadId)).runs.find(
+        (run) => run.status === "queued",
+      );
+      assert.isDefined(queuedRun);
+
+      const order: string[] = [];
+      const queuedRunStarted = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === queuedRun.id &&
+            event.payload.status !== "queued",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.andThen(Effect.sync(() => order.push("idle thread's queued run started"))),
+        Effect.forkScoped,
+      );
+      // Stands in for a long send or delegated bookkeeping holding the busy thread's lock.
+      const lockHeld = yield* Deferred.make<void>();
+      const busyLock = yield* executor
+        .withLock(
+          busyThreadId,
+          Deferred.succeed(lockHeld, undefined).pipe(
+            Effect.andThen(Effect.sleep("1 minute")),
+            Effect.andThen(Effect.sync(() => order.push("busy thread's lock released"))),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(lockHeld);
+
+      yield* endRun(busyRun);
+      yield* endRun(idleRun);
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(busyLock);
+      yield* Fiber.join(queuedRunStarted);
+
+      assert.deepEqual(order, ["idle thread's queued run started", "busy thread's lock released"]);
+    }),
+  );
+
   const seedPendingQuestion = Effect.fnUntraced(function* (
     threadId: ThreadId,
     runId: RunId | null,
