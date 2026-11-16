@@ -13,6 +13,8 @@ import * as Order from "effect/Order";
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
+// Stored instead of a turn's id when the user picks "Latest turn", so the pick follows new turns.
+export const LATEST_TURN_SECTION_ID = "latest-turn";
 const CHANGES_TITLE = "Changes";
 const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
@@ -589,6 +591,11 @@ export function resolveReviewSelectedSectionId(
   sections: ReadonlyArray<ReviewSectionItem>,
   storedSectionId: string | null,
 ): string | null {
+  if (storedSectionId === LATEST_TURN_SECTION_ID) {
+    return (
+      sections.find((section) => section.kind === "turn")?.id ?? getDefaultReviewSectionId(sections)
+    );
+  }
   return storedSectionId !== null && sections.some((section) => section.id === storedSectionId)
     ? storedSectionId
     : getDefaultReviewSectionId(sections);

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
@@ -37,6 +37,18 @@ describe("diffPanelStore", () => {
       kind: "branch",
       baseRef: null,
     });
+  });
+
+  it("keeps following the latest turn as turns complete, and keeps a picked turn pinned", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const store = useDiffPanelStore.getState();
+    const selection = () => useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)];
+    store.selectTurn(ref, null);
+    store.reconcileTurnSelection(ref, [RunId.make("run-2"), RunId.make("run-1")]);
+    expect(selection()).toMatchObject({ kind: "turn", turnId: null });
+    store.selectTurn(ref, RunId.make("run-1"));
+    store.reconcileTurnSelection(ref, [RunId.make("run-2"), RunId.make("run-1")]);
+    expect(selection()).toMatchObject({ kind: "turn", turnId: "run-1" });
   });
 
   it("refreshes a live tool-call target when its source item completes", () => {

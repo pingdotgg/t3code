@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyReviewDiffMetadata,
   buildReviewParsedDiff,
+  LATEST_TURN_SECTION_ID,
   resolveReviewSelectedSectionId,
   type ReviewSectionItem,
 } from "./reviewModel";
@@ -29,6 +30,18 @@ describe("resolveReviewSelectedSectionId", () => {
   it("shows the default while the picked section loads and returns to the pick once it does", () => {
     expect(resolveReviewSelectedSectionId([changes], "turn:2")).toBe("git:branch-range");
     expect(resolveReviewSelectedSectionId([turn, changes], "turn:2")).toBe("turn:2");
+  });
+
+  it("follows the newest turn when Latest turn is picked, and keeps a picked turn pinned", () => {
+    const newerTurn = makeSection("turn:3");
+    expect(resolveReviewSelectedSectionId([turn, changes], LATEST_TURN_SECTION_ID)).toBe("turn:2");
+    expect(resolveReviewSelectedSectionId([newerTurn, turn, changes], LATEST_TURN_SECTION_ID)).toBe(
+      "turn:3",
+    );
+    expect(resolveReviewSelectedSectionId([newerTurn, turn, changes], "turn:2")).toBe("turn:2");
+    expect(resolveReviewSelectedSectionId([changes], LATEST_TURN_SECTION_ID)).toBe(
+      "git:branch-range",
+    );
   });
 });
 

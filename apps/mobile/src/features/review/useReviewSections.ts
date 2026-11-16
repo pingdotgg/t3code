@@ -17,6 +17,7 @@ import {
   buildReviewSectionItems,
   getReadyReviewCheckpoints,
   getReviewSectionIdForCheckpoint,
+  LATEST_TURN_SECTION_ID,
   resolveReviewSelectedSectionId,
   reviewTurnDiffsBySectionId,
   type ReviewSectionItem,
@@ -152,6 +153,8 @@ export function useReviewSections(input: {
       selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
     reviewSections,
     selectedSection,
+    followsLatestTurn:
+      reviewCache.selectedSectionId === LATEST_TURN_SECTION_ID && selectedSection?.kind === "turn",
     refreshSelectedSection,
     selectSection,
   };

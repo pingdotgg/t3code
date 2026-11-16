@@ -6,7 +6,7 @@ import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarMenuItem } from "../../components/ui/AppBar.types";
-import type { ReviewSectionItem } from "./reviewModel";
+import { LATEST_TURN_SECTION_ID, type ReviewSectionItem } from "./reviewModel";
 import { useReviewHeaderPresentation } from "./useReviewHeaderPresentation";
 import { type Ref, type ReactElement, useImperativeHandle, useRef, useState } from "react";
 import { Pressable, ScrollView, type NativeSyntheticEvent, StyleSheet, View } from "react-native";
@@ -62,6 +62,7 @@ function ReviewHeader(
     readonly sectionMenu: ReturnType<typeof buildReviewSectionMenu>;
     readonly showSectionToolbar: boolean;
     readonly showChangedFilesToggle: boolean;
+    readonly followsLatestTurn: boolean;
     readonly onSelectSection: (sectionId: string) => void;
     readonly onReturnToThread: () => void;
   },
@@ -113,7 +114,11 @@ function ReviewHeader(
                     items: [
                       sectionAction(props.sectionMenu.branchChanges, "Changes"),
                       sectionAction(props.sectionMenu.workingTree, "Uncommitted"),
-                      sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                      {
+                        ...sectionAction(props.sectionMenu.latestTurn, "Latest turn"),
+                        selected: props.followsLatestTurn,
+                        onPress: () => props.onSelectSection(LATEST_TURN_SECTION_ID),
+                      },
                     ],
                   },
                   ...(props.sectionMenu.turns.length > 0
@@ -362,6 +367,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     error,
     reviewSections,
     selectedSection,
+    followsLatestTurn,
     refreshSelectedSection,
     selectSection,
     isSelectedSectionPending,
@@ -598,6 +604,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         selectedSection={selectedSection}
         showSectionToolbar={showSectionToolbar}
         showChangedFilesToggle={showChangedFilesToggle}
+        followsLatestTurn={followsLatestTurn}
         onRefresh={handlePullToRefresh}
         onSelectSection={selectSection}
         onReturnToThread={handleReturnToThread}
