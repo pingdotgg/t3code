@@ -156,9 +156,12 @@ const withoutForgotten = (
   );
 };
 
-const ftsMatch = (terms: ReadonlyArray<string>) =>
+const ftsMatch = (terms: ReadonlyArray<string>, exact = false) =>
   terms
-    .map((term) => `"${term.replaceAll('"', '""')}"${Buffer.byteLength(term) >= 4 ? "*" : ""}`)
+    .map((term) => {
+      const quoted = `"${term.replaceAll('"', '""')}"`;
+      return exact || Buffer.byteLength(term) < 4 ? quoted : `${quoted}*`;
+    })
     .join(" OR ");
 
 export const makeStore = Effect.gen(function* () {
@@ -309,14 +312,31 @@ export const makeStore = Effect.gen(function* () {
       partial: ids.length > 1000,
     };
   });
+  const termStats = Effect.fn("ProjectKnowledgeStore.termStats")(function* (
+    terms: ReadonlyArray<string>,
+  ) {
+    const [count] = yield* sql<{
+      readonly n: number;
+    }>`SELECT count(*) AS n FROM project_knowledge_fts`;
+    const corpusSize = Number(count?.n ?? 0);
+    if (terms.length === 0) return { corpusSize, docs: new Map<string, number>() };
+    const rows = yield* sql<{ readonly term: string; readonly doc: number }>`
+      SELECT term, doc FROM project_knowledge_fts_vocab WHERE ${sql.in("term", terms)}
+    `;
+    return {
+      corpusSize,
+      docs: new Map(rows.map((row) => [row.term, Number(row.doc)])),
+    };
+  });
   const recallCandidates = Effect.fn("ProjectKnowledgeStore.recallCandidates")(function* (
     projectId: ProjectId,
     terms: ReadonlyArray<string>,
     minTrust: number,
     threadId: ThreadId,
     excludeFactIds: ReadonlyArray<ProjectFactId>,
+    limit: number,
   ) {
-    const ftsQuery = ftsMatch(terms);
+    const ftsQuery = ftsMatch(terms, true);
     if (ftsQuery === "")
       return { facts: [], ranks: new Map<ProjectFactId, number>(), partial: false };
     const unseen =
@@ -338,12 +358,17 @@ export const makeStore = Effect.gen(function* () {
           WHERE json_extract(source.value, '$.kind') = 'message'
             AND json_extract(source.value, '$.threadId') = ${threadId}
         )
-      ORDER BY rank ASC, f.trust DESC, f.updated_at DESC, f.id ASC LIMIT 40`;
+      ORDER BY rank ASC, f.trust DESC, f.updated_at DESC, f.id ASC LIMIT ${limit}`;
+    const loaded = yield* findMany(
+      projectId,
+      rows.map((row) => row.id),
+    );
+    const byId = new Map(loaded.map((fact) => [fact.id, fact]));
     return {
-      facts: yield* findMany(
-        projectId,
-        rows.map((row) => row.id),
-      ),
+      facts: rows.flatMap((row) => {
+        const fact = byId.get(row.id);
+        return fact === undefined ? [] : [fact];
+      }),
       ranks: new Map(rows.map((row) => [row.id, row.rank])),
       partial: false,
     };
@@ -812,6 +837,7 @@ export const makeStore = Effect.gen(function* () {
     record,
     recordSearch,
     candidates,
+    termStats,
     recallCandidates,
     similar,
     findDuplicateContent,

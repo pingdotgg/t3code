@@ -18,7 +18,6 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
-  THREAD_SEARCH_QUERY_MAX_LENGTH,
 } from "./threadSearch.ts";
 
 export const ProjectFactId = TrimmedNonEmptyString.pipe(Schema.brand("ProjectFactId"));
@@ -493,71 +492,6 @@ const ProjectKnowledgeSearchResultSchema = Schema.Struct({
   ]),
 });
 export type ProjectKnowledgeSearchResult = typeof ProjectKnowledgeSearchResultSchema.Type;
-export interface ProjectMemoryRecallMatch {
-  readonly fact: ProjectFact;
-  readonly score: typeof KnowledgeScore.Type;
-}
-
-export function boundProjectMemoryRecallQuery(query: string): string {
-  return query.trim().slice(0, THREAD_SEARCH_QUERY_MAX_LENGTH);
-}
-
-const memoryQueryFiller = new Set([
-  "the",
-  "and",
-  "for",
-  "this",
-  "that",
-  "with",
-  "please",
-  "help",
-  "can",
-  "you",
-  "could",
-  "would",
-  "want",
-  "need",
-  "hello",
-  "there",
-  "thanks",
-]);
-const memoryQueryTerms = (query: string) => [
-  ...new Set(
-    (
-      boundProjectMemoryRecallQuery(query)
-        .toLowerCase()
-        .match(/[\p{L}\p{N}_/:.]+/gu) ?? []
-    ).filter((term) => term.length >= 3 && !memoryQueryFiller.has(term)),
-  ),
-];
-
-export function isSubstantiveProjectMemoryQuery(query: string): boolean {
-  const terms = memoryQueryTerms(query);
-  return (
-    terms.length >= 3 ||
-    terms.some(
-      (term) =>
-        /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(term) && term.length >= 6,
-    )
-  );
-}
-
-export function selectProjectMemoryRecallMatches(
-  result: ProjectKnowledgeSearchResult,
-): ReadonlyArray<ProjectMemoryRecallMatch> {
-  if (result.facts.state !== "available") return [];
-  return result.facts.matches
-    .filter(
-      ({ fact, score }) =>
-        fact.status === "saved" &&
-        fact.supersededBy == null &&
-        fact.sources.length > 0 &&
-        score.trust >= 0.5 &&
-        score.combined > 0 &&
-        (score.tokenOverlap >= 0.15 || (score.lexical >= 0.65 && score.tokenOverlap >= 0.05)),
-    )
-    .slice(0, 2);
-}
 
 export const ProjectKnowledgeSearchResult: Schema.Codec<
   ProjectKnowledgeSearchResult,

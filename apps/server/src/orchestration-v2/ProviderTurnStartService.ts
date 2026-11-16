@@ -1952,6 +1952,7 @@ export const layer: Layer.Layer<
               threadId: projection.thread.id,
               requestId: CommandId.make(`memory-recall:${attempt.id}`),
               query: providerMessage.text,
+              ...(message.notification === undefined ? {} : { notification: message.notification }),
               composer: pstackComposer,
               knowledgeAllowance: budget.knowledgeAllowance,
               turn: {

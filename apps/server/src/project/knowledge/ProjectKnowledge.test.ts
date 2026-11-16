@@ -1828,13 +1828,13 @@ it.effect("browsing searches can opt out of reinforcing retrieval counts", () =>
     yield* knowledge.mutate(
       {
         ...createFact(projectId, "unicode"),
-        content: "缓存键必须包含租户标识",
+        content: "缓存键 必须包 含租户标",
         entities: [],
         tags: [],
       },
       { kind: "user" },
     );
-    assert.deepEqual(yield* recalled("suggest-unicode", "缓存键必须包含租户标识"), [
+    assert.deepEqual(yield* recalled("suggest-unicode", "缓存键 必须包 含租户标"), [
       ProjectFactId.make("unicode"),
     ]);
     assert.deepEqual(yield* recalled("suggest-filler", "please can you help"), []);
@@ -2248,6 +2248,86 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
       knowledgeAllowance: 48000,
     });
     assert.equal(attachedFactIds(outcome)[0], ids[40]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("recall does not score with the holographic kernel", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projectId = ProjectId.make("recall-no-kernel");
+    yield* createProject(projectId);
+    yield* knowledge.mutate(createFact(projectId), { kind: "user" });
+    const query = "Change cache keys to include tenant IDs.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-no-kernel"),
+      requestId: CommandId.make("recall-no-kernel"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.deepEqual(attachedFactIds(outcome), [ProjectFactId.make("fact-one")]);
+  }).pipe(
+    Effect.provide(
+      knowledgeTestLayer(
+        Layer.succeed(HolographicMemory.HolographicMemory, {
+          scoreCandidates: () => Effect.die("recall must not call HolographicMemory"),
+        }),
+      ),
+    ),
+  ),
+);
+
+it.effect("recall returns the current fact when stale near-duplicates fill a page of 40", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-near-duplicates");
+    yield* createProject(projectId);
+    const duplicate = "Ship the ledger labs toggle for billing.";
+    for (let index = 0; index < 40; index += 1) {
+      const id = `dup-${index.toString().padStart(2, "0")}`;
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, id),
+          content: duplicate,
+          entities: [],
+          tags: [],
+        },
+        { kind: "user" },
+      );
+    }
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "current"),
+        content: "The ledger labs toggle gates billing.",
+        entities: ["ledger labs"],
+        tags: [],
+      },
+      { kind: "user" },
+    );
+    for (let index = 0; index < 200; index += 1)
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, `pad-${index}`),
+          content: `Unrelated padding subject ${index} about alphabets and gardens.`,
+          entities: [],
+          tags: [],
+        },
+        { kind: "user" },
+      );
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.9 WHERE project_id = ${projectId} AND id LIKE 'dup-%'`;
+    yield* sql`UPDATE project_knowledge_facts SET trust = 0.51 WHERE project_id = ${projectId} AND id = 'current'`;
+    const query = "Ship the ledger labs toggle for billing.";
+    const outcome = yield* knowledge.recall({
+      projectId,
+      threadId: ThreadId.make("recall-near-duplicates"),
+      requestId: CommandId.make("recall-near-duplicates"),
+      query,
+      composer: { text: query, records: [] },
+      knowledgeAllowance: 48000,
+    });
+    assert.deepEqual(attachedFactIds(outcome), [ProjectFactId.make("current")]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3342,12 +3422,10 @@ it.effect(
 );
 
 it.effect("does not consider a newer fact that shares no term with the recall query", () => {
-  const considered: string[] = [];
   const scoring = Layer.succeed(HolographicMemory.HolographicMemory, {
     scoreCandidates: (input) =>
-      Effect.sync(() => {
-        considered.push(...input.candidates.map((candidate) => candidate.id));
-        return input.candidates.map((candidate) => ({
+      Effect.sync(() =>
+        input.candidates.map((candidate) => ({
           id: candidate.id,
           rawCosine: 1,
           holographic: 1,
@@ -3358,8 +3436,8 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
           tokenOverlap: 1,
           fts: 1,
           coverage: 1,
-        }));
-      }),
+        })),
+      ),
   });
   return Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
@@ -3378,7 +3456,7 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
       { kind: "user" },
     );
     const query = "Change cache keys to include tenant IDs.";
-    yield* knowledge.recall({
+    const outcome = yield* knowledge.recall({
       projectId,
       threadId: ThreadId.make("recall-bounded"),
       requestId: CommandId.make("recall-bounded"),
@@ -3386,6 +3464,8 @@ it.effect("does not consider a newer fact that shares no term with the recall qu
       composer: { text: query, records: [] },
       knowledgeAllowance: 48000,
     });
+    const considered =
+      outcome._tag === "Omitted" ? [] : (outcome.top ?? []).map((item) => item.factId);
     assert.include(considered, "matching");
     assert.notInclude(considered, "newer-unrelated");
     const searched = yield* knowledge.search({
