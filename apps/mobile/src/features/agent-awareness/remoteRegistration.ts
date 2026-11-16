@@ -90,6 +90,7 @@ export type AgentAwarenessRegistrationError =
 // ActivityKit returns new wrappers per id; serialize by id to prevent stale-token registration.
 const activityPushTokenLocks = new Map<string, Semaphore.Semaphore>();
 const unregisteredStartedLiveActivities = new Map<string, LiveActivity<AgentActivityProps>>();
+const endedUnregisteredLiveActivityIds = new Set<string>();
 // Each accepted registration replays the relay aggregate, repairing drifted or orphaned activities.
 const ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS = 60_000;
 // Match the relay's STALE_AFTER_SECONDS so activities expire even if registration fails.
@@ -927,6 +928,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   registeredActivityPushTokens.clear();
   activityPushTokenLocks.clear();
   unregisteredStartedLiveActivities.clear();
+  endedUnregisteredLiveActivityIds.clear();
   widgetSnapshotReads = 0;
 }
 
@@ -1004,9 +1006,28 @@ function observeLiveActivityPushTokens(
   activityPushTokenLocks.set(activityId, lock);
   activity.addPushTokenListener((event) => {
     if (!event.pushToken) return;
+    const activityPushToken = event.pushToken;
     runRegistrationInBackground(
       lock.withPermit(
-        registerLiveActivityPushTokenValue({ activityId, activityPushToken: event.pushToken }),
+        Effect.gen(function* () {
+          // A queued token for a card the cleanup ended would replace a newer card's.
+          if (endedUnregisteredLiveActivityIds.has(activityId)) return;
+          const registered = yield* registerLiveActivityPushTokenValue({
+            activityId,
+            activityPushToken,
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                logRegistrationError("live activity token listener registration failed", error);
+                return false;
+              }),
+            ),
+          );
+          // The background cleanup may have given up waiting for this registration.
+          if (!registered) {
+            yield* endUnregisteredLiveActivityInBackground(activityId, activity);
+          }
+        }),
       ),
       "live activity token listener registration failed",
     );
@@ -1048,12 +1069,17 @@ const endUnregisteredStartedLiveActivity = Effect.fn(
         }),
       ),
     );
+  if (locked) {
+    yield* endUnregisteredLiveActivityInBackground(activityId, activity);
+  }
+});
+
+// Callers hold the activity's token lock.
+const endUnregisteredLiveActivityInBackground = Effect.fn(
+  "remoteRegistration.endUnregisteredLiveActivityInBackground",
+)(function* (activityId: string, activity: LiveActivity<AgentActivityProps>) {
   // Back in the foreground the refresh keeps registering the card instead.
-  if (
-    !locked ||
-    !unregisteredStartedLiveActivities.has(activityId) ||
-    AppState.currentState === "active"
-  ) {
+  if (!unregisteredStartedLiveActivities.has(activityId) || AppState.currentState === "active") {
     return;
   }
   yield* Effect.tryPromise({
@@ -1067,6 +1093,7 @@ const endUnregisteredStartedLiveActivity = Effect.fn(
       },
       onSuccess: () => {
         unregisteredStartedLiveActivities.delete(activityId);
+        endedUnregisteredLiveActivityIds.add(activityId);
       },
     }),
   );

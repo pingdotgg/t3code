@@ -634,9 +634,9 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
   });
 
-  it.effect(
-    "keeps a card whose registration is still in flight when the app goes to the background",
-    () => {
+  it.effect.each(["accepted", "rejected"] as const)(
+    "settles a card whose registration is still in flight in the background once the relay has %s it",
+    (outcome) => {
       const registrations = stubLiveActivityRelay();
       let tokenListener: ((event: { readonly pushToken: string }) => void) | undefined;
       const activity = {
@@ -656,7 +656,19 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         const client = yield* ManagedRelay.ManagedRelayClient;
         const register = client.registerLiveActivity;
         vi.spyOn(client, "registerLiveActivity").mockImplementationOnce((...args) =>
-          Deferred.await(relayReply).pipe(Effect.andThen(register(...args))),
+          Deferred.await(relayReply).pipe(
+            Effect.andThen(
+              outcome === "accepted"
+                ? register(...args)
+                : Effect.fail(
+                    new ManagedRelay.ManagedRelayRequestFailedError({
+                      action: "register relay live activity",
+                      cause: new Error("Offline"),
+                      transportFailed: true,
+                    }),
+                  ),
+            ),
+          ),
         );
         tokenListener?.({ pushToken: "activity-token" });
         const listenerRegistration = backgroundRuntime.pending.shift()!;
@@ -673,13 +685,22 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         const cleanup = yield* Effect.forkChild(runBackgroundOperations());
         yield* TestClock.adjust("3 seconds");
         yield* Fiber.join(cleanup);
+        // Ending it now would let the late token replace a newer card's on the relay.
         expect(activity.end).not.toHaveBeenCalled();
 
         yield* Deferred.succeed(relayReply, undefined);
         yield* Fiber.join(inFlight);
-        expect(registrations).toEqual([
-          { deviceId: "device-1", activityPushToken: "activity-token" },
-        ]);
+        if (outcome === "accepted") {
+          expect(registrations).toEqual([
+            { deviceId: "device-1", activityPushToken: "activity-token" },
+          ]);
+          expect(activity.end).not.toHaveBeenCalled();
+          return;
+        }
+        expect(activity.end).toHaveBeenCalledWith("immediate");
+        tokenListener?.({ pushToken: "activity-token-2" });
+        yield* runBackgroundOperations();
+        expect(registrations).toEqual([]);
       }).pipe(
         Effect.ensuring(Effect.sync(() => vi.useRealTimers())),
         Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
