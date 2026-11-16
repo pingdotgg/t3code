@@ -58,7 +58,7 @@ const NEXT_RUN = "2030-01-01T09:00:00.000Z";
 
 const insertTask = (
   sql: SqlClient.SqlClient,
-  task: { id: string; threadId: string; next: string | null; enabled?: number },
+  task: { id: string; threadId: string; next: string | null; enabled?: number; created?: string },
 ) =>
   sql`INSERT INTO scheduled_tasks ${sql.insert({
     task_id: task.id,
@@ -74,7 +74,7 @@ const insertTask = (
     interaction_mode: "default",
     created_by: "user",
     creation_source: "web",
-    created_at: "2026-01-01T00:00:00.000Z",
+    created_at: task.created ?? "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     next_run_at: task.next,
     last_run_at: null,
@@ -250,11 +250,26 @@ it.effect.each([
 ])("leaves the thread awake when $name", (scenario) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* insertTask(sql, { id: "soonest", threadId, next: NEXT_RUN });
+    // Created before the run, so the task's own run did not schedule it.
+    yield* insertTask(sql, {
+      id: "soonest",
+      threadId,
+      next: NEXT_RUN,
+      created: "1969-01-01T00:00:00.000Z",
+    });
     yield* completeTurn(
       scenario.fromTask === true ? { scheduledTaskId: ScheduledTaskId.make("soonest") } : {},
       scenario,
     );
     assert.strictEqual(yield* snoozedUntil, null);
   }).pipe(Effect.provide(layerTest(scenario.setting))),
+);
+
+it.effect("snoozes after a task's own run that schedules a follow-up task", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* insertTask(sql, { id: "follow-up", threadId, next: NEXT_RUN });
+    yield* completeTurn({ scheduledTaskId: ScheduledTaskId.make("current") });
+    assert.strictEqual(yield* snoozedUntil, NEXT_RUN);
+  }).pipe(Effect.provide(layerTest(true))),
 );

@@ -440,12 +440,14 @@ const decodeRow = Effect.fnUntraced(
 export const nextRunForThread = Effect.fn("ScheduledTaskService.nextRunForThread")(function* (
   threadId: ThreadId,
   now: DateTime.DateTime,
+  createdSince?: DateTime.DateTime,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ next_run_at: string }>`
     SELECT next_run_at FROM scheduled_tasks
     WHERE thread_id = ${threadId} AND enabled = 1
       AND next_run_at IS NOT NULL AND next_run_at > ${iso(now)}
+      ${createdSince === undefined ? sql`` : sql`AND created_at >= ${iso(createdSince)}`}
     ORDER BY next_run_at ASC
   `.pipe(NodeSqliteClient.readOnly);
   // next_run_at is freeform; the soonest parseable value wins.

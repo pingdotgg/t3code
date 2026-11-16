@@ -34,21 +34,20 @@ const make = Effect.gen(function* () {
       const { snoozeThreadsUntilScheduledTask } = yield* settings.getSettings;
       if (!snoozeThreadsUntilScheduledTask) return;
       const run = event.payload;
-      // The task's own run and its automatic follow-ups leave their result visible.
+      // Automatic follow-ups leave their result visible, and so does a task's own run
+      // unless it scheduled a new task for this thread.
       const { messages } = yield* projections.getThreadRecords(event.threadId, ["messages"], {
         messageIds: [run.userMessageId],
       });
       const message = messages.find((candidate) => candidate.id === run.userMessageId);
-      if (
-        message?.scheduledTaskId !== undefined ||
-        message?.notification !== undefined ||
-        message?.delegatedCompletion !== undefined
-      ) {
+      if (message?.notification !== undefined || message?.delegatedCompletion !== undefined) {
         return;
       }
-      const nextRun = yield* nextRunForThread(event.threadId, yield* DateTime.now).pipe(
-        Effect.provideService(SqlClient.SqlClient, sql),
-      );
+      const nextRun = yield* nextRunForThread(
+        event.threadId,
+        yield* DateTime.now,
+        message?.scheduledTaskId === undefined ? undefined : run.requestedAt,
+      ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
       if (nextRun === null) return;
       // Completion is re-emitted (checkpoints, delegated rewrites); one id per run keeps a
       // later manual wake from being undone.
