@@ -2278,7 +2278,7 @@ it.effect("recall does not score with the holographic kernel", () =>
   ),
 );
 
-it.effect("recall returns the current fact when stale near-duplicates fill a page of 40", () =>
+it.effect("recall preserves trust order for equally covered eligible near-duplicates", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     const sql = yield* SqlClient.SqlClient;
@@ -2327,7 +2327,10 @@ it.effect("recall returns the current fact when stale near-duplicates fill a pag
       composer: { text: query, records: [] },
       knowledgeAllowance: 48000,
     });
-    assert.deepEqual(attachedFactIds(outcome), [ProjectFactId.make("current")]);
+    assert.deepEqual(attachedFactIds(outcome), [
+      ProjectFactId.make("dup-00"),
+      ProjectFactId.make("dup-01"),
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3690,6 +3693,22 @@ it.effect("recall in one project depends on facts saved in other projects", () =
     const after = yield* recallIdsFor(knowledge, alone, query, "alone-after");
     assert.deepEqual(before, [ProjectFactId.make("op-alone-target")]);
     assert.deepEqual(after, before);
+    const tiedProject = ProjectId.make("isolated-ties");
+    yield* createProject(tiedProject);
+    const contents = ["cobalt kestrel lantern", "orchard harbor willow", "violet copper quartz"];
+    for (const [index, content] of contents.entries())
+      yield* knowledge.mutate(isolatedFact(tiedProject, `tie-${index}`, content), { kind: "user" });
+    const tiedQuery = contents.join(" ");
+    const tiedBefore = yield* recallIdsFor(knowledge, tiedProject, tiedQuery, "ties-before");
+    assert.equal(tiedBefore.length, 2);
+    const tiedOther = ProjectId.make("isolated-ties-other");
+    yield* createProject(tiedOther);
+    for (let i = 0; i < 100; i++)
+      yield* knowledge.mutate(isolatedFact(tiedOther, `foreign-tie-${i}`, contents[0]!), {
+        kind: "user",
+      });
+    const tiedAfter = yield* recallIdsFor(knowledge, tiedProject, tiedQuery, "ties-after");
+    assert.deepEqual(tiedAfter, tiedBefore);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3813,4 +3832,61 @@ it.effect("lost-source fact outranks a valid one", () =>
     const after = yield* run("after");
     assert.deepEqual(attachedFactIds(after), [ProjectFactId.make("valid")]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "recall uses exact terms before the candidate bound and forwards watch notifications",
+  () =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projectId = ProjectId.make("exact-recall");
+      yield* createProject(projectId);
+      const query = "cobalt lantern kestrel";
+      yield* knowledge.mutate(
+        isolatedFact(projectId, "exact", `${query} ${"garden ".repeat(500)}`),
+        { kind: "user" },
+      );
+      for (let i = 0; i < 130; i++)
+        yield* knowledge.mutate(
+          isolatedFact(projectId, `prefix-${i}`, "cobalts lanterns kestrels"),
+          { kind: "user" },
+        );
+      const input = {
+        projectId,
+        threadId: ThreadId.make("exact-reader"),
+        requestId: CommandId.make("exact-read"),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      };
+      assert.deepEqual(attachedFactIds(yield* knowledge.recall(input)), [
+        ProjectFactId.make("exact"),
+      ]);
+      assert.deepEqual(
+        attachedFactIds(
+          yield* knowledge.recall({
+            ...input,
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "completed",
+              summary: "Checks finished",
+            },
+          }),
+        ),
+        [],
+      );
+      assert.deepEqual(
+        attachedFactIds(
+          yield* knowledge.recall({
+            ...input,
+            notification: {
+              source: { kind: "command" },
+              outcome: "completed",
+              summary: "Command finished",
+            },
+          }),
+        ),
+        [],
+      );
+    }).pipe(Effect.provide(layerTest)),
 );

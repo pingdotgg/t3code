@@ -1258,18 +1258,17 @@ const make = Effect.gen(function* () {
         return yield* note({ _tag: "Skipped", reason: "no_budget" });
       const lookup = Effect.gen(function* () {
         const text = input.query.slice(0, RECALL_MESSAGE_CHARS);
-        const terms = [...recallTerms(text)];
+        const messageTokens = yield* store
+          .tokenize([text])
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const terms = [...recallTerms(text, (value) => messageTokens.get(value)!)];
         const seen = yield* store
           .seenFactIds(input.projectId, input.threadId, input.turn)
           .pipe(Effect.mapError(storageError(input.projectId)));
-        const messageStats = yield* store
-          .termStats(terms)
-          .pipe(Effect.mapError(storageError(input.projectId)));
-        const present = terms.filter((term) => (messageStats.docs.get(term) ?? 0) > 0);
         const candidates = yield* store
           .recallCandidates(
             input.projectId,
-            present,
+            terms,
             0.5,
             input.threadId,
             [...seen],
@@ -1279,30 +1278,36 @@ const make = Effect.gen(function* () {
         const active = candidates.facts.flatMap((fact) =>
           fact.status === "forgotten" || fact.content === null ? [] : [fact],
         );
-        const missing = new Set<string>();
+        const tokens = yield* store
+          .tokenize(active.map((fact) => [fact.content, ...fact.entities].join(" ")))
+          .pipe(Effect.mapError(storageError(input.projectId)));
+        const tokenize = (value: string): ReadonlyArray<string> =>
+          tokens.get(value) ?? messageTokens.get(value) ?? [];
+        const allTerms = new Set(terms);
         for (const fact of active)
-          for (const term of recallTerms([fact.content, ...fact.entities].join(" ")))
-            if (!messageStats.docs.has(term)) missing.add(term);
-        const extra =
-          missing.size === 0
-            ? messageStats
-            : yield* store
-                .termStats([...missing])
-                .pipe(Effect.mapError(storageError(input.projectId)));
-        const docs = new Map([...messageStats.docs, ...extra.docs]);
+          for (const term of recallTerms([fact.content, ...fact.entities].join(" "), tokenize))
+            allTerms.add(term);
+        const counted = yield* store
+          .termStats([...allTerms], input.projectId)
+          .pipe(Effect.mapError(storageError(input.projectId)));
         const stats: TermStats = {
-          corpusSize: messageStats.corpusSize,
-          docs: (term) => docs.get(term) ?? 0,
+          corpusSize: counted.corpusSize,
+          docs: (term) => counted.docs.get(term) ?? 0,
+          tokenize,
         };
         const ranked = rankRecallCandidates(text, active, stats, input.notification);
         const top = ranked.slice(0, 5).map((match) => ({ factId: match.fact.id }));
-        const selections = ranked
-          .flatMap((match) =>
-            match.passes
-              ? [{ kind: "fact" as const, factId: match.fact.id, revision: match.fact.revision }]
-              : [],
-          )
-          .slice(0, RECALL_MAX_FACTS);
+        const selections = [];
+        for (const match of ranked) {
+          if (!match.passes) continue;
+          if (!(yield* sourcesAvailable(match.fact, false))) continue;
+          selections.push({
+            kind: "fact" as const,
+            factId: match.fact.id,
+            revision: match.fact.revision,
+          });
+          if (selections.length === RECALL_MAX_FACTS) break;
+        }
         const environmentId = yield* environment.getEnvironmentId;
         // Drop the weakest match until the rest resolve within the turn's knowledge budget.
         for (let count = selections.length; count > 0; count--) {

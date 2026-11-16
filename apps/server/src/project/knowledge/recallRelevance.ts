@@ -1,3 +1,4 @@
+import * as NodeSqlite from "node:sqlite";
 import type { OrchestrationV2NotificationSource } from "@t3tools/contracts";
 
 /** How much of a message recall reads. A delegate brief's task starts after the boilerplate. */
@@ -5,10 +6,8 @@ export const RECALL_MESSAGE_CHARS = 8_192;
 export const RECALL_MAX_FACTS = 2;
 const RECALL_MIN_MATCHED_TERMS = 3;
 const RECALL_MONITOR_MIN_MATCHED_TERMS = 8;
-const RECALL_MIN_HIT = 10;
-const RECALL_TUNED_CORPUS_SIZE = 718;
 const RECALL_MIN_COVERAGE = 0.3;
-const RECALL_MIN_MESSAGE_COVERAGE = 0.03;
+const RECALL_MIN_MESSAGE_COVERAGE = 0.028;
 // 40 hid a current fact behind near-duplicates. 100 and 200 delivered the same facts here, and 200 slowed the tail.
 export const RECALL_CANDIDATE_LIMIT = 100;
 
@@ -40,8 +39,9 @@ export interface RecallFactText {
   readonly entities: ReadonlyArray<string>;
 }
 
-/** Document frequencies from the FTS vocabulary. `docs` is 0 for a term no fact contains. */
+/** Project-local document frequencies of current saved facts. */
 export interface TermStats {
+  readonly tokenize?: (text: string) => Iterable<string>;
   readonly corpusSize: number;
   readonly docs: (term: string) => number;
 }
@@ -52,18 +52,28 @@ export interface RecallMatch<Fact extends RecallFactText> {
   readonly passes: boolean;
 }
 
-const TOKEN = /[\p{L}\p{N}]+/gu;
-
-const fold = (text: string) => text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
-
-/** Same splits as the FTS5 unicode61 tokenizer, keeping tokens of at least 3 characters. */
-export const recallTokens = (text: string): ReadonlySet<string> => {
-  const tokens = fold(text).match(TOKEN) ?? [];
-  return new Set(tokens.filter((token) => token.length >= 3));
+/** Standalone adapter; recall batches the same tokenizer on its read-only connection. */
+const tokenizeRecallText = (text: string): ReadonlyArray<string> => {
+  const db = new NodeSqlite.DatabaseSync(":memory:");
+  try {
+    db.exec("CREATE VIRTUAL TABLE tokens USING fts3tokenize(unicode61)");
+    return db
+      .prepare("SELECT token FROM tokens WHERE input = ?")
+      .all(text)
+      .map((row) => String(row.token));
+  } finally {
+    db.close();
+  }
 };
 
-export const recallTerms = (text: string): ReadonlySet<string> =>
-  new Set([...recallTokens(text)].filter((token) => !RECALL_STOPWORDS.has(token)));
+export const recallTokens = (text: string): ReadonlySet<string> =>
+  new Set(tokenizeRecallText(text));
+
+export const recallTerms = (
+  text: string,
+  tokenize: (text: string) => Iterable<string> = tokenizeRecallText,
+): ReadonlySet<string> =>
+  new Set([...tokenize(text)].filter((token) => token.length >= 3 && !RECALL_STOPWORDS.has(token)));
 
 /** Work already under way. A pull-request watch stays eligible and the gate decides. */
 const isProgressNotice = (kind: OrchestrationV2NotificationSource["kind"]): boolean => {
@@ -94,23 +104,6 @@ export const recallTrigger = (message: RecallMessage): RecallTrigger => {
 
 const idf = (docs: number, corpusSize: number) => Math.log(1 + corpusSize / (1 + docs));
 
-// `hit >= 10` was tuned at 718 facts. Below that it scales with ln(1+N), because three rare terms cannot sum to 10.
-const recallHitFloor = (corpusSize: number) =>
-  corpusSize >= RECALL_TUNED_CORPUS_SIZE
-    ? RECALL_MIN_HIT
-    : (RECALL_MIN_HIT * Math.log(1 + corpusSize)) / Math.log(1 + RECALL_TUNED_CORPUS_SIZE);
-
-const phraseIn = (entity: string, message: string) => {
-  const phrase = fold(entity.trim());
-  if (phrase.length < 4) return false;
-  const foldedMessage = fold(message);
-  if (!foldedMessage.includes(phrase)) return false;
-  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(foldedMessage);
-};
-
-const factTerms = (fact: RecallFactText) => recallTerms([fact.content, ...fact.entities].join(" "));
-
 export const rankRecallCandidates = <Fact extends RecallFactText>(
   message: string,
   facts: ReadonlyArray<Fact>,
@@ -122,16 +115,14 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
       ? RECALL_MONITOR_MIN_MATCHED_TERMS
       : RECALL_MIN_MATCHED_TERMS;
   const text = message.slice(0, RECALL_MESSAGE_CHARS);
-  const queryTerms = recallTerms(text);
+  const tokenize = stats.tokenize ?? tokenizeRecallText;
+  const queryTerms = recallTerms(text, tokenize);
   const queryMass = [...queryTerms].reduce(
     (sum, term) => sum + idf(stats.docs(term), stats.corpusSize),
     0,
   );
-  const rareCeiling = Math.max(2, Math.floor(stats.corpusSize * 0.03));
-  const floor = recallHitFloor(stats.corpusSize);
   const ranked = facts.flatMap((fact) => {
-    const terms = factTerms(fact);
-    if (terms.size === 0) return [];
+    const terms = recallTerms([fact.content, ...fact.entities].join(" "), tokenize);
     const matched = [...queryTerms].filter((term) => terms.has(term));
     const hit = matched.reduce((sum, term) => sum + idf(stats.docs(term), stats.corpusSize), 0);
     const factMass = [...terms].reduce(
@@ -141,18 +132,19 @@ export const rankRecallCandidates = <Fact extends RecallFactText>(
     const queryCoverage = queryMass === 0 ? 0 : hit / queryMass;
     const factCoverage = factMass === 0 ? 0 : hit / factMass;
     const relevance = Math.max(queryCoverage, factCoverage);
-    const rare = matched.some((term) => stats.docs(term) <= rareCeiling);
-    const entity = !rare && fact.entities.some((value) => phraseIn(value, text));
-    // A fact contained in the message stays eligible when every saved fact uses the same words and idf collapses.
     const passes =
-      matched.length >= minimumMatchedTerms &&
+      (matched.length >= minimumMatchedTerms ||
+        (minimumMatchedTerms === RECALL_MIN_MATCHED_TERMS &&
+          matched.some(
+            (term) =>
+              /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(term) &&
+              term.length >= 6,
+          ))) &&
       relevance >= RECALL_MIN_COVERAGE &&
-      queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE &&
-      (rare || entity) &&
-      (hit >= floor || factCoverage >= RECALL_MIN_COVERAGE);
+      queryCoverage >= RECALL_MIN_MESSAGE_COVERAGE;
     return [{ fact, relevance, passes }];
   });
-  // Stable, so equal coverage keeps the candidate order: bm25, then trust, then recency.
+  // Equal coverage preserves project-local trust and recency order.
   ranked.sort((left, right) => right.relevance - left.relevance);
   return ranked;
 };

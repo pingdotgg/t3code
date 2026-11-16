@@ -11,6 +11,7 @@ import {
   recallForMessage,
   recallTokens,
   recallTrigger,
+  rankRecallCandidates,
   type RecallFactText,
   type RecallMessage,
   type TermStats,
@@ -94,7 +95,7 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
     {
       name: "delegate brief names the fact after the boilerplate",
       message: { text: delegateBrief },
-      ids: ["ledger-labs"],
+      ids: ["ledger-labs", "remaining-work"],
     },
     {
       name: "a narrow fact covers too little of a broad message",
@@ -104,9 +105,9 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
       ids: [],
     },
     {
-      name: "continue with remaining work",
+      name: "a short request fully covers a common fact",
       message: { text: "continue with remaining work" },
-      ids: [],
+      ids: ["remaining-work"],
     },
     {
       name: "can you also do the work here",
@@ -167,6 +168,13 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
     },
   ];
   assert.deepEqual(
+    recallForMessage({ text: "continue with remaining work" }, facts, {
+      ...stats,
+      corpusSize: 2000,
+    }).map((fact) => fact.id),
+    ["remaining-work"],
+  );
+  assert.deepEqual(
     cases.map((entry) => [entry.name, idsFor(entry.message)]),
     cases.map((entry) => [entry.name, entry.ids]),
   );
@@ -209,7 +217,7 @@ it.effect("splits terms the way the FTS vocabulary does", () =>
     const rows = yield* sql<{ readonly term: string }>`
       SELECT term FROM project_knowledge_fts_vocab ORDER BY term
     `;
-    const indexed = new Set(rows.map((row) => row.term).filter((term) => term.length >= 3));
+    const indexed = new Set(rows.map((row) => row.term));
     assert.deepEqual([...recallTokens(`${content} Café Menu`)].sort(), [...indexed].sort());
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
 );
@@ -246,4 +254,154 @@ it("uses unicode61 tokens across scripts and identifier punctuation", () => {
   } finally {
     db.close();
   }
+});
+
+it("enforces coverage, overlap and relevance order", () => {
+  const shared = "cobalt kestrel lantern";
+  const padding =
+    "orchard harbor willow badger meadow pebble granite thistle otter falcon river maple";
+  const fact = (id: string, content: string, entities: string[] = []): RecallFactText => ({
+    id,
+    content,
+    entities,
+  });
+  const cases = [
+    {
+      name: "long unspaced Han token",
+      text: "数据库连接池配置",
+      facts: [fact("han", "数据库连接池配置")],
+      docs: 1,
+      ids: ["han"],
+    },
+    {
+      name: "short Han token",
+      text: "数据库",
+      facts: [fact("short-han", "数据库")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "stopwords",
+      text: "can you please",
+      facts: [fact("stopwords", "can you please")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "short identifiers",
+      text: "go db ui",
+      facts: [fact("short-terms", "go db ui")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "two matched terms",
+      text: "cobalt kestrel",
+      facts: [fact("two", shared)],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "coverage below thirty percent on both sides",
+      text: `${shared} ${padding}`,
+      facts: [
+        fact(
+          "low",
+          `${shared} violet copper quartz blossom crimson spruce coral eucalyptus fern almond cedar silver`,
+        ),
+      ],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "entity terms match alongside content",
+      text: shared,
+      facts: [fact("entity", "Formatting preferences apply locally.", [shared])],
+      docs: 1,
+      ids: ["entity"],
+    },
+    {
+      name: "query coverage carries a narrow request",
+      text: shared,
+      facts: [fact("broad", `${shared} ${padding}`)],
+      docs: 1,
+      ids: ["broad"],
+    },
+    {
+      name: "fact coverage carries a broad brief",
+      text: `${shared} ${padding}`,
+      facts: [fact("narrow", shared)],
+      docs: 1,
+      ids: ["narrow"],
+    },
+    {
+      name: "leading whitespace before slash",
+      text: ` \n\t/${shared}`,
+      facts: [fact("slash", shared)],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "empty indexed content",
+      text: shared,
+      facts: [fact("empty", "!!!")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "relevance orders the two attachments",
+      text: `${shared} orchard harbor willow badger meadow pebble granite`,
+      facts: [
+        fact("weak", `${shared} violet copper quartz blossom crimson spruce coral`),
+        fact("middle", `${shared} orchard harbor violet copper quartz blossom crimson`),
+        fact("strong", `${shared} orchard harbor willow badger meadow violet copper`),
+      ],
+      docs: 1,
+      ids: ["strong", "middle"],
+    },
+  ];
+  for (const row of cases) {
+    const attached = recallForMessage({ text: row.text }, row.facts, {
+      corpusSize: CORPUS,
+      docs: () => row.docs,
+    });
+    assert.deepEqual(
+      attached.map((f) => f.id),
+      row.ids,
+      row.name,
+    );
+  }
+  assert.deepEqual(
+    recallForMessage(
+      { text: "数据库连接池配置", notification: { source: { kind: "monitor" } } },
+      [fact("han", "数据库连接池配置")],
+      stats,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    rankRecallCandidates("!!!", [fact("empty", "!!!")], stats).filter((m) => m.passes),
+    [],
+  );
+});
+
+it("weights distinctive terms", () => {
+  const shared = "cobalt kestrel lantern";
+  const query = `${shared} violet copper quartz meadow harbor zircon`;
+  const ranked = rankRecallCandidates(
+    query,
+    [
+      { id: "common", content: `${shared} crimson spruce coral birch cypress`, entities: [] },
+      { id: "distinctive", content: "violet copper quartz willow fern almond", entities: [] },
+    ],
+    {
+      corpusSize: 64,
+      docs: (term) =>
+        "cobalt kestrel lantern willow fern almond".split(" ").includes(term) ? 50 : 1,
+    },
+  );
+  assert.deepEqual(
+    ranked.filter((m) => m.passes).map((m) => m.fact.id),
+    ["distinctive"],
+  );
 });
