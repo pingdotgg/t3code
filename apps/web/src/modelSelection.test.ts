@@ -395,6 +395,16 @@ describe("instance-scoped model selection", () => {
 
   describe.each([
     {
+      driverName: "pi",
+      availableModel: "default",
+      missingModel: "anthropic/claude-sonnet-4",
+    },
+    {
+      driverName: "acpRegistry",
+      availableModel: "default",
+      missingModel: "gateway/chosen-model",
+    },
+    {
       driverName: "opencode",
       availableModel: "opencode/big-pickle",
       missingModel: "opencode/kimi-k3",
