@@ -260,9 +260,10 @@ export const make = Effect.gen(function* () {
     input: ProjectReadFileInput,
   ) {
     const requestedPath = input.relativePath;
-    const hostPath = requestedPath.startsWith("~/")
-      ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
-      : yield* toHostPath(requestedPath);
+    const hostPath =
+      requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
+        ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
+        : yield* toHostPath(requestedPath);
     if (
       isNetworkPath(hostPath) &&
       !KnownWorkspaces.isWithinRoot(path, path.resolve(hostPath), path.resolve(input.cwd))
