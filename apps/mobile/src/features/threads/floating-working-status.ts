@@ -8,7 +8,6 @@ export interface FloatingStatusAction {
 }
 
 export type FloatingWorkingStatus =
-  | { readonly kind: "compacting" }
   | {
       readonly kind: "child-input";
       readonly label: string;
@@ -21,12 +20,6 @@ export type FloatingWorkingStatus =
       readonly accessibilityLabel: string;
       readonly waiting: boolean;
       readonly onPress: () => void;
-      readonly action: FloatingStatusAction;
-    }
-  | {
-      readonly kind: "lifecycle";
-      readonly state: "snoozed" | "settled" | "woke";
-      readonly label: string;
       readonly action: FloatingStatusAction;
     }
   | {

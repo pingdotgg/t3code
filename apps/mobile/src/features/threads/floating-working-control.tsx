@@ -82,9 +82,7 @@ export function FloatingWorkingControl(props: {
   const extensionOnly = props.status?.kind === "extension";
   const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED && !extensionOnly;
   const action =
-    props.status?.kind === "background" ||
-    props.status?.kind === "lifecycle" ||
-    props.status?.kind === "stop"
+    props.status?.kind === "background" || props.status?.kind === "stop"
       ? props.status.action
       : null;
   const [agentsWidth, setAgentsWidth] = useState(0);
@@ -189,7 +187,7 @@ export function FloatingWorkingControl(props: {
         >
           <FloatingStatusLabel
             key={
-              props.status.kind === "compacting" || props.status.kind === "extension"
+              props.status.kind === "extension"
                 ? props.status.kind
                 : `${props.status.kind}:${props.status.label}`
             }
@@ -380,20 +378,6 @@ export function FloatingWorkingControl(props: {
   );
 }
 
-function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) => void }) {
-  return (
-    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5" onLayout={props.onLayout}>
-      <SymbolView
-        name="arrow.down.right.and.arrow.up.left"
-        size={13}
-        tintColorClassName="accent-foreground"
-        type="monochrome"
-      />
-      <Text className="font-t3-medium text-xs text-foreground">Compacting…</Text>
-    </StatusLabelRow>
-  );
-}
-
 function FloatingStatusLabel(props: {
   readonly status: FloatingWorkingStatus;
   readonly onLayout: (event: LayoutChangeEvent) => void;
@@ -414,9 +398,6 @@ function FloatingStatusLabel(props: {
         <SymbolView name="chevron.down" size={10} tintColorClassName="accent-foreground" />
       </StatusLabelRow>
     );
-  }
-  if (props.status.kind === "compacting") {
-    return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
   }
   if (props.status.kind === "child-input") {
     return (
@@ -450,26 +431,6 @@ function FloatingStatusLabel(props: {
           className="max-w-[260px] shrink font-t3-medium text-xs text-foreground"
           numberOfLines={1}
         >
-          {props.status.label}
-        </Text>
-      </StatusLabelRow>
-    );
-  }
-  if (props.status.kind === "lifecycle") {
-    return (
-      <StatusLabelRow
-        key="lifecycle"
-        accessibilityLabel={props.status.label}
-        className="gap-2"
-        onLayout={props.onLayout}
-      >
-        <SymbolView
-          name={props.status.state === "settled" ? "checkmark.circle" : "clock"}
-          size={13}
-          tintColorClassName="accent-foreground"
-          type="monochrome"
-        />
-        <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
           {props.status.label}
         </Text>
       </StatusLabelRow>

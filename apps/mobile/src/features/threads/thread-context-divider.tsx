@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { View, type ColorValue } from "react-native";
+import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { ShimmeringWorkContent } from "./thread-work-log";
@@ -44,5 +44,44 @@ export function ThreadContextDivider(props: {
       </View>
       <View className="h-px min-w-2 flex-1 bg-separator" />
     </View>
+  );
+}
+
+export interface ThreadLifecycleEvent {
+  readonly state: "snoozed" | "settled" | "woke";
+  readonly label: string;
+  readonly action: {
+    readonly label: string;
+    readonly accessibilityLabel: string;
+    readonly disabled: boolean;
+    readonly onPress: () => void;
+  };
+}
+
+/** Closes the feed while the thread is snoozed, settled, or just woke. */
+export function ThreadLifecycleDivider(props: {
+  readonly event: ThreadLifecycleEvent;
+  readonly iconColor: ColorValue;
+}) {
+  const { action } = props.event;
+  return (
+    <ThreadContextDivider
+      label={props.event.label}
+      icon={props.event.state === "settled" ? "checkmark.circle" : "clock"}
+      iconColor={props.iconColor}
+    >
+      <Text className="text-xs text-foreground-muted">·</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={action.accessibilityLabel}
+        accessibilityState={{ disabled: action.disabled }}
+        disabled={action.disabled}
+        onPress={action.onPress}
+        hitSlop={8}
+        className={`active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
+      >
+        <Text className="font-t3-medium text-xs text-foreground">{action.label}</Text>
+      </Pressable>
+    </ThreadContextDivider>
   );
 }
