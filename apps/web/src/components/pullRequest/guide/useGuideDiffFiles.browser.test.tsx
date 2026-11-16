@@ -16,11 +16,11 @@ vi.mock("~/state/pullRequests", () => ({
 
 import { useGuideDiffFiles } from "./useGuideDiffFiles";
 
-function Probe({ wantedPaths }: { wantedPaths: string[] }) {
+function Probe({ wantedPaths, headSha = "new-head" }: { wantedPaths: string[]; headSha?: string }) {
   const diff = useGuideDiffFiles({
     environmentId: EnvironmentId.make("test"),
     reference: { projectId: ProjectId.make("project"), repository: "owner/repo", number: 1 },
-    headSha: "new-head",
+    headSha,
     wantedPaths,
   });
   return (
@@ -142,4 +142,29 @@ it("waits for a later cached page that is still refreshing", async () => {
       ["wanted.ts", "FRESH\n"],
     ],
   });
+});
+
+it("replaces cached excerpts when a new guide head receives a refreshed diff", async () => {
+  setup();
+  await using stack = new AsyncDisposableStack();
+  const registry = stack.adopt(AtomRegistry.make(), (value) => value.dispose());
+  const first = Atom.make<AsyncResult.AsyncResult<PullRequestDiffResult>>(
+    AsyncResult.success(page("wanted.ts", "OLD_HEAD", null)),
+  );
+  state.pages.set(null, first);
+  await using screen = await render(
+    <RegistryContext.Provider value={registry}>
+      <Probe wantedPaths={["wanted.ts"]} headSha="old-head" />
+    </RegistryContext.Provider>,
+  );
+  const result = () => JSON.parse(screen.container.querySelector("output")!.textContent!);
+  expect(result().files).toEqual([["wanted.ts", "OLD_HEAD\n"]]);
+
+  await screen.rerender(
+    <RegistryContext.Provider value={registry}>
+      <Probe wantedPaths={["wanted.ts"]} headSha="new-head" />
+    </RegistryContext.Provider>,
+  );
+  await act(() => registry.set(first, AsyncResult.success(page("wanted.ts", "NEW_HEAD", null))));
+  expect(result().files).toEqual([["wanted.ts", "NEW_HEAD\n"]]);
 });
