@@ -5,11 +5,12 @@ import { gradeCondensed, gradeKnowledge, gradeLeaf } from "./grade.ts";
 const [reversal, control] = condensedCases;
 const [peerLeaf, ordinaryLeaf] = leafCases;
 const [peerKnowledge, conventionKnowledge] = knowledgeCases;
-/** The grader's misattribution failures for one statement, ignoring what it leaves out. */
-const misattributions = (text: string) =>
-  gradeLeaf(peerLeaf!, [{ text, citations: ["M2"] }]).filter((failure) =>
-    peerLeaf!.mustNot.some((pattern) => failure.startsWith(`${pattern}: `)),
-  );
+/** The full leaf grade of one statement beside a sibling that credits Astra, which passes alone. */
+const gradeBesideAstra = (text: string) =>
+  gradeLeaf(peerLeaf!, [
+    { text: "Astra proposed Postgres for sessions.", citations: ["M2"] },
+    { text, citations: ["M2"] },
+  ]);
 
 it("passes a roll-up that keeps the reversal, the attribution and the open item", () => {
   expect(
@@ -71,8 +72,10 @@ it.each([
   "The user is still deciding between Redis and Postgres.",
   "The user never agreed to Postgres.",
   "The agent rejected the proposal to use Postgres.",
+  "The user decided to wait before choosing Postgres or Redis.",
+  "The agent suggested keeping Redis rather than Postgres.",
 ])("leaves an open choice open: %s", (text) => {
-  expect(misattributions(text)).toEqual([]);
+  expect(gradeBesideAstra(text)).toEqual([]);
 });
 
 it.each([
@@ -84,8 +87,15 @@ it.each([
   "The user approved Postgres.",
   "Sessions will move to Postgres, per the user.",
   "The agent proposed moving sessions to Postgres; Astra wants to keep Redis.",
+  "The user is going with Postgres.",
+  "The user wants Postgres.",
+  "The user's choice: Postgres for sessions.",
+  "Per the user, sessions move to Postgres.",
+  "The user later agreed and sessions moved to Postgres.",
+  "The assistant answered that sessions should move to Postgres.",
+  "The assistant recommended Postgres for sessions.",
 ])("fails a statement that hands the proposal to the user or the agent: %s", (text) => {
-  expect(misattributions(text)).not.toEqual([]);
+  expect(gradeBesideAstra(text)).not.toEqual([]);
 });
 
 it("does not treat an open Postgres choice as the peer's proposal", () => {
