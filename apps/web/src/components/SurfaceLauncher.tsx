@@ -38,12 +38,9 @@ import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { registerCommands } from "~/shortcuts/dispatcher";
 
 import {
-  DRAFT_PROJECT_ROW_ACTION_CLASS,
-  DRAFT_PROJECT_ROW_BUTTON_CLASS,
-  DRAFT_PROJECT_ROW_CLASS,
-  DRAFT_PROJECT_ROW_LABEL_CLASS,
   DraftProjectGroupLabel,
   DraftProjectRow,
+  DraftProjectRowSlots,
 } from "./chat/DraftHeroHeadline";
 
 /** What a launcher can open for a thread. */
@@ -489,17 +486,19 @@ function SurfaceLauncherCell(props: {
   readonly onSelect: () => void;
 }) {
   return (
-    <div role="listitem" className={DRAFT_PROJECT_ROW_CLASS}>
-      <button type="button" onClick={props.onSelect} className={DRAFT_PROJECT_ROW_BUTTON_CLASS}>
+    <DraftProjectRowSlots.Root>
+      <DraftProjectRowSlots.Button onClick={props.onSelect}>
         {props.icon}
-        <span className={DRAFT_PROJECT_ROW_LABEL_CLASS}>{props.label}</span>
+        <DraftProjectRowSlots.Label>{props.label}</DraftProjectRowSlots.Label>
         <span className="flex min-w-0 flex-1 items-center justify-end gap-2 ps-3.5 text-dim-foreground text-meta">
           {props.detail ? <span className="shrink-0 whitespace-nowrap">{props.detail}</span> : null}
           <Kbd>{props.shortcut}</Kbd>
         </span>
-      </button>
-      {props.action ? <div className={DRAFT_PROJECT_ROW_ACTION_CLASS}>{props.action}</div> : null}
-    </div>
+      </DraftProjectRowSlots.Button>
+      {props.action ? (
+        <DraftProjectRowSlots.Action>{props.action}</DraftProjectRowSlots.Action>
+      ) : null}
+    </DraftProjectRowSlots.Root>
   );
 }
 
