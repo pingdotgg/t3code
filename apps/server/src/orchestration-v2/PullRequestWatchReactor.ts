@@ -46,6 +46,8 @@ import {
 
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
+/** Between sweeps, pending checks get a fingerprint probe this often; a full read only follows a change. */
+const PENDING_PROBE_MS = 30_000;
 const READ_FAILURE_LIMIT = 8;
 /** Group reads in flight at once, inside the host's own request limit. */
 const GROUP_READS = 4;
@@ -839,6 +841,17 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
 
+  /** Targeted reads for the watches whose last read saw checks or mergeability still pending. */
+  const probePending = Effect.suspend(() =>
+    Effect.forEach(
+      currentGroups
+        .filter((group) => lastReads.get(group.key)?.inFlight === true)
+        .map(pullRequestOf),
+      readOnChange,
+      { concurrency: "unbounded", discard: true },
+    ),
+  );
+
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",
   )(function* () {
@@ -867,6 +880,15 @@ export const make = Effect.gen(function* () {
       sweep.pipe(
         Effect.andThen(follow),
         Effect.repeat(Schedule.spaced(`${SWEEP_MINUTES} minutes`)),
+        Effect.asVoid,
+      ),
+    );
+    // A host without a live feed leaves the sweep as the only reader, so a pending watch
+    // would wait the whole sweep for its checks; the probes catch the conclusion sooner.
+    yield* forkParked(
+      Effect.sleep(PENDING_PROBE_MS).pipe(
+        Effect.andThen(probePending),
+        Effect.repeat(Schedule.spaced(PENDING_PROBE_MS)),
         Effect.asVoid,
       ),
     );
