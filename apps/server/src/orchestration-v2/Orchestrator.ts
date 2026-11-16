@@ -3114,7 +3114,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         [
           // A scheduled task's pinned model still moves the thread back when it starts.
           ...(selectionChanged &&
-          (queuedRun.threadPickSuperseded !== true || queuedMessage.scheduledTaskId !== undefined)
+          (queuedRun.threadPickSuperseded !== true ||
+            (queuedMessage.scheduledTaskId !== undefined &&
+              queuedMessage.followsThreadSelection !== true))
             ? [
                 {
                   type:
