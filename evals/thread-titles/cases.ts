@@ -152,12 +152,28 @@ export const threadTitleEvaluationCases = [
     ],
     rubric: "Name the default config on init. Leave out Hyperdrive, the project name.",
   },
+  {
+    id: "custom-title-scheme",
+    source: "https://github.com/pingdotgg/t3code/pull/37565",
+    request: "Relay chat to the lead agent, titled with the user's naming scheme.",
+    previousTitle: "Relay chat to lead agent",
+    instructions: 'Title every thread "Owner: what it does (model effort)".',
+    messages: [
+      {
+        role: "user",
+        text: "Make the relay forward every chat message to the lead agent so reviewers can see questions from subagents.",
+      },
+    ],
+    rubric:
+      'Use the user\'s "Owner: what it does (model effort)" shape with all three parts, even past the default 8-word, 40-character limit. A bare short title fails.',
+  },
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;
   request: string;
   projectTitle?: string;
   previousTitle: string;
+  instructions?: string;
   messages: ReadonlyArray<ThreadTitleMessage>;
   rubric: string;
 }>;
