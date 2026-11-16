@@ -56,7 +56,7 @@ export function ReviewGuideExcerpt({
   return (
     <View className="gap-3">
       {excerpt.caption.trim() ? (
-        <PullRequestMarkdown lineBreaks={false} markdown={excerpt.caption} />
+        <PullRequestMarkdown lineBreaks={false} mathSyntax="chat" markdown={excerpt.caption} />
       ) : null}
       <View className="overflow-hidden rounded-lg border border-border-subtle">
         <Pressable

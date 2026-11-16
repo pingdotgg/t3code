@@ -2,7 +2,10 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
-import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import {
+  remarkKeepWindowsProsePaths,
+  UNFINISHED_DRIVE_PATH,
+} from "@t3tools/shared/markdownWindowsPaths";
 import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
@@ -482,6 +485,37 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
       (this.data().fromMarkdownExtensions ??= []).push({
         exit: { resourceDestinationString: record, definitionDestinationString: record },
       });
+    })
+    .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+const TEX_OPENER_ENTITIES: Record<string, string> = { "\\[": "&#91;", "\\(": "&#40;" };
+
+/**
+ * md4c's math reads `\[` and `\(` as TeX delimiters, but text people write (forge text, user
+ * messages) means CommonMark escapes there, as forges do. Entities keep the literal bracket.
+ */
+export function markdownWithLiteralTexEscapes(markdown: string): string {
+  if (!/\\[[(]/.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  function record(
+    this: { sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    const entity = TEX_OPENER_ENTITIES[this.sliceSerialize(token)];
+    if (!entity) return;
+    const start = token.start.offset;
+    // In a drive path the backslash is a separator, which md4c's preserveWindowsPaths keeps.
+    const word = markdown.slice(0, start).match(/\S*$/)?.[0] ?? "";
+    if (UNFINISHED_DRIVE_PATH.test(word)) return;
+    edits.push({ start, end: token.end.offset, content: entity });
+  }
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({ exit: { characterEscape: record } });
     })
     .parse(markdown);
   return applyMarkdownEdits(markdown, edits);

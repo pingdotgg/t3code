@@ -263,7 +263,11 @@ interface ChatMarkdownProps {
   /** The change request's repository, when it can differ from the checkout at `cwd`. */
   sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
+  /** Text people write (forge text, user messages) reads only dollar math, as forges do. */
+  mathSyntax?: MarkdownMathSyntax | undefined;
 }
+
+export type MarkdownMathSyntax = "chat" | "dollar";
 
 export interface ChatMarkdownContextReference {
   kind: string;
@@ -1755,14 +1759,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
-const REMARK_MATH: Pluggable = [remarkMath, { singleDollarTextMath: true }];
+function withMath(math: Pluggable) {
+  return {
+    plain: [math, ...CHAT_MARKDOWN_REMARK_PLUGINS],
+    breaks: [math, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+  };
+}
+
 // Shared lists, so every message with the same options shares a processor and its cache.
 const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
-  plain: CHAT_MARKDOWN_REMARK_PLUGINS,
-  breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
-  mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-} satisfies Record<string, PluggableList>;
+  off: { plain: CHAT_MARKDOWN_REMARK_PLUGINS, breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS },
+  chat: withMath([remarkMath, { singleDollarTextMath: true }]),
+  // Forges typeset only dollar math; there `\[` and `\(` are CommonMark escapes.
+  dollar: withMath([remarkMath, { singleDollarTextMath: true, texDelimiters: false }]),
+} satisfies Record<string, Record<"plain" | "breaks", PluggableList>>;
 
 const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
 
@@ -1838,6 +1848,7 @@ function ChatMarkdown({
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  mathSyntax = "chat",
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
@@ -1863,14 +1874,8 @@ function ChatMarkdown({
     markdownRef.current = node;
   };
   const sharedRemarkPlugins =
-    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      componentState.mathEnabled
-        ? lineBreaks
-          ? "mathBreaks"
-          : "math"
-        : lineBreaks
-          ? "breaks"
-          : "plain"
+    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[componentState.mathEnabled ? mathSyntax : "off"][
+      lineBreaks ? "breaks" : "plain"
     ];
   // The incremental parser keeps per-instance state, so its output is not shared.
   const uncachedPlugins = incrementalParsing;

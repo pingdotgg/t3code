@@ -27,6 +27,7 @@ export function GuideProse({
       cwd={context.cwd}
       environmentId={context.environmentId}
       lineBreaks={false}
+      mathSyntax="chat"
       className={cn("space-y-0 [&_.chat-markdown]:text-inherit", className)}
     />
   );

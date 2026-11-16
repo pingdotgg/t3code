@@ -625,6 +625,28 @@ describe("ChatMarkdown headings", () => {
   });
 });
 
+it("typesets backslash-delimited math in chat when math rendering is on", async () => {
+  setup();
+  settingsOverrides.mathRenderingEnabled = true;
+  await using screen = await renderText("Area \\(x^2\\) and $y$");
+  await expect.element(screen.getByText(/Area/)).toBeInTheDocument();
+  expect(screen.container.querySelectorAll('[data-markdown-math="inline"]')).toHaveLength(2);
+});
+
+it("keeps escaped brackets literal in user messages when math rendering is on", async () => {
+  setup();
+  settingsOverrides.mathRenderingEnabled = true;
+  await using screen = await renderText(
+    "related: [TEST-123: \\[Security\\]\\[CI\\] Example issue title](https://example.com/issues/TEST-123) and $y$",
+    { mathSyntax: "dollar" },
+  );
+  await expect
+    .element(screen.getByRole("link", { name: "TEST-123: [Security][CI] Example issue title" }))
+    .toBeInTheDocument();
+  const math = [...screen.container.querySelectorAll("[data-markdown-math]")];
+  expect(math.map((node) => node.getAttribute("data-markdown-math"))).toEqual(["inline"]);
+});
+
 describe("ChatMarkdown inline code selection", () => {
   it("selects only a word on double-click in inline and fenced code", async () => {
     setup();

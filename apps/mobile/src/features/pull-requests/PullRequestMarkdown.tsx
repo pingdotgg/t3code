@@ -27,6 +27,7 @@ import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { markdownWithLiteralTexEscapes } from "../../lib/markdownDocument";
 import { markdownImageSources } from "../../lib/markdownImageSources";
 import { FilePreviewGallery, useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { pullRequestImageSource } from "./pullRequestMediaSource";
@@ -110,6 +111,8 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
   readonly lineBreaks?: boolean;
+  /** Forge text reads only dollar math; agent-written guides keep `\(` and `\[`. */
+  readonly mathSyntax?: "chat" | "dollar";
   /**
    * `markerOffset` is into `markdown`. Returning false, or a tap that can't be traced back to
    * the source, undoes the tick the renderer already drew.
@@ -136,6 +139,7 @@ export function PullRequestMarkdown(props: {
   const segmentProps = {
     gallery,
     lineBreaks: props.lineBreaks,
+    mathSyntax: props.mathSyntax ?? "dollar",
     undoneTicks,
     onTaskListChange: props.onTaskListChange,
     onTaskListUndone: () => setUndoneTicks((count) => count + 1),
@@ -153,6 +157,7 @@ function PullRequestBodySegmentView(props: {
   readonly segment: PullRequestBodySegment;
   readonly gallery: FilePreviewItem[];
   readonly lineBreaks: boolean | undefined;
+  readonly mathSyntax: "chat" | "dollar";
   readonly undoneTicks: number;
   readonly onTaskListChange:
     | ((input: { readonly markerOffset: number; readonly checked: boolean }) => boolean)
@@ -167,6 +172,7 @@ function PullRequestBodySegmentView(props: {
         markdown={segment.text}
         gallery={props.gallery}
         lineBreaks={props.lineBreaks}
+        mathSyntax={props.mathSyntax}
         onTaskListItemPress={
           onTaskListChange
             ? (event) => {
@@ -215,6 +221,7 @@ function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly gallery: FilePreviewItem[];
   readonly lineBreaks: boolean | undefined;
+  readonly mathSyntax: "chat" | "dollar";
   readonly onTaskListItemPress?: SelectableMarkdownTextProps["onTaskListItemPress"];
 }) {
   const hostLineBreaks = useContext(LineBreaksContext);
@@ -223,7 +230,8 @@ function PullRequestMarkdownContent(props: {
   const changeRequestUrl = useContext(ChangeRequestUrlContext);
   const resolveMediaUrl = (href: string) =>
     changeRequestUrl ? resolveChangeRequestMediaUrl(href, changeRequestUrl) : href;
-  const markdown = linkReferenceAutolinks(props.markdown, autolinks);
+  const linked = linkReferenceAutolinks(props.markdown, autolinks);
+  const markdown = props.mathSyntax === "dollar" ? markdownWithLiteralTexEscapes(linked) : linked;
   const openPullRequest = useOpenPullRequest();
   const openLink = (href: string) => {
     void openPullRequest(href);

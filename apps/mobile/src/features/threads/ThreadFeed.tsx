@@ -165,7 +165,11 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
-import { markdownReferenceDefinitions, withReferenceDefinitions } from "../../lib/markdownDocument";
+import {
+  markdownReferenceDefinitions,
+  markdownWithLiteralTexEscapes,
+  withReferenceDefinitions,
+} from "../../lib/markdownDocument";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
 import {
   SelectableMarkdownText,
@@ -2628,7 +2632,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
   if (!hasReviewComment) {
     return (
       <SelectableMarkdownText
-        markdown={text}
+        markdown={markdownWithLiteralTexEscapes(text)}
         contextClipboardFragment={contextClipboardFragment}
         skills={props.skills}
         models={models}
@@ -2661,7 +2665,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
         return (
           <SelectableMarkdownText
             key={segment.id}
-            markdown={text}
+            markdown={markdownWithLiteralTexEscapes(text)}
             contextClipboardFragment={contextClipboardFragment}
             skills={props.skills}
             models={models}
