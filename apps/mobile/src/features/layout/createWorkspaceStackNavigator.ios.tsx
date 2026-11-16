@@ -77,6 +77,7 @@ import {
   NativePrimaryColumnContext,
   NativeWorkspaceInspectorContext,
   NativeWorkspaceModeContext,
+  NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
   slotScreenOptions,
 } from "../../native/v5-workspace-context";
@@ -104,6 +105,7 @@ function ColumnScreen(props: {
   readonly screenKey?: string;
   readonly primary?: boolean;
   readonly attached?: boolean;
+  readonly animatesPush?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
   readonly onDismiss: (routeKey: string, native: boolean) => void;
@@ -138,6 +140,7 @@ function ColumnScreen(props: {
     <Split.Screen
       screenKey={props.screenKey ?? key}
       activityMode={props.attached === false ? "detached" : "attached"}
+      animatesPush={props.animatesPush}
       onDismiss={(event) => {
         props.onDismiss(key, event.nativeEvent.isNativeDismiss);
       }}
@@ -265,6 +268,14 @@ function WorkspaceColumns(
     deviceType === "duo-unfolded" && selectedTab !== "pullRequests" && !settingsOpen
       ? openNewTask
       : undefined;
+  // Pages a hidden tab opens as it's shown belong to the tab, so they appear in place.
+  const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
+  const [shownPages, setShownPages] = useState({ headerOnly, keys: new Set<string>() });
+  if (shownPages.headerOnly !== headerOnly)
+    setShownPages({
+      headerOnly,
+      keys: headerOnly ? new Set() : new Set(props.detail.map((route) => route.key)),
+    });
   const inspector = use(NativeWorkspaceInspectorContext);
   const hideInspector = () => {
     if (inspector.visible) toggleAuxiliaryPane();
@@ -436,13 +447,18 @@ function WorkspaceColumns(
               <EmptyDetailHeader onCompose={detailCompose} />
             </PaneContext>
             <ColumnContent column="empty-detail">
-              <WorkspaceEmptyDetail
-                tab={settingsOpen ? "settings" : selectedTab}
-                onStartNewTask={
-                  // Duo provides compose in the detail bar; iPad uses the empty-state action.
-                  detailCompose ? undefined : openNewTask
-                }
-              />
+              {/* Settings opens a page as it's shown, so its hidden tab skips the placeholder. */}
+              {headerOnly && settingsOpen ? (
+                <View className="flex-1 bg-screen" />
+              ) : (
+                <WorkspaceEmptyDetail
+                  tab={settingsOpen ? "settings" : selectedTab}
+                  onStartNewTask={
+                    // Duo provides compose in the detail bar; iPad uses the empty-state action.
+                    detailCompose ? undefined : openNewTask
+                  }
+                />
+              )}
             </ColumnContent>
           </Split.Screen>
           {screens.routes.map((route) => {
@@ -455,6 +471,7 @@ function WorkspaceColumns(
                 screenKey={screenKey}
                 descriptor={descriptor}
                 attached={props.detail.some((current) => current.key === route.key)}
+                animatesPush={!shownPages.keys.has(route.key)}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
@@ -538,7 +555,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     render: () => (
       <WorkspaceNativeTabs
         tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
-        detailOpen={projection.detail.length > 0}
         hidden={
           projection.detail.length > 0 &&
           !primaryVisible &&
@@ -546,14 +562,16 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
       >
-        {(slotWorkspace) =>
-          props.nativeColumns &&
-          workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
+        {(slotWorkspace, headerOnly) => {
+          // A hidden tab only needs its header, not the shown tab's pages.
+          const detail = headerOnly ? [] : projection.detail;
+          return props.nativeColumns &&
+            workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
             <WorkspaceColumns
               {...props}
               descriptors={descriptors}
               primary={primaryRoute}
-              detail={projection.detail}
+              detail={detail}
             />
           ) : (
             <V5CardStackView
@@ -563,13 +581,13 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
               descriptors={descriptors}
               state={{
                 ...props.state,
-                routes: [primaryRoute, ...projection.detail],
-                index: projection.detail.length,
+                routes: [primaryRoute, ...detail],
+                index: detail.length,
                 preloadedRoutes: [],
               }}
             />
-          )
-        }
+          );
+        }}
       </WorkspaceNativeTabs>
     ),
   };
