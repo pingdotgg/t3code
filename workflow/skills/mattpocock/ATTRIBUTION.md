@@ -10,7 +10,7 @@ read by the marketplace.
 
 ## What was taken
 
-Every skill in upstream's plugin manifest. From `skills/engineering/`: `ask-matt`, `code-review` (now `diff-review`),
+Every skill but one in upstream's plugin manifest. From `skills/engineering/`: `code-review` (now `diff-review`),
 `codebase-design`, `diagnosing-bugs`, `domain-modeling`, `grill-with-docs`, `implement`,
 `implement-spec`, `improve-codebase-architecture`, `pr`, `prototype`, `research`, `retro`,
 `setup-matt-pocock-skills`, `tdd`, `to-spec`, `to-tickets`, `triage`, `wayfinder`, and `wizard`. From
@@ -21,6 +21,8 @@ and `writing-for-agents`.
 
 - `skills/in-progress/`, including `chief-of-staff` and `software-factory`, and `skills/deprecated/`,
   `skills/misc/`. Upstream's manifest does not ship them.
+- `ask-matt`, removed after the migration review: `ak-help` routes over every group, while
+  `ask-matt` only knew this one. Skip it when syncing.
 - Each skill's `agents/openai.yaml`. It configures another vendor's agent and nothing here reads it.
 
 ## Local modifications
@@ -33,7 +35,7 @@ and `writing-for-agents`.
   `AGENT-BRIEF.md` are unchanged.
 - Sixteen skills had `disable-model-invocation` removed, for the same reason as the pstack set: the
   agent should reach for a skill when the situation comes up. The fork carried this change already.
-- `code-review` is `diff-review`, including its frontmatter name and every reference in `ask-matt`,
+- `code-review` is `diff-review`, including its frontmatter name and every reference in
   `implement`, `implement-spec`, and `tdd`. Claude Code ships a built-in `code-review` skill, and
   providers see one flat list of names.
 - Claude Code-only wording is provider-neutral, so every provider T3 Code runs can follow these
@@ -49,8 +51,6 @@ and `writing-for-agents`.
     checkout, because a fresh worktree would miss uncommitted work and gains nothing.
   - `retro` finds past sessions with `t3_thread_search` and `t3_thread_read` instead of searching
     session logs on disk.
-  - Slash names in `ask-matt` (`/clear`, `/compact`, `/grill-me` and the rest) are unchanged. They
-    tell the user what to type, and the main harnesses share them.
   - `CLAUDE.md` mentions in `setup-matt-pocock-skills`, `retro`, and `writing-for-agents` are
     unchanged. They mean the repo's instruction file, which is real for Claude projects.
 

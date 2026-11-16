@@ -87,7 +87,5 @@ or `writing-for-agents` skill for capturing it as a new skill.
 
 ## Notes
 
-- `ask-matt` routes over the vendored Matt Pocock skills only. This skill covers everything
-  available, so prefer it when the user does not know which group owns what.
 - Read `workflow/skills/pstack/ATTRIBUTION.md` or `workflow/skills/mattpocock/ATTRIBUTION.md`
   when the user asks where a vendored skill came from or why a related one is missing.
