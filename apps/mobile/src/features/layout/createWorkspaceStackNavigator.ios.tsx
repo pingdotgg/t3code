@@ -546,27 +546,30 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
           (metrics?.verticalBarEdge ?? "none") === "none"
         }
       >
-        {props.nativeColumns && !workspacePage ? (
-          <WorkspaceColumns
-            {...props}
-            descriptors={descriptors}
-            primary={primaryRoute}
-            detail={projection.detail}
-          />
-        ) : (
-          <V5CardStackView
-            {...props}
-            onRootVisibilityChange={setPrimaryVisible}
-            onNativePopChange={setNativelyPoppingWorkspaceRoute}
-            descriptors={descriptors}
-            state={{
-              ...props.state,
-              routes: [primaryRoute, ...projection.detail],
-              index: projection.detail.length,
-              preloadedRoutes: [],
-            }}
-          />
-        )}
+        {(slotWorkspace) =>
+          props.nativeColumns &&
+          workspaceUsesColumns(slotWorkspace.state.selectedTab, slotWorkspace.settingsOpen) ? (
+            <WorkspaceColumns
+              {...props}
+              descriptors={descriptors}
+              primary={primaryRoute}
+              detail={projection.detail}
+            />
+          ) : (
+            <V5CardStackView
+              {...props}
+              onRootVisibilityChange={setPrimaryVisible}
+              onNativePopChange={setNativelyPoppingWorkspaceRoute}
+              descriptors={descriptors}
+              state={{
+                ...props.state,
+                routes: [primaryRoute, ...projection.detail],
+                index: projection.detail.length,
+                preloadedRoutes: [],
+              }}
+            />
+          )
+        }
       </WorkspaceNativeTabs>
     ),
   };

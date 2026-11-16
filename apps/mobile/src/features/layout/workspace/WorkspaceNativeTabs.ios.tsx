@@ -55,7 +55,7 @@ function RetainedWorkspaceTab(props: {
   readonly prewarm: boolean;
   readonly setMountedSlots: Dispatch<SetStateAction<ReadonlySet<string>>>;
   readonly setPrewarmRequests: Dispatch<SetStateAction<ReadonlyMap<string, number>>>;
-  readonly children: ReactNode;
+  readonly children: (workspace: SlotWorkspace) => ReactNode;
 }) {
   const workspace = useWorkspaceTabs()!;
   // Whether this slot is the visible one, read by cleanups after the switch has committed.
@@ -124,14 +124,19 @@ function RetainedWorkspaceTab(props: {
   return content ? (
     <NativeWorkspaceTabActivityContext value={activity}>
       <WorkspaceSlotOptionsContext value={slotOptions}>
-        <WorkspaceTabsContext value={content.workspace}>{content.children}</WorkspaceTabsContext>
+        <WorkspaceTabsContext value={content.workspace}>
+          {content.children(content.workspace)}
+        </WorkspaceTabsContext>
       </WorkspaceSlotOptionsContext>
     </NativeWorkspaceTabActivityContext>
   ) : null;
 }
 
+type SlotWorkspace = NonNullable<ReturnType<typeof useWorkspaceTabs>>;
+
 export function WorkspaceNativeTabs(props: {
-  readonly children: ReactNode;
+  /** Renders a slot's tree for its own tab, which can lay out differently from the shown one. */
+  readonly children: (workspace: SlotWorkspace) => ReactNode;
   readonly hidden: boolean;
   /** The sidebar column draws the tabs itself, so they leave with it. */
   readonly tabsInSidebarColumn?: boolean;
