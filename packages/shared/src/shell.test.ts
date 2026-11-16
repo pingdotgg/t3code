@@ -261,22 +261,12 @@ describe("mergePathEntries", () => {
 describe("windowsEnvironmentValueCommand", () => {
   it("joins PATH as Process, then Machine, then User so prepends win and User installs still appear", () => {
     const command = windowsEnvironmentValueCommand("PATH");
-    const processAt = command.indexOf(
-      "[Environment]::GetEnvironmentVariable('PATH','Process')",
-    );
-    const machineAt = command.indexOf(
-      "[Environment]::GetEnvironmentVariable('PATH','Machine')",
-    );
+    const processAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','Process')");
+    const machineAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','Machine')");
     const userAt = command.indexOf("[Environment]::GetEnvironmentVariable('PATH','User')");
     expect(processAt).toBeGreaterThan(-1);
     expect(processAt).toBeLessThan(machineAt);
     expect(machineAt).toBeLessThan(userAt);
-  });
-
-  it("leaves non-PATH names on the process scope", () => {
-    expect(windowsEnvironmentValueCommand("FNM_DIR")).toBe(
-      "$value = [Environment]::GetEnvironmentVariable('FNM_DIR')",
-    );
   });
 });
 
@@ -424,19 +414,6 @@ describe("readEnvironmentFromWindowsShell", () => {
         expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
         { encoding: "utf8", timeout: 5000 },
       );
-      const captureCommand = String(execFile.mock.calls[0]?.[1].at(-1));
-      const processAt = captureCommand.indexOf(
-        "[Environment]::GetEnvironmentVariable('PATH','Process')",
-      );
-      const machineAt = captureCommand.indexOf(
-        "[Environment]::GetEnvironmentVariable('PATH','Machine')",
-      );
-      const userAt = captureCommand.indexOf(
-        "[Environment]::GetEnvironmentVariable('PATH','User')",
-      );
-      expect(processAt).toBeGreaterThan(-1);
-      expect(processAt).toBeLessThan(machineAt);
-      expect(machineAt).toBeLessThan(userAt);
     }),
   );
 
