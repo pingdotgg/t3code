@@ -561,6 +561,26 @@ fn uploads_claims_and_deletes_attachments() {
     store.release(&[ChatAttachment::Image(claimed.clone())]);
     assert!(store.resolve(&claimed.id).is_none());
 
+    let missing = ChatAttachment::Image(ChatImageAttachment {
+        id: format!("pending-{}", conn_support::uuid_v4()),
+        ..match &attachment {
+            ChatAttachment::Image(a) => a.clone(),
+            _ => unreachable!(),
+        }
+    });
+    let before = fs::read_dir(store.dir()).unwrap().count();
+    assert!(
+        store
+            .claim_all("Thread 1", &[attachment.clone(), missing])
+            .unwrap_err()
+            .contains("not found")
+    );
+    assert_eq!(
+        fs::read_dir(store.dir()).unwrap().count(),
+        before,
+        "failed batch must release its claimed copies"
+    );
+
     // Delete removes pending uploads only.
     store.delete_pending(&id);
     assert!(store.resolve(&id).is_none());

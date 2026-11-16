@@ -227,3 +227,14 @@ fn decode(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_generated_rule_compiles() {
+        assert!(
+            super::compiled().is_ok(),
+            "generated input patterns must compile"
+        );
+    }
+}

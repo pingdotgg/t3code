@@ -111,19 +111,11 @@ impl EngineHost for Host {
                 return Ok(attachments);
             };
             let list: Vec<ChatAttachment> = from_json(attachments).map_err(|e| e.to_string())?;
-            conn_files::attachments::validate_claims(&list)?;
             tokio::task::spawn_blocking(move || {
-                let mut claimed = Vec::with_capacity(list.len());
-                for attachment in &list {
-                    match files.attachments.claim(&thread_id, attachment) {
-                        Ok(kept) => claimed.push(kept),
-                        Err(reason) => {
-                            files.attachments.release(&claimed);
-                            return Err(reason);
-                        }
-                    }
-                }
-                Ok(to_json(&claimed))
+                files
+                    .attachments
+                    .claim_all(&thread_id, &list)
+                    .map(|claimed| to_json(&claimed))
             })
             .await
             .map_err(|e| e.to_string())?
