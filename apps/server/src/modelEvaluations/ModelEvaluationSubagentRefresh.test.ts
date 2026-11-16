@@ -7,6 +7,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { followSettledSubagentRefreshes } from "./ModelEvaluationSubagentRefresh.ts";
 
 const runId = RunId.make("parent-run");
@@ -37,7 +38,11 @@ it.effect("keeps refreshing after the event stream fails", () =>
           streamDomainEventsAfter: () => {
             subscriptions += 1;
             return subscriptions === 1
-              ? Stream.fail(new Error("subscription dropped"))
+              ? Stream.fail(
+                  new Orchestrator.OrchestratorDomainEventStreamError({
+                    cause: new Error("subscription dropped"),
+                  }),
+                )
               : Stream.fromQueue(events);
           },
         },
