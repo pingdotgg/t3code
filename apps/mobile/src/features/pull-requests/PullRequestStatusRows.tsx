@@ -1,3 +1,4 @@
+import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
@@ -26,6 +27,7 @@ import {
 } from "./pullRequestActions";
 import {
   checkStatus,
+  isFailingCheck,
   pullRequestBranchSummary,
   pullRequestChecksSummary,
   pullRequestReviewSummary,
@@ -102,7 +104,13 @@ export function PullRequestStatusMenu(props: RowProps) {
 }
 
 export function PullRequestChecksRow(props: RowProps) {
-  const [expanded, setExpanded] = useState(false);
+  const linked = parsePullRequestAnchor(props.params.navigationUrl)?.kind === "checks";
+  const [expanded, setExpanded] = useState(linked);
+  const [seenNavigation, setSeenNavigation] = useState(props.params.navigationId);
+  if (props.params.navigationId !== seenNavigation) {
+    setSeenNavigation(props.params.navigationId);
+    if (linked) setExpanded(true);
+  }
   const checks = pullRequestChecksSummary(props.pr);
   const action = usePullRequestAction(props.params, props.pr);
   const definition = sourceControlClients.get(props.pr.provider);
@@ -125,8 +133,7 @@ export function PullRequestChecksRow(props: RowProps) {
           exiting={PR_ROW_EXIT}
           className="pl-8"
         >
-          {props.pr.state === "open" &&
-          props.pr.checks.some((check) => check.status === "failure") ? (
+          {props.pr.state === "open" && props.pr.checks.some(isFailingCheck) ? (
             <PullRequestAgentRow {...props} task="feedback" title="Fix failing checks" />
           ) : null}
           {action.available("approve-workflows") ? (
