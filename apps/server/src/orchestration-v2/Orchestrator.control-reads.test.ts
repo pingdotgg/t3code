@@ -1,3 +1,5 @@
+import * as NodeSqlite from "node:sqlite";
+
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -24,8 +26,10 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
+import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -43,6 +47,13 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+declare module "node:sqlite" {
+  interface StatementSync {
+    // Node 26 has this; @types/node 24 does not declare it yet.
+    stat(counter: "vmStep"): number;
+  }
+}
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -1254,6 +1265,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       creationSource: "mcp",
     });
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
+    assert.deepEqual(updatedParent.subagents[0]!.modelSelection, modelSelection);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
     const child = yield* projections.getThreadProjection(childThreadId);
     assert.isNull(child.thread.linkedPullRequest);
@@ -1900,6 +1912,216 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("starts and finishes a delegated task without reading the parent's history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentThreadId = ThreadId.make("thread:long-parent");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-parent"),
+      threadId: parentThreadId,
+      projectId: ProjectId.make("project:long-parent"),
+      title: "Parent",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-long-parent"),
+      threadId: parentThreadId,
+      messageId: MessageId.make("message:long-parent"),
+      text: "Delegate the work",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parent = yield* projections.getThreadRecords(parentThreadId, [
+      "runs",
+      "attempts",
+      "providerThreads",
+    ]);
+    const parentRun = parent.runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:long-parent");
+    const nativeRef = (nativeId: string) => ({
+      driver: adapter.driver,
+      nativeId,
+      strength: "strong" as const,
+    });
+    for (const event of [
+      {
+        type: "provider-thread.updated",
+        payload: { ...parent.providerThreads[0]!, nativeThreadRef: nativeRef("native:parent") },
+      },
+      // A steered run: its attempt points at a provider turn that another attempt started.
+      {
+        type: "provider-turn.updated",
+        payload: {
+          id: providerTurnId,
+          providerThreadId: parentRun.providerThreadId!,
+          nodeId: parentRun.rootNodeId!,
+          runAttemptId: null,
+          nativeTurnRef: nativeRef("native:parent:turn"),
+          ordinal: 1,
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        },
+      },
+      { type: "run-attempt.updated", payload: { ...parent.attempts[0]!, providerTurnId } },
+    ] as const) {
+      yield* projections.apply({
+        ...event,
+        id: EventId.make(`event:long-parent:${event.type}`),
+        threadId: parentThreadId,
+        runId: parentRun.id,
+        occurredAt: now,
+      });
+    }
+
+    // Keep the statements of the task start and finish operations, not of the recovery around them.
+    const taskSpans = [
+      "orchestrationV2.dispatch.delegatedTaskRequest",
+      "Orchestrator.finalizeAppOwnedSubagent",
+    ];
+    const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const recordStatements = Effect.provideService(
+      Statement.CurrentTransformer,
+      (statement, _make, _fiber, span) => {
+        for (
+          let parent = Option.some<Tracer.AnySpan>(span);
+          Option.isSome(parent) && parent.value._tag === "Span";
+          parent = parent.value.parent
+        ) {
+          if (taskSpans.includes(parent.value.name)) {
+            statements.push(statement.compile());
+            break;
+          }
+        }
+        return Effect.succeed(statement);
+      },
+    );
+    yield* orchestrator
+      .dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-long-parent"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Do the work",
+        completionWake: "always",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(recordStatements);
+    const started = yield* projections.getThreadRecords(parentThreadId, ["subagents", "turnItems"]);
+    const task = started.subagents[0]!;
+    const childThreadId = task.childThreadId!;
+    assert.equal(
+      started.turnItems.find((item) => item.type === "subagent")?.providerTurnId,
+      providerTurnId,
+    );
+    const child = yield* projections.getThreadRecords(childThreadId, ["runs", "contextTransfers"]);
+    const spawnPoint = child.contextTransfers[0]?.sourcePoint;
+    assert.deepEqual(
+      [spawnPoint?.providerThreadRef, spawnPoint?.providerTurnRef],
+      [nativeRef("native:parent"), nativeRef("native:parent:turn")],
+    );
+
+    // The run listener skips reconcile commands, so the recovery below finishes the task here.
+    yield* eventSink.write({
+      commandId: CommandId.make("command:runtime-reconcile:long-parent"),
+      events: [
+        {
+          id: EventId.make("event:long-parent:child-completed"),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: child.runs[0]!.id,
+          occurredAt: now,
+          payload: { ...child.runs[0]!, status: "completed", completedAt: now },
+        },
+      ],
+    });
+    yield* orchestrator.recoverDelegatedTasks.pipe(recordStatements);
+    const finished = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "nodes",
+      "turnItems",
+      "runs",
+    ]);
+    assert.deepEqual(
+      [
+        finished.subagents[0]?.status,
+        finished.subagents[0]?.completionDelivery?.state,
+        finished.nodes.find((node) => node.id === task.id)?.status,
+        finished.turnItems.find((item) => item.type === "subagent")?.status,
+        finished.runs[0]?.delegatedCompletion?.delivery?.taskIds,
+      ],
+      ["completed", "claimed", "completed", "completed", [task.id]],
+    );
+
+    // Start and finish read the task's own records, so their VM steps, which are deterministic,
+    // must stay flat on a copy with a long parent history. Left out: the counts that number the
+    // task and its wake, which walk one index.
+    const copyPath = "file:/delegated-task-reads?vfs=memdb";
+    using copy = new NodeSqlite.DatabaseSync(copyPath);
+    yield* sql`VACUUM INTO ${copyPath}`;
+    const reads = statements.filter(
+      ([query]) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("COUNT(*)"),
+    );
+    const readSteps = () =>
+      reads.reduce((steps, [query, params]) => {
+        const statement = copy.prepare(query);
+        statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+        return steps + statement.stat("vmStep");
+      }, 0);
+    const shortSteps = readSteps();
+    assert.isAbove(shortSteps, 0);
+    const addHistory = (table: string, key: string, renamed: ReadonlyArray<string> = []) => {
+      const name = `orchestration_v2_projection_${table}`;
+      const columns = copy
+        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
+        .all()
+        .map((column) => String(column.name));
+      const values = columns.map((column) =>
+        column === key || renamed.includes(column)
+          ? `CASE WHEN ${column} = '${parentThreadId}' THEN ${column} ELSE ${column} || ':history:' || history.n END`
+          : column === "ordinal"
+            ? "ordinal + history.n"
+            : column,
+      );
+      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 300)
+        INSERT INTO ${name} (${columns.join(", ")})
+        SELECT ${values.join(", ")} FROM ${name}, history
+        WHERE '${parentThreadId}' IN (${columns.filter((column) => column.endsWith("thread_id")).join(", ")})`);
+    };
+    addHistory("nodes", "node_id");
+    addHistory("turn_items", "turn_item_id", ["node_id"]);
+    addHistory("subagents", "subagent_id", ["child_thread_id"]);
+    addHistory("context_transfers", "context_transfer_id", [
+      "source_thread_id",
+      "target_thread_id",
+    ]);
+    addHistory("runs", "run_id");
+    addHistory("run_attempts", "attempt_id", ["run_id"]);
+    addHistory("messages", "message_id");
+    addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
+    assert.isAtMost(readSteps(), shortSteps * 1.1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("replays a thread.create receipt without changing the thread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -2004,6 +2226,27 @@ it.effect("explicit settle clears snooze atomically and stays idempotent after r
     } as const;
     assert.deepInclude(yield* projections.getThreadShell(threadId), active);
     assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
+
+    // Undo of a settle restores the cleared Active anchor instead of stamping a new one.
+    for (const restoreUnsettledAt of [DateTime.formatIso(now), null]) {
+      yield* TestClock.adjust("1 second");
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`settle-before-undo-${restoreUnsettledAt}`),
+        threadId,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unsettle",
+        commandId: CommandId.make(`undo-settle-${restoreUnsettledAt}`),
+        threadId,
+        reason: "user",
+        restoreUnsettledAt,
+      });
+      assert.deepInclude(yield* projections.getThreadShell(threadId), {
+        ...active,
+        unsettledAt: restoreUnsettledAt === null ? null : now,
+      });
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2428,7 +2671,9 @@ it.effect("queued-message commands read a long thread's history without walking 
           if (
             (detail.includes("TEMP B-TREE FOR GROUP BY") && query.includes("json_each")) ||
             (/^SEARCH .*(node|turn_item).* \(thread_id=\?\)$/.test(detail) &&
-              !detail.includes("USING COVERING INDEX")) ||
+              !detail.includes("USING COVERING INDEX") &&
+              // That full ordering pass, through an index that holds only message items.
+              !(detail.includes("message_ordinal_idx") && !query.includes("json_each"))) ||
             // Every active run in the environment, not only this thread's.
             /^SEARCH .*runs.* \(status=\?\)$/.test(detail) ||
             // A status-filtered read that fetches every typed row to check its status.
@@ -2609,4 +2854,109 @@ it.effect("a running provider-turn update reads only the thread's queued and run
       ),
     );
   }),
+);
+
+it.effect(
+  "a delegated child's run end reads the parent's runs no matter how many deliveries it has open",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const parentThreadId = ThreadId.make("thread:busy-coordinator");
+      const now = yield* DateTime.now;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-busy-coordinator"),
+        threadId: parentThreadId,
+        projectId: ProjectId.make("project:busy-coordinator"),
+        title: "Coordinator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("start-busy-coordinator"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("message:busy-coordinator"),
+        text: "Delegate the work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parentRun = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-busy-coordinator"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Do the work",
+        completionWake: "always",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const task = (yield* projections.getThreadRecords(parentThreadId, ["subagents"]))
+        .subagents[0]!;
+      const childThreadId = task.childThreadId!;
+      const childRun = (yield* projections.getThreadRecords(childThreadId, ["runs"])).runs[0]!;
+
+      const runReads: Array<string> = [];
+      const recordRunReads = Effect.provideService(
+        Statement.CurrentTransformer,
+        (statement, _make, _fiber, _span) => {
+          const [query, params] = statement.compile();
+          if (
+            query.includes("FROM orchestration_v2_projection_runs") &&
+            params.includes(parentThreadId)
+          )
+            runReads.push(query);
+          return Effect.succeed(statement);
+        },
+      );
+      const captureReads = Effect.gen(function* () {
+        runReads.length = 0;
+        yield* orchestrator
+          .recoverDelegatedTask(childThreadId, { completedRunId: childRun.id })
+          .pipe(recordRunReads);
+        return runReads.length;
+      });
+      const quietParent = yield* captureReads;
+
+      // Completion wakes queued behind the coordinator's own work, each with a delivery still open.
+      for (let index = 0; index < 40; index++) {
+        const runId = RunId.make(`run:busy-coordinator:wake:${index}`);
+        yield* projections.apply({
+          id: EventId.make(`event:busy-coordinator:wake:${index}`),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            ...parentRun,
+            id: runId,
+            ordinal: parentRun.ordinal + index + 1,
+            status: "queued",
+            delegatedCompletion: {
+              disposition: "open",
+              nextGeneration: 2,
+              delivery: {
+                generation: 1,
+                messageId: MessageId.make(`message:busy-coordinator:wake:${index}`),
+                taskIds: [NodeId.make(`task:busy-coordinator:other:${index}`)],
+              },
+            },
+          },
+        });
+      }
+      assert.equal(yield* captureReads, quietParent);
+    }).pipe(Effect.provide(layerTest)),
 );

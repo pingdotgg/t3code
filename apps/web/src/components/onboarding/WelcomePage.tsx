@@ -94,6 +94,7 @@ import {
   useEnvironmentsWithScope,
 } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
+import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
 import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog";
@@ -696,6 +697,12 @@ function AgentsSection({
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
           session={terminalSession}
+          onCommandFinished={() =>
+            void refreshProviders({
+              environmentId,
+              input: { instanceId: terminalSession.providerInstanceId },
+            })
+          }
           onClose={() => {
             setTerminalSession(null);
             void refreshProviders({ environmentId, input: {} });
@@ -1201,9 +1208,11 @@ function AgentRow({
 
 function AgentInstallTerminal({
   session,
+  onCommandFinished,
   onClose,
 }: {
   readonly session: AgentTerminalSession;
+  readonly onCommandFinished: () => void;
   readonly onClose: () => void;
 }) {
   const { command, cwd, driver, environmentId, keybindings, providerInstanceId } = session;
@@ -1226,6 +1235,22 @@ function AgentInstallTerminal({
     "preparing" | "ready" | "openFailed" | "writeFailed"
   >("preparing");
   const terminalReady = setupState === "ready" || setupState === "writeFailed";
+  const commandRunning = useThreadRunningTerminalIds({
+    environmentId,
+    threadId: AGENT_ONBOARDING_THREAD_ID,
+  }).includes(terminalId);
+  const commandStartedRef = useRef(false);
+  const handleCommandFinished = useEffectEvent(onCommandFinished);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the shell stays open after an install or sign-in, so its command exiting is the only signal to check the agent again
+  useEffect(() => {
+    if (commandRunning) {
+      commandStartedRef.current = true;
+    } else if (commandStartedRef.current) {
+      commandStartedRef.current = false;
+      handleCommandFinished();
+    }
+  }, [commandRunning]);
 
   // StrictMode can finish a cancelled open after replacement setup; it must not close or pre-type into that
   // session.

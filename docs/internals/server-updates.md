@@ -27,6 +27,11 @@ Protocol 4 changed the launcher alone, so its runtime still runs under protocol 
 The server names its launcher's protocol to preflight, not its own, since the two differ
 after the first such update.
 
+A client can stage the target early with `stageOnly`, which installs and preflights the
+runtime and restarts nothing. "Update everything" does this while provider installs run,
+because a restart would kill them. A server without the `serverUpdateStaging` capability
+ignores the flag and runs the whole update, so send it only to a server that advertises it.
+
 After a commit or rollback the launcher points the unit at the selected runtime and
 reloads the manager, so the next service start runs that version's launcher; the
 protocol check is what makes that safe. Each start after a finished update retries this, because
@@ -112,6 +117,14 @@ never wake it. Its continuation prompt is the note of what will not report back.
 unmarked shell or monitor does not wake a settled run: most are dev servers and their
 watchdogs that nobody waits on, so that note waits for the next user message.
 
+A run is marked running before its provider accepts the prompt, so recovery treats a run
+without a provider turn as never started. A user's prompt the provider never received
+joins the held queue. With restart continuation on, a delegated, agent-sent, or scheduled
+prompt has nobody to review it, so recovery starts it again under the same run. The resend
+skips every thread and Stop that a continuation skips, and gives up after three tries so a
+start that crashes the server cannot loop. A crash after the provider received the prompt
+but before its turn was recorded can repeat that prompt.
+
 Recovery retires effects tied to the lost process and records continuation intent
 in the durable outbox. That intent survives another restart before provider startup.
 Continuation effects wait for activation; a slow provider must not delay the server's
@@ -125,8 +138,11 @@ and maintenance turns such as `/compact` before dispatching. Intent and delivery
 refuse a thread that is archived, settled, or still snoozed, a cut turn whose provider
 turn already ended, and a run waiting on the user: an approval, question, or secret that was pending,
 or that recovery closed on the cut turn. Message-capable questions stay answerable, so
-they do not block. Delivery also stops after three consecutive continuations in one
-`restartContinuationOfRunId` chain, so a turn that crashes the server cannot loop. Stable
+they do not block. New continuation intents persist a cumulative process-loss count;
+delivery stops before the fourth crash recovery of an unfinished turn, regardless
+of elapsed time. Planned shutdowns and completed turns reset it. A live continuation
+retains its preceding intent past outbox retention so cleanup cannot erase the count.
+Legacy intents without a count keep the five-minute chain guard. Stable
 command and message IDs prevent duplicate submissions after an outbox retry. Codex
 resumes without adding provider prompt text unless the turn lost background work;
 other adapters receive the continuation message through their normal turn path.
