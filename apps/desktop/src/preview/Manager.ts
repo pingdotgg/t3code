@@ -476,13 +476,32 @@ const IN_PLACE_DENIED_PROTOCOLS = new Set([
 ]);
 
 /** Popups bypass will-attach-webview hardening and would inherit the picker's contextIsolation:false. */
+const POPUP_WEB_PREFERENCES = {
+  contextIsolation: true,
+  nodeIntegration: false,
+  sandbox: true,
+} satisfies Electron.WebPreferences;
+
 const POPUP_WINDOW_OPTIONS = {
+  webPreferences: POPUP_WEB_PREFERENCES,
+} satisfies Electron.BrowserWindowConstructorOptions;
+
+/** Same-origin tab opens stay off-screen; T3 Browser hosts the page so opener can survive. */
+const HIDDEN_POPUP_WINDOW_OPTIONS = {
+  show: false,
+  skipTaskbar: true,
   webPreferences: {
-    contextIsolation: true,
-    nodeIntegration: false,
-    sandbox: true,
+    ...POPUP_WEB_PREFERENCES,
+    backgroundThrottling: false,
   },
 } satisfies Electron.BrowserWindowConstructorOptions;
+
+export const previewPopupWindowOptions = (
+  disposition: Electron.HandlerDetails["disposition"],
+): Electron.BrowserWindowConstructorOptions =>
+  disposition === "foreground-tab" || disposition === "background-tab"
+    ? HIDDEN_POPUP_WINDOW_OPTIONS
+    : POPUP_WINDOW_OPTIONS;
 
 const isSameOriginHttpUrl = (left: string, right: string): boolean => {
   const from = URL.parse(left);
@@ -1554,6 +1573,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.on("before-input-event", (_event, input) => {
         syncMenuShortcuts(window.webContents, input);
       });
+      // A same-origin tab open is shown in T3 Browser; keep the native window off-screen.
+      if (!window.isVisible()) {
+        window.on("show", () => {
+          if (!window.isDestroyed()) window.hide();
+        });
+      }
       browserHost.openedPopup(wc, window.webContents);
     };
     const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
@@ -1670,7 +1695,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const openerUrl = wc.isDestroyed() ? undefined : wc.getURL();
           const action = previewWindowOpenAction(details, openerUrl);
           if (action === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: previewPopupWindowOptions(details.disposition),
+            };
           }
           if (action === "deny") return { action: "deny" };
           if (action === "new-tab") {

@@ -106,7 +106,12 @@ describe("previewWindowOpenAction", () => {
           "https://vdid.sbigeneral.in/",
         ),
       ).toBe("popup");
+      expect(PreviewManager.previewPopupWindowOptions(disposition).show).toBe(false);
     }
+  });
+
+  it("still shows a scripted OAuth popup as a real window", () => {
+    expect(PreviewManager.previewPopupWindowOptions("new-window").show).not.toBe(false);
   });
 
   it("still opens a cross-origin target=_blank link in a preview tab", () => {
