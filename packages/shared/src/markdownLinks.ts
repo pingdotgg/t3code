@@ -33,10 +33,10 @@ const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
 
 // Inline code with spaces is a file only when it is absolute and every word is a plain name:
-// `/Users/me/Mobile Documents/notes.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
+// `/Users/me/Mobile Documents/a - b.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
 const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/])/;
 const SPACED_PATH_BODY_PATTERN =
-  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-)[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-+\p{L})[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
 
 function isSpacedAbsoluteFilePath(text: string): boolean {
   const root = SPACED_ABSOLUTE_PATH_ROOT_PATTERN.exec(text)?.[0];
