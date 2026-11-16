@@ -88,12 +88,19 @@ const isConsoleError = (entry: { readonly level: string }) => /^(error|assert)$/
 const isFailedRequest = (entry: { readonly failed: boolean; readonly status: number | null }) =>
   entry.failed || (entry.status !== null && entry.status >= 400);
 
+// An unparseable timestamp counts as new: better a stale error than a hidden one.
+const after = (since: string | null) => (timestamp: string) =>
+  since === null || !(Date.parse(timestamp) <= Date.parse(since));
+
+/** Counts only what happened after `since`, the previous verdict; the log files keep everything. */
 export function summarizeLogs(
   consoleEntries: ReturnType<typeof sanitizeConsoleEntries>,
   networkEntries: ReturnType<typeof sanitizeNetworkEntries>,
+  since: string | null,
 ) {
-  const errors = consoleEntries.filter(isConsoleError);
-  const failed = networkEntries.filter(isFailedRequest);
+  const isNew = after(since);
+  const errors = consoleEntries.filter((entry) => isConsoleError(entry) && isNew(entry.timestamp));
+  const failed = networkEntries.filter((entry) => isFailedRequest(entry) && isNew(entry.timestamp));
   return {
     consoleErrorCount: errors.length,
     failedRequestCount: failed.length,
@@ -124,10 +131,13 @@ export function resolveVerdict(
 export function stepsFor(
   input: Pick<QaEvidenceRecordInput, "steps">,
   timeline: ReadonlyArray<PreviewAutomationActionEvent>,
+  since: string | null,
 ): ReadonlyArray<string> {
   if (input.steps !== undefined && input.steps.length > 0)
     return input.steps.map((step) => redactText(step));
+  const isNew = after(since);
   return timeline
+    .filter((event) => isNew(event.startedAt))
     .slice(-20)
     .map((event) => `${event.action}${event.status === "succeeded" ? "" : ` (${event.status})`}`);
 }

@@ -200,6 +200,7 @@ const make = Effect.gen(function* () {
       });
     }
     const index = run.scenarios.length;
+    const since = run.scenarios.at(-1)?.recordedAt ?? run.startedAt;
     const evidenceDir = path.join(run.dir, "evidence");
     const stem = scenarioFileStem(index, input.scenario);
     const png =
@@ -228,7 +229,7 @@ const make = Effect.gen(function* () {
       ...(input.expected === undefined ? {} : { expected: input.expected }),
       ...(input.actual === undefined ? {} : { actual: input.actual }),
       ...(input.severity === undefined ? {} : { severity: input.severity }),
-      steps: [...stepsFor(input, page.actionTimeline)],
+      steps: [...stepsFor(input, page.actionTimeline, since)],
       pageUrl: page.url,
       pageTitle: page.title,
       recordedAt,
@@ -239,7 +240,7 @@ const make = Effect.gen(function* () {
       screenshotPath,
       consolePath,
       networkPath,
-      ...summarizeLogs(consoleEntries, networkEntries),
+      ...summarizeLogs(consoleEntries, networkEntries, since),
     };
     yield* save({ ...run, scenarios: [...run.scenarios, scenario] });
     return scenario;

@@ -6,6 +6,7 @@ import {
   resolveVerdict,
   sanitizeConsoleEntries,
   sanitizeNetworkEntries,
+  summarizeLogs,
   QA_MAX_LOG_ENTRIES,
 } from "./qaEvidence.ts";
 
@@ -72,5 +73,34 @@ describe("resolveVerdict", () => {
     ["SKIPPED", false, "SKIPPED"],
   ] as const)("%s with screenshot=%s is %s", (requested, hasScreenshot, expected) => {
     expect(resolveVerdict(requested, hasScreenshot).verdict).toBe(expected);
+  });
+});
+
+describe("summarizeLogs", () => {
+  it("counts only errors after the previous verdict, since the tab's logs accumulate", () => {
+    const consoleEntries = sanitizeConsoleEntries([
+      { level: "error", text: "earlier", timestamp: "2026-01-01T00:00:01.000Z" },
+      { level: "error", text: "this scenario", timestamp: "2026-01-01T00:00:03.000Z" },
+    ]);
+    const networkEntries = sanitizeNetworkEntries([
+      {
+        url: "https://a.test/old",
+        method: "GET",
+        status: 500,
+        failed: false,
+        timestamp: "2026-01-01T00:00:01.000Z",
+      },
+      {
+        url: "https://a.test/new",
+        method: "GET",
+        status: 404,
+        failed: false,
+        timestamp: "2026-01-01T00:00:03.000Z",
+      },
+    ]);
+    const summary = summarizeLogs(consoleEntries, networkEntries, "2026-01-01T00:00:02.000Z");
+    expect(summary.consoleErrors).toEqual(["this scenario"]);
+    expect(summary.failedRequests.map((request) => request.url)).toEqual(["https://a.test/new"]);
+    expect(summarizeLogs(consoleEntries, networkEntries, null).consoleErrorCount).toBe(2);
   });
 });
