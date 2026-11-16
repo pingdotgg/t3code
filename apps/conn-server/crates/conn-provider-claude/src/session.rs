@@ -301,27 +301,21 @@ impl Inner {
     }
 
     fn mcp_app_query(&self, thread: &conn_contract::ProviderThread) -> ProviderResult<QueryHandle> {
-        let row = conn_contract::to_json(thread);
-        let native = row
-            .pointer("/nativeThreadRef/nativeId")
-            .and_then(Value::as_str);
-        let query = {
-            let state = self.lock();
-            let live = state
-                .live
-                .as_ref()
-                .filter(|live| {
-                    Some(live.native_thread_id.as_str()) == native && live.query.is_open()
-                })
-                .ok_or(ProviderError::SessionStopped)?;
-            if !live.mcp_apps_capable {
-                return Err(ProviderError::Protocol {
-                    detail: "This Claude process does not support MCP Apps.".into(),
-                });
-            }
-            live.query.clone()
-        };
-        Ok(query)
+        let native = native_thread_id(thread);
+        let state = self.lock();
+        let live = state
+            .live
+            .as_ref()
+            .filter(|live| {
+                native.as_deref() == Some(live.native_thread_id.as_str()) && live.query.is_open()
+            })
+            .ok_or(ProviderError::SessionStopped)?;
+        if !live.mcp_apps_capable {
+            return Err(ProviderError::Protocol {
+                detail: "This Claude process does not support MCP Apps.".into(),
+            });
+        }
+        Ok(live.query.clone())
     }
 
     fn live_query(&self) -> ProviderResult<QueryHandle> {
@@ -1543,42 +1537,34 @@ impl Session for ClaudeSession {
                     detail: "Failed to list Claude MCP tools.".into(),
                 })?;
             require_unambiguous_server(&statuses, &input.server)?;
+            let tools = statuses
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|status| {
+                    status.get("name").and_then(Value::as_str) == Some(input.server.as_str())
+                })
+                .and_then(|status| status.get("tools"))
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
             match input.operation {
                 Operation::ListTools => {
                     let rules = query
                         .call_without_timeout("listPermissionRules", json!([]))
                         .await
                         .ok();
-                    let tools = statuses
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .find(|s| {
-                            s.get("name").and_then(Value::as_str) == Some(input.server.as_str())
-                        })
-                        .and_then(|s| s.get("tools"))
-                        .and_then(Value::as_array);
-                    Ok(json!(
+                    Ok(Value::Array(
                         tools
-                            .into_iter()
-                            .flatten()
+                            .iter()
                             .map(|tool| mcp_apps::claude_tool(tool, rules.as_ref()))
-                            .collect::<Vec<_>>()
+                            .collect(),
                     ))
                 }
                 Operation::CallTool { tool, arguments } => {
                     let name = mcp_apps::claude_name(&input.server, &tool);
-                    let same_name = statuses
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .find(|s| {
-                            s.get("name").and_then(Value::as_str) == Some(input.server.as_str())
-                        })
-                        .and_then(|s| s.get("tools"))
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten()
+                    let same_name = tools
+                        .iter()
                         .filter(|t| {
                             t.get("name")
                                 .and_then(Value::as_str)

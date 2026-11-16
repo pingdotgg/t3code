@@ -22,7 +22,6 @@ mod catalog;
 mod credentials;
 mod input;
 mod links;
-pub mod mcp_inputs;
 mod sessions;
 mod time;
 mod tools;

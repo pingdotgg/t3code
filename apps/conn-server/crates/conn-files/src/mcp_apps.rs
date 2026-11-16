@@ -207,7 +207,6 @@ fn inject_csp(html: &str, csp: &Value) -> String {
     format!("<!doctype html>{meta}{html}")
 }
 
-/// The sandbox blocks cookie reads; these scripts also apply the frame's initial theme.
 pub fn bootstrap(html: &str) -> String {
     let trimmed = html.trim_start_matches('\u{feff}').trim_start();
     let doctype = trimmed

@@ -2809,13 +2809,13 @@ async fn mcp_panel_tools_relay_to_the_mac_and_keep_caller_guards() {
     drop(obsolete);
     let call = agent.ok(
         "mcp_call",
-        json!({"server":"  stub  ","tool":" weather ","arguments":{"city":"Amsterdam"}}),
+        json!({"server":"  stub  ","tool":" weather ","arguments":{"city":"Amsterdam","options":{"raw":"  keep  ","nested":[null,7,true,{"value":"x"}]}}}),
     );
     let stub = async {
         let request = conn_contract::to_json(&desktop.recv().await.unwrap());
         assert_eq!(
             request["mcpCall"],
-            json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam"}})
+            json!({"server":"stub","tool":"weather","arguments":{"city":"Amsterdam","options":{"raw":"  keep  ","nested":[null,7,true,{"value":"x"}]}}})
         );
         broker.respond(conn_contract::from_json(json!({"requestId":request["requestId"],"ok":true,"mcpCall":{"server":"stub","tool":"weather","content":[{"type":"text","text":"sunny"}],"isError":false,"truncated":false,"durationMs":1}})).unwrap());
     };

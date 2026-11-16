@@ -69,10 +69,10 @@ impl Inner {
             ProviderEvent::TurnItemUpdated { turn_item } => (turn_item, None),
             other => return other,
         };
-        let mut item = conn_contract::to_json(&turn_item);
-        if item.get("type").and_then(Value::as_str) != Some("dynamic_tool") {
+        if !matches!(&turn_item, conn_contract::TurnItem::DynamicTool(_)) {
             return ProviderEvent::TurnItemUpdated { turn_item };
         }
+        let mut item = conn_contract::to_json(&turn_item);
         let original_output = item.get("output").cloned().unwrap_or(Value::Null);
         if item
             .get("toolName")
@@ -82,10 +82,9 @@ impl Inner {
         {
             item["output"] = json!({"result":original_output});
         }
-        let failed = item.get("status").and_then(Value::as_str) == Some("failed");
-        if item.get("status").and_then(Value::as_str) != Some("completed")
-            && !(failed && source.is_some())
-        {
+        let status = item.get("status").and_then(Value::as_str);
+        let failed = status == Some("failed");
+        if status != Some("completed") && !(failed && source.is_some()) {
             return ProviderEvent::TurnItemUpdated {
                 turn_item: from_json(item).unwrap_or(turn_item),
             };
@@ -180,13 +179,9 @@ impl Inner {
             .await
             .map_err(|_: String| fail(&thread, "request-failed"))?
             .ok_or_else(|| fail(&thread, "session-stopped"))?;
-        let driver = row
-            .get("driver")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
         let provider_thread: ProviderThread =
             from_json(row).map_err(|_| fail(&thread, "request-failed"))?;
+        let driver = &provider_thread.driver;
         let session_id = provider_thread
             .provider_session_id
             .as_ref()
@@ -215,7 +210,7 @@ impl Inner {
                 .session()
                 .mcp_app_request(request(Operation::ListTools))
                 .await
-                .map_err(|e| adapter_error(&thread, &driver, "list", e))?;
+                .map_err(|e| adapter_error(&thread, driver.as_str(), "list", e))?;
             let tool = tools
                 .as_array()
                 .into_iter()
@@ -259,7 +254,7 @@ impl Inner {
             .map_err(|e| {
                 adapter_error(
                     &thread,
-                    &driver,
+                    driver.as_str(),
                     if method == "mcpApps.callTool" {
                         "call"
                     } else {
