@@ -36,7 +36,7 @@ PR stages reference the database with `PostgresDatabase.ref`; every
 other stage creates it:
 
 ```typescript
-import * as Planetscale from "alchemy/Planetscale";
+import * as Planetscale from "@alchemy.run/planetscale";
 
 const database = stage.startsWith("pr-")
   ? yield* Planetscale.PostgresDatabase.ref("app-db", {

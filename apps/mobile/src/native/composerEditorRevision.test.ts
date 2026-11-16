@@ -164,3 +164,10 @@ describe("typing immediately before an intercepted paste", () => {
     expect(acknowledgeComposerNativeEvent(2, 1)).toBeNull();
   });
 });
+
+describe("acknowledgeComposerNativeEvent", () => {
+  it("drops a native edit a send already read, so it cannot refill the cleared draft", () => {
+    expect(acknowledgeComposerNativeEvent(76, 77)).toBe(77);
+    expect(acknowledgeComposerNativeEvent(77, 77)).toBeNull();
+  });
+});

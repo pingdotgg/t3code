@@ -1,6 +1,6 @@
-import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import type { LoadResult, ResolveIdResult } from "rolldown";
 import { assert, describe, expect, it } from "vitest";
+import { createMiniflareFromRolldown } from "../../../../cloudflare-test-tools/src/miniflare/miniflare.ts";
 import {
   EXPORT_TYPES_MODULE_ID,
   haveExportTypesChanged,
@@ -80,9 +80,7 @@ describe("export types virtual module", () => {
     const result = load("\0distilled:worker-entry:/app/worker.ts");
     assert(typeof result === "string");
     expect(result).toContain(`await import("${EXPORT_TYPES_MODULE_ID}")`);
-    expect(result).toContain(
-      `import.meta.hot.send("${WORKER_EXPORT_TYPES_EVENT}", exportTypes)`,
-    );
+    expect(result).toContain(`import.meta.hot.send("${WORKER_EXPORT_TYPES_EVENT}", exportTypes)`);
   });
 });
 
@@ -111,15 +109,11 @@ describe("haveExportTypesChanged", () => {
   });
 
   it("is true when an export is removed", () => {
-    expect(haveExportTypesChanged(previous, { Counter: "DurableObject" })).toBe(
-      true,
-    );
+    expect(haveExportTypesChanged(previous, { Counter: "DurableObject" })).toBe(true);
   });
 
   it("is true when an export changes type", () => {
-    expect(
-      haveExportTypesChanged(previous, { ...previous, Api: "DurableObject" }),
-    ).toBe(true);
+    expect(haveExportTypesChanged(previous, { ...previous, Api: "DurableObject" })).toBe(true);
   });
 
   it("is true when an export is renamed", () => {
@@ -135,9 +129,7 @@ describe("haveExportTypesChanged", () => {
 describe("isExportTypes", () => {
   it("accepts an export types payload", () => {
     expect(isExportTypes({})).toBe(true);
-    expect(
-      isExportTypes({ Counter: "DurableObject", Flow: "WorkflowEntrypoint" }),
-    ).toBe(true);
+    expect(isExportTypes({ Counter: "DurableObject", Flow: "WorkflowEntrypoint" })).toBe(true);
   });
 
   it("rejects anything else", () => {

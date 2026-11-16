@@ -62,11 +62,7 @@ function isLoopbackRequest(req: Request): boolean {
 
 function removeGzipEncoding(res: Response): Response {
   const contentType = res.headers.get("content-type");
-  if (
-    !contentType ||
-    contentType.includes("text/html") ||
-    contentType.includes("text/plain")
-  ) {
+  if (!contentType || contentType.includes("text/html") || contentType.includes("text/plain")) {
     const headers = new Headers(res.headers);
     headers.set("content-encoding", "Identity");
     return new Response(res.body, {
@@ -98,7 +94,7 @@ const cloudflareAdapter: ReturnType<
   typeof createServerEntryAdapter<CloudflareAdapterOptions | undefined>
 > = createServerEntryAdapter(
   (
-    { processRequest, processBuild, setAllEnv, config, notFoundHtml },
+    { processRequest, processBuild, unstable_setAllEnv: setAllEnv, config, notFoundHtml },
     options?: CloudflareAdapterOptions,
   ) => {
     const {
@@ -115,9 +111,7 @@ const cloudflareAdapter: ReturnType<
       return c.text("404 Not Found", 404);
     });
     if (bodyLimitOptions !== false) {
-      app.use(
-        bodyLimit(bodyLimitOptions ?? { maxSize: DEFAULT_BODY_LIMIT_MAX_SIZE }),
-      );
+      app.use(bodyLimit(bodyLimitOptions ?? { maxSize: DEFAULT_BODY_LIMIT_MAX_SIZE }));
     }
     for (const middlewareFn of middlewareFns) {
       app.use(middlewareFn({ app }));
@@ -150,9 +144,7 @@ const cloudflareAdapter: ReturnType<
       }
       let cloudflareContext;
       try {
-        cloudflareContext = await import(
-          /* @vite-ignore */ DO_NOT_BUNDLE + "cloudflare:workers"
-        );
+        cloudflareContext = await import(/* @vite-ignore */ DO_NOT_BUNDLE + "cloudflare:workers");
       } catch {
         // Not in a Cloudflare environment
       }
@@ -189,25 +181,18 @@ const cloudflareAdapter: ReturnType<
         // preview server: streams the SSG output directly from Node.
         server.middlewares.use(async (_req, res, next) => {
           try {
-            const { Readable } = await import(
-              /* @vite-ignore */ DO_NOT_BUNDLE + "node:stream"
-            );
+            const { Readable } = await import(/* @vite-ignore */ DO_NOT_BUNDLE + "node:stream");
             Readable.fromWeb(buildBody() as never).pipe(res as never);
           } catch (err) {
             next(err);
           }
         });
-        const response = await fetch(
-          server.baseUrl + internalPathToBuildStaticFiles,
-          {
-            headers: { connection: "close" },
-          },
-        );
+        const response = await fetch(server.baseUrl + internalPathToBuildStaticFiles, {
+          headers: { connection: "close" },
+        });
         await consumeMultiplexedStream(response.body!, async (key, stream) => {
           if (key.startsWith(PRUNABLE_KEY_PREFIX)) {
-            utils.unstable_registerPrunableFile(
-              key.slice(PRUNABLE_KEY_PREFIX.length),
-            );
+            utils.unstable_registerPrunableFile(key.slice(PRUNABLE_KEY_PREFIX.length));
             return;
           }
           await utils.emitFile(key, stream);
