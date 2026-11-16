@@ -1006,6 +1006,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "scheduled-tasks",
+    title: "Scheduled tasks",
+    to: "/settings/scheduled-tasks",
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/browser",
@@ -1276,6 +1281,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
     desktopOnly: true,
     cloudOnly: true,
+  },
+  {
+    id: "connect-device-approval",
+    title: "Require approval for new devices",
+    to: "/settings/access",
+    targetId: "connections-environment",
+    searchTerms: ["t3 connect devices approve deny trust revoke pairing code security account"],
+    cloudOnly: true,
+    managedTunnelOnly: true,
   },
   {
     id: "hold-webhooks-while-offline",

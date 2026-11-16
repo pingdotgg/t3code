@@ -35,8 +35,8 @@ export function responsePayloads<E>(
   if (response.status === 202 || response.status === 204) {
     return Stream.unwrap(discardResponseBody(response).pipe(Effect.as(Stream.empty)));
   }
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType.includes("text/event-stream")) {
+  const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0]!.trim();
+  if (mediaType.toLowerCase() === "text/event-stream") {
     return Stream.fromAsyncIterable(sseDataLines(response), onError).pipe(
       Stream.mapEffect((data) => Effect.try({ try: () => JSON.parse(data), catch: onError })),
     );
