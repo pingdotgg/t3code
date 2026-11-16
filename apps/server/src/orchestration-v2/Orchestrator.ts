@@ -2747,7 +2747,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : "Provider or model selection changed.";
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged && queuedRun.threadPickSuperseded !== true
             ? [
                 {
                   type:
@@ -4712,6 +4712,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+    if (command.type === "thread.model-selection.set" || command.type === "provider.switch") {
+      const { runs } = yield* loadProjectionForCommand(command, ["runs"], { turnItemTypes: [] });
+      for (const run of runs) {
+        if (run.status !== "queued" || run.threadPickSuperseded === true) continue;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...run, threadPickSuperseded: true },
+        });
+      }
+    }
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
