@@ -7,11 +7,12 @@ import { Command } from "effect/cli";
 import { baseDirFlag } from "./config.ts";
 import { readSettingsObject, resolveCliServerPaths, updateSettingsObject } from "./settingsFile.ts";
 
-const envTelemetryEnabled = Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.option);
+// Read as text: a value that is not a boolean still overrides the setting (as off) on a server.
+const envTelemetryEnabled = Config.String("T3CODE_TELEMETRY_ENABLED").pipe(Config.option);
 
 /** The variable overrides the setting for a server that sees it, so say when this shell sets it. */
 const noteEnvironmentOverride = Effect.gen(function* () {
-  const fromEnvironment = yield* envTelemetryEnabled;
+  const fromEnvironment = Option.filter(yield* envTelemetryEnabled, (value) => value.trim() !== "");
   if (Option.isSome(fromEnvironment)) {
     yield* Console.log(
       `T3CODE_TELEMETRY_ENABLED=${fromEnvironment.value} is set in this shell. A server started with it ignores this setting.\n`,

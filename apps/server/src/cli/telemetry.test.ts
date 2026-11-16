@@ -93,6 +93,19 @@ it.layer(NodeServices.layer)("t3 telemetry", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("still writes and reports when the variable is not a boolean", () =>
+    Effect.gen(function* () {
+      const { baseDir, settingsPath } = yield* makeBaseDir;
+      const lines = yield* runCli(["telemetry", "off", "--base-dir", baseDir], {
+        T3CODE_TELEMETRY_ENABLED: "disabled",
+      });
+      assert.deepEqual(yield* readSettings(settingsPath), { telemetryEnabled: false });
+      assert.isTrue(
+        lines.some((line) => String(line).startsWith("T3CODE_TELEMETRY_ENABLED=disabled is set")),
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("says when the variable in this shell overrides the setting", () =>
     Effect.gen(function* () {
       const { baseDir } = yield* makeBaseDir;
