@@ -1015,13 +1015,10 @@ const make = Effect.gen(function* () {
         const messages = input.messages.map((message, index) => {
           const ref = `M${index + 1}`;
           refs.set(ref, conversationSummarySourceKey(input.sources[index]!));
-          return {
-            ref,
-            role: message.role,
-            text: message.text,
-            ...(message.role === "peer" ? { speaker: message.speaker } : {}),
-            ...(message.range === undefined ? {} : { range: message.range }),
-          };
+          const range = message.range === undefined ? {} : { range: message.range };
+          return message.role === "peer"
+            ? { ref, role: message.role, speaker: message.speaker, text: message.text, ...range }
+            : { ref, role: message.role, text: message.text, ...range };
         });
         const reply = yield* textGeneration
           .generateConversationSummary({
