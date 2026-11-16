@@ -495,6 +495,14 @@ export function useThreadComposerState(input: {
       );
       return;
     }
+    // A queued message stays in its thread, so saving `/side` would send it to main.
+    if (parseSideChatCommand(text)) {
+      Dialog.alert(
+        "Queued message not updated",
+        "A queued message can't move to a side chat. Remove /side or /btw to save it.",
+      );
+      return;
+    }
     const finishSave = startQueuedRunEditSave(threadKey);
     if (finishSave === null) return;
     savingQueuedEditRef.current = true;
