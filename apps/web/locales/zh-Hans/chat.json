@@ -88,11 +88,10 @@
     "projectCloneFailed": "克隆 {{name}} 失败",
     "projectCloneRetryHint": "重试以导入该仓库。",
     "removeProject": "移除项目",
-    "retry": "重试",
-    "openQuestion": "打开提问",
     "restoreBranch": "恢复分支",
     "restoring": "正在恢复...",
     "resume": "恢复",
+    "retry": "重试",
     "sideChatWaiting": "旁路对话等待中",
     "stop": "停止",
     "stopping": "正在停止…",
@@ -204,9 +203,9 @@
     "automatic": "自动",
     "branch": "分支",
     "cannotReadLocalDiffs": "当前连接无法读取本地差异。",
+    "changeComparisonTargetA11y": "更改比较目标。当前为 {{base}}",
     "changedFilesCount_one": "{{count}} 个已更改的文件",
     "changedFilesCount_other": "{{count}} 个已更改的文件",
-    "changeComparisonTargetA11y": "更改比较目标。当前为 {{base}}",
     "changes": "变更",
     "checkingFileAccess": "正在检查文件访问权限...",
     "collapseAllFiles": "折叠全部文件",
@@ -238,12 +237,12 @@
     "loadingUncommitted": "正在加载未提交变更...",
     "moreFilesInFullDiff_one": "完整差异中还有 {{count}} 个文件",
     "moreFilesInFullDiff_other": "完整差异中还有 {{count}} 个文件",
-    "openDiff": "打开差异",
-    "openFullDiffAria": "打开完整差异",
     "noCommitsOnBranch": "该分支上没有提交。",
     "noMatchingRefs": "没有匹配的引用。",
     "noNetChanges": "所选范围没有净变更。",
     "noPatchAvailable": "所选范围没有可用的补丁。",
+    "openDiff": "打开差异",
+    "openFullDiffAria": "打开完整差异",
     "previewExceedsSizeLimit": "该预览超出大小限制，显示的变更不完整。",
     "refreshDiff": "刷新差异",
     "refreshingDiff": "正在刷新差异",
@@ -274,18 +273,18 @@
     "addAProject": "添加项目",
     "addProject": "添加项目",
     "addProjectToStart": "先添加一个项目再开始",
-    "chooseProject": "选择项目",
-    "chooseToStart": "{selector} 后开始",
-    "noProject": "无项目",
-    "searchProjects": "搜索项目",
-    "searchProjectsPlaceholder": "搜索项目...",
     "buildInLead": "我们想在",
     "buildInSuffix": "，关于",
     "buildInTail": "里做点什么？",
     "buildLead": "我们想做点什么",
     "buildLeadTail": "？",
-    "whatWentWrong": "哪里出了问题？",
-    "whatNext": "接下来做什么？"
+    "chooseProject": "选择项目",
+    "chooseToStart": "{selector} 后开始",
+    "noProject": "无项目",
+    "searchProjects": "搜索项目",
+    "searchProjectsPlaceholder": "搜索项目...",
+    "whatNext": "接下来做什么？",
+    "whatWentWrong": "哪里出了问题？"
   },
   "errors": {
     "chatgptLimitReached": "已达到 ChatGPT 用量上限",
@@ -420,6 +419,20 @@
     "wakeNow": "立即唤醒",
     "waking": "唤醒中…"
   },
+  "limitRecovery": {
+    "autoResumeFailed": "无法更改自动恢复",
+    "cancelAutoResume": "取消自动恢复",
+    "limitReached": "已达用量上限",
+    "resetPassed": "重置时间已过，请手动重试该线程。",
+    "resets": "{{time}} 重置",
+    "resetUnavailable": "重置时间不可用，请手动重试",
+    "resumeAtReset": "重置时恢复",
+    "resumes": "{{time}} 恢复",
+    "saving": "保存中...",
+    "snoozeFailed": "无法搁置线程",
+    "snoozeUntilReset": "搁置到重置",
+    "wakeNow": "立即唤醒"
+  },
   "link": {
     "address": "地址",
     "addressHint": "此应用没有 {{target}} 的、可供其他机器访问的地址。请输入其 https 或 Tailscale 地址。",
@@ -447,20 +460,6 @@
     "stepMachine": "机器",
     "useThisLink": "使用此链接"
   },
-  "limitRecovery": {
-    "autoResumeFailed": "无法更改自动恢复",
-    "cancelAutoResume": "取消自动恢复",
-    "limitReached": "已达用量上限",
-    "resetPassed": "重置时间已过，请手动重试该线程。",
-    "resets": "{{time}} 重置",
-    "resetUnavailable": "重置时间不可用，请手动重试",
-    "resumeAtReset": "重置时恢复",
-    "resumes": "{{time}} 恢复",
-    "saving": "保存中...",
-    "snoozeFailed": "无法搁置线程",
-    "snoozeUntilReset": "搁置到重置",
-    "wakeNow": "立即唤醒"
-  },
   "markdown": {
     "alerts": {
       "caution": "当心",
@@ -484,13 +483,6 @@
     "toggleTask": "切换任务",
     "unlinkFailed": "取消关联拉取请求失败"
   },
-  "media": {
-    "nextMedia": "下一媒体",
-    "previousMedia": "上一媒体",
-    "zoomHint": "点击放大或恢复适合大小。捏合或 Ctrl+滚轮缩放，滚动或拖拽平移。按 Enter 切换缩放，按加号或减号缩放，按 0 恢复适合大小。",
-    "zoomPercent": "{{percent}}% 缩放",
-    "zoomableImageAria": "{{name}}，可缩放图片"
-  },
   "mcp": {
     "appLeftPage": "{{server}} 应用离开了其页面，已被停止",
     "appWasClosed": "{{server}} 应用已关闭",
@@ -501,6 +493,13 @@
     "requestFailed": "请求失败。",
     "showApp": "显示应用",
     "unableToLoad": "无法加载 {{server}} 应用"
+  },
+  "media": {
+    "nextMedia": "下一媒体",
+    "previousMedia": "上一媒体",
+    "zoomableImageAria": "{{name}}，可缩放图片",
+    "zoomHint": "点击放大或恢复适合大小。捏合或 Ctrl+滚轮缩放，滚动或拖拽平移。按 Enter 切换缩放，按加号或减号缩放，按 0 恢复适合大小。",
+    "zoomPercent": "{{percent}}% 缩放"
   },
   "mermaid": {
     "expand": "展开图",
@@ -537,8 +536,8 @@
   },
   "plan": {
     "actions": "计划操作",
-    "cancel": "取消",
     "badge": "计划",
+    "cancel": "取消",
     "collapse": "折叠计划",
     "copied": "已复制！",
     "copyErrorGeneric": "复制时发生错误。",
@@ -557,6 +556,10 @@
     "workspacePath": "工作区路径",
     "workspaceUnavailable": "工作区路径不可用",
     "workspaceUnavailableDetail": "此线程没有可保存的工作区路径。"
+  },
+  "providerSubagent": {
+    "openParent": "打开父级",
+    "runsOnItsOwn": "独立运行"
   },
   "prRow": {
     "cancel": "取消",
@@ -577,12 +580,9 @@
     "stopWatchingAria": "停止监视 #{{number}}",
     "watching": "监视中：检查完成、有人评论或分支出现冲突时，代理会被唤醒。点击以停止。"
   },
-  "providerSubagent": {
-    "openParent": "打开父级",
-    "runsOnItsOwn": "独立运行"
-  },
   "queuedRuns": {
     "count": "{{count}} 条排队中",
+    "count_other": "{{count}} 条排队中",
     "sentBy": "由 T3 Code 发送"
   },
   "relations": {
@@ -603,24 +603,21 @@
     "parentThread": "父线程",
     "previousAgents": "先前的代理",
     "relatedThreads": "相关线程",
+    "runsOn": "在 {{label}} 上",
+    "showMore": "显示更多 {{count}} 条",
+    "showMore_other": "显示更多 {{count}} 条",
     "sideChat": "旁路对话",
     "sideChats": "旁路对话",
     "sideChatsRunning": "旁路对话 · {{count}} 个运行中",
     "stopSubagentAria": "停止子代理 {{title}}",
     "stopSubagentFailed": "无法停止子代理",
     "stopWorkflowFailed": "无法停止工作流",
-    "subagent": "子代理",
-    "showMore": "显示更多 {{count}} 条",
-    "runsOn": "在 {{label}} 上"
+    "subagent": "子代理"
   },
   "secretRequest": {
     "decline": "拒绝",
     "open": "打开 {{host}}",
     "saveSecurely": "安全保存"
-  },
-  "skills": {
-    "noDescription": "此技能没有可用的描述。",
-    "viewInstructions": "查看说明"
   },
   "sideChat": {
     "addToMainDetail": "把这条旁路对话加进主线程的下一条消息。",
@@ -631,15 +628,19 @@
     "broughtBackDetail": "主线程会在你下次发送消息时收到这条旁路对话。",
     "clearDetail": "这会永久清除它的对话历史。",
     "clearFailed": "无法删除旁路对话",
-    "deleted": "这条旁路对话已被删除。",
     "closeAria": "关闭旁路对话",
     "connectionCannotChange": "此连接无法更改线程。",
     "deleteAria": "删除旁路对话",
     "deleteConfirm": "删除旁路对话“{{title}}”？",
+    "deleted": "这条旁路对话已被删除。",
     "deleteFailed": "无法删除旁路对话",
     "mainIdleOnly": "主线程空闲时可用。",
     "newSideChat": "新建旁路对话",
     "sideChat": "旁路对话"
+  },
+  "skills": {
+    "noDescription": "此技能没有可用的描述。",
+    "viewInstructions": "查看说明"
   },
   "snapshot": {
     "a11yUnnamed": "已包含结构化无障碍元素，但它们没有可读取的名称或值。",
@@ -733,9 +734,9 @@
     "microphone": "麦克风",
     "microphoneUnavailable": "所选麦克风不可用。请选择其他设备或使用系统默认设备。",
     "multilingualHint": "可以说多种语言并进行转录，或翻译成英语；在语音设置的词典里录入人名和术语，识别会更准确。",
-    "retryLoadingModels": "重新加载模型",
     "recommendedFor": "推荐用于 {{language}}",
     "refreshMics": "刷新麦克风列表",
+    "retryLoadingModels": "重新加载模型",
     "selectedUnavailable": "所选麦克风（不可用）",
     "sileroDetail": "Silero（1.2 MB）用于静音过滤和停顿检测，会随语音模型一起下载。已安装的副本会被复用。",
     "startDictating": "开始听写",
