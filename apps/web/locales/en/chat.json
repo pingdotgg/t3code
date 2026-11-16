@@ -284,6 +284,11 @@
     "noProject": "No project",
     "searchProjects": "Search projects",
     "searchProjectsPlaceholder": "Search projects...",
+    "buildInLead": "What should we build in",
+    "buildInSuffix": " in",
+    "buildInTail": "?",
+    "buildLead": "What should we build",
+    "buildLeadTail": "?",
     "whatWentWrong": "What went wrong?",
     "whatNext": "What should we work on?"
   },
@@ -693,6 +698,7 @@
   },
   "userMessage": {
     "agent": "Agent",
+    "annotatedPreviewAlt": "Annotated preview crop",
     "automation": "Automation",
     "capturedTerminalAria": "Captured terminal output",
     "copyPromptLink": "Copy prompt link",
@@ -703,6 +709,7 @@
     "openThread": "Open thread",
     "previewAttachment": "Preview {{label}}",
     "queuedThenSteered": "Originally queued, then promoted to steer the active turn",
+    "screenshotUnavailable": "Screenshot unavailable",
     "sending": "Sending…",
     "sendingAttachmentA11y": "Sending attachment",
     "sentByT3Code": "Sent by T3 Code",

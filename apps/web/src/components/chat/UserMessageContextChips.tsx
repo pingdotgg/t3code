@@ -7,6 +7,7 @@ import { useRightPanelStore } from "~/rightPanelStore";
 import { COMPOSER_CONTEXT_KINDS } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { use, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { FileDiff } from "@pierre/diffs/react";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import {
@@ -144,6 +145,7 @@ function UserMessagePreviewAnnotationDetails(props: {
   image: ChatImageAttachment | null;
 }) {
   const ctx = use(TimelineRowCtx);
+  const { t } = useTranslation("chat");
   const visibleElements = props.record.elements ?? [];
   return (
     <div className="max-w-full overflow-hidden rounded-lg border border-border/70 bg-background/70">
@@ -160,13 +162,13 @@ function UserMessagePreviewAnnotationDetails(props: {
         >
           <img
             src={props.image.previewUrl}
-            alt="Annotated preview crop"
+            alt={t("userMessage.annotatedPreviewAlt")}
             className="max-h-64 w-full object-contain"
           />
         </button>
       ) : (
         <div className="border-b border-border/70 bg-muted/40 px-3 py-2 text-secondary-label text-xs">
-          Screenshot unavailable
+          {t("userMessage.screenshotUnavailable")}
         </div>
       )}
       <div className="min-w-0 px-3 py-2.5">

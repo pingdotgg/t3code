@@ -279,6 +279,11 @@
     "noProject": "无项目",
     "searchProjects": "搜索项目",
     "searchProjectsPlaceholder": "搜索项目...",
+    "buildInLead": "我们想在",
+    "buildInSuffix": "，关于",
+    "buildInTail": "里做点什么？",
+    "buildLead": "我们想做点什么",
+    "buildLeadTail": "？",
     "whatWentWrong": "哪里出了问题？",
     "whatNext": "接下来做什么？"
   },
@@ -687,6 +692,7 @@
   },
   "userMessage": {
     "agent": "Agent",
+    "annotatedPreviewAlt": "标注预览裁剪",
     "automation": "自动任务",
     "capturedTerminalAria": "捕获的终端输出",
     "copyPromptLink": "复制提示链接",
@@ -697,6 +703,7 @@
     "openThread": "打开线程",
     "previewAttachment": "预览 {{label}}",
     "queuedThenSteered": "最初排队，之后提升为改变当前对话轮方向",
+    "screenshotUnavailable": "截图不可用",
     "sending": "正在发送…",
     "sendingAttachmentA11y": "正在发送附件",
     "sentByT3Code": "由 T3 Code 发送",
