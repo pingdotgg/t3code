@@ -360,7 +360,7 @@ describe("GitHubRest", () => {
         expect(media?.status).toBe(401);
         expect(directRequests).toEqual([mediaUrl]);
       }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["", "unavailable"])(

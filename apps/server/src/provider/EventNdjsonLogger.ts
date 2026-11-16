@@ -63,6 +63,13 @@ const transientNativeMethods = new Set([
   "turn/diff/updated",
 ]);
 const transientAcpUpdates = new Set(["agent_message_chunk", "agent_thought_chunk"]);
+const transientCursorUpdates = new Set([
+  "text-delta",
+  "thinking-delta",
+  "token-delta",
+  "shell-output-delta",
+  "partial-tool-call",
+]);
 
 export type EventNdjsonStream = "native" | "canonical" | "orchestration";
 
@@ -217,6 +224,18 @@ export function shouldPersistProviderEvent(stream: EventNdjsonStream, event: unk
       ) {
         return false;
       }
+    }
+
+    if (nativeType === "interaction.update") {
+      let update = Reflect.get(nativeEvent, "update");
+      if (typeof update !== "object" || update === null) return true;
+      // Subagent updates arrive wrapped; keep the wrapper when it carries a lifecycle record.
+      if (Reflect.get(update, "type") === "tool-call-delta") {
+        update = Reflect.get(update, "taskUpdate");
+        if (typeof update !== "object" || update === null) return true;
+      }
+      const updateType = Reflect.get(update, "type");
+      return typeof updateType !== "string" || !transientCursorUpdates.has(updateType);
     }
 
     const payload = Reflect.get(nativeEvent, "payload");
