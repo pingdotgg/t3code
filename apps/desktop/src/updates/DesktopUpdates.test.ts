@@ -344,10 +344,11 @@ describe("DesktopUpdates", () => {
 
           const installFiber = yield* updates.install.pipe(Effect.forkScoped);
           yield* Deferred.await(installStarted);
+          const checksBefore = harness.checkCount();
 
           const checkResult = yield* updates.check("manual");
           assert.isFalse(checkResult.checked);
-          assert.equal(harness.checkCount(), 0);
+          assert.equal(harness.checkCount(), checksBefore);
 
           yield* Deferred.succeed(releaseInstall, undefined);
           const installResult = yield* Fiber.join(installFiber);
@@ -358,7 +359,9 @@ describe("DesktopUpdates", () => {
   );
 
   it.effect("preserves a queued installer after a background updater error", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-not-available")),
+    });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -521,6 +524,42 @@ describe("DesktopUpdates", () => {
         yield* flushCallbacks;
         assert.isTrue(result.completed);
         assert.equal((yield* updates.getState).downloadedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs a release published after the retained download", () => {
+    let published = "1.2.4";
+    let lastChecked: string | undefined;
+    let installedVersion: string | null | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        lastChecked = published;
+        harness.emit("update-available", { version: published });
+      }),
+      downloadUpdate: Effect.sync(() => {
+        harness.emit("update-downloaded", { version: lastChecked });
+      }),
+      quitAndInstall: Effect.sync(() => {
+        installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        yield* updates.download;
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+
+        published = "1.2.5";
+        const result = yield* updates.installPrepared("1.2.4");
+        assert.isTrue(result.accepted);
+        assert.equal(harness.quitAndInstalls(), 1);
+        assert.equal(installedVersion, "1.2.5");
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });

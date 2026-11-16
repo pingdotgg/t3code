@@ -962,7 +962,33 @@ export const make = Effect.gen(function* () {
         state: yield* Ref.get(updateStateRef),
       };
     }
-    const result = yield* installDownloadedUpdate(expectedVersion);
+    let installVersion = expectedVersion;
+    // A download can be hours old: a release published since replaces it before restarting.
+    const retained = yield* Ref.get(updateStateRef);
+    if (
+      retained.downloadedVersion !== null &&
+      (expectedVersion === undefined || retained.downloadedVersion === expectedVersion) &&
+      (yield* checkForUpdates(
+        "install",
+        "acquire",
+        retained.channel !== desktopUpdateChannelOf(environment.appVersion),
+      )) &&
+      (yield* Ref.get(updateStateRef)).status === "available"
+    ) {
+      const download = yield* downloadAvailableUpdate;
+      if (!download.completed) {
+        return {
+          accepted: download.accepted,
+          completed: false,
+          failed: download.accepted,
+          state: yield* Ref.get(updateStateRef),
+        };
+      }
+      if (expectedVersion !== undefined) {
+        installVersion = (yield* Ref.get(updateStateRef)).downloadedVersion ?? expectedVersion;
+      }
+    }
+    const result = yield* installDownloadedUpdate(installVersion);
     return {
       accepted: result.accepted,
       completed: result.completed,
