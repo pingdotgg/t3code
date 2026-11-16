@@ -1126,6 +1126,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     useRightPanelStore.getState().open(threadRef, "pull-requests");
     if (!props.isRouteThread) onThreadActivate(threadRef);
   };
+  const handlePrLinkPress = (event: ReactPointerEvent<HTMLElement>, url: string) => {
+    const surface = readThreadPullRequestSurface(threadRef, url);
+    if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
+  };
   const handlePrPress = (event: ReactPointerEvent<HTMLElement>, opensList: boolean) => {
     const url = pr?.url ?? currentLinkedPr?.url;
     const surface = opensList
@@ -1154,6 +1158,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         onOpenList={handlePrListClick}
         onOpenPullRequest={handlePrClick}
         onPress={handlePrPress}
+        onPressPullRequest={handlePrLinkPress}
       />
     ) : null;
   const terminalStatusIcon = (

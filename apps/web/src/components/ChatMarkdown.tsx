@@ -915,6 +915,10 @@ function useChatMarkdownState({
         isAppBundle={isAppBundle}
         workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
         panelPath={isAppBundle ? null : panelPath}
+        searchesWorkspace={
+          fileLinkMeta.workspaceLookupPath !== null &&
+          needsWorkspaceBasenameLookup(fileLinkMeta.workspaceLookupPath)
+        }
         line={fileLinkMeta.line}
         label={fileLinkLabel(
           {

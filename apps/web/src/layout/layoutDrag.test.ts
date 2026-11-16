@@ -1,10 +1,23 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { useDiffPanelStore } from "../diffPanelStore";
+import {
+  fileSurface,
+  pullRequestSurface,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { createLayoutNewTabContent } from "./layoutActions";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
-import { commitLayoutDrop, isLayoutDropUseful, type LayoutDragSource } from "./layoutDrag";
+import {
+  commitLayoutDrop,
+  isLayoutDropUseful,
+  type LayoutDragSource,
+  type LayoutDragSurface,
+} from "./layoutDrag";
 import {
   createLayoutState,
   createLayoutTab,
@@ -209,5 +222,117 @@ describe("layout drops of a new tab from the + button", () => {
     );
     expect(selectFocusedWorkspace(after).id).toBe(spare.id);
     expect(selectFocusedWorkspace(after).columns).toEqual(spare.columns);
+  });
+});
+
+describe("layout drops of a thread's surfaces", () => {
+  const surfaceThreadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("surfaces"));
+  const runId = RunId.make("run-1");
+
+  function setupSurfaceDrop() {
+    const stack = new DisposableStack();
+    const { chatPaneId } = stack.use(setup());
+    const panels = useRightPanelStore.getState();
+    const diffs = useDiffPanelStore.getState();
+    const terminals = useTerminalUiStateStore.getState();
+    stack.defer(() => useRightPanelStore.setState(panels));
+    stack.defer(() => useDiffPanelStore.setState(diffs));
+    stack.defer(() => useTerminalUiStateStore.setState(terminals));
+    useRightPanelStore.setState({ byThreadKey: {} });
+    useDiffPanelStore.setState({ byThreadKey: {} });
+    useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
+    useTerminalUiStateStore.getState().ensureTerminal(surfaceThreadRef, "default");
+    useTerminalUiStateStore.getState().setTerminalOpen(surfaceThreadRef, false);
+    return { chatPaneId, [Symbol.dispose]: () => stack.dispose() };
+  }
+
+  const panel = () =>
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, surfaceThreadRef);
+  const terminalOpen = () =>
+    selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      surfaceThreadRef,
+    ).terminalOpen;
+
+  it.each<{ name: string; surface: LayoutDragSurface; opened: () => void }>([
+    {
+      name: "a file at its line",
+      surface: fileSurface("src/app.ts", 42, 0),
+      opened: () =>
+        expect(panel().surfaces).toContainEqual(
+          expect.objectContaining({ id: "file:src/app.ts", revealLine: 42 }),
+        ),
+    },
+    {
+      name: "a turn's diff at its file",
+      surface: { id: "diff", kind: "diff", runId, filePath: "src/app.ts" },
+      opened: () =>
+        expect(useDiffPanelStore.getState().byThreadKey).toEqual({
+          "env:surfaces": expect.objectContaining({
+            kind: "turn",
+            turnId: runId,
+            filePath: "src/app.ts",
+          }),
+        }),
+    },
+    {
+      name: "the thread's hidden terminal",
+      surface: { id: "thread-terminal", kind: "thread-terminal" },
+      opened: () => expect(terminalOpen()).toBe(true),
+    },
+    {
+      name: "a browser tab",
+      surface: { id: "browser:tab-1", kind: "preview", resourceId: "tab-1" },
+      opened: () => {},
+    },
+    {
+      name: "a device",
+      surface: {
+        id: "device:host:phone",
+        kind: "device",
+        target: { hostId: "host", deviceId: "phone", platform: "ios", name: "Phone" },
+      },
+      opened: () => {},
+    },
+    {
+      name: "a terminal tab",
+      surface: {
+        id: "terminal:term-1",
+        kind: "terminal",
+        resourceId: "term-1",
+        terminalIds: ["term-1"],
+        activeTerminalId: "term-1",
+      },
+      opened: () => {},
+    },
+    { name: "the file browser", surface: { id: "files", kind: "files" }, opened: () => {} },
+    {
+      name: "a pull request",
+      surface: pullRequestSurface({ projectId: "project", repository: "owner/repo", number: 7 }),
+      opened: () => {},
+    },
+    {
+      name: "the pull request list",
+      surface: { id: "pull-requests", kind: "pull-requests" },
+      opened: () => {},
+    },
+    {
+      name: "a side chat",
+      surface: { id: "side-chat:side", kind: "side-chat", threadId: ThreadId.make("side") },
+      opened: () => {},
+    },
+  ])("opens $name when dropped", ({ surface, opened }) => {
+    using fixture = setupSurfaceDrop();
+    const { chatPaneId } = fixture;
+    const source: LayoutDragSource = { kind: "surface", threadRef: surfaceThreadRef, surface };
+    expect(terminalOpen()).toBe(false);
+
+    expect(commitLayoutDrop(source, { kind: "side", paneId: chatPaneId, side: "right" })).toBe(
+      true,
+    );
+    if (surface.kind !== "thread-terminal") {
+      expect(panel()).toMatchObject({ isOpen: true, activeSurfaceId: surface.id });
+    }
+    opened();
   });
 });

@@ -26,7 +26,8 @@ import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
 import { useAtomValue } from "@effect/atom-react";
 import { primaryServerKeybindingsAtom } from "../../state/server";
-import { beginLayoutTabDrag } from "../../layout/layoutDrag";
+import { beginLayoutContentDrag, beginLayoutTabDrag } from "../../layout/layoutDrag";
+import { THREAD_TERMINAL_SURFACE_ID } from "../../layout/layoutModel";
 import { threadEnvironment } from "../../state/threads";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -438,6 +439,13 @@ export const ChatHeader = memo(function ChatHeader({
                         "cursor-pointer text-left text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
                       )}
                       onClick={hiddenTerminal.onShow}
+                      onPointerDown={(event) =>
+                        beginLayoutContentDrag(event, {
+                          kind: "surface",
+                          threadRef: scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
+                          surface: { id: THREAD_TERMINAL_SURFACE_ID, kind: "thread-terminal" },
+                        })
+                      }
                     />
                   }
                 >
@@ -506,6 +514,12 @@ function ParentThreadTab({
               type="button"
               aria-label={`Open parent thread: ${link.title}`}
               onClick={() => onOpenThread(link.threadId)}
+              onPointerDown={(event) =>
+                beginLayoutContentDrag(event, {
+                  kind: "thread",
+                  threadRef: scopeThreadRef(environmentId, link.threadId),
+                })
+              }
             />
           }
         >

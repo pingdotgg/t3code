@@ -261,6 +261,7 @@ export function ThreadPullRequestBadgeControl({
   onOpenList,
   onOpenPullRequest,
   onPress,
+  onPressPullRequest,
   appearance = "glyph",
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
@@ -272,6 +273,7 @@ export function ThreadPullRequestBadgeControl({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
   onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
+  onPressPullRequest: (event: PointerEvent<HTMLElement>, url: string) => void;
   appearance?: ThreadPullRequestBadgeAppearance;
 }) {
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
@@ -289,6 +291,7 @@ export function ThreadPullRequestBadgeControl({
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
       onPress={onPress}
+      onPressPullRequest={onPressPullRequest}
     />
   );
 }
@@ -305,6 +308,7 @@ function PullRequestBadge({
   onOpenList,
   onOpenPullRequest,
   onPress,
+  onPressPullRequest,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   appearance: ThreadPullRequestBadgeAppearance;
@@ -317,6 +321,7 @@ function PullRequestBadge({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
   onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
+  onPressPullRequest: (event: PointerEvent<HTMLElement>, url: string) => void;
 }) {
   const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
@@ -369,6 +374,7 @@ function PullRequestBadge({
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
               onOpenPullRequest={onOpenPullRequest}
+              onPressPullRequest={onPressPullRequest}
             />
           ) : number !== undefined && url !== undefined ? (
             <ul className="flex flex-col gap-1">
@@ -378,6 +384,7 @@ function PullRequestBadge({
                 title={status?.tooltipTitle ?? presentation.label}
                 presentation={presentation}
                 onOpenPullRequest={onOpenPullRequest}
+                onPressPullRequest={onPressPullRequest}
               />
             </ul>
           ) : null}
@@ -392,9 +399,11 @@ const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
+  onPressPullRequest,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
+  onPressPullRequest?: (event: PointerEvent<HTMLElement>, url: string) => void;
 }) {
   const chains = resolveThreadPullRequestChains(pullRequests);
   const lines = pullRequestListLines(chains, THREAD_PULL_REQUEST_PREVIEW_LIMIT);
@@ -419,6 +428,7 @@ export function ThreadPullRequestsMiniList({
             presentation={presentation}
             depth={line.depth}
             onOpenPullRequest={onOpenPullRequest}
+            onPressPullRequest={onPressPullRequest}
           >
             {line.stack ? (
               <span className="ml-auto shrink-0 pl-1 text-3xs">{line.stack.size}</span>
@@ -442,6 +452,7 @@ export function ThreadPullRequestMiniListItem({
   presentation,
   depth = 0,
   onOpenPullRequest,
+  onPressPullRequest,
   children,
 }: {
   number: number;
@@ -450,6 +461,7 @@ export function ThreadPullRequestMiniListItem({
   presentation: Pick<ThreadPullRequestBadgePresentation, "Icon" | "toneClassName"> | null;
   depth?: number;
   onOpenPullRequest?: ((event: MouseEvent<HTMLAnchorElement>, url: string) => void) | undefined;
+  onPressPullRequest?: ((event: PointerEvent<HTMLElement>, url: string) => void) | undefined;
   children?: ReactNode;
 }) {
   const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
@@ -471,8 +483,12 @@ export function ThreadPullRequestMiniListItem({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
+          draggable={onPressPullRequest ? false : undefined}
           className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:surface-ghost-hover focus-visible:surface-ghost-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          onPointerDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onPressPullRequest?.(event, url);
+          }}
           onClick={(event) => onOpenPullRequest(event, url)}
         >
           {content}
