@@ -27,4 +27,6 @@ vp run workflow:link
 
 It symlinks every skill into `~/.claude/skills`, `~/.agents/skills`, and `~/.codex/skills`, which between them cover every provider. The links point into the main checkout, so pulling the fork updates skill content in place. Rerun it after adding or removing a skill. The in-app source update and the `t3code-update` skill run it for you.
 
+`vp run workflow:map` rewrites `skills/ak/ak-help/skill-map.md`, the chart of which skill names which. Rerun it and commit the result when skills change.
+
 The script only touches symlinks that point into `workflow/skills`. A real file or folder with the same name as one of our skills is left alone and reported as skipped.

@@ -13,6 +13,8 @@ second is the point; a bare inventory is something the user could read off a dir
 
 ## Step 1: enumerate what is available
 
+For which skills hand work to which, read `skill-map.md` beside this file: entry points, hubs, leaves, and a chart. Regenerate it with `vp run workflow:map` after adding, removing, or rewiring skills.
+
 Two sources, and you need both.
 
 **Workflow skills.** This fork ships its skills under `workflow/skills/<group>/<name>/SKILL.md`.
