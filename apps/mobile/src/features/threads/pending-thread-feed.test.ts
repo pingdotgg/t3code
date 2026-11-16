@@ -241,6 +241,8 @@ describe("pending timeline messages", () => {
       ["live-activity-row", "Sending…"],
     ]);
     expect(appendTurn(sent, { zen: false })[1]).toBe(held[1]);
+    const grouped = createThreadFeedGrouping()(held, {});
+    expect(grouped.map((row) => row.followedByFold)).toEqual([true, false, false]);
     const delivered = sent.map((entry) => ({ ...entry, acknowledged: true }));
     expect(appendTurn(delivered, { zen: true }).map((entry) => entry.id)).toEqual([
       "sent",

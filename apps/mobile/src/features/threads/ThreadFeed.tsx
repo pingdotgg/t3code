@@ -23,8 +23,8 @@ import {
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
   ThreadContextDivider,
-  ThreadLifecycleLine,
-  type ThreadLifecycleEvent,
+  ThreadStatusLine,
+  type ThreadStatusLineModel,
 } from "./thread-context-divider";
 import {
   ThreadHandoffDivider,
@@ -362,7 +362,8 @@ export interface ThreadFeedProps {
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
-  readonly lifecycleEvent?: ThreadLifecycleEvent | null;
+  /** Thread states that close the feed: background work, then snooze or settle. */
+  readonly statusLines?: ReadonlyArray<ThreadStatusLineModel>;
   readonly contentPresentation: ThreadContentPresentation;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
@@ -1856,6 +1857,7 @@ function renderFeedEntry(
     readonly threadTitle: string;
     readonly workflowOpening: WorkflowOpening | null;
     readonly userMessageGrouping: GroupedThreadFeedRow["userMessageGrouping"];
+    readonly followedByFold: boolean;
   },
 ) {
   const entry = info.item;
@@ -2218,7 +2220,14 @@ function renderFeedEntry(
           visibleAttachments.length + pendingBubbleAttachments.length > 0);
       return (
         <Animated.View
-          className={cn("items-end", props.userMessageGrouping.groupedWithNext ? "mb-1" : "mb-5")}
+          className={cn(
+            "items-end",
+            props.userMessageGrouping.groupedWithNext
+              ? "mb-1"
+              : props.followedByFold
+                ? "mb-0"
+                : "mb-5",
+          )}
           {...(enterAnimated ? { entering: FadeInDown.duration(220) } : {})}
         >
           {presentation.attribution === "t3code" ? (
@@ -4001,6 +4010,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ) : null}
           {renderFeedEntry(info, {
             userMessageGrouping: info.item.userMessageGrouping,
+            followedByFold: info.item.followedByFold,
             formatMessageTime,
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
@@ -4160,7 +4170,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               </>
             }
             ListFooterComponent={
-              props.pendingHandoff || props.lifecycleEvent ? (
+              props.pendingHandoff || props.statusLines?.length ? (
                 <>
                   {props.pendingHandoff ? (
                     <ThreadHandoffDivider
@@ -4171,9 +4181,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                       label="Context handoff pending"
                     />
                   ) : null}
-                  {props.lifecycleEvent ? (
-                    <ThreadLifecycleLine event={props.lifecycleEvent} iconColor={iconSubtleColor} />
-                  ) : null}
+                  {props.statusLines?.map((line) => (
+                    <ThreadStatusLine key={line.key} line={line} iconColor={iconSubtleColor} />
+                  ))}
                 </>
               ) : null
             }
