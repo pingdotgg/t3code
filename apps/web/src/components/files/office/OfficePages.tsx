@@ -1,13 +1,21 @@
 /* oxlint-disable react/no-array-index-key -- A page keeps its ordinal throughout incremental layout. */
 import { observeResize } from "~/lib/observeResize";
+import { RotateCcwIcon } from "lucide-react";
 import {
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
   type RefObject,
 } from "react";
+import { usePinchZoom } from "../pinchZoom";
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 5;
+// Bounds each page raster; deeper zoom stretches the raster instead of allocating more.
+const MAX_RASTER_PIXELS = 16 * 1024 * 1024;
 
 export type PageSize = {
   readonly width: number;
@@ -20,6 +28,10 @@ export type PaintPage = (
   scale: number,
   signal: AbortSignal,
 ) => Promise<void>;
+
+function fitScale(page: PageSize, available: number) {
+  return Math.min(1, Math.max(0, available - 48) / page.width);
+}
 
 export function OfficePages(props: {
   pages: readonly PageSize[];
@@ -36,6 +48,13 @@ export function OfficePages(props: {
   const [width, setWidth] = useState(0);
   const [settledWidth, setSettledWidth] = useState(0);
   const [mounted, setMounted] = useState(6);
+  const [zoom, setZoom] = useState(1);
+  const [settledZoom, setSettledZoom] = useState(1);
+  // Pinch steps that arrive before React commits build on the uncommitted zoom.
+  const pendingZoom = useRef<number | null>(null);
+  const anchor = useRef<{ index: number; x: number; y: number; fx: number; fy: number } | null>(
+    null,
+  );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the scroll container width and debounce raster resizing, releasing the observer and timer on unmount.
   useEffect(() => {
     const root = scroller.current;
@@ -53,12 +72,61 @@ export function OfficePages(props: {
       unobserve();
     };
   }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Re-raster pages only after a pinch pauses; until then pages stretch their last raster.
+  useEffect(() => {
+    const timer = setTimeout(() => setSettledZoom(zoom), 180);
+    return () => clearTimeout(timer);
+  }, [zoom]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Yield between page mounting batches with a timer so large documents do not block the browser.
   useEffect(() => {
     if (mounted >= props.pages.length) return;
     const timer = setTimeout(() => setMounted((n) => Math.min(props.pages.length, n + 50)), 0);
     return () => clearTimeout(timer);
   }, [mounted, props.pages.length]);
+  usePinchZoom(scroller, (factor, point) => {
+    const root = scroller.current;
+    if (!root) return;
+    const previous = pendingZoom.current ?? zoom;
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, previous * factor));
+    if (next === previous) return;
+    const bounds = root.getBoundingClientRect();
+    const y = bounds.top + point.y;
+    const ordered = [...rows.current].sort(([a], [b]) => a - b);
+    const hit =
+      ordered.find(([, row]) => row.getBoundingClientRect().bottom >= y) ?? ordered.at(-1);
+    if (hit) {
+      const rect = hit[1].getBoundingClientRect();
+      anchor.current = {
+        index: hit[0],
+        ...point,
+        fx: (bounds.left + point.x - rect.left) / rect.width,
+        fy: (y - rect.top) / rect.height,
+      };
+    }
+    pendingZoom.current = next;
+    setZoom(next);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the page point under the pointer fixed once the new page sizes have committed to layout.
+  useLayoutEffect(() => {
+    pendingZoom.current = null;
+    const point = anchor.current;
+    anchor.current = null;
+    const root = scroller.current;
+    const row = point ? rows.current.get(point.index) : undefined;
+    if (!point || !root || !row) return;
+    const bounds = root.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    root.scrollTo({
+      left: root.scrollLeft + rect.left - bounds.left + point.fx * rect.width - point.x,
+      top: root.scrollTop + rect.top - bounds.top + point.fy * rect.height - point.y,
+    });
+  });
+  const pageScale = (page: PageSize) => fitScale(page, width) * zoom;
+  const rasterScale = (page: PageSize) =>
+    Math.min(
+      fitScale(page, settledWidth || width) * settledZoom,
+      Math.sqrt(MAX_RASTER_PIXELS / (page.width * page.height)) / (window.devicePixelRatio || 1),
+    );
   useImperativeHandle(
     props.scrollRef,
     () =>
@@ -67,51 +135,68 @@ export function OfficePages(props: {
         const page = props.pages[index];
         if (row && page)
           scroller.current?.scrollTo({
-            top: row.offsetTop + y * Math.min(1, Math.max(0, width - 48) / page.width) - 24,
+            top: row.offsetTop + y * fitScale(page, width) * zoom - 24,
           });
       },
-    [props.pages, width],
+    [props.pages, width, zoom],
   );
   return (
-    <div
-      ref={scroller}
-      className="relative min-h-0 flex-1 overflow-auto bg-muted/60"
-      data-office-pages
-      onScroll={() => {
-        const root = scroller.current;
-        if (!root || !props.onPageChange) return;
-        if (
-          root.scrollHeight > root.clientHeight &&
-          root.scrollTop + root.clientHeight >= root.scrollHeight - 1
-        ) {
-          props.onPageChange(Math.min(mounted, props.pages.length) - 1);
-          return;
-        }
-        for (const [index, row] of [...rows.current].sort(([a], [b]) => a - b)) {
-          if (row.offsetTop + row.offsetHeight > root.scrollTop + 24) {
-            props.onPageChange(index);
-            break;
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={scroller}
+        className="relative min-h-0 flex-1 overflow-auto bg-muted/60"
+        data-office-pages
+        onScroll={() => {
+          const root = scroller.current;
+          if (!root || !props.onPageChange) return;
+          if (
+            root.scrollHeight > root.clientHeight &&
+            root.scrollTop + root.clientHeight >= root.scrollHeight - 1
+          ) {
+            props.onPageChange(Math.min(mounted, props.pages.length) - 1);
+            return;
           }
-        }
-      }}
-    >
-      <div className="flex flex-col items-center gap-4 py-6">
-        {props.pages.slice(0, mounted).map((page, index) => (
-          <OfficePage
-            key={index}
-            page={page}
-            index={index}
-            root={scroller}
-            register={(el) => {
-              if (el) rows.current.set(index, el);
-              else rows.current.delete(index);
-            }}
-            scale={Math.min(1, Math.max(0, width - 48) / page.width)}
-            rasterScale={Math.min(1, Math.max(0, (settledWidth || width) - 48) / page.width)}
-            {...props}
-          />
-        ))}
+          for (const [index, row] of [...rows.current].sort(([a], [b]) => a - b)) {
+            if (row.offsetTop + row.offsetHeight > root.scrollTop + 24) {
+              props.onPageChange(index);
+              break;
+            }
+          }
+        }}
+      >
+        {/* w-max keeps pages wider than the viewport scrollable on both sides. */}
+        <div className="flex w-max min-w-full flex-col items-center gap-4 px-6 py-6">
+          {props.pages.slice(0, mounted).map((page, index) => (
+            <OfficePage
+              key={index}
+              page={page}
+              index={index}
+              root={scroller}
+              register={(el) => {
+                if (el) rows.current.set(index, el);
+                else rows.current.delete(index);
+              }}
+              scale={pageScale(page)}
+              rasterScale={rasterScale(page)}
+              {...props}
+            />
+          ))}
+        </div>
       </div>
+      {zoom !== 1 ? (
+        <button
+          type="button"
+          aria-label="Fit to width"
+          className="absolute right-4 bottom-4 flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-2 py-1 text-xs tabular-nums shadow-sm hover:bg-accent"
+          onClick={() => {
+            pendingZoom.current = null;
+            setZoom(1);
+          }}
+        >
+          {Math.round(zoom * 100)}%
+          <RotateCcwIcon className="size-3" />
+        </button>
+      ) : null}
     </div>
   );
 }

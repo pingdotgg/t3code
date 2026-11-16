@@ -13,6 +13,7 @@ import { observeResize } from "~/lib/observeResize";
 import { FileSurfaceAction, FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import { readBoundedDocument } from "./readBoundedDocument";
 import { openPdf } from "./pdfDocument";
+import { usePinchZoom } from "./pinchZoom";
 import {
   currentPdfPage,
   pdfFindIncludes,
@@ -55,49 +56,66 @@ function PdfPage(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const { document: pdf, index, width, onSize, onError } = props;
+  const painted = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
   useEffect(() => {
     let cancelled = false;
     let paint: ReturnType<Awaited<ReturnType<PDFDocumentProxy["getPage"]>>["render"]> | undefined;
     let layer: TextLayer | undefined;
     let loadedPage: Awaited<ReturnType<PDFDocumentProxy["getPage"]>> | undefined;
-    void (async () => {
-      const page = await pdf.getPage(index + 1);
-      loadedPage = page;
-      if (cancelled || !canvas.current || !text.current) {
-        page.cleanup();
-        return;
-      }
-      const natural = page.getViewport({ scale: 1 });
-      onSize(index, natural.height / natural.width);
-      const viewport = page.getViewport({ scale: width / natural.width });
-      const ratio = Math.min(
-        2,
-        window.devicePixelRatio || 1,
-        Math.sqrt((8 * 1024 * 1024) / (viewport.width * viewport.height)),
-      );
-      canvas.current.width = Math.ceil(viewport.width * ratio);
-      canvas.current.height = Math.ceil(viewport.height * ratio);
-      paint = page.render({
-        canvas: canvas.current,
-        viewport,
-        transform: [ratio, 0, 0, ratio, 0, 0],
-        background: "white",
-      });
-      text.current.replaceChildren();
-      text.current.style.setProperty("--total-scale-factor", String(viewport.scale));
-      layer = new TextLayer({
-        container: text.current,
-        viewport,
-        textContentSource: page.streamTextContent(),
-      });
-      await Promise.all([paint.promise, layer.render()]);
-    })().catch((cause: unknown) => {
-      if (!cancelled)
-        onError(cause instanceof Error ? cause.message : "This PDF page could not render.");
-    });
+    // Zoom gestures change width on every wheel event; re-render only once the width settles.
+    const timer = setTimeout(
+      () =>
+        void (async () => {
+          const page = await pdf.getPage(index + 1);
+          loadedPage = page;
+          if (cancelled || !canvas.current || !text.current) {
+            page.cleanup();
+            return;
+          }
+          const natural = page.getViewport({ scale: 1 });
+          onSize(index, natural.height / natural.width);
+          const viewport = page.getViewport({ scale: width / natural.width });
+          const ratio = Math.min(
+            2,
+            window.devicePixelRatio || 1,
+            Math.sqrt((8 * 1024 * 1024) / (viewport.width * viewport.height)),
+          );
+          // Paint off-screen so the stretched previous frame stays visible until the new one is ready.
+          const target = window.document.createElement("canvas");
+          target.width = Math.ceil(viewport.width * ratio);
+          target.height = Math.ceil(viewport.height * ratio);
+          paint = page.render({
+            canvas: target,
+            viewport,
+            transform: [ratio, 0, 0, ratio, 0, 0],
+            background: "white",
+          });
+          await paint.promise;
+          const visible = canvas.current;
+          if (cancelled || !visible || !text.current) return;
+          visible.width = target.width;
+          visible.height = target.height;
+          visible.getContext("2d")?.drawImage(target, 0, 0);
+          target.width = 0;
+          painted.current = true;
+          text.current.replaceChildren();
+          text.current.style.setProperty("--total-scale-factor", String(viewport.scale));
+          layer = new TextLayer({
+            container: text.current,
+            viewport,
+            textContentSource: page.streamTextContent(),
+          });
+          await layer.render();
+        })().catch((cause: unknown) => {
+          if (!cancelled)
+            onError(cause instanceof Error ? cause.message : "This PDF page could not render.");
+        }),
+      painted.current ? 180 : 0,
+    );
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       paint?.cancel();
       layer?.cancel();
       // Release operator lists when virtual pages leave the viewport.
@@ -157,7 +175,12 @@ export default function PdfViewer(props: {
   const [match, setMatch] = useState(0);
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
-  const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const zoomAnchor = useRef<{
+    page: number;
+    offset: number;
+    width: number;
+    point?: { x: number; y: number; pageX: number };
+  } | null>(null);
   const initialPage = initialView.page;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
@@ -268,14 +291,39 @@ export default function PdfViewer(props: {
   const showPage = (index: number) => {
     scroll.current?.scrollTo({ top: pdfPageScrollTop(offsets, index) });
   };
-  const changeZoom = (value: number | null) => {
+  const changeZoom = (value: number | null, point?: { x: number; y: number }) => {
+    const node = scroll.current;
+    const page =
+      point && node
+        ? Math.max(
+            0,
+            Math.min(
+              ratios.length - 1,
+              offsets.findLastIndex((top) => top <= node.scrollTop + point.y),
+            ),
+          )
+        : current;
     zoomAnchor.current = {
-      page: current,
-      offset: (scroll.current?.scrollTop ?? 0) - (offsets[current]! - 16),
+      page,
+      offset: (node?.scrollTop ?? 0) + (point?.y ?? 0) - offsets[page]! + (point ? 0 : 16),
       width,
+      ...(point && node
+        ? {
+            point: {
+              ...point,
+              pageX:
+                (node.scrollLeft + point.x - Math.max(16, (viewport.width - width) / 2)) / width,
+            },
+          }
+        : {}),
     };
     setZoom(value);
   };
+  usePinchZoom(scroll, (factor, point) => {
+    if (!pdf) return;
+    const next = Math.min(PDF_MAX_ZOOM, Math.max(PDF_MIN_ZOOM, scale * factor));
+    if (next !== scale) changeZoom(next, point);
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the DOM scroll anchor after the new zoom width has committed to page layout.
   useLayoutEffect(() => {
     const anchor = zoomAnchor.current;
@@ -284,7 +332,16 @@ export default function PdfViewer(props: {
     if (!node || !pdf) return;
     if (anchor && anchor.width !== width) {
       node.scrollTo({
-        top: offsets[anchor.page]! - 16 + (anchor.offset * width) / anchor.width,
+        top:
+          offsets[anchor.page]! + (anchor.offset * width) / anchor.width - (anchor.point?.y ?? 16),
+        ...(anchor.point
+          ? {
+              left:
+                Math.max(16, (viewport.width - width) / 2) +
+                anchor.point.pageX * width -
+                anchor.point.x,
+            }
+          : {}),
       });
     }
     saveView(node, anchor !== null);

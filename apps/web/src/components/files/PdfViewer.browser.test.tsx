@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { render } from "../../../test/render";
 import "~/index.css";
 
@@ -170,6 +171,74 @@ it("jumps to the first hit while still counting and keeps later manual navigatio
     await expect.element(screen.getByText("3 / 4 pages")).toBeVisible();
   } finally {
     findGate.open();
+    URL.revokeObjectURL(url);
+  }
+});
+
+it("pinches only the PDF around the pointer and leaves plain wheels scrolling", async () => {
+  const url = URL.createObjectURL(
+    testPdf([{ box: "0 0 612 792", rotate: 0, text: "BT /F1 24 Tf 30 700 Td (Pinch me) Tj ET" }]),
+  );
+  try {
+    await using screen = await render(
+      <div className="flex h-[300px] w-[320px]">
+        <PdfViewer
+          src={url}
+          title="Pinch PDF"
+          initialView={{ page: 0, offset: 200, zoom: 1, left: 100 }}
+        />
+      </div>,
+    );
+    await expect.element(screen.getByText("1 / 1 page")).toBeVisible();
+    const locator = screen.getByRole("region", { name: "Pinch PDF" });
+    const region = locator.element();
+    const canvas = () => region.querySelector("canvas")!;
+    await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBe(612));
+    const fraction = () => {
+      const bounds = region.getBoundingClientRect();
+      const page = canvas().getBoundingClientRect();
+      return {
+        x: (bounds.left + bounds.width / 2 - page.left) / page.width,
+        y: (bounds.top + bounds.height / 2 - page.top) / page.height,
+      };
+    };
+    const canceled: boolean[] = [];
+    const record = (event: WheelEvent) => canceled.push(event.defaultPrevented);
+    document.addEventListener("wheel", record);
+    using _listener = { [Symbol.dispose]: () => document.removeEventListener("wheel", record) };
+    const anchor = fraction();
+    await userEvent.keyboard("{Control>}");
+    await userEvent.wheel(locator, { delta: { y: -20 } });
+    await userEvent.keyboard("{/Control}");
+    await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBeGreaterThan(612));
+    expect(canceled.at(-1)).toBe(true);
+    expect(fraction().x).toBeCloseTo(anchor.x, 2);
+    expect(fraction().y).toBeCloseTo(anchor.y, 2);
+    const enlargedWidth = canvas().getBoundingClientRect().width;
+    await userEvent.keyboard("{Control>}");
+    await userEvent.wheel(locator, { delta: { y: 10 } });
+    await userEvent.keyboard("{/Control}");
+    await vi.waitFor(() =>
+      expect(canvas().getBoundingClientRect().width).toBeLessThan(enlargedWidth),
+    );
+    expect(canceled.at(-1)).toBe(true);
+    const width = canvas().getBoundingClientRect().width;
+    const top = region.scrollTop;
+    await userEvent.wheel(locator, { delta: { y: 60 } });
+    await vi.waitFor(() => expect(region.scrollTop).toBeGreaterThan(top));
+    expect(canceled.at(-1)).toBe(false);
+    expect(canvas().getBoundingClientRect().width).toBe(width);
+    await userEvent.keyboard("{Control>}");
+    await userEvent.wheel(locator, { delta: { y: -1000 } });
+    await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBe(612 * 3));
+    await userEvent.wheel(locator, { delta: { y: -20 } });
+    expect(canceled.at(-1)).toBe(true);
+    expect(canvas().getBoundingClientRect().width).toBe(612 * 3);
+    await userEvent.wheel(locator, { delta: { y: 1000 } });
+    await userEvent.keyboard("{/Control}");
+    await vi.waitFor(() => expect(canvas().getBoundingClientRect().width).toBe(612 * 0.25));
+    expect(canceled.at(-1)).toBe(true);
+  } finally {
     URL.revokeObjectURL(url);
   }
 });
