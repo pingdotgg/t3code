@@ -913,6 +913,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const markThreadUnread = useAtomCommand(threadEnvironment.markUnread, { reportFailure: false });
+  const canMarkUnread =
+    status === "ready" &&
+    thread.lastVisitedAt !== undefined &&
+    thread.latestRun?.completedAt != null &&
+    !threadHasUnseenCompletion(thread);
+  const handleMarkUnread = useCallback(async () => {
+    if (!canMarkUnread) return;
+    const result = await markThreadUnread({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    if (result._tag === "Failure") {
+      Dialog.alert(
+        "Could not mark thread unread",
+        "The thread could not be marked unread. Try again.",
+      );
+    }
+  }, [canMarkUnread, markThreadUnread, thread.environmentId, thread.id]);
   const handleAcknowledgeWoke = useCallback(() => {
     if (props.wokeAt === null) return;
     void visitThread({
@@ -1079,7 +1097,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         },
         m,
       ),
-      ...(thread.latestRun?.completedAt != null && threadCanArchive(thread.runtime)
+      ...(canMarkUnread
         ? [{ id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" }]
         : []),
       ...(canTurnIntoProject
@@ -1094,6 +1112,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         : []),
     ],
     [
+      canMarkUnread,
       canTurnIntoProject,
       gt,
       m,
@@ -1229,13 +1248,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "rename") handleRename();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
+      if (nativeEvent.event === "mark-unread") void handleMarkUnread();
       if (nativeEvent.event === "turn-into-project") void turnThreadIntoProject(thread);
-      if (nativeEvent.event === "mark-unread") {
-        void markThreadUnread({
-          environmentId: thread.environmentId,
-          input: { threadId: thread.id },
-        });
-      }
       if (nativeEvent.event === "copy-thread") {
         const target = threadChipCopyTarget(
           { environmentId: thread.environmentId, threadId: thread.id },
@@ -1284,6 +1298,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       navigation,
       handleArchive,
       handleDelete,
+      handleMarkUnread,
       handleRegenerateTitle,
       handleRename,
       handleMoveDown,
@@ -1295,7 +1310,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
-      markThreadUnread,
       setCustomSnoozeOpen,
       snoozePresets,
       props.snoozePresets,
