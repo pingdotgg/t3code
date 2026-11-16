@@ -1696,13 +1696,23 @@ describe("threadErrorBannerRunId", () => {
     completedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt),
   });
 
-  it("drops a failed run's key once a later run completes, so a new session error is shown", () => {
+  it("keys a session error by the completed run that followed a failure, so the failure's dismissal does not hide it", () => {
     expect(
       threadErrorBannerRunId([
         run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
         run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
       ]),
-    ).toBeNull();
+    ).toBe("run-b");
+  });
+
+  it("keys a repeated session error by a later completed run, so its earlier dismissal does not hide it", () => {
+    expect(
+      threadErrorBannerRunId([
+        run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
+        run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
+        run("run-c", "completed", 3, "2026-11-16T00:03:00Z"),
+      ]),
+    ).toBe("run-c");
   });
 
   it("keeps a failed run's key when the completed run finished before it failed", () => {
@@ -1730,8 +1740,9 @@ describe("threadErrorBannerRunId", () => {
     ).toBe("run-c");
   });
 
-  it("has no key when no run has failed", () => {
+  it("keys by the latest completed run when no run has failed, and has no key without runs", () => {
     expect(threadErrorBannerRunId([])).toBeNull();
-    expect(threadErrorBannerRunId([run("run-a", "completed", 1)])).toBeNull();
+    expect(threadErrorBannerRunId([run("run-a", "completed", 1)])).toBe("run-a");
+    expect(threadErrorBannerRunId([run("run-a", "starting", 1)])).toBeNull();
   });
 });

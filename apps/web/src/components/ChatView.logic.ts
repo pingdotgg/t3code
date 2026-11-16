@@ -1214,21 +1214,22 @@ export function threadErrorIsServerRuntime(input: {
 }
 
 /**
- * The latest failed run, which owns the session's error until a later run completes: a run that
- * completes proves the session works, so a later session error is a new one.
+ * The run a thread's error banner is keyed by. The latest failed run owns the error until a later
+ * run completes; after that, or when nothing failed, the latest completed run owns it, so a
+ * session error that repeats after a later run is a new one.
  */
 export function threadErrorBannerRunId(
   runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">>,
 ): RunId | null {
   let failed: (typeof runs)[number] | null = null;
+  let completed: (typeof runs)[number] | null = null;
   for (const run of runs) {
-    if (run.status !== "failed") continue;
-    if (failed === null || runRanAfter(run, failed)) failed = run;
+    if (run.status === "failed" && (failed === null || runRanAfter(run, failed))) failed = run;
+    if (run.status === "completed" && (completed === null || runRanAfter(run, completed)))
+      completed = run;
   }
-  if (failed === null) return null;
-  const owner = failed;
-  const completedSince = runs.some((run) => run.status === "completed" && runRanAfter(run, owner));
-  return completedSince ? null : owner.id;
+  if (failed !== null && (completed === null || !runRanAfter(completed, failed))) return failed.id;
+  return completed?.id ?? null;
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(
