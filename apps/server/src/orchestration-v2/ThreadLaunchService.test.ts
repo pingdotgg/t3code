@@ -3104,7 +3104,9 @@ it.effect("shows an async setup as done while the agent still waits for its bran
         Stream.runHead,
       );
       const stages = Option.getOrUndefined(snapshot)?.stages ?? [];
-      assert.equal(stages.find((stage) => stage.id === "setup-script")?.status, "done");
+      const setupStage = stages.find((stage) => stage.id === "setup-script");
+      assert.equal(setupStage?.status, "done");
+      assert.isNotNull(setupStage?.endedAt ?? null);
       assert.notEqual(stages.find((stage) => stage.id === "agent")?.status, "done");
       yield* Deferred.succeed(allowBranchName, undefined);
     }).pipe(Effect.provide(harness.layer));

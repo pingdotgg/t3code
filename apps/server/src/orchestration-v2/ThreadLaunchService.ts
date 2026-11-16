@@ -960,10 +960,12 @@ const make = Effect.gen(function* () {
         if (setup.completion) {
           const awaitCompletion = Effect.gen(function* () {
             const completion = yield* setup.completion!;
-            yield* setupTracker.stage(threadId, "setup-script", {
-              status: completion.exitCode === 0 ? "done" : "failed",
-              detail: `exited with ${completion.exitCode ?? "no exit code"}`,
-            });
+            yield* setupTracker.stageStatus(
+              threadId,
+              "setup-script",
+              completion.exitCode === 0 ? "done" : "failed",
+              `exited with ${completion.exitCode ?? "no exit code"}`,
+            );
             if (completion.exitCode !== 0 && !setup.async)
               return yield* mapError(
                 input,
@@ -975,10 +977,12 @@ const make = Effect.gen(function* () {
             // Record the result when the script ends, not after the agent starts.
             const asyncSetup = yield* awaitCompletion.pipe(
               Effect.catchCause((cause) =>
-                setupTracker.stage(threadId, "setup-script", {
-                  status: "failed",
-                  detail: failureDetail(Cause.squash(cause)),
-                }),
+                setupTracker.stageStatus(
+                  threadId,
+                  "setup-script",
+                  "failed",
+                  failureDetail(Cause.squash(cause)),
+                ),
               ),
               Effect.forkChild,
             );
