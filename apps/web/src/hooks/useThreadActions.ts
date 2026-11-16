@@ -236,6 +236,7 @@ export function useAcknowledgeThreadWoke() {
 
 // These Undos restore a thread's place in the list, which archiving or deleting it ends.
 const LIST_PLACEMENT_UNDO_KINDS = ["settle", "snooze", "pin"];
+const WORKTREE_CHANGES_LISTED = 10;
 
 function expireThreadUndos(target: ScopedThreadRef, kinds: readonly string[]) {
   for (const kind of kinds) ThreadUndo.invalidate(kind, scopedThreadKey(target));
@@ -650,23 +651,66 @@ export function useThreadActions() {
       return deleteResult;
     }
 
-    const removeResult = readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope)
-      ? await removeWorktree({
-          environmentId: threadRef.environmentId,
-          input: {
-            cwd: threadProject.workspaceRoot,
-            path: orphanedWorktreePath,
-            force: true,
-          },
-        })
-      : AsyncResult.failure(
-          Cause.fail(
-            new EnvironmentAuthorizationError({
-              message: "This connection can no longer remove worktrees.",
-              requiredScope: AuthSourceControlWriteScope,
-            }),
+    const worktreePath = orphanedWorktreePath;
+    const removeOrphanedWorktree = (force: boolean) =>
+      readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope)
+        ? removeWorktree({
+            environmentId: threadRef.environmentId,
+            input: {
+              cwd: threadProject.workspaceRoot,
+              path: worktreePath,
+              ...(force ? { force } : {}),
+            },
+          })
+        : Promise.resolve(
+            AsyncResult.failure(
+              Cause.fail(
+                new EnvironmentAuthorizationError({
+                  message: "This connection can no longer remove worktrees.",
+                  requiredScope: AuthSourceControlWriteScope,
+                }),
+              ),
+            ),
+          );
+    // Git refuses to remove a worktree with local changes unless forced; those are only
+    // discarded after the user sees them and confirms.
+    let removeResult = await removeOrphanedWorktree(false);
+    if (
+      removeResult._tag === "Failure" &&
+      localApi &&
+      readEnvironmentScope(threadRef.environmentId, AuthSourceControlWriteScope)
+    ) {
+      const statusResult = await refreshVcsStatus({
+        environmentId: threadRef.environmentId,
+        input: { cwd: worktreePath, localOnly: true },
+      });
+      if (statusResult._tag === "Success" && statusResult.value.hasWorkingTreeChanges) {
+        const files = statusResult.value.workingTree.files.map((file) => file.path);
+        const listed = files.slice(0, WORKTREE_CHANGES_LISTED);
+        const confirmationResult = await settlePromise(() =>
+          localApi.dialogs.confirm(
+            [
+              "This worktree has uncommitted changes:",
+              displayWorktreePath ?? orphanedWorktreePath,
+              "",
+              ...listed,
+              ...(files.length > listed.length
+                ? [`…and ${files.length - listed.length} more`]
+                : []),
+              "",
+              "Delete the worktree anyway? These changes will be lost.",
+            ].join("\n"),
+            { variant: "destructive" },
           ),
         );
+        if (confirmationResult._tag === "Success" && !confirmationResult.value) {
+          return deleteResult;
+        }
+        if (confirmationResult._tag === "Success") {
+          removeResult = await removeOrphanedWorktree(true);
+        }
+      }
+    }
     const refreshResult =
       removeResult._tag === "Success"
         ? await refreshVcsStatus({
