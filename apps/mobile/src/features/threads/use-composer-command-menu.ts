@@ -388,7 +388,12 @@ export function useComposerCommandMenu({
       const providerSlashCommands = selectedProviderStatus
         ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, projectCwd)
         : [];
-      const visibleSkills = getProviderSkillsForSlashMenu(skills, true, providerSlashCommands);
+      // Provider commands are offered only at the start of the message.
+      const visibleSkills = getProviderSkillsForSlashMenu(
+        skills,
+        true,
+        trigger.rangeStart === 0 ? providerSlashCommands : [],
+      );
       const commandItems = buildComposerSlashCommandItems({
         query: q,
         atMessageStart: trigger.rangeStart === 0,
