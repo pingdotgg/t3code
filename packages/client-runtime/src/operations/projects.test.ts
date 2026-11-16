@@ -119,6 +119,23 @@ describe("add project shared logic", () => {
     ).toBe("https://forgejo.example.test:8443/owner/repo.git");
   });
 
+  it("keeps a clone URL the user pasted into a provider lookup", () => {
+    const repository = {
+      provider: SourceControlProviderKind.make("forgejo"),
+      url: "https://forgejo.example.test/owner/repo.git",
+      sshUrl: "ssh://git@forgejo.example.test/owner/repo.git",
+    };
+    expect(
+      getDefaultCloneUrl(repository, " ssh://forgejo@forgejo.example.test:2222/owner/repo.git "),
+    ).toBe("ssh://forgejo@forgejo.example.test:2222/owner/repo.git");
+    expect(getDefaultCloneUrl(repository, "forgejo@forgejo.example.test:owner/repo.git")).toBe(
+      "forgejo@forgejo.example.test:owner/repo.git",
+    );
+    expect(getDefaultCloneUrl(repository, "owner/repo")).toBe(
+      "https://forgejo.example.test/owner/repo.git",
+    );
+  });
+
   it("derives the clone folder name from any pasted clone URL", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");
