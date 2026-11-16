@@ -70,6 +70,12 @@ on:
         required: false
         default: false
         type: boolean
+      # Whether the JS bundle came from a pull request. This job holds the
+      # signing secrets, so packaging then skips every step that runs the bundle.
+      untrusted_bundle:
+        required: false
+        default: false
+        type: boolean
       # A runner of the target's own platform and architecture, for a `runner`
       # that cannot execute the target. The build job skips everything that
       # runs the packaged binaries, and a second job runs it there.
@@ -134,6 +140,14 @@ jobs:
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ inputs.relay_url }}
     steps:
+      # The launch check and the CLI archive smoke test both run the bundle.
+      - name: Reject running an untrusted bundle
+        if: inputs.untrusted_bundle && (inputs.launch_check || inputs.cli_archive)
+        shell: bash
+        run: |
+          echo "::error::untrusted_bundle cannot be combined with launch_check or cli_archive, which run the bundle."
+          exit 1
+
       # This repository is public, so Git needs no credentials. checkout's
       # credential cleanup runs submodule foreach even with submodules disabled,
       # which fails on the orphaned gitlinks in our vendored .repos tree.
@@ -573,6 +587,7 @@ jobs:
           pnpm_config_prefer_offline: "true"
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: true
           T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
+          T3CODE_DESKTOP_UNTRUSTED_BUNDLE: ${{ inputs.untrusted_bundle }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
