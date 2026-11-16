@@ -12,6 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { inlineFilePreviewKind, isPdfFile } from "./filePreview";
 import { ThreadInlineFilePreview } from "../features/threads/ThreadInlineFilePreview";
+import {
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "../features/threads/ThreadMarkdownVideo";
 import { AudioFilePreview } from "../features/files/AudioFilePreview";
 import { MediaVideoPlayer } from "../components/MediaVideoPlayer";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
@@ -113,6 +117,7 @@ vi.mock("../components/ui/Button", () => ({
     createElement("button", { onClick: props.onPress, disabled: props.disabled }, props.label),
 }));
 vi.mock("expo", () => ({
+  requireNativeModule: () => ({ is24HourFormat: () => true }),
   useEvent: (_player: unknown, _event: unknown, initial: unknown) => initial,
   useReleasingSharedObjectWithLifecycle: (
     lifecycle: {
@@ -240,6 +245,7 @@ vi.mock("../components/ui/Menu", () => ({
 }));
 vi.mock("../components/ui/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
+  useFilePreviewGallery: () => (source: unknown) => source,
 }));
 vi.mock("../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string } | null }) =>
@@ -1299,6 +1305,59 @@ describe("ThreadInlineFilePreview playback", () => {
       expect(audio.player.play).toHaveBeenCalledTimes(isLoaded ? 3 : 2);
     },
   );
+
+  it("keeps a started inline audio player mounted when its row scrolls out of view", async () => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    audio.status = { ...audio.status, isLoaded: true };
+    const container = document.createElement("div");
+    root = createRoot(container);
+    const retainRow = vi.fn();
+    const render = (visible: boolean) =>
+      root!.render(
+        createElement(
+          ThreadMediaRetainContext,
+          { value: retainRow },
+          createElement(
+            ThreadMediaVisibleContext,
+            { value: visible },
+            createElement(ThreadInlineFilePreview, {
+              source: { kind: "document", name: "sound.mp3", uri: "https://example.com/sound.mp3" },
+              onOpen() {},
+            }),
+          ),
+        ),
+      );
+    await act(async () => render(true));
+    const playButton = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Play audio"]');
+    const pauseButton = () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Pause audio"]');
+    expect(playButton()).not.toBeNull();
+    // An idle preview still unmounts off-screen, so off-screen rows stay cheap.
+    await act(async () => render(false));
+    expect(playButton()).toBeNull();
+    await act(async () => render(true));
+    await act(async () => playButton()!.click());
+    expect(audio.player.play).toHaveBeenCalledOnce();
+    expect(pauseButton()).not.toBeNull();
+    // The feed list recycles rows beyond its draw distance, so the row itself is pinned too.
+    expect(retainRow).toHaveBeenLastCalledWith(true);
+    audio.player.release.mockClear();
+    audio.player.pause.mockClear();
+    // Scrolling the playing chip out of view (or a new reply pushing it out)
+    // must not unmount it: unmounting disposes the native player mid-playback.
+    await act(async () => render(false));
+    expect(pauseButton()).not.toBeNull();
+    expect(audio.player.release).not.toHaveBeenCalled();
+    expect(audio.player.pause).not.toHaveBeenCalled();
+    // Once playback finishes, the off-screen preview can unmount again.
+    audio.status = { ...audio.status, didJustFinish: true, currentTime: 10 };
+    await act(async () => render(false));
+    expect(pauseButton()).toBeNull();
+    expect(playButton()).toBeNull();
+    expect(audio.player.release).toHaveBeenCalledOnce();
+    expect(retainRow).toHaveBeenLastCalledWith(false);
+  });
 });
 
 describe("PDF preview detection", () => {
