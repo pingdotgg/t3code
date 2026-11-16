@@ -80,7 +80,7 @@ import {
   CLAUDE_PROVIDER,
   makeClaudeQueryOptions,
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
-import { proxyConfig } from "../shared/proxy.ts";
+import { morphConfig, proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
 import {
   decideGitHubArguments,
@@ -96,6 +96,7 @@ import {
   NATIVE_COMPUTER_USE_TOOL,
 } from "./native-computer-use.ts";
 import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
+import { ContextHandoffFixture, contextHandoffPrompt } from "./contextHandoff.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
@@ -121,6 +122,7 @@ const MODELS = {
   "claude-opus-5-5": "Opus 5.5",
   "gpt-6.1-sol": "GPT-6.1 Sol",
   "gpt-6-astra": "GPT-6 Astra",
+  "morph-kimik31": "Kimi K3.1",
 } as const;
 type Model = keyof typeof MODELS;
 /** GPT models replay a Codex capture through CLIProxyAPI, the rest a Claude Code capture. */
@@ -136,7 +138,14 @@ const PRICES = {
 type PricedModel = keyof typeof PRICES;
 /** GPT models that can play the shell through CLIProxyAPI, when no Anthropic key is at hand. */
 const PROXY_SHELL_MODELS = ["gpt-6-luna", "gpt-6.1-terra"] as const;
-type ShellModel = PricedModel | (typeof PROXY_SHELL_MODELS)[number];
+/** Morph models replay the Claude Code capture through Morph's Anthropic-compatible API. */
+const MORPH_SHELL_MODELS = ["morph-dsv41flash"] as const;
+const isMorph = <M extends string>(model: M): model is Extract<M, `morph-${string}`> =>
+  model.startsWith("morph-");
+type ShellModel =
+  | PricedModel
+  | (typeof PROXY_SHELL_MODELS)[number]
+  | (typeof MORPH_SHELL_MODELS)[number];
 const isPricedModel = (model: ShellModel): model is PricedModel => model in PRICES;
 const T3_PREFIX = "mcp__t3-code__";
 const RUNTIME_MARKER = "<runtime_info>";
@@ -357,6 +366,8 @@ export const McpToolUseCase = Schema.Struct({
     shellMocks: Schema.optional(
       Schema.Array(Schema.Struct({ match: Schema.String, output: Schema.String })),
     ),
+    /** The first turn after a context restart: T3 puts the delivered history ahead of `prompt`. */
+    contextHandoff: Schema.optional(ContextHandoffFixture),
     /** The thread is a side chat's first turn: T3 puts the parent's digest ahead of `prompt`. */
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
@@ -1159,8 +1170,11 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const handoff = testCase.setup.contextHandoff;
+  const inlineContext =
+    sideChatContext ?? (handoff === undefined ? undefined : contextHandoffPrompt(handoff));
   const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+    inlineContext === undefined ? userText : withInlineContext(inlineContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));
@@ -1713,9 +1727,10 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
         : undefined;
   if (output === undefined) {
     const body = shellRequest(sample, call, config.shellModel);
-    const response = isPricedModel(config.shellModel)
-      ? yield* callModel(config.apiKey, body, config.apiKey ? undefined : config.proxy)
-      : yield* callCodex(config, shellResponsesRequest(body));
+    const response =
+      isPricedModel(config.shellModel) || isMorph(config.shellModel)
+        ? yield* callModel(config.apiKey, body, config.apiKey ? undefined : config.proxy)
+        : yield* callCodex(config, shellResponsesRequest(body));
     addUsage(sample.shellUsage, response.usage);
     output = shellOutput(response.content);
   }
@@ -2326,7 +2341,11 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   for (let step = 0; step < maxSteps; step++) {
     const response = input
       ? yield* callCodex(config, codexRequest(base, input))
-      : yield* callModel(config.apiKey, requestBody(sample, config.effort, messages));
+      : yield* callModel(
+          config.apiKey,
+          requestBody(sample, config.effort, messages),
+          isMorph(config.model) ? config.proxy : undefined,
+        );
     addUsage(usage, response.usage);
     if ("raw" in response) {
       input?.push(...response.raw);
@@ -2481,7 +2500,7 @@ export const summarize = (
   const codex = isCodex(options.model);
   const agent = spend(
     rows.map((row) => row.usage),
-    codex ? undefined : options.model,
+    codex || isMorph(options.model) ? undefined : options.model,
   );
   const shell = spend(
     rows.map((row) => row.shellUsage),
@@ -2521,8 +2540,10 @@ export const summarize = (
     ...(errors.length > 0 ? [errorNote] : []),
     codex
       ? "- Cost: the agent is not priced. `vibeproxy` in `~/.codex/config.toml` may use a subscription or bill an API key per token; agent tokens are below."
-      : `- Estimated cost $${cost.toFixed(2)}, $${(cost / rows.length).toFixed(3)} per sample.`,
-    `- Agent tokens: ${agent.tokens}${codex ? "." : ` ($${agent.cost.toFixed(2)}).`}`,
+      : isMorph(options.model)
+        ? "- Cost: Morph runs are not priced; agent tokens are below."
+        : `- Estimated cost $${cost.toFixed(2)}, $${(cost / rows.length).toFixed(3)} per sample.`,
+    `- Agent tokens: ${agent.tokens}${codex || isMorph(options.model) ? "." : ` ($${agent.cost.toFixed(2)}).`}`,
     `- Shell simulator (${options.shellModel}) tokens: ${shell.tokens} (API-price estimate $${shell.cost.toFixed(2)}).`,
     ...(codex
       ? [
@@ -2556,6 +2577,7 @@ const Flags = Schema.Struct({
   "shell-model": Schema.Literals([
     ...(Object.keys(PRICES) as Array<PricedModel>),
     ...PROXY_SHELL_MODELS,
+    ...MORPH_SHELL_MODELS,
   ]),
   "user-instructions": Schema.Literals(["keep", "drop"]),
   "dry-run": Schema.Boolean,
@@ -2739,9 +2761,15 @@ const main = Effect.gen(function* () {
     }
     return;
   }
-  const apiKey = yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
+  const morph = isMorph(flags.model);
+  if (morph !== isMorph(flags["shell-model"])) {
+    return yield* Effect.die(new Error("A Morph agent needs a Morph shell model, and only then."));
+  }
+  const apiKey = morph
+    ? ""
+    : yield* Config.String("ANTHROPIC_API_KEY").pipe(Config.withDefault(""));
   const out = flags.out;
-  if ((!apiKey && !codex) || out === undefined) {
+  if ((!apiKey && !codex && !morph) || out === undefined) {
     const message =
       "Set ANTHROPIC_API_KEY and pass --out <directory>. ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are never used.";
     return yield* Effect.die(new Error(message));
@@ -2749,7 +2777,11 @@ const main = Effect.gen(function* () {
   const config: Config = {
     apiKey,
     model: flags.model,
-    ...(codex || !isPricedModel(flags["shell-model"]) ? { proxy: proxyConfig() } : {}),
+    ...(morph
+      ? { proxy: morphConfig() }
+      : codex || !isPricedModel(flags["shell-model"])
+        ? { proxy: proxyConfig() }
+        : {}),
     effort,
     maxSteps: flags["max-steps"] ?? (codex ? 10 : 6),
     shellModel: flags["shell-model"],

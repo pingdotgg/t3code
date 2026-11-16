@@ -24,6 +24,7 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
+import { freshTailMessages } from "./ContextHandoffDelivery.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
 
 export class ContextHandoffPrepareError extends Schema.TaggedError<ContextHandoffPrepareError>()(
@@ -547,20 +548,24 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
         ...input,
         threadId: input.sourceThreadId ?? input.threadId,
       });
+      const messages = input.items.flatMap((item) => {
+        const message = historicalMessage(item);
+        return message === null
+          ? []
+          : [
+              {
+                ...message,
+                ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
+              },
+            ];
+      });
       const selected = selectHistory({
-        messages: input.items.flatMap((item) => {
-          const message = historicalMessage(item);
-          return message === null
-            ? []
-            : [
-                {
-                  ...message,
-                  ...(item.runId === null ? {} : { runStatus: runStatuses.get(item.runId) }),
-                },
-              ];
-        }),
+        messages,
         coverage,
         budget: input.tokenCap ?? tokenCap,
+        ...(input.strategy === "full_thread_summary"
+          ? { first: new Set(freshTailMessages(messages).map((message) => message.itemId)) }
+          : {}),
       });
       return {
         id: handoffId,

@@ -149,6 +149,17 @@ const renderStatements = (summary: Pick<ConversationSummary, "sources" | "statem
   );
 };
 
+export const renderSummaryForHandoff = (
+  summary: Pick<ConversationSummary, "id" | "projectId" | "threadId" | "sources" | "statements">,
+) => {
+  const condensed = summary.sources.some((source) => source.kind === "summary");
+  return [
+    `[Conversation summary ${summary.id}: written by a model from ${summary.sources.length} earlier ${condensed ? "summaries" : "source ranges"} of thread ${summary.threadId}. It is a summary, not the original evidence.]`,
+    `Read the exact source ranges with t3_conversation_summary_expand({projectId:"${summary.projectId}",threadId:"${summary.threadId}",summaryId:"${summary.id}"}); #n is the nth source.${condensed ? " A source that is a summary expands the same way, down to the original text." : ""} Follow nextOffset and nextTextOffset together to retrieve all text.`,
+    ...renderStatements(summary),
+  ].join("\n");
+};
+
 /** Keep statements in order while the rendered roll-up fits its byte budget. */
 const fitCondensed = (
   sources: ReadonlyArray<ConversationSummarySourceRef>,
@@ -1152,15 +1163,6 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const renderForHandoff = (summary: ConversationSummary) => {
-    const condensed = summary.sources.some((source) => source.kind === "summary");
-    return [
-      `[Conversation summary ${summary.id}: written by a model from ${summary.sources.length} earlier ${condensed ? "summaries" : "source ranges"} of thread ${summary.threadId}. It is a summary, not the original evidence.]`,
-      `Read the exact source ranges with t3_conversation_summary_expand({projectId:"${summary.projectId}",threadId:"${summary.threadId}",summaryId:"${summary.id}"}); #n is the nth source.${condensed ? " A source that is a summary expands the same way, down to the original text." : ""} Follow nextOffset and nextTextOffset together to retrieve all text.`,
-      ...renderStatements(summary),
-    ].join("\n");
-  };
-
   const coveredUncarriedSources = Effect.fn("ConversationSummaries.coveredUncarriedSources")(
     function* (
       threadId: ThreadId,
@@ -1303,9 +1305,11 @@ const make = Effect.gen(function* () {
           if (nodes.length !== group.nodes.length) continue;
           offered.push({
             id: nodes[0]!.id,
+            projectId: nodes[0]!.projectId,
+            threadId: nodes[0]!.threadId,
             ...(nodes.length > 1 ? { summaryIds: nodes.map((summary) => summary.id) } : {}),
             text: [
-              ...nodes.map(renderForHandoff),
+              ...nodes.map(renderSummaryForHandoff),
               ...sourceItems.flatMap((item) => {
                 const attached = evidence?.textByItem.get(item.itemId);
                 return attached === undefined

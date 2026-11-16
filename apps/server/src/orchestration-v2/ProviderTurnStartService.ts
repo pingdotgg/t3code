@@ -1049,8 +1049,7 @@ export const layer: Layer.Layer<
             projectId: projection.thread.projectId,
             handoffs,
             itemIds,
-            // A recovery replays every earlier run of this thread onto a fresh native
-            // conversation, but reads its history without MCP tool results.
+            // A summary may cite a source this handoff did not carry, for runs the caller names.
             ...(replaysEarlierRuns && run.ordinal > 1
               ? { replayed: { threadId: projection.thread.id, from: 1, to: run.ordinal - 1 } }
               : {}),

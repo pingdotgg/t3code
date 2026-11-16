@@ -9,16 +9,20 @@ accepting one only when more history items arrive with it than without it, count
 summarized items alike. The six newest messages are never traded away,
 which matches the tail the summary pass never covers. A summary's sources must all be carried by the
 handoffs, with one exception that only the caller can declare. A recovery replays every earlier run
-of its thread onto a fresh native conversation but reads history without MCP tool results, so the
-caller names those runs and a summary may cite history inside them. Nothing is inferred from a
-handoff record: it does not name the thread its run ordinals describe, and a fork's history spans
-its ancestors. These transfers do not
+of its thread onto a fresh native conversation and carries tool results verbatim when they fit.
+The caller may still name those runs so a summary can cite a source the handoff did not carry.
+Nothing is inferred from a handoff record: it does not name the thread its run ordinals
+describe, and a fork's history spans its ancestors. These transfers do not
 reconstruct native provider session state, tool state, approvals, or attachments.
 
 Within a provider handoff payload, selected evidence is stored in `history.messages`. The
 `summaryText` field carries a compact coverage and recovery receipt, which also appears in the
 handoff activity item. It does not repeat the selected message or tool-output bodies. Delivery
 reads the intact evidence from `history`, preserving the same selection and context budget.
+The receipt names the summaries a delivery used, for people; the prompt does not repeat it, because
+a delivered summary's own header carries its expand call. The prompt adds a line only for a summary
+that did not fit but holds omitted items, with the full expand call, since agents are not told their
+project id. The `context-handoffs` mcp-tool-use eval measures both choices.
 
 Fork merge-back and side-chat fallback text use `compactText` for compact item descriptions. Its
 240-character prefix is a property of those fallback descriptions, not the provider handoff history

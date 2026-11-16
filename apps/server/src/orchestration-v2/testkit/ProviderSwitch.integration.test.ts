@@ -5284,6 +5284,8 @@ describe("orchestration v2 context restart", () => {
           : [
               {
                 id: ConversationSummaryId.make(`summary:${"a".repeat(64)}`),
+                projectId: ProjectId.make("project:summary"),
+                threadId: ThreadId.make("thread:summary"),
                 text: summaryText,
                 // The first offered item is the oldest one that does not arrive verbatim.
                 coveredItemIds: [...itemIds].slice(gap ? 1 : 0).map((id) => TurnItemId.make(id)),
