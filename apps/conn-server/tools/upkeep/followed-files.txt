@@ -10,6 +10,12 @@
 # upstream file is mapped would be red every night. The report lists new upstream files that
 # no part follows, as a short list to read.
 
+[crates/conn-provider/src/tool_output.rs]
+packages/shared/src/toolOutput.ts
+packages/shared/src/t3McpToolPresentation.ts
+packages/shared/src/mcpApp.ts
+packages/shared/src/htmlRender.ts
+
 [crates/conn-provider-claude]
 apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts
 apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.test.ts

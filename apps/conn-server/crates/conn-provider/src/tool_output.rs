@@ -429,6 +429,16 @@ pub fn html_render_from_tool_item(item: &Value) -> Option<Value> {
     output.remove("htmlRender")
 }
 
+pub fn mcp_app_from_tool_item(item: &Value) -> Option<Value> {
+    let mut output = compact_dynamic_tool_output(item.get("output")?)?;
+    let app = output.remove(MCP_APP_OUTPUT_KEY)?;
+    let server = app.get("server")?.as_str()?;
+    let tool = app.get("tool")?.as_str()?;
+    let name = item.get("toolName")?.as_str()?;
+    (name == format!("{server}.{tool}") || name == crate::mcp_apps::claude_name(server, tool))
+        .then_some(app)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

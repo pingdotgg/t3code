@@ -5,4 +5,4 @@ const HTML_RENDER_MAX_HEIGHT: i64 = 2000;
 const HTML_RENDER_MAX_TITLE_LENGTH: usize = 200;
 const MAX_MEASURED_HEIGHTS: usize = 24;
 const SEND_TO_USER_MAX_LENGTH: usize = 4_000;
-const MCP_APP_OUTPUT_KEY: &str = "t3McpApp";
+pub(crate) const MCP_APP_OUTPUT_KEY: &str = "t3McpApp";

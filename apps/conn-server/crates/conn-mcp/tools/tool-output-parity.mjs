@@ -8,7 +8,7 @@ import { sealedEnv } from "../../../tools/sealed-env.mjs";
 
 export async function toolOutputParity(binary) {
   const { T3_MCP_TOOL_NAMES, resolveT3McpToolId } = await importSource("packages/shared/src/t3McpToolPresentation.ts");
-  const { compactDynamicToolOutput, htmlRenderFromToolItem, SEND_TO_USER_MAX_LENGTH } = await importSource("packages/shared/src/toolOutput.ts");
+  const { compactDynamicToolOutput, htmlRenderFromToolItem, mcpAppFromToolItem, SEND_TO_USER_MAX_LENGTH } = await importSource("packages/shared/src/toolOutput.ts");
   const tests = FS.readFileSync(Path.join(monorepo(), "packages/shared/src/t3McpToolPresentation.test.ts"), "utf8");
   const prefixes = /for \(const prefix of \[([\s\S]*?)\]\)/.exec(tests)?.[1];
   if (!prefixes) throw new Error("T3 provider-prefix test moved");
@@ -31,7 +31,10 @@ export async function toolOutputParity(binary) {
     {t3McpApp:{attachmentId:"app",server:"server",tool:"tool",resourceUri:"ui://app",prefersBorder:false,csp:{connectDomains:["https://*.example.com","bad"]},permissions:{camera:{},microphone:[]}}},
   ];
   items.push(...outputs.map((output)=>({toolName:"html_render",output})));
-  const expected = items.map((item)=>({id:resolveT3McpToolId(item.toolName),compact:compactDynamicToolOutput(item.output)??null,html:htmlRenderFromToolItem(item)??null}));
+  const app = {attachmentId:"app-html",server:"weather",tool:"show",resourceUri:"ui://weather",csp:{connectDomains:["https://example.com","*"]},permissions:{camera:{},microphone:true},private:"discard"};
+  for (const toolName of ["weather.show","mcp__weather__show","other.tool"])
+    for (const output of [{t3McpApp:app},{structuredContent:{t3McpApp:app}},{isError:true,content:[{text:JSON.stringify({t3McpApp:app})}]}]) items.push({toolName,output});
+  const expected = items.map((item)=>({id:resolveT3McpToolId(item.toolName),compact:compactDynamicToolOutput(item.output)??null,html:htmlRenderFromToolItem(item)??null,app:mcpAppFromToolItem(item)??null}));
   const root = FS.mkdtempSync(Path.join(OS.tmpdir(), "conn-tool-output-"));
   try {
     const result = spawnSync(binary, [], {input:JSON.stringify(items),encoding:"utf8",env:sealedEnv(root),maxBuffer:8*1024*1024});
@@ -42,7 +45,7 @@ export async function toolOutputParity(binary) {
     for (const [i,want] of expected.entries()) {
       if (canonical(actual[i]) !== canonical(want)) throw new Error(`tool-output case ${i} ${items[i].toolName}: ${canonical(actual[i])} != ${canonical(want)}`);
     }
-    console.log(`tool-output: ${items.length} cases match T3 resolveT3McpToolId, compactDynamicToolOutput and htmlRenderFromToolItem`);
+    console.log(`tool-output: ${items.length} cases match T3 resolveT3McpToolId, compactDynamicToolOutput, htmlRenderFromToolItem and mcpAppFromToolItem`);
   } finally { FS.rmSync(root,{recursive:true,force:true}); }
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) await toolOutputParity(process.argv[2]);
