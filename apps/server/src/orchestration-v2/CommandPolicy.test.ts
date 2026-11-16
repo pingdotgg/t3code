@@ -234,6 +234,23 @@ it("does not steer a Grok follow-up by interrupting its running turn", () => {
   }
 });
 
+// regression: #37326 a steered Grok follow-up waits for the turn to end instead of interjecting
+it("steers a Grok follow-up into its running turn without restarting it", () => {
+  const grok = makeGrokAcpAdapterFlavor(
+    { makeRuntime: () => Effect.never } as unknown as Parameters<
+      typeof makeGrokAcpAdapterFlavor
+    >[0],
+    "/home/ada",
+  ).capabilities;
+  const mode = CommandPolicy.resolveMessageDispatchIntent(
+    dispatchProjection(grok),
+    { type: "start_immediately" },
+    "steer",
+  );
+  assert.strictEqual(mode.type, "steer_active");
+  assert.isTrue(grok.turns.supportsActiveSteering);
+});
+
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
   const maintenance = {
