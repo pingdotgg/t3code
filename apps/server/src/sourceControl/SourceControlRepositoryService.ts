@@ -559,6 +559,8 @@ export const make = Effect.gen(function* () {
     );
     if (deferLfs) yield* pullLfsObjects(input, prepared.destinationPath, options);
 
+    // A ref list read while the clone ran saw an unborn HEAD and no refs.
+    yield* git.invalidateRefs(prepared.destinationPath);
     return {
       cwd: prepared.destinationPath,
       remoteUrl,

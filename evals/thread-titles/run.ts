@@ -103,6 +103,7 @@ await Effect.runPromise(
           cwd,
           message,
           ...("projectTitle" in fixture ? { projectTitle: fixture.projectTitle } : {}),
+          ...("instructions" in fixture ? { instructions: fixture.instructions } : {}),
           previousTitle: values.initial ? undefined : fixture.previousTitle,
           attachments,
           linkedContext,

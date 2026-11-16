@@ -380,6 +380,11 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getMergeRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
     getChangeRequestActivity: (input) =>
       Effect.all(
         [
