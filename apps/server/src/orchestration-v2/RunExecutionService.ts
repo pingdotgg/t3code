@@ -46,6 +46,7 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { PROVIDER_STOP_REASON_SIGNAL } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
@@ -912,6 +913,42 @@ export const layer: Layer.Layer<
                       reason,
                       completedAt,
                     }),
+                  },
+                ]
+              : []),
+            // Codex reports a hook that stops the turn as completed; keep its reason visible.
+            ...(input.terminal.status === "completed" && input.terminal.reason !== undefined
+              ? [
+                  {
+                    id: yield* allocateEventId(),
+                    type: "turn-item.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    nodeId: input.rootNode.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: {
+                      id: idAllocator.derive.runSignalTurnItem({
+                        runId: input.run.id,
+                        signal: PROVIDER_STOP_REASON_SIGNAL,
+                      }),
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      nodeId: input.rootNode.id,
+                      providerThreadId: input.providerThread.id,
+                      providerTurnId: input.rootNode.providerTurnId,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: input.run.ordinal * 100 + 98,
+                      status: "completed" as const,
+                      title: "Stopped by the provider",
+                      startedAt: completedAt,
+                      completedAt,
+                      updatedAt: completedAt,
+                      type: "system_notice" as const,
+                      level: "warning" as const,
+                      message: input.terminal.reason,
+                    },
                   },
                 ]
               : []),

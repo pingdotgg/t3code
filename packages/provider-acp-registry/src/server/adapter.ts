@@ -11,6 +11,7 @@ import {
   rewriteDevinSkillMention,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
 import { extractOmpElicitationForm } from "./ompAcp.ts";
 import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
@@ -211,6 +212,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     registryAgentId === "github-copilot-cli" ||
     (options.settings.source === "local" &&
       /^copilot(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  const isKimi =
+    registryAgentId === "kimi-code" ||
+    (options.settings.source === "local" &&
+      /^kimi(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
   const isClaude =
     registryAgentId === "claude-acp" ||
     (options.settings.source === "local" &&
@@ -227,6 +232,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         },
       }
     : options;
+  const watchKimiPromptOutcome = isKimi
+    ? yield* makeKimiPromptOutcomeWatch(options.environment.KIMI_CODE_HOME)
+    : undefined;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   // Copilot CLI 1.0.105 rejects stdio MCP servers from the client, and Command Code cannot
   // start the stdio bridge on Windows (it spawns MCP commands through cmd.exe, which splits
@@ -254,6 +262,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
+    ...(watchKimiPromptOutcome === undefined ? {} : { watchPromptOutcome: watchKimiPromptOutcome }),
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
