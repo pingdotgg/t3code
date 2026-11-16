@@ -842,27 +842,32 @@ export const make = Effect.gen(function* () {
     );
 
   // Hosts without fingerprints are left to the sweep, since every probe there would be a full read.
-  const probePending = Effect.suspend(() =>
-    Effect.forEach(
+  // One pass per moved pull request covers every project watching it.
+  const probePending = Effect.gen(function* () {
+    const moved = new Set<string>();
+    yield* Effect.forEach(
       currentGroups.filter((group) => {
         const last = lastReads.get(group.key);
         return last?.inFlight === true && last.status !== null;
       }),
       (group) =>
         fingerprintOf(group).pipe(
-          Effect.flatMap((fingerprint) => {
+          Effect.map((fingerprint) => {
             const last = lastReads.get(group.key);
-            return fingerprint !== null &&
+            if (
+              fingerprint !== null &&
               fingerprint !== "paused" &&
               last !== undefined &&
               (last.status !== fingerprint.status || last.remarks !== fingerprint.remarks)
-              ? readOnChange(pullRequestOf(group))
-              : Effect.void;
+            ) {
+              moved.add(pullRequestOf(group));
+            }
           }),
         ),
       { concurrency: "unbounded", discard: true },
-    ),
-  );
+    );
+    yield* Effect.forEach(moved, readOnChange, { concurrency: "unbounded", discard: true });
+  });
 
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",
