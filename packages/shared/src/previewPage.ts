@@ -1021,7 +1021,13 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const focused =
     locator === null
       ? await focusedTextField(page, timeout)
-      : await locator.evaluate(focusTextTarget, undefined, { timeout });
+      : // playwright-core 1.60's evaluate typing wants a DOM element parameter; the
+        // function stays a standalone reference because it is serialized into the page.
+        await locator.evaluate(
+          focusTextTarget as unknown as (element: unknown) => boolean,
+          undefined,
+          { timeout },
+        );
   if (focused !== true) {
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationTargetNotEditableError",
