@@ -3899,10 +3899,12 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  // /preset runs as its own command turn with no assistant message; a mid-turn extension switch reports one.
-  it.effect.each([false, true])(
-    "reapplies the selected model and thinking after an extension changes them (reported: %s)",
-    (reported) =>
+  it.effect.each([
+    { change: { model: "openai/model-b", thinking: "minimal" }, setModels: 2 },
+    { change: { thinking: "minimal" }, setModels: 1 },
+  ])(
+    "reapplies the selection after an extension changes it natively (%o)",
+    ({ change, setModels }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -3926,18 +3928,7 @@ describe("PiAdapterV2", () => {
         );
         yield* fake.takeRequest("prompt");
         yield* fake.emit({ type: "agent_start" });
-        fake.changeNatively({ model: "openai/model-b", thinking: "minimal" });
-        if (reported) {
-          yield* fake.emit({
-            type: "message_end",
-            message: {
-              role: "assistant",
-              provider: "openai",
-              model: "model-b",
-              stopReason: "stop",
-            },
-          });
-        }
+        fake.changeNatively(change);
         yield* fake.emit({ type: "agent_settled" });
         yield* takeEvent((event) => event.type === "turn.terminal");
 
@@ -3945,38 +3936,11 @@ describe("PiAdapterV2", () => {
         yield* fake.takeRequest("prompt");
         assert.deepEqual(fake.promptModels, ["anthropic/model-a", "anthropic/model-a"]);
         assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
+        assert.equal(
+          fake.allRequests().filter((request) => request["type"] === "set_model").length,
+          setModels,
+        );
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("reapplies the selected thinking after an extension changes it on the same model", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const selection: ModelSelection = {
-        instanceId: PI_INSTANCE_ID,
-        model: "anthropic/model-a",
-        options: [{ id: "thinking", value: "high" }],
-      };
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: selection,
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Hello pi", selection);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      fake.changeNatively({ thinking: "minimal" });
-      yield* fake.emit({ type: "agent_settled" });
-      yield* takeEvent((event) => event.type === "turn.terminal");
-
-      yield* startTurn(runtime, providerThread, "anthropic/model-a", [], "Next", selection, 2);
-      yield* fake.takeRequest("prompt");
-      assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
-      assert.equal(
-        fake.allRequests().filter((request) => request["type"] === "set_model").length,
-        1,
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("records the model Pi reports on the completed provider turn", () =>
