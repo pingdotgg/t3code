@@ -1854,10 +1854,20 @@ impl Inner {
     }
 
     pub(crate) async fn close_session(&self, thread_id: &str) {
+        self.close_session_inner(thread_id, true).await;
+    }
+
+    pub(crate) async fn close_workspace_session(&self, thread_id: &str) {
+        self.close_session_inner(thread_id, false).await;
+    }
+
+    async fn close_session_inner(&self, thread_id: &str, revoke_tools: bool) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             self.command_output.finish_thread(thread_id);
-            self.revoke_tools(live.tools_key.as_deref());
+            if revoke_tools {
+                self.revoke_tools(live.tools_key.as_deref());
+            }
             live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
