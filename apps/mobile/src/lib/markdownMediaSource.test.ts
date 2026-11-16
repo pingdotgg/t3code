@@ -38,6 +38,7 @@ describe("mobile Markdown draft media", () => {
     const hostImage = "https://github.com/owner/private/blob/main/shot.png?raw=true";
     expect(resolveMobileMarkdownMediaSource(hostImage, input)).toMatchObject({
       access: "environment",
+      uri: hostImage,
       resource: { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/project" },
     });
     expect(resolveMobileMarkdownMediaSource(hostImage, { ...input, captured: true })).toMatchObject(

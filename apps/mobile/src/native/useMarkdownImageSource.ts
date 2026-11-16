@@ -41,6 +41,9 @@ export function useMarkdownImageSource(props: {
         captured,
       });
       if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };
+      // Source-control media keeps its direct URL, which loads when the media is public.
+      const fallback =
+        media !== null && "uri" in media ? { uri: normalizeNativeMarkdownUrl(media.uri) } : null;
       if (
         captured ||
         !fileAccess.canReadFiles ||
@@ -51,10 +54,15 @@ export function useMarkdownImageSource(props: {
         connectionPhase === "error" ||
         connectionPhase === "unsupported" ||
         connectionPhase === "reconnecting"
-      )
+      ) {
+        if (fallback !== null) return fallback;
         throw new Error("Markdown image is unavailable");
+      }
       const result = await createUrl({ environmentId, input: { resource: media.resource } });
-      if (result._tag !== "Success") throw new Error("Could not authorize Markdown image");
+      if (result._tag !== "Success") {
+        if (fallback !== null) return fallback;
+        throw new Error("Could not authorize Markdown image");
+      }
       const uri = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
       if (uri === null) throw new Error("Markdown image URL is invalid");
       return { uri };

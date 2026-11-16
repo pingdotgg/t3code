@@ -3342,22 +3342,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         </Text>
       );
     }
-    const sourceControlResource =
-      media && "resource" in media.source ? media.source.resource : undefined;
-    if (sourceControlResource?._tag === SOURCE_CONTROL_MEDIA_ASSET) {
-      return (
-        <ThreadMarkdownImage
-          environmentId={props.environmentId}
-          resource={sourceControlResource}
-          alt={image.alt}
-          srcFragment={markdownImageSourceFragment(image.href)}
-          actionsSource={media?.source.actionsSource}
-          onPressPreview={onPressPreview}
-        />
-      );
-    }
     const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
     if (imageSource._tag === "Direct") {
+      const sourceControlResource =
+        media && "resource" in media.source ? media.source.resource : undefined;
+      if (sourceControlResource?._tag === SOURCE_CONTROL_MEDIA_ASSET) {
+        return (
+          <ThreadMarkdownImage
+            environmentId={props.environmentId}
+            resource={sourceControlResource}
+            alt={image.alt}
+            srcFragment={markdownImageSourceFragment(image.href)}
+            actionsSource={media?.source.actionsSource}
+            fallbackUri={normalizeNativeMarkdownUrl(imageSource.uri)}
+            onPressPreview={onPressPreview}
+          />
+        );
+      }
       return (
         <ThreadMarkdownImageView
           uri={normalizeNativeMarkdownUrl(imageSource.uri)}

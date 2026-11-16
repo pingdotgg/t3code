@@ -289,6 +289,8 @@ export function ThreadMarkdownImage(props: {
   >;
   readonly alt: string | null;
   readonly srcFragment?: string;
+  /** Loaded directly when the environment cannot authorize the resource. */
+  readonly fallbackUri?: string;
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
@@ -307,6 +309,7 @@ export function ThreadMarkdownImage(props: {
         : props.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
           ? `source-control:${props.resource.url}`
           : `workspace:${props.resource.path}`;
+  const fallbackUri = assetUrl._tag === "Failure" ? props.fallbackUri : undefined;
   // The view keeps the first decoded size per key, so a file edited in place needs a
   // new key; a re-signed URL for the same revision must not get one.
   const sourceKey =
@@ -316,7 +319,10 @@ export function ThreadMarkdownImage(props: {
 
   return (
     <ThreadMarkdownImageView
-      uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
+      uri={
+        fallbackUri ??
+        (assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null)
+      }
       cacheKey={
         assetUrl._tag === "Success"
           ? assetImageCacheKey(props.environmentId, props.resource, assetUrl.fileRevision)
@@ -328,9 +334,11 @@ export function ThreadMarkdownImage(props: {
         environmentId: props.environmentId,
         resource: props.resource,
       })}
-      unavailable={assetUrl._tag === "Failure"}
+      unavailable={assetUrl._tag === "Failure" && fallbackUri === undefined}
       unavailableDetail={
-        assetUrl._tag === "Failure" && assetUrl.reason === "missing-file-access"
+        assetUrl._tag === "Failure" &&
+        fallbackUri === undefined &&
+        assetUrl.reason === "missing-file-access"
           ? MISSING_FILE_ACCESS_MESSAGE
           : undefined
       }
