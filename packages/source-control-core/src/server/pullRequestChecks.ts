@@ -117,13 +117,17 @@ export const CHECK_LOG_EXCERPT_BUDGET = {
 } as const;
 type Line = { index: number; text: string };
 
+// A failed composite step's end marker is the only record of which nested step failed.
 const isLogNoise = (text: string) =>
   (/^\s*(?:❯|at)\s/.test(text) && /node_modules[\\/]/.test(text)) ||
-  /^(?:##\[(?:start|end)-action |Post job cleanup\.|Cleaning up orphan processes)/.test(text);
+  /^##\[start-action /.test(text) ||
+  /^##\[end-action .*outcome=(?:success|skipped)\b/.test(text) ||
+  /^(?:Post job cleanup\.|Cleaning up orphan processes)/.test(text);
 
 export class CheckLogExcerpt {
   private pending = "";
   private totalLines = 0;
+  private noiseLines = 0;
   private clipped = false;
   private afterError = 0;
   private header: Line | undefined;
@@ -154,7 +158,10 @@ export class CheckLogExcerpt {
         .replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z\s?/, "")
         .replace(/\r$/, ""),
     };
-    if (isLogNoise(line.text)) return;
+    if (isLogNoise(line.text)) {
+      this.noiseLines++;
+      return;
+    }
     // Step names do not appear in the log; a section failed when it carries ##[error].
     if (line.text.startsWith("##[group]Run ")) {
       if (this.failedSection) this.failedTail = this.tail;
@@ -213,7 +220,7 @@ export class CheckLogExcerpt {
       _tag: "excerpt",
       text: lines.join("\n"),
       totalLines: this.totalLines,
-      truncated: this.clipped || lines.length < this.totalLines,
+      truncated: this.clipped || lines.length < this.totalLines - this.noiseLines,
     };
   }
 }

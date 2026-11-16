@@ -167,10 +167,8 @@ export const makeGitHubCheckFailureReader = Effect.gen(function* () {
       failedSteps: failedSteps.slice(0, 20).map((name) => name.slice(0, 300)),
       annotations: annotations
         .filter(
-          (annotation) =>
-            annotation.path !== ".github" ||
-            // Exit 1 repeats the log's own error line; 137 or 143 may be the only sign of a kill.
-            annotation.message !== "Process completed with exit code 1.",
+          // Exit 1 repeats the log's own error line; 137 or 143 may be the only sign of a kill.
+          (annotation) => annotation.message !== "Process completed with exit code 1.",
         )
         .slice(0, 20)
         .map((annotation) => ({

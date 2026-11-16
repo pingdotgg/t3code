@@ -232,8 +232,8 @@ describe("check log excerpts", () => {
         [
           " ❯ ~effect/Effect/successCont ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/Effect.js:1:1",
           " ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/internal/fiberRuntime.js:1:1",
-          "##[start-action 123",
-          "##[end-action 123",
+          "##[start-action display=Install dependencies;id=install]",
+          "##[end-action id=install;outcome=success;conclusion=success;duration_ms=900]",
           "Post job cleanup.",
           "Cleaning up orphan processes",
           " ❯ runAssertion src/example.test.ts:10:5",
@@ -281,8 +281,8 @@ describe("check log excerpts", () => {
   it("does not let noise consume error context or tail slots", () => {
     const noise = [
       " ❯ FiberImpl.runLoop ../../node_modules/.pnpm/effect@4.1.3/node_modules/effect/dist/esm/internal/fiberRuntime.js:1:1",
-      "##[start-action 123",
-      "##[end-action 123",
+      "##[start-action display=Install dependencies;id=install]",
+      "##[end-action id=install;outcome=success;conclusion=success;duration_ms=900]",
       "Post job cleanup.",
       "Cleaning up orphan processes",
     ];
