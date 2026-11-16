@@ -1024,6 +1024,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const hostPlatform = yield* HostProcess.Platform;
   const serviceScope = yield* Effect.scope;
   const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+  // WSL Git reading an index written by Git for Windows sees every inode, owner and ctime differ.
+  // Polls never save a refreshed index, so each would re-read every file; elsewhere keep the full
+  // check, which also catches same-size replacements that keep their mtime. Guards always keep it.
+  const isWsl =
+    hostPlatform === "linux" &&
+    (yield* fileSystem.readFileString("/proc/sys/kernel/osrelease").pipe(
+      Effect.map((release) => release.toLowerCase().includes("microsoft")),
+      Effect.orElseSucceed(() => false),
+    ));
+  const pollStatConfig = isWsl ? ["-c", "core.checkStat=minimal"] : [];
   type StatusFetchState = {
     phase: "queued" | "running" | "claimed";
     claimed: Deferred.Deferred<void>;
@@ -2353,9 +2363,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       ),
     );
-    // Polls never save a refreshed index, so inode, owner or ctime written by another Git (Git for
-    // Windows read from WSL) would re-read every file each poll. Removal guards keep the full check.
-    const pollStatConfig = ["-c", "core.checkStat=minimal"];
     const statusArgs = [
       ...pollStatConfig,
       "status",
@@ -3950,7 +3957,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "GitVcsDriver.readBranchChangeTotals",
         cwd,
         // Plumbing: porcelain diff refreshes and rewrites the real index, taking index.lock.
-        ["diff-index", "-M", "--numstat", "-z", ref, "--"],
+        [...pollStatConfig, "diff-index", "-M", "--numstat", "-z", ref, "--"],
         {
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,

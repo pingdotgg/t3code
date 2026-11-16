@@ -65,6 +65,22 @@ const layerTest = GitVcsDriver.layer.pipe(
   Layer.provideMerge(layerServerConfig),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
+const layerWslTest = GitVcsDriver.layer.pipe(
+  Layer.provideMerge(layerServerConfig),
+  Layer.provideMerge(
+    Layer.effect(
+      FileSystem.FileSystem,
+      Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+        ...fileSystem,
+        readFileString: (path: string, encoding?: string) =>
+          path === "/proc/sys/kernel/osrelease"
+            ? Effect.succeed("6.6.87.2-microsoft-standard-WSL2\n")
+            : fileSystem.readFileString(path, encoding),
+      })),
+    ),
+  ),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+);
 
 const makeNonRepositoryHandle = () =>
   ChildProcessSpawner.makeHandle({
@@ -462,7 +478,14 @@ it.effect.each(["root", "nested", "worktree"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("does not re-read a file that only differs from the index by inode", () =>
+// Same size and mtime, new inode: what Linux Git sees in an index written by Git for Windows.
+const replaceKeepingStat = (filePath: string, contents: string) => {
+  NodeFS.writeFileSync(`${filePath}.copy`, contents);
+  NodeFS.utimesSync(`${filePath}.copy`, 1, 1);
+  NodeFS.renameSync(`${filePath}.copy`, filePath);
+};
+
+it.effect("does not re-read a file that only differs from the index by inode under WSL", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
     const fs = yield* FileSystem.FileSystem;
@@ -478,17 +501,37 @@ it.effect("does not re-read a file that only differs from the index by inode", (
     NodeFS.utimesSync(assetPath, 1, 1);
     yield* git(cwd, ["add", "."]);
     yield* git(cwd, ["commit", "-m", "filtered asset"]);
-    // Same size and mtime, new inode: what Linux Git sees in an index written by Git for Windows.
-    NodeFS.copyFileSync(assetPath, `${assetPath}.copy`);
-    NodeFS.utimesSync(`${assetPath}.copy`, 1, 1);
-    NodeFS.renameSync(`${assetPath}.copy`, assetPath);
+    replaceKeepingStat(assetPath, "original\n");
     const runsPath = path.join(cwd, ".filter-runs");
     yield* fs.remove(runsPath, { force: true });
 
-    const status = yield* driver.statusDetailsLocal(cwd);
+    const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
 
     assert.isFalse(status.hasWorkingTreeChanges);
     assert.isFalse(yield* fs.exists(runsPath));
+  }).pipe(Effect.provide(layerWslTest)),
+);
+
+it.effect("reports a same-size replacement that kept its mtime outside WSL", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const path = yield* Path.Path;
+    const cwd = yield* makeTmpDir();
+    yield* initRepoWithCommit(cwd);
+    yield* writeTextFile(cwd, "asset.txt", "original\n");
+    const assetPath = path.join(cwd, "asset.txt");
+    NodeFS.utimesSync(assetPath, 1, 1);
+    yield* git(cwd, ["add", "."]);
+    yield* git(cwd, ["commit", "-m", "asset"]);
+    replaceKeepingStat(assetPath, "modified\n");
+
+    const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+    assert.isTrue(status.hasWorkingTreeChanges);
+    assert.deepStrictEqual(
+      status.workingTree.files.map((file) => file.path),
+      ["asset.txt"],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
