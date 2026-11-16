@@ -406,6 +406,9 @@ const modelManifestRs = rustfmt(
 
 const LIMITED_METHODS = [
   "assets.createUrl",
+  "git.resolvePullRequest",
+  "git.preparePullRequestThread",
+  "git.runStackedAction",
   "secrets.answerRequest",
   "panels.respond",
   "server.listTextGeneratorModels",
@@ -443,6 +446,7 @@ function limitNode(ast) {
   for (const r of representations(ast)) {
     const p = r.payload;
     if (r.id === "effect/schema/isMaxLength") node.maxLength = p.maxLength;
+    else if (r.id === "effect/schema/isMinLength") node.minLength = p.minLength;
     else if (r.id === "effect/schema/isPattern") {
       // JS `i`, `m`, `s` are inline flags in Rust's regex; `u` changes nothing for these.
       const flags = p.flags.replace("u", "");
@@ -453,6 +457,7 @@ function limitNode(ast) {
     else if (r.id === "effect/schema/isGreaterThanOrEqualTo") node.minimum = p.minimum;
     else if (r.id === "effect/schema/isLessThanOrEqualTo") node.maximum = p.maximum;
   }
+  if (ast._tag === "Arrays" && ast.rest?.[0]) node.items = limitNode(ast.rest[0]);
   if (ast._tag === "Objects") {
     const fields = {};
     for (const p of ast.propertySignatures) {
@@ -558,7 +563,23 @@ const titlePromptsRs = rustfmt(
 
 // ---- Write or check ----------------------------------------------------------------------
 
+const vcsSource = NodeFS.readFileSync(inMonorepo("apps/server/src/vcs/GitVcsDriverCore.ts"), "utf8");
+const patchLimit = vcsSource.match(/const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = ([\d_]+);/);
+if (!patchLimit) throw new Error("commit patch limit moved");
+const pathFunctions = await importSource("packages/shared/src/path.ts");
+const folds = new Map();
+for (let code = 128; code <= 0x1eff; code++) {
+  const raw = String.fromCodePoint(code);
+  const folded = pathFunctions.foldLatinDiacritics(raw);
+  if (raw !== folded && /^[a-zA-Z]+$/.test(folded)) folds.set(folded, (folds.get(folded) ?? "") + raw);
+}
+const gitRulesRs = rustfmt([...HEADER,
+  `pub const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES: usize = ${patchLimit[1].replaceAll("_", "")};`,
+  `pub const LATIN_FOLDS: &[(&str, &str)] = &[${[...folds].map(([folded, raw]) => `(${str(raw)},${str(folded)})`).join(",")}];`,
+].join("\n"));
+
 const outputs = {
+  "crates/conn-vcs/src/generated.rs": gitRulesRs,
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,

@@ -1,6 +1,5 @@
 //! GitHub pull request resolution and checkout, with local work kept when heads diverge.
 use crate::{
-    cli::{self, CliCall},
     hosts::{DiscoveryContext, github, github_graphql::generated, repositories},
     registry, remote,
 };
@@ -78,122 +77,32 @@ impl From<VcsError> for Error {
     }
 }
 
+impl From<crate::repository::HostFailure> for Error {
+    fn from(error: crate::repository::HostFailure) -> Self {
+        Self::provider(Path::new(""), error.detail)
+    }
+}
+
 impl From<ProcessError> for Error {
     fn from(error: ProcessError) -> Self {
         Self::from(VcsError::from(error))
     }
 }
 
-async fn gh(
+pub async fn resolve(
     ctx: DiscoveryContext<'_>,
     cwd: &Path,
-    host: &str,
-    endpoint: &str,
-    body: Value,
-) -> Result<Value, Error> {
-    if !github::is_github_host(host) {
-        return Err(Error::provider(
-            cwd,
-            "Could not resolve the GitHub repository from this checkout.",
-        ));
-    }
-    let token = github::credential(ctx, host).await.map_err(|e| {
-        let detail = match e {
-            github::CredentialError::CliMissing => "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.".into(),
-            github::CredentialError::NotSignedIn => match ctx.settings.host(github::KIND).host_account(host) {
-                Some(account)=>format!("No GitHub credential for {account} on {host}: run `gh auth login --hostname {host}` for that account or pick another in Settings → Source Control."),
-                None=>format!("No GitHub credential for {host}: run `gh auth login --hostname {host}`."),
-            },
-            github::CredentialError::HostDisabled => format!("GitHub host {host} is turned off in Settings → Source Control."),
-            github::CredentialError::CliFailed => format!("The GitHub CLI could not hand over a credential for {host}. Check `gh auth status` on the server."),
-            github::CredentialError::Unresolved(e) => e,
-        }; Error::provider(cwd, detail)
-    })?;
-    let mut call = CliCall::new(
-        "GitHubSourceControlProvider.getChangeRequest",
-        "gh",
-        ["api", endpoint, "--hostname", host, "--input", "-"],
-        cwd,
-    );
-    call.env = ctx.probe_env(&[
-        (
-            if host == "github.com" || host.ends_with(".ghe.com") {
-                "GH_TOKEN"
-            } else {
-                "GH_ENTERPRISE_TOKEN"
-            },
-            token.expose().into(),
-        ),
-        ("GH_DEBUG", "".into()),
-        ("GH_PROMPT_DISABLED", "1".into()),
-    ]);
-    if endpoint == "graphql" {
-        call.stdin = Some(body.to_string().into_bytes());
-    } else {
-        call.args = vec![
-            "api".into(),
-            endpoint.into(),
-            "--hostname".into(),
-            host.into(),
-            "--method".into(),
-            "GET".into(),
-        ];
-    }
-    let output = cli::run(call).await.map_err(|e| {
-        let text = e.stderr().to_lowercase();
-        Error::provider(
-            cwd,
-            if text.contains("401") {
-                "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry."
-            } else if text.contains("404") {
-                "Pull request not found. Check the PR number or URL and try again."
-            } else if text.contains("rate limit") {
-                "GitHub API rate limit exceeded. Requests resume when the limit resets."
-            } else {
-                "GitHub request failed."
-            },
-        )
-    })?;
-    serde_json::from_str(&output.stdout)
-        .map_err(|_| Error::provider(cwd, "GitHub returned an invalid pull request."))
+    reference: &str,
+) -> Result<PullRequest, Error> {
+    resolve_inner(ctx, cwd, reference)
+        .await
+        .map_err(|mut error| {
+            error.cwd = cwd.to_string_lossy().into();
+            error
+        })
 }
 
-async fn locator(ctx: DiscoveryContext<'_>, cwd: &Path) -> Result<repositories::Locator, Error> {
-    let host = ctx
-        .env
-        .non_blank("GH_HOST")
-        .unwrap_or_else(|| "github.com".into());
-    if let Some(selector) = ctx
-        .env
-        .non_blank("GH_REPO")
-        .and_then(|s| repositories::parse_selector(&s, &host))
-    {
-        return Ok(selector);
-    }
-    let remotes = conn_vcs::process::GitCommand::new(
-        "GitHubSourceControlProvider.resolveRepository",
-        cwd,
-        ["remote", "-v"],
-    )
-    .text()
-    .await?;
-    let mut remotes = crate::detect::parse_remote_verbose(&remotes);
-    remotes.sort_by_key(|r| r.name != "origin");
-    for r in remotes {
-        if let Some(host) = repositories::api_host_for_remote(&r.url)
-            && let Some((_, name)) = remote::parse_git_remote_repository(&r.url)
-            && let Some(locator) = repositories::parse_selector(&name, &host)
-        {
-            return Ok(locator);
-        }
-    }
-    Err(Error::provider(
-        cwd,
-        "Could not resolve the GitHub repository from this checkout.",
-    ))
-}
-
-pub async fn resolve(
+async fn resolve_inner(
     ctx: DiscoveryContext<'_>,
     cwd: &Path,
     reference: &str,
@@ -218,16 +127,36 @@ pub async fn resolve(
         )
     } else {
         (
-            locator(ctx, cwd).await?,
+            repositories::resolve_repository(DiscoveryContext { cwd, ..ctx }).await?,
             reference.parse::<u64>().ok().filter(|n| *n > 0),
         )
     };
     let response = if let Some(number) = number {
-        gh(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUEST_BY_NUMBER.document,"variables":{"owner":location.owner,"name":location.name,"number":number}})).await?
+        github::api_json(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUEST_BY_NUMBER.document,"variables":{"owner":location.owner,"name":location.name,"number":number}})).await?
+    } else if reference.split_once(':').is_some_and(|(owner, branch)| {
+        !owner.is_empty() && !owner.contains(['/', ' ', ':']) && !branch.is_empty()
+    }) {
+        let mut found = None;
+        for state in ["open", "all"] {
+            let path = format!(
+                "repos/{}/{}/pulls?head={}&state={state}&sort=created&direction=desc&per_page=100",
+                github::encode_uri_component(&location.owner),
+                github::encode_uri_component(&location.name),
+                github::encode_uri_component(reference)
+            );
+            let response = github::api_json(ctx, cwd, &location.host, &path, Value::Null).await?;
+            if let Some(pr) = response.as_array().and_then(|rows| rows.first()) {
+                found = Some(
+                    json!({"number":pr.get("number"),"title":pr.get("title"),"url":pr.get("html_url"),"baseRefName":pr.pointer("/base/ref"),"headRefName":pr.pointer("/head/ref"),"headRefOid":pr.pointer("/head/sha"),"state":if pr.get("merged_at").is_some_and(|v| !v.is_null()) {"MERGED"} else if pr.get("state").and_then(Value::as_str)==Some("open") {"OPEN"} else {"CLOSED"},"isCrossRepository":pr.pointer("/head/repo/full_name")!=pr.pointer("/base/repo/full_name"),"headRepository":{"nameWithOwner":pr.pointer("/head/repo/full_name")},"headRepositoryOwner":{"login":pr.pointer("/head/user/login")}}),
+                );
+                break;
+            }
+        }
+        json!({"data":{"repository":{"pullRequest":found}}})
     } else {
         let mut found = None;
         for states in [json!(["OPEN"]), json!(["OPEN", "CLOSED", "MERGED"])] {
-            let response=gh(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUESTS_BY_HEAD.document,"variables":{"owner":location.owner,"name":location.name,"head":reference.rsplit(':').next().unwrap_or(reference),"states":states,"first":1}})).await?;
+            let response=github::api_json(ctx,cwd,&location.host,"graphql",json!({"query":generated::PULL_REQUESTS_BY_HEAD.document,"variables":{"owner":location.owner,"name":location.name,"head":reference,"states":states,"first":1}})).await?;
             if let Some(node) = response
                 .pointer("/data/repository/pullRequests/nodes")
                 .and_then(Value::as_array)
@@ -318,7 +247,22 @@ pub fn worktree_branch(number: i64, head: &str, cross: bool, branches: &[String]
 
 pub fn branch_fragment(raw: &str) -> String {
     let mut result = String::new();
-    for c in raw.trim().to_lowercase().chars() {
+    let folded = raw
+        .chars()
+        .map(|c| {
+            conn_vcs::generated::LATIN_FOLDS
+                .iter()
+                .find(|(from, _)| from.contains(c))
+                .map(|(_, to)| (*to).to_owned())
+                .unwrap_or_else(|| c.to_string())
+        })
+        .collect::<String>();
+    for c in folded
+        .trim()
+        .to_lowercase()
+        .chars()
+        .filter(|c| !('̀'..='ͯ').contains(c))
+    {
         if matches!(c, '\'' | '"' | '`') {
             continue;
         }
@@ -379,6 +323,9 @@ async fn head_remote(
     pr: &PullRequest,
 ) -> Result<String, Error> {
     let Some(repository) = &pr.head_repository else {
+        if pr.cross_repository {
+            return Err(Error::manager(cwd, "The fork is gone."));
+        }
         return Ok(repo::primary_remote(cwd)
             .await?
             .unwrap_or_else(|| "origin".into()));
@@ -395,40 +342,47 @@ async fn head_remote(
             return Ok(name);
         }
     }
-    let response = gh(ctx, cwd, &host, &format!("repos/{repository}"), json!({})).await?;
+    let urls =
+        repositories::checkout_clone_urls(DiscoveryContext { cwd, ..ctx }, &host, repository)
+            .await?;
     let origin = repo::config_get(cwd, "remote.origin.url")
         .await?
         .unwrap_or_default();
-    let key = if remote::clone_url_protocol(&origin) == Some(remote::CloneProtocol::Ssh) {
-        "ssh_url"
+    let url = if remote::clone_url_protocol(&origin) == Some(remote::CloneProtocol::Ssh) {
+        urls.ssh_url
     } else {
-        "html_url"
+        urls.url
     };
-    let url = response
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::provider(cwd, "GitHub returned an invalid repository."))?;
-    let preferred = pr.head_owner.as_deref().unwrap_or("fork");
-    let names = repo::remote_names(cwd).await?;
-    let mut name = preferred.to_owned();
-    for n in 2..=names.len().saturating_add(2) {
-        if !names.contains(&name) {
-            break;
-        }
-        name = format!("{preferred}-{n}");
-    }
-    git(
+    let context = crate::repository::ServiceContext {
+        server_cwd: cwd,
+        process_cwd: cwd,
+        home: ctx.home,
+        child_env: ctx.child_env,
+        clone_timeout: Duration::from_secs(300),
+    };
+    Ok(crate::repository::ensure_remote(
+        context,
         cwd,
-        vec![
-            "remote".into(),
-            "add".into(),
-            "--".into(),
-            name.clone(),
-            url.into(),
-        ],
+        pr.head_owner.as_deref().unwrap_or("fork"),
+        &url,
     )
-    .await?;
-    Ok(name)
+    .await?)
+}
+
+async fn fetch_upstream(
+    ctx: DiscoveryContext<'_>,
+    cwd: &Path,
+    pr: &PullRequest,
+) -> Result<String, Error> {
+    let remote = head_remote(ctx, cwd, pr).await?;
+    let Some((sha, _)) = setup::fetch_remote_branch(cwd, &remote, &pr.resolved.head_branch).await?
+    else {
+        return Err(Error::manager(
+            cwd,
+            "The pull request head could not be resolved for this checkout.",
+        ));
+    };
+    Ok(sha)
 }
 
 async fn configure(
@@ -436,31 +390,50 @@ async fn configure(
     cwd: &Path,
     pr: &PullRequest,
     branch: &str,
-) -> Result<String, Error> {
+) -> Result<(), Error> {
     let remote = head_remote(ctx, cwd, pr).await?;
-    let Some((sha, _)) =
-        setup::fetch_base(cwd, &format!("{remote}/{}", pr.resolved.head_branch)).await?
-    else {
+    if setup::fetch_remote_branch(cwd, &remote, &pr.resolved.head_branch)
+        .await?
+        .is_none()
+    {
         return Err(Error::manager(
             cwd,
             "The pull request head could not be resolved for this checkout.",
         ));
-    };
-    git(
-        cwd,
-        vec!["config".into(), format!("branch.{branch}.remote"), remote],
-    )
-    .await?;
-    git(
-        cwd,
-        vec![
-            "config".into(),
-            format!("branch.{branch}.merge"),
-            format!("refs/heads/{}", pr.resolved.head_branch),
-        ],
-    )
-    .await?;
-    Ok(sha)
+    }
+    set_upstream(cwd, branch, &remote, &pr.resolved.head_branch).await
+}
+
+async fn set_upstream(cwd: &Path, branch: &str, remote: &str, head: &str) -> Result<(), Error> {
+    let args = vec![
+        "branch".into(),
+        "--set-upstream-to".into(),
+        format!("refs/remotes/{remote}/{head}"),
+        "--".into(),
+        branch.into(),
+    ];
+    let first =
+        conn_vcs::process::GitCommand::new("GitVcsDriver.setBranchUpstream", cwd, args.clone())
+            .run()
+            .await;
+    if first.is_ok() {
+        return Ok(());
+    }
+    let missing_mapping = matches!(&first, Err(ProcessError::Exit{stderr,..}) if stderr.contains("cannot set up tracking information") && stderr.contains("is not a branch"));
+    if missing_mapping {
+        git(
+            cwd,
+            vec![
+                "config".into(),
+                "--add".into(),
+                format!("remote.{remote}.fetch"),
+                format!("+refs/heads/{head}*:refs/remotes/{remote}/{head}*"),
+            ],
+        )
+        .await?;
+    }
+    git(cwd, args).await?;
+    Ok(())
 }
 
 async fn fetch_head(cwd: &Path, pr: &PullRequest) -> Result<String, Error> {
@@ -612,6 +585,19 @@ pub async fn prepare(
     input: &GitPreparePullRequestThreadInput,
     dir: &Path,
 ) -> Result<(GitPreparePullRequestThreadResult, bool), Error> {
+    prepare_inner(ctx, input, dir).await.map_err(|mut error| {
+        if error.cwd.is_empty() {
+            error.cwd.clone_from(&input.cwd);
+        }
+        error
+    })
+}
+
+async fn prepare_inner(
+    ctx: DiscoveryContext<'_>,
+    input: &GitPreparePullRequestThreadInput,
+    dir: &Path,
+) -> Result<(GitPreparePullRequestThreadResult, bool), Error> {
     let cwd = Path::new(&input.cwd);
     let pr = resolve(ctx, cwd, &input.reference).await?;
     let mut branch = pr.resolved.head_branch.clone();
@@ -655,7 +641,7 @@ pub async fn prepare(
             let location =
                 registry::parse_change_request_url(&pr.resolved.url).map(|(_, parsed)| parsed.link);
             if let Some(location) = location {
-                let repository = gh(
+                let repository = github::api_json(
                     ctx,
                     cwd,
                     &location.host,
@@ -670,7 +656,7 @@ pub async fn prepare(
                 }
             }
         }
-        let target = match configure(ctx, cwd, &pr, &branch).await {
+        let target = match fetch_upstream(ctx, cwd, &pr).await {
             Ok(sha) => sha,
             Err(_) => fetch_head(cwd, &pr).await?,
         };
@@ -681,12 +667,6 @@ pub async fn prepare(
                 vec!["branch".into(), "--".into(), branch.clone(), target.clone()],
             )
             .await?;
-        }
-        if branch.starts_with('-') {
-            return Err(Error::manager(
-                cwd,
-                "The pull request head branch is not valid.",
-            ));
         }
         git(cwd, vec!["checkout".into(), branch.clone(), "--".into()]).await?;
         if exists {
@@ -764,7 +744,7 @@ pub async fn prepare(
         } else {
             let exists = names.contains(&branch);
             if !exists {
-                let target = match configure(ctx, cwd, &pr, &branch).await {
+                let target = match fetch_upstream(ctx, cwd, &pr).await {
                     Ok(sha) => sha,
                     Err(_) => fetch_head(cwd, &pr).await.map_err(|mut e| {
                         e.detail = format!(

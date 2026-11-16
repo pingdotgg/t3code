@@ -1,5 +1,9 @@
 //! Commit preparation uses a scratch index; only the final commit changes the real index.
-use crate::{VcsError, VcsResult, process::GitCommand, repo};
+use crate::{
+    VcsError, VcsResult,
+    process::{GitCommand, OnLimit},
+    repo,
+};
 use std::{path::Path, time::Duration};
 
 #[derive(Debug)]
@@ -307,7 +311,7 @@ pub async fn prepare_context(
             return Ok(None);
         }
         let patch = if include_patch {
-            indexed(
+            let output = indexed(
                 command(
                     cwd,
                     [
@@ -317,13 +321,25 @@ pub async fn prepare_context(
                         "--cached",
                         "--no-ext-diff",
                         "--no-color",
+                        "--no-textconv",
+                        "--patch",
+                        "--minimal",
                     ],
                 ),
                 &index,
                 &alternates,
             )
-            .text()
-            .await?
+            .max_stdout(
+                crate::generated::PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
+                OnLimit::Truncate,
+            )
+            .run()
+            .await?;
+            let mut patch = output.stdout_text();
+            if output.stdout_truncated {
+                patch.push_str("\n\n[truncated]");
+            }
+            patch
         } else {
             String::new()
         };

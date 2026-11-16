@@ -13,8 +13,9 @@ use conn_source_control::{
 use conn_vcs::{commit, repo};
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
@@ -62,35 +63,50 @@ pub(super) async fn project_id(
     thread: Option<&str>,
     explicit: Option<&str>,
 ) -> Option<String> {
-    if let Some(engine) = &deps.engine
-        && let Some(thread) = thread
-        && let Ok(projection) = engine.get_thread_projection(thread.into()).await
-        && let Some(id) = projection
-            .pointer("/thread/projectId")
-            .and_then(Value::as_str)
-    {
-        return Some(id.into());
+    let Some(engine) = &deps.engine else {
+        return explicit.map(str::to_owned);
+    };
+    engine
+        .resolve_project(cwd, thread, explicit)
+        .await
+        .and_then(|p| p.get("id").and_then(Value::as_str).map(str::to_owned))
+}
+
+#[derive(Default)]
+struct RepositoryLocks(std::sync::Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>);
+impl RepositoryLocks {
+    async fn for_cwd(&self, cwd: &str) -> Result<Arc<Mutex<()>>, Failure> {
+        let path = conn_vcs::process::GitCommand::new(
+            "GitManager.repositoryLock",
+            Path::new(cwd),
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .text()
+        .await
+        .map_err(|e| vcs(e.into()))?;
+        let path = PathBuf::from(path.trim());
+        let path =
+            tokio::task::spawn_blocking(move || std::fs::canonicalize(&path).unwrap_or(path))
+                .await
+                .map_err(|e| manager(cwd, &e.to_string()))?;
+        let mut entries = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        entries.retain(|_, lock| lock.strong_count() != 0);
+        let entry = entries.entry(path).or_default();
+        if let Some(lock) = entry.upgrade() {
+            return Ok(lock);
+        }
+        let lock = Arc::new(Mutex::new(()));
+        *entry = Arc::downgrade(&lock);
+        Ok(lock)
     }
-    if let Some(id) = explicit {
-        return Some(id.into());
-    }
-    let shell = deps.engine.as_ref()?.shell_snapshot().await.ok()?;
-    shell
-        .get("projects")?
-        .as_array()?
-        .iter()
-        .find(|p| {
-            p.get("workspaceRoot").and_then(Value::as_str) == Some(cwd)
-                && p.get("deletedAt").is_none_or(Value::is_null)
-        })?
-        .get("id")?
-        .as_str()
-        .map(str::to_owned)
 }
 
 pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
-    // Serialize our checkout mutations without retaining a map of every repository visited.
-    let lease = Arc::new(Mutex::new(()));
+    let leases = Arc::new(RepositoryLocks::default());
+    let slots = Arc::new(Semaphore::new(16));
     let d = deps.clone();
     table.unary(
         "git.resolvePullRequest",
@@ -120,14 +136,19 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         },
     );
     let d = deps.clone();
-    let lock = lease.clone();
+    let locks = leases.clone();
+    let permits = slots.clone();
     table.unary(
         "git.preparePullRequestThread",
         move |_, input: GitPreparePullRequestThreadInput| {
             let d = d.clone();
-            let lock = lock.clone();
+            let locks = locks.clone();
+            let permit = permits.clone().try_acquire_owned();
             async move {
-                let _lease = lock.lock().await;
+                let _permit =
+                    permit.map_err(|_| manager(&input.cwd, "Too many Git actions are running."))?;
+                let lock = locks.for_cwd(&input.cwd).await?;
+                let lease = lock.lock().await;
                 ensure_git(&input.cwd, "GitWorkflowService.preparePullRequestThread").await?;
                 let project = project_id(&d, &input.cwd, input.thread_id.as_deref(), None).await;
                 let settings = settings(&d, project.as_deref());
@@ -148,6 +169,7 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
                     child_env: &[],
                 };
                 let result = checkout::prepare(ctx, &input, &dir).await;
+                drop(lease);
                 if let Ok((result, true)) = &result
                     && let (Some(mcp), Some(thread), Some(path)) =
                         (&d.mcp, &input.thread_id, &result.worktree_path)
@@ -163,12 +185,11 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
         },
     );
     let d = deps.clone();
-    let slots = Arc::new(Semaphore::new(16));
     table.stream(
         "git.runStackedAction",
         move |_, input: GitRunStackedActionInput| {
             let d = d.clone();
-            let lock = lease.clone();
+            let locks = leases.clone();
             let permit = slots.clone().try_acquire_owned();
             async move {
                 let permit =
@@ -176,9 +197,12 @@ pub(super) fn register(table: &mut MethodTable, deps: &Deps) {
                 let (tx, rx) = mpsc::channel(16);
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let _lease = tokio::select! {lease=lock.lock()=>lease, ()=tx.closed()=>return};
                     let mut phase = None;
-                    let result = run_commit(&d, &input, &tx, &mut phase).await;
+                    let result = async {
+                        let lock = locks.for_cwd(&input.cwd).await?;
+                        let _lease = tokio::select! {lease=lock.lock()=>lease, ()=tx.closed()=>return Ok(())};
+                        run_commit(&d, &input, &tx, &mut phase).await
+                    }.await;
                     if let Err(error) = result {
                         let message = match &error {
                             Failure::Fail(value) => {
@@ -240,10 +264,10 @@ async fn run_commit(
 ) -> Result<(), Failure> {
     ensure_git(&input.cwd, "GitWorkflowService.runStackedAction").await?;
     if input.action != GitStackedAction::Commit {
-        return Err(Failure::Die(conn_wire::error_defect(
-            "ConnServerNotSupported",
-            "conn-server does not support push or pull request creation in git.runStackedAction; use Orbit",
-        )));
+        return Err(manager(
+            &input.cwd,
+            "Push and pull request creation are not supported by this server. Use Orbit.",
+        ));
     }
     let cwd = Path::new(&input.cwd);
     let feature = input.feature_branch == Some(true);
@@ -296,7 +320,8 @@ async fn run_commit(
             .map_err(|e| vcs(e.into()))?;
             let names = names.lines().map(str::to_lowercase).collect::<Vec<_>>();
             let mut branch = String::new();
-            for part in base.split('/') {
+            let segments = base.split('/').count();
+            for (index, part) in base.split('/').enumerate() {
                 let prefix = if branch.is_empty() {
                     part.into()
                 } else {
@@ -305,7 +330,8 @@ async fn run_commit(
                 let mut candidate = prefix.clone();
                 for n in 2..=names.len().saturating_add(2) {
                     if !names.iter().any(|name| {
-                        name == &candidate || name.starts_with(&format!("{candidate}/"))
+                        name == &candidate
+                            || (index + 1 == segments && name.starts_with(&format!("{candidate}/")))
                     }) {
                         break;
                     }
@@ -345,7 +371,7 @@ async fn run_commit(
     };
     let toast = if let Some(sha) = commit_step.get("commitSha").and_then(Value::as_str) {
         let short = sha.chars().take(7).collect::<String>();
-        json!({"title":format!("Committed {short}"),"description":commit_step.get("subject"),"cta":{"kind":"run_action","label":"Push","action":{"kind":"push"}}})
+        json!({"title":format!("Committed {short}"),"description":commit_step.get("subject"),"cta":{"kind":"none"}})
     } else {
         json!({"title":"Done","cta":{"kind":"none"}})
     };
@@ -395,10 +421,12 @@ mod tests {
         assert_eq!(events.first().unwrap()["kind"], "action_started");
         let result = events.last().unwrap().get("result").unwrap();
         assert_eq!(result["commit"]["status"], "created");
+        assert_eq!(result["toast"]["cta"], json!({"kind":"none"}));
         assert_eq!(result["push"]["status"], "skipped_not_requested");
         assert_eq!(git(&root, &["log", "-1", "--format=%s"]), "feat: change");
+        git(&root, &["branch", "feature/a"]);
         std::fs::write(root.join("file"), "changed").unwrap();
-        let mut feature=handler(CallContext::default(),json!({"cwd":root,"actionId":"feature","action":"commit","commitMessage":"Fix selected file","featureBranch":true})).await.unwrap();
+        let mut feature=handler(CallContext::default(),json!({"cwd":root,"actionId":"feature","action":"commit","commitMessage":"feature/b","featureBranch":true})).await.unwrap();
         let mut finished = None;
         while let Some(event) = feature.recv().await {
             let event = event.unwrap();
@@ -406,10 +434,7 @@ mod tests {
                 finished = Some(event);
             }
         }
-        assert_eq!(
-            finished.unwrap()["result"]["branch"]["name"],
-            "feature/fix-selected-file"
-        );
+        assert_eq!(finished.unwrap()["result"]["branch"]["name"], "feature/b");
         let head = git(&root, &["rev-parse", "HEAD"]);
         for action in ["push", "create_pr", "commit_push", "commit_push_pr"] {
             let mut stream = handler(
@@ -418,13 +443,59 @@ mod tests {
             )
             .await
             .unwrap();
-            let mut refused = false;
+            let mut error = None;
             while let Some(event) = stream.recv().await {
-                refused |= event.is_err();
+                if let Err(value) = event {
+                    error = Some(value);
+                }
             }
-            assert!(refused);
+            assert!(
+                matches!(error, Some(Failure::Fail(ref value)) if value["_tag"] == "GitManagerError"),
+                "{error:?}"
+            );
             assert_eq!(git(&root, &["rev-parse", "HEAD"]), head);
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn repository_locks_share_git_common_dir_and_release_unused_entries() {
+        let root = std::env::temp_dir().join(format!("conn-lock-rpc-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-b", "main"]);
+        git(&root, &["config", "user.name", "test"]);
+        git(&root, &["config", "user.email", "test@example.com"]);
+        std::fs::write(root.join("file"), "first").unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-m", "first"]);
+        let sibling = root.join("sibling");
+        git(
+            &root,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "sibling",
+                sibling.to_str().unwrap(),
+            ],
+        );
+        let other = root.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        git(&other, &["init", "-b", "main"]);
+        let locks = RepositoryLocks::default();
+        let first = locks.for_cwd(root.to_str().unwrap()).await.unwrap();
+        let sibling_lock = locks.for_cwd(sibling.to_str().unwrap()).await.unwrap();
+        let other_lock = locks.for_cwd(other.to_str().unwrap()).await.unwrap();
+        assert!(Arc::ptr_eq(&first, &sibling_lock));
+        assert!(!Arc::ptr_eq(&first, &other_lock));
+        let held = first.lock().await;
+        assert!(sibling_lock.try_lock().is_err());
+        assert!(other_lock.try_lock().is_ok());
+        drop(held);
+        drop(first);
+        drop(sibling_lock);
+        drop(other_lock);
+        let _next = locks.for_cwd(root.to_str().unwrap()).await.unwrap();
+        assert_eq!(locks.0.lock().unwrap().len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

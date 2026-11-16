@@ -913,3 +913,21 @@ async fn partial_commit_does_not_clear_merge_state() {
     write(&fx.work, "README.md", "Heading\n=======\nresolved\n");
     assert!(commit::prepare(&fx.work, None).await.unwrap().is_some());
 }
+
+#[tokio::test]
+async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
+    let fx = Fixture::new("commit-large");
+    write(
+        &fx.work,
+        "large.txt",
+        &"a line of text for a generated commit message\n".repeat(30_000),
+    );
+    write(&fx.work, ".gitattributes", "large.txt diff=external\n");
+    let context = commit::prepare(&fx.work, None).await.unwrap().unwrap();
+    assert!(context.patch.ends_with("\n\n[truncated]"));
+    git(&fx.work, &["config", "diff.external.textconv", "false"]);
+    let context = commit::prepare(&fx.work, None).await.unwrap().unwrap();
+    assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
+    assert!(context.patch.ends_with("\n\n[truncated]"));
+    assert!(context.patch.contains("+a line of text"));
+}

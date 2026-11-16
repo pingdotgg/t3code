@@ -36,6 +36,8 @@ struct RawLimit {
     #[serde(default)]
     non_blank: bool,
     max_length: Option<usize>,
+    min_length: Option<usize>,
+    items: Option<Box<RawLimit>>,
     pattern: Option<String>,
     max_properties: Option<usize>,
     #[serde(default)]
@@ -51,6 +53,8 @@ struct Limit {
     variants: Vec<(String, Limit)>,
     non_blank: bool,
     max_length: Option<usize>,
+    min_length: Option<usize>,
+    items: Option<Box<Limit>>,
     pattern: Option<(String, Regex)>,
     max_properties: Option<usize>,
     int: bool,
@@ -88,6 +92,8 @@ impl Limit {
             variants,
             non_blank: raw.non_blank,
             max_length: raw.max_length,
+            min_length: raw.min_length,
+            items: raw.items.map(|i| Box::new(Self::build(*i))),
             pattern,
             max_properties: raw.max_properties,
             int: raw.int,
@@ -111,6 +117,28 @@ impl Limit {
                 self.text_problem(text, path)
             }
             Value::Number(number) => self.number_problem(number.as_f64()?, path),
+            Value::Array(items) => {
+                if self.min_length.is_some_and(|min| items.len() < min) {
+                    return Some(at(
+                        format!(
+                            "an array with at least {} items",
+                            self.min_length.unwrap_or_default()
+                        ),
+                        path,
+                    ));
+                }
+                if let Some(limit) = &self.items {
+                    for (index, item) in items.iter_mut().enumerate() {
+                        path.push(index.to_string());
+                        let problem = limit.problem(item, path);
+                        path.pop();
+                        if problem.is_some() {
+                            return problem;
+                        }
+                    }
+                }
+                None
+            }
             Value::Object(map) => {
                 if let Some(Value::String(tag)) = map.get("_tag")
                     && let Some((_, variant)) = self.variants.iter().find(|(t, _)| t == tag)
@@ -155,6 +183,18 @@ impl Limit {
     fn text_problem(&self, text: &str, path: &[String]) -> Option<String> {
         if self.non_blank && text.is_empty() {
             return Some(at("a non-blank string".to_owned(), path));
+        }
+        if self
+            .min_length
+            .is_some_and(|min| text.encode_utf16().count() < min)
+        {
+            return Some(at(
+                format!(
+                    "a value with a length of at least {}",
+                    self.min_length.unwrap_or_default()
+                ),
+                path,
+            ));
         }
         if let Some(max) = self.max_length {
             let length = text.encode_utf16().count();

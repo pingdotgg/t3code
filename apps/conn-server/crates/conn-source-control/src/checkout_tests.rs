@@ -168,10 +168,19 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
         mode: ThreadEnvMode::Worktree,
         thread_id: None,
     };
+    git(
+        &work,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    );
     let (created, setup) = prepare(ctx, &input, &root.join("worktrees")).await.unwrap();
     assert!(setup);
     let path = PathBuf::from(created.worktree_path.unwrap());
     assert_eq!(git(&path, &["rev-parse", "HEAD"]), first);
+    assert_eq!(git(&path, &["rev-parse", "@{upstream}"]), first);
     assert_eq!(git(&work, &["branch", "--show-current"]), "main");
     assert_eq!(
         git(&path, &["config", "branch.feature.t3-pull-request"]),
@@ -246,6 +255,32 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
     assert_eq!(local.worktree_path, None);
     assert_eq!(local.branch, "feature");
     assert_eq!(git(&work, &["rev-parse", "HEAD"]), rewritten);
+    git(
+        &work,
+        &["config", "branch.feature.remote", "upstream-before"],
+    );
+    git(
+        &work,
+        &["config", "branch.feature.merge", "refs/heads/before"],
+    );
+    git(&work, &["reset", "--hard", &first]);
+    std::fs::write(work.join("unpublished"), "local").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-m", "unpublished"]);
+    assert!(
+        prepare(ctx, &local_input, &root.join("worktrees"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        git(&work, &["config", "branch.feature.remote"]),
+        "upstream-before"
+    );
+    assert_eq!(
+        git(&work, &["config", "branch.feature.merge"]),
+        "refs/heads/before"
+    );
+    git(&work, &["reset", "--hard", &rewritten]);
     git(&work, &["checkout", "main"]);
     let main = git(&work, &["rev-parse", "HEAD"]);
     let mut fork: Value =
@@ -268,7 +303,7 @@ async fn worktrees_reuse_refresh_and_preserve_edits_local_commits_and_rewritten_
     );
     std::fs::write(&response, fork.to_string()).unwrap();
     stub.executable("gh", &[], &format!(
-        "case \"$1\" in auth) printf token ;; api) case \"$2\" in graphql) cat '{}' ;; repos/someone/web) printf '%s' '{{\"html_url\":\"https://github.com/someone/web\"}}' ;; *) printf '%s' '{{\"default_branch\":\"main\"}}' ;; esac ;; esac", response.display()));
+        "case \"$1\" in auth) printf token ;; api) case \"$2\" in graphql) cat '{}' ;; repos/someone/web) printf '%s' '{{\"full_name\":\"someone/web\",\"html_url\":\"https://github.com/someone/web\",\"clone_url\":\"https://github.com/someone/web.git\",\"ssh_url\":\"git@github.com:someone/web.git\"}}' ;; *) printf '%s' '{{\"default_branch\":\"main\"}}' ;; esac ;; esac", response.display()));
     let fork = prepare(ctx, &local_input, &root.join("worktrees"))
         .await
         .unwrap()
@@ -295,4 +330,107 @@ fn github_identity_accepts_https_and_ssh_remotes() {
             Some("acme/web")
         );
     }
+}
+
+#[test]
+fn branch_names_fold_latin_diacritics() {
+    assert_eq!(branch_fragment("Féature/Đß café"), "feature/dss-cafe");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn owner_qualified_heads_use_rest_and_keep_the_owner() {
+    let stub = StubDir::new("pr-owner");
+    let pr = json!({"number":71,"title":"Owned","html_url":"https://github.com/acme/web/pull/71","state":"open","merged_at":null,"head":{"ref":"main","sha":"abcdef1234567","repo":{"full_name":"someone/web"},"user":{"login":"someone"}},"base":{"ref":"main","repo":{"full_name":"acme/web"}}});
+    stub.executable("gh", &[], &format!("case \"$1\" in auth) printf token ;; api) case \"$2\" in *'head=someone%3Amain'*) printf '%s' '{}' ;; *) printf '%s' '{{}}' ;; esac ;; esac", json!([pr])));
+    let settings = Settings::default();
+    let env = Environment::fixed([("GH_REPO", "acme/web")]);
+    let endpoints = Endpoints::default();
+    let child = stub.path_env();
+    let ctx = DiscoveryContext {
+        cwd: &stub.dir,
+        home: None,
+        settings: &settings,
+        env: &env,
+        endpoints: &endpoints,
+        child_env: &child,
+    };
+    let pr = resolve(ctx, &stub.dir, "someone:main").await.unwrap();
+    assert_eq!(pr.resolved.number, 71);
+    assert!(pr.cross_repository);
+    assert!(!stub.log("gh").contains("graphql"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn deleted_fork_uses_the_pull_ref_instead_of_the_base_branch() {
+    let stub = StubDir::new("pr-deleted-fork");
+    let root = std::fs::canonicalize(&stub.dir).unwrap();
+    let bare = root.join("remote.git");
+    let work = root.join("work");
+    git(
+        &root,
+        &["init", "--bare", "-b", "main", bare.to_str().unwrap()],
+    );
+    git(
+        &root,
+        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+    );
+    std::fs::write(work.join("file"), "base").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-m", "base"]);
+    git(&work, &["push", "origin", "main"]);
+    let base = git(&work, &["rev-parse", "HEAD"]);
+    std::fs::write(work.join("file"), "fork").unwrap();
+    git(&work, &["commit", "-am", "fork"]);
+    let head = git(&work, &["rev-parse", "HEAD"]);
+    git(&work, &["push", "origin", "HEAD:refs/pull/71/head"]);
+    git(&work, &["reset", "--hard", &base]);
+    git(
+        &work,
+        &[
+            "config",
+            &format!("url.{}.insteadOf", bare.display()),
+            "https://github.com/acme/web",
+        ],
+    );
+    git(
+        &work,
+        &["remote", "set-url", "origin", "https://github.com/acme/web"],
+    );
+    let pr = json!({"data":{"repository":{"pullRequest":{"number":71,"title":"Deleted fork","url":"https://github.com/acme/web/pull/71","state":"OPEN","baseRefName":"main","headRefName":"main","headRefOid":head,"isCrossRepository":true,"headRepository":null}}}});
+    stub.executable(
+        "gh",
+        &[],
+        &format!(
+            "case \"$1\" in auth) printf token ;; api) printf '%s' '{}' ;; esac",
+            pr
+        ),
+    );
+    let settings = Settings::default();
+    let env = Environment::fixed([("GH_REPO", "acme/web")]);
+    let endpoints = Endpoints::default();
+    let child = stub.path_env();
+    let ctx = DiscoveryContext {
+        cwd: &work,
+        home: None,
+        settings: &settings,
+        env: &env,
+        endpoints: &endpoints,
+        child_env: &child,
+    };
+    let input = GitPreparePullRequestThreadInput {
+        cwd: work.to_string_lossy().into(),
+        reference: "71".into(),
+        mode: ThreadEnvMode::Worktree,
+        thread_id: None,
+    };
+    let (result, _) = prepare(ctx, &input, &root.join("worktrees")).await.unwrap();
+    assert_eq!(
+        git(
+            Path::new(result.worktree_path.as_deref().unwrap()),
+            &["rev-parse", "HEAD"]
+        ),
+        head
+    );
+    assert_eq!(result.is_on_pull_request_head, Some(true));
+    assert_eq!(git(&work, &["rev-parse", "main"]), base);
 }

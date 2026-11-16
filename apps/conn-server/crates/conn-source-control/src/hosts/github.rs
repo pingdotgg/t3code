@@ -736,6 +736,77 @@ pub async fn discover(ctx: DiscoveryContext<'_>) -> SourceControlProviderDiscove
     }
 }
 
+pub(crate) async fn api_json(
+    ctx: DiscoveryContext<'_>,
+    cwd: &std::path::Path,
+    host: &str,
+    endpoint: &str,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, crate::repository::HostFailure> {
+    if !is_github_host(host) {
+        return Err(crate::repository::HostFailure::new(
+            "Could not resolve the GitHub repository from this checkout.",
+        ));
+    }
+    let token = credential(ctx, host).await.map_err(|e| {
+        let detail = match e {
+            CredentialError::CliMissing => "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.".into(),
+            CredentialError::NotSignedIn => match ctx.settings.host(KIND).host_account(host) {
+                Some(account)=>format!("No GitHub credential for {account} on {host}: run `gh auth login --hostname {host}` for that account or pick another in Settings → Source Control."),
+                None=>format!("No GitHub credential for {host}: run `gh auth login --hostname {host}`."),
+            },
+            CredentialError::HostDisabled => format!("GitHub host {host} is turned off in Settings → Source Control."),
+            CredentialError::CliFailed => format!("The GitHub CLI could not hand over a credential for {host}. Check `gh auth status` on the server."),
+            CredentialError::Unresolved(e) => e,
+        }; crate::repository::HostFailure::new(detail)
+    })?;
+    let mut call = crate::cli::CliCall::new(
+        "GitHubSourceControlProvider.getChangeRequest",
+        "gh",
+        ["api", endpoint, "--hostname", host, "--input", "-"],
+        cwd,
+    );
+    call.env = ctx.probe_env(&[
+        (
+            if host == "github.com" || host.ends_with(".ghe.com") {
+                "GH_TOKEN"
+            } else {
+                "GH_ENTERPRISE_TOKEN"
+            },
+            token.expose().into(),
+        ),
+        ("GH_DEBUG", "".into()),
+        ("GH_PROMPT_DISABLED", "1".into()),
+    ]);
+    if endpoint == "graphql" {
+        call.stdin = Some(body.to_string().into_bytes());
+    } else {
+        call.args = vec![
+            "api".into(),
+            endpoint.into(),
+            "--hostname".into(),
+            host.into(),
+            "--method".into(),
+            "GET".into(),
+        ];
+    }
+    let output = crate::cli::run(call).await.map_err(|e| {
+        let text = e.stderr().to_lowercase();
+        crate::repository::HostFailure::new(if text.contains("401") {
+            "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry."
+        } else if text.contains("404") {
+            "Pull request not found. Check the PR number or URL and try again."
+        } else if text.contains("rate limit") {
+            "GitHub API rate limit exceeded. Requests resume when the limit resets."
+        } else {
+            "GitHub request failed."
+        })
+    })?;
+    serde_json::from_str(&output.stdout).map_err(|_| {
+        crate::repository::HostFailure::new("GitHub returned an invalid pull request.")
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

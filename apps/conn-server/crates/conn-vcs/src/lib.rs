@@ -27,6 +27,7 @@ pub mod checkpoint;
 pub mod commit;
 pub mod discovery;
 pub mod error;
+pub mod generated;
 pub mod hub;
 pub mod process;
 pub mod refs;

@@ -594,6 +594,14 @@ pub async fn fetch_base(root: &Path, base_ref: &str) -> VcsResult<Option<(String
     let Some((remote, branch)) = base_remote(root, base_ref).await? else {
         return Ok(None);
     };
+    fetch_remote_branch(root, &remote, &branch).await
+}
+
+pub async fn fetch_remote_branch(
+    root: &Path,
+    remote: &str,
+    branch: &str,
+) -> VcsResult<Option<(String, String)>> {
     if branch == "HEAD"
         || branch.starts_with('-')
         || branch.contains("..")
@@ -614,7 +622,7 @@ pub async fn fetch_base(root: &Path, base_ref: &str) -> VcsResult<Option<(String
                 "--quiet",
                 "--no-tags",
                 "--",
-                remote.as_str(),
+                remote,
                 refspec.as_str(),
             ],
         )

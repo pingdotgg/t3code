@@ -196,25 +196,13 @@ impl McpService {
         let Some(config) = &self.config.worktrees else {
             return Ok(());
         };
-        let projection = self
+        let project = self
             .config
             .engine
-            .get_thread_projection(thread.into())
+            .resolve_project("", Some(thread), None)
             .await
-            .map_err(|e| format!("{e:?}"))?;
-        let project_id = projection.pointer("/thread/projectId");
-        let shell = self
-            .config
-            .engine
-            .shell_snapshot()
-            .await
-            .map_err(|e| format!("{e:?}"))?;
-        let project = shell
-            .get("projects")
-            .and_then(serde_json::Value::as_array)
-            .and_then(|projects| projects.iter().find(|p| p.get("id") == project_id))
             .ok_or_else(|| "Project was not found for worktree setup.".to_owned())?;
-        tools::worktree::setup(config, thread, project, path).await?;
+        tools::worktree::setup(config, thread, &project, path).await?;
         Ok(())
     }
 
