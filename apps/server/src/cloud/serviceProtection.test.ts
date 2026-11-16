@@ -268,3 +268,32 @@ it.effect("counts memory.min as protection and names the first cgroup that grant
     Effect.provide(NodeServices.layer),
   );
 });
+
+it.effect(
+  "tells a kernel without the memory controller apart from a cgroup that grants none",
+  () => {
+    const root = temporaryDirectory();
+    NodeFS.mkdirSync(NodePath.join(root, "user.slice"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, "cgroup.controllers"), "cpuset cpu io pids\n");
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const state = yield* ServiceProtection.readProtection("/home/theo/.config/systemd/user").pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readFileString: (path, encoding) =>
+            fs.readFileString(path.replace("/sys/fs/cgroup", root), encoding),
+        }),
+      );
+      expect(state).toMatchObject({ memoryControllerAvailable: false });
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true }))),
+      Effect.provideService(
+        ProcessRunner.ProcessRunner,
+        runner(
+          "ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/t3code.service\nMainPID=0\n",
+        ),
+      ),
+      Effect.provide(NodeServices.layer),
+    );
+  },
+);

@@ -48,6 +48,11 @@ import {
 } from "./pending-thread-creation";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
+import { composerAttachmentUploadsAtom } from "./composer-attachment-upload-states";
+import {
+  queuedAttachmentsStillUploading,
+  uploadingComposerAttachmentKeys,
+} from "../lib/composerAttachmentUploadQueue";
 import { gitEnvironment } from "./git";
 import { environmentSession, readEnvironmentScope, sessionHasScope } from "./session";
 import {
@@ -372,7 +377,7 @@ export async function recoverEditedCreationAfterDelivery(
     appendComposerDraftAttachments(
       draftKey,
       kept.attachments.filter((attachment) => !existingAttachmentIds.has(attachment.id)),
-      { allowOverflow: true },
+      { restore: true },
     );
     updateComposerDraftSettings(draftKey, {
       ...(kept.modelSelection !== undefined ? { modelSelection: kept.modelSelection } : {}),
@@ -589,6 +594,11 @@ async function preserveUploadedAttachmentsForEditor(
 
 // Everything a drain pass decides from. Each queued environment's session is
 // read here so a granted or revoked operate scope re-runs the drain.
+const uploadingComposerAttachmentKeysAtom = Atom.map(
+  composerAttachmentUploadsAtom,
+  uploadingComposerAttachmentKeys,
+);
+
 const deliveryInputsAtom = Atom.make((get) => {
   const connectedEnvironments = get(workspaceConnections.environmentsAtom);
   const operableEnvironments = new Set<EnvironmentId>();
@@ -612,6 +622,8 @@ const deliveryInputsAtom = Atom.make((get) => {
     serverConfigs: get(environmentServerConfigsAtom),
     connectedEnvironments,
     operableEnvironments,
+    // Wakes a message waiting on the upload worker when that upload settles.
+    uploadingAttachmentKeys: get(uploadingComposerAttachmentKeysAtom),
   };
 }).pipe(Atom.withLabel("mobile:thread-outbox:delivery-inputs"));
 
@@ -691,6 +703,7 @@ export function createThreadOutboxDelivery(): {
 } {
   let disposed = false;
   const retries = new Map<MessageId, ThreadOutboxRetry>();
+  let readyEnvironmentIds = new Set<EnvironmentId>();
   // Existing-thread turns the server accepted but whose outbox removal has
   // not landed; the next pass retries only the removal, never the send.
   const acknowledgedExistingThreadMessageIds = new Set<MessageId>();
@@ -1192,6 +1205,23 @@ export function createThreadOutboxDelivery(): {
       connectedEnvironments,
       operableEnvironments,
     } = appAtomRegistry.get(deliveryInputsAtom);
+    // Failures while an environment was unreachable say nothing about it now; a backoff
+    // started then would hold a message for up to its full delay after reconnecting.
+    const ready = new Set(
+      connectedEnvironments
+        .filter(
+          (environment) =>
+            environment.connectionState === "connected" &&
+            serverConfigs.has(environment.environmentId),
+        )
+        .map((environment) => environment.environmentId),
+    );
+    for (const message of Object.values(queuedMessagesByThreadKey).flat()) {
+      if (ready.has(message.environmentId) && !readyEnvironmentIds.has(message.environmentId)) {
+        clearRetry(message.messageId);
+      }
+    }
+    readyEnvironmentIds = ready;
     if (dispatchingQueuedMessageId !== null) {
       return;
     }
@@ -1253,6 +1283,15 @@ export function createThreadOutboxDelivery(): {
         blockedRecovery.unsubscribe();
       }
       if (retryNotBefore(messageId) > Date.now()) {
+        continue;
+      }
+      if (
+        queuedAttachmentsStillUploading({
+          environmentId: nextQueuedMessage.environmentId,
+          attachments: nextQueuedMessage.attachments,
+          states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+        })
+      ) {
         continue;
       }
 
