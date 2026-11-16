@@ -544,7 +544,11 @@ export function buildKnowledgeCandidatesPrompt(input: KnowledgeCandidatesPromptI
     "Rules:",
     "- kind is one of decision, constraint, convention",
     "- only extract decisions the user made or accepted, constraints the project must respect, or conventions the code follows",
-    "- a peer is another model in the conversation; its proposals are not the user's decisions unless the user accepted them",
+    ...(input.messages.some((message) => message.role === "peer")
+      ? [
+          "- a peer is another model in the conversation; its proposals are not the user's decisions unless the user accepted them",
+        ]
+      : []),
     "- do not summarize the work, restate the task, or record transient status, plans, or guesses",
     "- content is one or two plain sentences that stand alone without this conversation",
     "- entities lists up to 5 short names of files, modules, tools, or concepts the knowledge is about",
@@ -606,7 +610,11 @@ export function buildConversationSummaryPrompt(input: ConversationSummaryPromptI
     "- each text is one or two plain sentences, at most 600 characters",
     "- keep what the user asked for, decisions made, constraints, what was done and verified, and what was left open",
     "- say who said what; do not present an agent's claim or plan as a verified outcome",
-    "- a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
+    ...(input.messages.some((message) => message.role === "peer")
+      ? [
+          "- a peer is another model in the conversation, so attribute its words to it by name, never to the user or the agent",
+        ]
+      : []),
     "- citations lists the refs (like M1) of the sources that support the statement; never invent a ref",
     "- sources may be exact ranges of long messages or tool evidence; do not infer omitted ranges",
     "- preserve observed command results, failures and checks, distinguishing tool evidence from an agent claiming success",
