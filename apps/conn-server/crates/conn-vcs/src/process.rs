@@ -70,7 +70,7 @@ impl GitCommand {
         }
     }
 
-    /// A source control host's CLI (`gh`, `glab`, `az`, ...), run as `VcsProcess.ts` runs a
+    /// A source control host's CLI (`gh`), run as `VcsProcess.ts` runs a
     /// command that is not `git`: the server's environment plus `safe.bareRepository=explicit`
     /// through `GIT_CONFIG_*` (`explicitBareRepositoryEnv`), and none of the `git`-only
     /// variables.

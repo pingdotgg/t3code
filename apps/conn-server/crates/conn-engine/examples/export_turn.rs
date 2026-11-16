@@ -478,7 +478,7 @@ async fn main() {
     .await;
     let _ = std::fs::remove_dir_all(&added);
 
-    // Pull request links on thread-1, as T3 keys them: a GitCafe link, a stack member, then
+    // Pull request links on thread-1, as T3 keys them: a GitHub link, a stack member, then
     // the member unlinked (a tombstone) and linked again by hand.
     let mut links_items = vec![];
     let mut links = engine
@@ -492,8 +492,8 @@ async fn main() {
     })
     .await;
     for (index, command) in [
-        json!({"type": "thread.pull-request.link", "host": "Git.Cafe", "repository": "O/R",
-               "number": 4, "url": "https://git.cafe/O/R/pull/4", "source": "manual"}),
+        json!({"type": "thread.pull-request.link", "host": "GitHub.com", "repository": "O/R",
+               "number": 4, "url": "https://github.com/O/R/pull/4", "source": "manual"}),
         json!({"type": "thread.pull-request.link", "host": "github.com", "repository": "o/r",
                "number": 9, "url": "https://github.com/o/r/pull/9", "source": "stack"}),
         json!({"type": "thread.pull-request.unlink", "host": "GitHub.com", "repository": "O/R",

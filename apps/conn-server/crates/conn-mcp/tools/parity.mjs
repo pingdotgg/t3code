@@ -118,7 +118,7 @@ async function startTs() {
   ];
   // Without --model, no provider or host CLI is on the T3 server's PATH, so its provider and
   // source control probes can start none of this machine's (they find nothing, as on a host
-  // without them). A folder that holds one (a CI image's /usr/bin has gh and az) is replaced
+  // without them). A folder that holds one (a CI image's /usr/bin has gh) is replaced
   // by links to the rest (`sealedPath`).
   const tsPathText = noModel ? sealedPath(NodePath.join(root, "ts"), tsPath.join(":")) : tsPath.join(":");
   const { origin, code } = await start(
@@ -416,10 +416,10 @@ const steps = [
   ["t3_queue", () => ({ action: 5 })],
   // Pull request links on the idle thread: values compared, not only shapes.
   ...[
-    (c) => ({ threadId: c.idleThreadId, url: "https://git.cafe/O/R/pull/4" }),
-    (c) => ({ threadId: c.idleThreadId, url: "https://git.cafe/o/r/pulls/4" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/O/R/pull/4" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/o/r/pull/4" }),
     (c) => ({ threadId: c.idleThreadId, repository: "O/R", number: 3, host: "GitHub.com" }),
-    (c) => ({ threadId: c.idleThreadId, url: "http://forge.example:3000/a/b/pulls/7" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.example:8443/a/b/pull/7" }),
   ].map((input) => ["link_pull_request", input, undefined, { same: (v) => v }]),
   ...[
     (c) => ({ threadId: c.idleThreadId, url: "https://example.com/team/x" }),
@@ -438,7 +438,7 @@ const steps = [
         "https://GitHub.com/O/R/pull/5",
         "https://github.com/o/r/pull/3",
         "not a url",
-        "https://gitlab.com/g/s/p/-/merge_requests/2",
+        "https://github.com/g/s/pull/2",
       ],
     }),
     undefined,

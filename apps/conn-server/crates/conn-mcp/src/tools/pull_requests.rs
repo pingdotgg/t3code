@@ -10,7 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use conn_source_control::registry::{
-    self, ChangeRequestUrlInput, HostKind, ProjectIdentity, canonicalize_gitcafe_pull_request_url,
+    self, ChangeRequestUrlInput, HostKind, ProjectIdentity,
     thread_keys::{KeySource, ThreadPullRequestKey, normalize_thread_pull_request_key},
 };
 use serde_json::{Map, Value, json};
@@ -136,7 +136,7 @@ fn resolve_target(args: &Args, project: Option<&Value>) -> Result<Target, ToolEr
         });
         return Ok(Target {
             key,
-            url: canonicalize_gitcafe_pull_request_url(url),
+            url: url.to_owned(),
         });
     }
     let repository = args.get("repository").and_then(Value::as_str);
@@ -164,10 +164,8 @@ fn resolve_target(args: &Args, project: Option<&Value>) -> Result<Target, ToolEr
     let repository = repository.to_lowercase();
     // Without a URL, a public forge host says what shape its change request URLs take; any
     // other host is taken to run the project's own forge.
-    let recognized = registry::recognize_remote(&format!("https://{host}")).map(|p| p.kind);
     let kind = registry::find_by_public_host(&host)
         .map(|k| k.as_str().to_owned())
-        .or_else(|| (recognized.as_deref() == Some("gitcafe")).then(|| "gitcafe".to_owned()))
         .or(project_kind);
     let remote_url = identity.as_ref().map(|i| i.remote_url.clone());
     let url = kind.as_deref().and_then(HostKind::parse).and_then(|k| {
@@ -191,10 +189,7 @@ fn resolve_target(args: &Args, project: Option<&Value>) -> Result<Target, ToolEr
         authority: None,
         url: Some(&url),
     });
-    Ok(Target {
-        key,
-        url: canonicalize_gitcafe_pull_request_url(&url),
-    })
+    Ok(Target { key, url })
 }
 
 // ---- Chains: `resolveThreadPullRequestChains` --------------------------------------------
@@ -688,8 +683,8 @@ mod tests {
             .expect("resolved");
         assert_eq!(target.key.text(), "git.cafe/o/r#4", "key");
         assert_eq!(
-            target.url, "https://git.cafe/o/r/pulls/4",
-            "GitCafe's spelling"
+            target.url, "https://git.cafe/O/R/pull/4",
+            "an unknown host keeps the supplied URL"
         );
         let target = resolve_target(
             &args(json!({"repository": "O/R", "number": 3, "host": "GitHub.com"})),

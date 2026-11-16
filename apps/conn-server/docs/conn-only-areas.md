@@ -56,7 +56,7 @@ lowercase. Names come from `mapSecretFieldGroups` (`S/settingsSecrets.ts`) and
 | --- | --- |
 | `providerInstances.<id>.config.<field>` (OpenCode `serverPassword`, Antigravity `apiKey`) | `provider-config-e(id)-e(driver)-e(field)[-e(host)]` |
 | `providerInstances.<id>.environment[]` with `sensitive: true` | `provider-env-e(id)-e(name)`; the file holds `value: ""` and `valueRedacted: true` |
-| `sourceControlHosts.<kind>.<field>` (GitHub `tokens` and `signIns` per host, Bitbucket `accessToken` and `apiToken`, GitCafe `token`) | `source-control-e(kind)-e(field)[-e(host)]` |
+| `sourceControlHosts.<kind>.<field>` (GitHub `tokens` and `signIns` per host) | `source-control-e(kind)-e(field)[-e(host)]` |
 | `usageLimitSources.<id>.managementKey` | `usage-limit-source-e(id)` |
 | `textGenerators.<id>.apiKey` | `text-generator-e(id)-e("apiKey")` |
 | `cloudSpeechCredentials.<openai, xai, openrouter>` | `voice-cloud-<field>` (not encoded) |

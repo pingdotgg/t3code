@@ -95,22 +95,9 @@ impl<'a> HostSettings<'a> {
         }
     }
 
-    /// A plain credential field (Bitbucket's `accessToken`, GitCafe's `token`).
-    pub fn secret_field(&self, name: &str) -> SecretSetting {
-        self.secret(self.field(name))
-    }
-
     /// One host's entry of a keyed credential field (GitHub's `tokens`, `signIns`).
     pub fn keyed_secret(&self, name: &str, host: &str) -> SecretSetting {
         self.secret(self.field(name).and_then(|m| m.get(host)))
-    }
-
-    /// A plain text field, trimmed (Bitbucket's `email`).
-    pub fn text(&self, name: &str) -> String {
-        self.field(name)
-            .and_then(Value::as_str)
-            .map(|s| s.trim().to_owned())
-            .unwrap_or_default()
     }
 
     /// `hosts[host].enabled` (default true), from `hostCredentialSettingsFields`.
@@ -167,7 +154,9 @@ mod tests {
         assert!(github.host_enabled("other"), "enabled by default");
         assert_eq!(github.host_account("github.com"), Some("me"), "account");
         assert_eq!(
-            settings.host("gitlab").secret_field("token"),
+            settings
+                .host("github")
+                .keyed_secret("tokens", "missing.example"),
             SecretSetting::Unset,
             "unset"
         );
