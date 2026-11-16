@@ -32,6 +32,7 @@ describe("inlineCodeFilePathCandidate", () => {
     ["origin/main", null],
     ["z-ai/glm-5.3", null],
     ["share/man/ls.1", "share/man/ls.1"],
+    ["docker/Dockerfile", "docker/Dockerfile"],
     ["src/main.ts/", null],
     ["./patches/", "./patches/"],
     // regression: #30757 an agent's shortened path is not a file
@@ -162,6 +163,21 @@ describe("extractMarkdownLinkHrefs", () => {
   ])("extracts links from incomplete and nested text", (markdown, hrefs) => {
     expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
   });
+
+  it.each([
+    [
+      "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
+      ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
+    ],
+    ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
+    ["[a](x\\)y) [b](x\\(y)", ["x\\)y", "x\\(y"]],
+    ["[a](unclosed(paren) [b](ok)", ["ok"]],
+    ["[a](" + "(".repeat(32) + "x" + ")".repeat(32) + ")", ["(".repeat(32) + "x" + ")".repeat(32)]],
+    ["[a](" + "(".repeat(33) + "x" + ")".repeat(33) + ") [b](ok)", ["ok"]],
+  ])("keeps balanced parentheses in a destination like the parser: %s", (markdown, hrefs) => {
+    expect(extractMarkdownLinkHrefs(markdown)).toEqual(hrefs);
+  });
 });
 
 describe("resolveMarkdownFileLinkTarget", () => {
@@ -183,7 +199,7 @@ describe("resolveMarkdownFileLinkTarget", () => {
   });
 
   it("keeps a backslash in a relative link that already names a file", () => {
-    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/./foo\\bar.ts");
+    expect(resolveMarkdownFileLinkTarget("./foo%5Cbar.ts", "/repo")).toBe("/repo/foo\\bar.ts");
   });
 
   it("does not treat filename line references as external schemes", () => {

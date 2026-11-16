@@ -61,6 +61,7 @@ function status(
 const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
+  const statusCalls = yield* Ref.make(0);
   const listedEnvironments =
     yield* Ref.make<ReadonlyArray<RelayClientEnvironmentRecord>>(environments);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
@@ -69,7 +70,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const sessionIdentity = { accountId: "account-1" };
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
-    readonly reason: "application-active" | "credentials-changed";
+    readonly reason: ConnectionWakeups.ConnectionWakeup;
   }>({
     sequence: 0,
     reason: "application-active",
@@ -107,7 +108,8 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         return yield* Ref.get(listedEnvironments);
       }),
     getEnvironmentStatus: ({ environmentId }) =>
-      Ref.get(statusRequests).pipe(
+      Ref.update(statusCalls, (current) => current + 1).pipe(
+        Effect.andThen(Ref.get(statusRequests)),
         Effect.flatMap((requests) => Deferred.await(requests.get(environmentId)!)),
       ),
     listDevices: () => Effect.die("unused"),
@@ -174,8 +176,9 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
     clerkToken,
     networkStatus,
     secondListCall,
+    statusCalls,
     statusRequests,
-    wake: (reason: "application-active" | "credentials-changed") =>
+    wake: (reason: ConnectionWakeups.ConnectionWakeup) =>
       SubscriptionRef.update(wakeups, (event) => ({
         sequence: event.sequence + 1,
         reason,
@@ -467,6 +470,188 @@ describe("RelayEnvironmentDiscovery", () => {
         );
         expect(Option.isNone(populated.error)).toBe(true);
         expect(yield* Ref.get(harness.listCalls)).toBe(1);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect.each(["application-active", "application-active-long", "application-focused"] as const)(
+    "lists the account again when the app returns to the foreground (%s)",
+    (reason) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Ref.set(harness.listedEnvironments, [environments[0]!]);
+        yield* Effect.gen(function* () {
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+          const requests = yield* Ref.get(harness.statusRequests);
+          for (const environment of environments) {
+            yield* Deferred.succeed(
+              requests.get(environment.environmentId)!,
+              status(environment, "online"),
+            );
+          }
+          // Let the scoped connectivity and wakeup subscriptions start before signing in.
+          yield* Effect.yieldNow;
+          yield* harness.wake("credentials-changed");
+          const signedIn = yield* SubscriptionRef.changes(discovery.state).pipe(
+            Stream.filter((state) => state.listed && !state.refreshing),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect([...signedIn.environments.keys()]).toEqual([environments[0]!.environmentId]);
+
+          yield* Ref.set(harness.listedEnvironments, environments);
+          yield* harness.wake(reason);
+          const relisted = yield* SubscriptionRef.changes(discovery.state).pipe(
+            Stream.filter(
+              (state) => state.environments.size === environments.length && !state.refreshing,
+            ),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          expect([...relisted.environments.keys()]).toEqual(
+            environments.map((environment) => environment.environmentId),
+          );
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
+  );
+
+  it.effect("lists a registration that lands while an earlier refresh checks statuses", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Ref.set(harness.listedEnvironments, [environments[0]!]);
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Effect.yieldNow;
+        const refreshFiber = yield* Effect.forkChild(discovery.refresh);
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.listed),
+          Stream.runHead,
+        );
+
+        yield* Ref.set(harness.listedEnvironments, environments);
+        yield* harness.wake("application-active");
+        // Let the wakeup reach discovery while the first refresh still holds the lock.
+        yield* Effect.yieldNow;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Fiber.join(refreshFiber);
+
+        const relisted = yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter(
+            (state) => state.environments.size === environments.length && !state.refreshing,
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        );
+        expect([...relisted.environments.keys()]).toEqual(
+          environments.map((environment) => environment.environmentId),
+        );
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("coalesces foreground checks that arrive during an in-flight refresh", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        yield* Effect.yieldNow;
+        const refreshFiber = yield* Effect.forkChild(discovery.refresh);
+        yield* SubscriptionRef.changes(discovery.state).pipe(
+          Stream.filter((state) => state.listed),
+          Stream.runHead,
+        );
+
+        for (const reason of [
+          "application-active",
+          "application-focused",
+          "application-active",
+          "application-focused",
+          "application-active-long",
+        ] as const) {
+          yield* harness.wake(reason);
+          yield* Effect.yieldNow;
+        }
+        // Waits on the lock behind every refresh the wakeups queued.
+        const lastRefresh = yield* Effect.forkChild(discovery.refresh);
+        yield* Effect.yieldNow;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Fiber.join(refreshFiber);
+        yield* Fiber.join(lastRefresh);
+
+        // The first refresh, one queued refresh, one trailing check's listing, and the last refresh.
+        expect(yield* Ref.get(harness.listCalls)).toBe(4);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("keeps listed rows when the foreground check cannot list the account", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Effect.yieldNow;
+        yield* discovery.refresh;
+        const settled = yield* SubscriptionRef.get(discovery.state);
+
+        yield* Ref.set(
+          harness.listFailure,
+          new ManagedRelay.ManagedRelayRequestFailedError({
+            action: "list relay-managed environments",
+            cause: new Error("Relay request failed."),
+          }),
+        );
+        yield* harness.wake("application-active");
+        yield* Deferred.await(harness.secondListCall);
+
+        const after = yield* SubscriptionRef.get(discovery.state);
+        expect(after).toBe(settled);
+        expect(after.environments.size).toBe(environments.length);
+        expect(Option.isNone(after.error)).toBe(true);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("leaves an unchanged account list untouched when the app returns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* Effect.gen(function* () {
+        const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+        const requests = yield* Ref.get(harness.statusRequests);
+        for (const environment of environments) {
+          yield* Deferred.succeed(
+            requests.get(environment.environmentId)!,
+            status(environment, "online"),
+          );
+        }
+        yield* Effect.yieldNow;
+        yield* discovery.refresh;
+        const settled = yield* SubscriptionRef.get(discovery.state);
+
+        yield* harness.wake("application-active");
+        yield* Deferred.await(harness.secondListCall);
+
+        expect(yield* SubscriptionRef.get(discovery.state)).toBe(settled);
+        expect(yield* Ref.get(harness.listCalls)).toBe(2);
+        expect(yield* Ref.get(harness.statusCalls)).toBe(environments.length);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
   );
