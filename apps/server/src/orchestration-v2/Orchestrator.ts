@@ -82,6 +82,7 @@ import {
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { modelSwitchSince } from "./modelSwitch.ts";
+import { resolveBufferedProviderContinuation } from "./bufferedProviderContinuation.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
 import { combinePullRequestWatchWakes, type PullRequestWatchWake } from "./pullRequestWatch.ts";
 import { recordThreadOpen } from "@t3tools/shared/paletteSearch";
@@ -989,7 +990,20 @@ function worktreeSetupPending(
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
-  return queuedRunsInDeliveryOrder(projection).find((run) => run.queueHeld !== true);
+  const queued = queuedRunsInDeliveryOrder(projection).filter((run) => run.queueHeld !== true);
+  const next = queued[0];
+  // Retained sessions stay busy until their buffered output is consumed.
+  const bufferedMessageIds = new Set(
+    projection.messages.filter(isBufferedProviderNotification).map((message) => message.id),
+  );
+  if (next === undefined || bufferedMessageIds.has(next.userMessageId)) return next;
+  return (
+    queued.find(
+      (run) =>
+        run.providerInstanceId !== next.providerInstanceId &&
+        bufferedMessageIds.has(run.userMessageId),
+    ) ?? next
+  );
 }
 
 // Delegated completions, monitor notifications and unpinned scheduled deliveries never choose a
@@ -1433,7 +1447,7 @@ function conversationProviderThread(
   );
 }
 
-/** Wakes and fresh starts act on the active session; a message continues the conversation. */
+/** Provider wakes and fresh starts act on the active session; other sends continue the conversation. */
 function dispatchProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1442,9 +1456,7 @@ function dispatchProviderThread(
   message: Pick<OrchestrationV2ConversationMessage, "notification" | "delegatedCompletion">,
   freshContext: boolean,
 ): OrchestrationV2ProviderThread | undefined {
-  return freshContext ||
-    message.notification !== undefined ||
-    message.delegatedCompletion !== undefined
+  return freshContext || message.notification?.source.kind === "background_task"
     ? projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       )
@@ -1735,6 +1747,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
     }
     return false;
+  });
+
+  const busyProviderThreadIds = Effect.fn("Orchestrator.busyProviderThreadIds")(function* (
+    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
+  ) {
+    const busy = new Set<OrchestrationV2ProviderThread["id"]>();
+    for (const owner of providerThreads) {
+      if (owner.providerSessionId === null) continue;
+      const runtime = yield* providerSessions
+        .get(owner.providerSessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (
+        Option.isSome(runtime) &&
+        (yield* sessionHasBackgroundWork(runtime.value.providerSession, [owner]))
+      ) {
+        busy.add(owner.id);
+      }
+    }
+    return busy;
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
@@ -2489,11 +2520,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // Failed worktree creation would run queued work in the project checkout; wait for the user.
       const failedRun = latestExecutedRun(projection.runs);
-      const endedRunId = options?.latestRunEnded === true ? failedRun?.id : options?.endedRunId;
+      const latestRunEnded = options?.latestRunEnded === true && queuedRun.queueHeld !== false;
+      const endedRunId = latestRunEnded ? failedRun?.id : options?.endedRunId;
       const failedRunId =
-        options?.latestRunEnded === true && failedRun?.status === "failed"
-          ? failedRun.id
-          : options?.failedRunId;
+        latestRunEnded && failedRun?.status === "failed" ? failedRun.id : options?.failedRunId;
       const failureClass =
         failedRun && failedRunId !== undefined && failedRun.id === failedRunId
           ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
@@ -2611,13 +2641,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+      const bufferedContinuation = isBufferedProviderNotification(queuedMessage);
       const followsCurrent = followsCurrentConversation(queuedMessage);
       const freshContext = queuedRun.freshContext === true;
-      const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
+      const selectedProviderThread = dispatchProviderThread(
+        projection,
+        queuedMessage,
+        freshContext,
+      );
+      const activeProviderThread =
+        selectedProviderThread !== undefined &&
+        providerThreadPredatesBoundary(selectedProviderThread, contextBoundaryOrdinal(projection))
+          ? rootProviderThreadsForProvider(projection, projection.thread.providerInstanceId)[0]
+          : selectedProviderThread;
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
       // A run queued before a fresh run started is bound to the conversation that run left behind.
       const followsLatestContext =
         !freshContext &&
+        !bufferedContinuation &&
         (followsCurrent || providerThreadPredatesBoundary(storedProviderThread, contextBoundary));
       const targetProviderThread = followsLatestContext
         ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId &&
@@ -2654,13 +2695,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         createdAt: now,
         updatedAt: now,
       };
-      const selectionChanged = !modelSelectionsEqual(
-        projection.thread.modelSelection,
-        queuedRun.modelSelection,
-      );
+      const selectionChanged =
+        !bufferedContinuation &&
+        !modelSelectionsEqual(projection.thread.modelSelection, queuedRun.modelSelection);
       // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
-        followsCurrent &&
+        !bufferedContinuation &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
@@ -2715,22 +2755,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !freshContext &&
         switchPlan?.transition.type === "restart_and_resume"
       ) {
-        yield* Effect.logInfo(
-          "Holding the queue: the replaced provider session still runs background work",
-          { threadId, runId: queuedRun.id, providerSessionIds: Array.from(busySessionIds) },
-        );
-        yield* writeSystemEvents(
-          projection.runs
-            .filter((run) => run.status === "queued")
-            .map((run) => ({
-              type: "run.updated" as const,
-              threadId,
-              runId: run.id,
-              providerInstanceId: run.providerInstanceId,
-              occurredAt: now,
-              payload: { ...run, queueHeld: true },
-            })),
-        );
         return;
       }
       const sessionsToDetach = releasableSessions.filter(
@@ -7081,7 +7105,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    const continuation = resolveBufferedProviderContinuation(projection, command);
+    const continuationProviderThread = continuation?.providerThread;
+    if (command.continuationProviderThreadId !== undefined && continuation === undefined) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Buffered continuations require their owning provider thread.",
+      });
+    }
+    let modelSelection =
+      continuation?.modelSelection ?? command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -7432,11 +7466,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
 
-    const activeProviderThread = dispatchProviderThread(
+    const selectedProviderThread = dispatchProviderThread(
       projection,
       { ...command, delegatedCompletion },
       freshContext,
     );
+    // A retained session's late roster can point back across a fresh-context boundary.
+    const activeProviderThread =
+      continuationProviderThread ??
+      (selectedProviderThread !== undefined &&
+      providerThreadPredatesBoundary(selectedProviderThread, contextBoundaryOrdinal(projection))
+        ? rootProviderThreadsForProvider(projection, projection.thread.providerInstanceId)[0]
+        : selectedProviderThread);
     const activeRun = projection.runs.find(isActiveRun);
     // Messages after failed or stopped worktree setup must wait for a worktree,
     // rather than start in the project checkout.
@@ -7449,7 +7490,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const isProviderSwitch =
+      continuationProviderThread === undefined &&
+      activeRun === undefined &&
+      activeProviderThread !== undefined &&
+      activeProviderThread.providerInstanceId !== modelSelection.instanceId;
+    // Account overlays share native history. Selection commands may already
+    // have updated the app thread, so classify against the native thread's owner.
+    const providerSwitchPlan = isProviderSwitch
+      ? yield* providerSwitchService
+          .plan({
+            projection: {
+              ...projection,
+              thread: {
+                ...projection.thread,
+                modelSelection: {
+                  ...projection.thread.modelSelection,
+                  instanceId: activeProviderThread.providerInstanceId,
+                },
+              },
+            },
+            targetModelSelection: modelSelection,
+          })
+          .pipe(mapDispatchError(command))
+      : null;
+    const canResumeAcrossInstances =
+      !freshContext &&
+      isProviderSwitch &&
+      activeProviderThread.nativeThreadRef !== null &&
+      providerSwitchPlan?.transition.type === "restart_and_resume";
+    const releasableSessions = uniqueSessions([
+      ...projection.providerSessions.filter(
+        (session) =>
+          providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
+          session.status !== "stopped" &&
+          session.status !== "error",
+      ),
+      ...(freshContext && activeRun === undefined
+        ? sessionsReleasedByFreshContext(projection, activeProviderThread)
+        : []),
+    ]);
+    const busySessionIds = new Set<ProviderSessionId>();
+    for (const session of releasableSessions) {
+      if (yield* sessionHasBackgroundWork(session, projection.providerThreads)) {
+        busySessionIds.add(session.id);
+      }
+    }
+    const sessionsToDetach = releasableSessions.filter(
+      (session) => !busySessionIds.has(session.id),
+    );
+    const waitsForBackgroundWork = canResumeAcrossInstances && busySessionIds.size > 0;
+
+    const queuedSession =
+      activeRun === undefined && nextQueuedRun(projection) !== undefined
+        ? projection.providerSessions.find(
+            (session) => session.id === activeProviderThread?.providerSessionId,
+          )
+        : undefined;
+    const bufferedProviderWake =
+      command.createdBy === "agent" &&
+      command.creationSource === "provider" &&
+      command.notification !== undefined;
+    // Buffered output is part of the busy session; only its owning turn can drain it.
+    const queueWaitingOnBackgroundWork =
+      !bufferedProviderWake &&
+      queuedSession !== undefined &&
+      (busySessionIds.has(queuedSession.id) ||
+        (yield* sessionHasBackgroundWork(queuedSession, projection.providerThreads)));
+    const queueBehindRun =
+      activeRun ??
+      worktreeMissingRun ??
+      (waitsForBackgroundWork || queueWaitingOnBackgroundWork
+        ? (latestRun ?? undefined)
+        : undefined);
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -7870,8 +7983,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      continuationProviderThread === undefined &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,
@@ -7911,57 +8025,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.historyOrigin === "v1_import" && contextBoundary === 0
         ? yield* readHandoffItems(command.threadId, [null])
         : [];
-    const isProviderSwitch =
-      activeProviderThread !== undefined &&
-      activeProviderThread.providerInstanceId !== modelSelection.instanceId;
-    // Account overlays share native history. Selection commands may already
-    // have updated the app thread, so classify against the native thread's owner.
-    const providerSwitchPlan = isProviderSwitch
-      ? yield* providerSwitchService
-          .plan({
-            projection: {
-              ...projection,
-              thread: {
-                ...projection.thread,
-                modelSelection: {
-                  ...projection.thread.modelSelection,
-                  instanceId: activeProviderThread.providerInstanceId,
-                },
-              },
-            },
-            targetModelSelection: modelSelection,
-          })
-          .pipe(mapDispatchError(command))
-      : null;
-    const canResumeAcrossInstances =
-      !freshContext &&
-      isProviderSwitch &&
-      activeProviderThread.nativeThreadRef !== null &&
-      providerSwitchPlan?.transition.type === "restart_and_resume";
-    const releasableSessions = uniqueSessions([
-      ...projection.providerSessions.filter(
-        (session) =>
-          providerSwitchPlan?.releaseProviderSessionIds.includes(session.id) &&
-          session.status !== "stopped" &&
-          session.status !== "error",
-      ),
-      ...(freshContext ? sessionsReleasedByFreshContext(projection, activeProviderThread) : []),
-    ]);
-    const sessionsToDetach: Array<OrchestrationV2ProviderSession> = [];
-    for (const detaching of releasableSessions) {
-      if (yield* sessionHasBackgroundWork(detaching, projection.providerThreads)) {
-        // A schedule has nobody to wait or press Stop; like a queued fresh start, leave it running.
-        if (freshContext && command.scheduledTaskId !== undefined) continue;
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: freshContext
-            ? "The current session is still running background agents or commands, and a fresh session would end them. Wait for them to finish, or press Stop, then send the message again."
-            : "The previous provider is still running background agents or commands, and switching would end them. Wait for them to finish, or press Stop, then send the message again.",
-        });
-      }
-      sessionsToDetach.push(detaching);
-    }
 
     if (
       pendingForkTransfer === undefined &&
@@ -13124,15 +13187,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       run?.providerThreadId === null
         ? undefined
         : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
+    const busyOwners =
+      command.holdQueue === true
+        ? yield* busyProviderThreadIds(projection.providerThreads)
+        : new Set<OrchestrationV2ProviderThread["id"]>();
     const hasBackgroundWork =
-      run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
-      derivePendingBackgroundWork({
-        latestRun: run,
-        providerThreads: projection.providerThreads,
-        turnItems: projection.turnItems,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
-        runs: projection.runs,
-      }).length > 0;
+      busyOwners.size > 0 ||
+      (run?.id === projection.runs.findLast((candidate) => candidate.status !== "queued")?.id &&
+        derivePendingBackgroundWork({
+          latestRun: run,
+          providerThreads: projection.providerThreads,
+          turnItems: projection.turnItems,
+          activeProviderThreadId:
+            command.holdQueue === true ? null : projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }).length > 0);
     // A failed start has no provider turn. Background work still belongs
     // to the provider thread, so Stop reaches its latest accepted turn.
     const providerTurn =
@@ -13232,6 +13301,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const latest = latestTurnByProviderThread.get(turn.providerThreadId);
         if (latest === undefined || runOrdinal > latest.runOrdinal) {
           latestTurnByProviderThread.set(turn.providerThreadId, { turn, runOrdinal });
+        }
+      }
+      for (const owner of command.holdQueue === true ? projection.providerThreads : []) {
+        if (
+          owner.id === providerThread.id ||
+          ((owner.pendingBackgroundTasks?.length ?? 0) === 0 && !busyOwners.has(owner.id))
+        ) {
+          continue;
+        }
+        const turn = projection.providerTurns.findLast(
+          (candidate) => candidate.providerThreadId === owner.id,
+        );
+        if (turn === undefined) continue;
+        const runOrdinal = owner.lastRunOrdinal ?? -1;
+        const latest = latestTurnByProviderThread.get(owner.id);
+        if (latest === undefined || runOrdinal > latest.runOrdinal) {
+          latestTurnByProviderThread.set(owner.id, { turn, runOrdinal });
         }
       }
       for (const { turn } of latestTurnByProviderThread.values()) {
@@ -13413,6 +13499,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (providerTurn === undefined) {
+      if (command.holdQueue === true && otherProviderInterrupts.length > 0) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          runId: run.id,
+          nodeId: rootNode.id,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: interruptRequestItem,
+        });
+        yield* stopRemainingWork();
+        yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
+        return undefined;
+      }
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -13730,6 +13830,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? Effect.void
         : Ref.update(effects, (existing) => [...existing, delegatedTasksStopEffect(command)]);
     const latestRun = projection.runs.findLast((run) => run.status !== "queued");
+    const busyOwners = yield* busyProviderThreadIds(projection.providerThreads);
     const target =
       projection.runs.findLast(
         (run) =>
@@ -13739,9 +13840,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latestRun,
         providerThreads: projection.providerThreads,
         turnItems: projection.turnItems,
-        activeProviderThreadId: projection.thread.activeProviderThreadId,
         runs: projection.runs,
-      }).length > 0
+      }).length > 0 || busyOwners.size > 0
         ? latestRun
         : undefined);
     if (target !== undefined) {
@@ -15628,6 +15728,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       command.type === "queue.resume" ||
       command.type === "queued-run.start" ||
+      (command.type === "message.dispatch" &&
+        plan.events.some(
+          (event) => event.type === "run.created" && event.payload.status === "queued",
+        )) ||
       (command.type === "thread.runtime-mode.set" && runtimeModeCeiling !== undefined)
     ) {
       yield* mapDispatchError(command)(
@@ -15903,24 +16007,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       afterSequence: terminalEventsAfterSequence,
       eventType: "provider-thread.updated",
     }),
-    eventSink.stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" }),
+    Stream.merge(
+      eventSink.stream({
+        afterSequence: terminalEventsAfterSequence,
+        eventType: "subagent.updated",
+      }),
+      // Codex MCP and dynamic tools that outlive their turn settle with only a node update.
+      eventSink
+        .stream({ afterSequence: terminalEventsAfterSequence, eventType: "node.updated" })
+        .pipe(
+          Stream.filter(
+            ({ event }) =>
+              event.type === "node.updated" &&
+              event.payload.kind === "tool_call" &&
+              !isOrchestrationV2WorkActive(event.payload.status),
+          ),
+        ),
+    ),
   ).pipe(
-    Stream.filter(settlesChildWork),
-    Stream.runForEach((stored) =>
+    Stream.map((stored) => ({ stored, settlesChild: settlesChildWork(stored) })),
+    Stream.filter(
+      ({ stored, settlesChild }) =>
+        settlesChild ||
+        (stored.event.type === "provider-thread.updated" &&
+          !backgroundWorkHoldsCompletion(stored.event.payload.pendingBackgroundTasks ?? [])) ||
+        (stored.event.type === "node.updated" &&
+          stored.event.payload.kind === "tool_call" &&
+          !isOrchestrationV2WorkActive(stored.event.payload.status)),
+    ),
+    Stream.runForEach(({ stored, settlesChild }) =>
       threadReactions.run(
         stored.event.threadId,
         Effect.gen(function* () {
           const childThreadId = stored.event.threadId;
+          // Commands already promote their queues; only unsolicited settlement needs this retry.
+          if (
+            stored.commandId === null &&
+            (yield* projectionStore.canStartQueuedRun(childThreadId))
+          ) {
+            yield* threadDispatch.withLock(childThreadId, startNextQueuedRun(childThreadId));
+          }
+          if (!settlesChild) return;
           const parentThreadId = yield* appOwnedSubagentParentThreadId(childThreadId);
           if (parentThreadId === undefined) return;
           yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(childThreadId));
         }).pipe(
           Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to finalize a delegated child after its work settled", {
-              threadId: stored.event.threadId,
-              sequence: stored.sequence,
-              cause,
-            }),
+            Effect.logWarning(
+              "Failed to resume a queue or finalize a delegated child after its work settled",
+              {
+                threadId: stored.event.threadId,
+                sequence: stored.sequence,
+                cause,
+              },
+            ),
           ),
         ),
       ),
