@@ -36,7 +36,8 @@ checkout, always give the dev server its own state outside the repository:
 vp run dev --home-dir ~/.exploro/dev
 ```
 
-Without `--home-dir` the main checkout uses the shared `~/.t3/dev`. A state directory inside
+Without `--home-dir` the main checkout uses the shared `~/.exploro/dev`. Installed builds keep
+their data in `~/.exploro`, apart from T3 Code's `~/.t3`. A state directory inside
 the repository turns off threads without a project, which the QA start screen needs.
 
 On Linux hosts that restrict user namespaces, the browser needs a one-time setup that the
