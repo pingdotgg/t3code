@@ -3072,6 +3072,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+        // pi.setModel and /preset can change the model without an RPC event.
+        // Confirm cached selections against Pi before skipping them.
+        const modelCached =
+          modelSelection.model !== PI_INHERIT_MODEL_SLUG && modelSelection.model === appliedModel;
+        let modelDrifted = false;
+        if (modelCached || (thinking !== undefined && thinking === appliedThinking)) {
+          const state = yield* request({ type: "get_state" });
+          const stateModel = recordField(state, "model");
+          const piModel = `${recordString(stateModel, "provider")}/${recordString(stateModel, "id")}`;
+          modelDrifted = modelCached && piModel !== appliedModel;
+          appliedThinking = recordString(state, "thinkingLevel") ?? null;
+        }
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
@@ -3094,7 +3106,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* request({ type: "set_thinking_level", level: baselineThinking });
             appliedThinking = baselineThinking;
           }
-        } else if (modelSelection.model !== appliedModel) {
+        } else if (modelDrifted || modelSelection.model !== appliedModel) {
           // Extensions and models.json edits can add providers after the first discovery.
           if (findReportedPiModel(modelSelection.model, discoveredModels) === undefined) {
             yield* discoverModels();
