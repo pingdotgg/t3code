@@ -917,7 +917,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "product-usage-data",
     title: "Product usage data",
-    to: "/settings/about",
+    to: "/settings/maintenance",
     scope: "environment",
     telemetrySettingOnly: true,
     searchTerms: ["telemetry analytics usage data tracking opt out disable posthog traces"],

@@ -20,7 +20,7 @@ timings, environment identifiers and the connected machine's name. Failed spans 
 messages and stack traces; error text can quote a value the app was handling.
 
 To disable product events and relay tracing for an environment, turn off **Product usage data** in
-**Settings → About** with that environment selected, or run `t3 telemetry off` on its machine
+**Settings → Maintenance** with that environment selected, or run `t3 telemetry off` on its machine
 (`t3 telemetry on` turns it back on, `t3 telemetry status` shows it). Product events stop at once;
 relay tracing stops after the server restarts, and the desktop app's own relay tracing after the app
 restarts. If the settings file cannot be read, T3 Code treats the setting as off until it is fixed.

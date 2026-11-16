@@ -2283,6 +2283,7 @@ export function MaintenanceSettingsPanel() {
             </Button>
           }
         />
+        <ProductUsageDataRow />
       </SettingsSection>
     </SettingsPageContainer>
   );
@@ -2409,7 +2410,6 @@ export function AboutSettingsPanel() {
             </Button>
           }
         />
-        <ProductUsageDataRow />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
           description="Notices for dependencies, assets, and optional tools used by T3 Code."
