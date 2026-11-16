@@ -52,6 +52,10 @@ function markdownDestination(src: string): string {
   return `<${escaped}>`;
 }
 
+function parseImageDimension(value: string | number | undefined): number {
+  return Number(typeof value === "string" ? value.trim().replace(/px$/i, "") : value);
+}
+
 /**
  * `maxHeightRem` folds a height cap into the width bound: `max-height` alone
  * would not feed back through `aspect-ratio` once `width` is definite, so a
@@ -62,8 +66,8 @@ export function authoredImageSizeStyle(
   height: string | number | undefined,
   maxHeightRem = 30,
 ): CSSProperties | undefined {
-  const parsedWidth = Number(width);
-  const parsedHeight = Number(height);
+  const parsedWidth = parseImageDimension(width);
+  const parsedHeight = parseImageDimension(height);
   const hasWidth = Number.isFinite(parsedWidth) && parsedWidth > 0;
   const hasHeight = Number.isFinite(parsedHeight) && parsedHeight > 0;
   if (hasWidth && hasHeight) {
@@ -293,6 +297,7 @@ export function ChatMarkdownVideo(props: {
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
+  readonly unavailableDetail?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
@@ -303,6 +308,7 @@ export function ChatMarkdownVideo(props: {
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
       src={props.src}
       sourceFailed={props.sourceFailed}
+      unavailableDetail={props.unavailableDetail}
       label={props.alt}
       originalUrl={props.originalUrl}
       style={props.style}
@@ -409,6 +415,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   );
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
+  const missingFileAccess =
+    assetUrl._tag === "Failure" &&
+    assetUrl.reason === "missing-file-access" &&
+    fallbackSrc === undefined;
+  const unavailableDetail = missingFileAccess ? MISSING_FILE_ACCESS_MESSAGE : undefined;
   const src =
     assetUrl._tag === "Success"
       ? assetUrl.url + (props.srcFragment ?? "")
@@ -440,12 +451,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       <ChatMarkdownVideo
         src={src}
         sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+        unavailableDetail={unavailableDetail}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        // Re-signing cannot grant the file access this connection lacks.
+        onRetry={missingFileAccess ? undefined : refreshAssetUrl}
         actionsSource={actionsSource}
       />
     );
@@ -456,13 +469,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
-      unavailableDetail={
-        assetUrl._tag === "Failure" &&
-        assetUrl.reason === "missing-file-access" &&
-        fallbackSrc === undefined
-          ? MISSING_FILE_ACCESS_MESSAGE
-          : undefined
-      }
+      unavailableDetail={unavailableDetail}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
