@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { MICROPHONE_PERMISSION_ERROR } from "@t3tools/client-runtime/voice-input";
 import { MicIcon, PauseIcon, PlayIcon, RotateCcwIcon, SquareIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -38,6 +39,7 @@ export function MicrophoneTest({
   /** Labels and device ids become readable once the browser grants access. */
   onMicrophoneAccess: () => void;
 }) {
+  const m = useMessages();
   const [phase, setPhase] = useState<"idle" | "starting" | "recording" | "ready">("idle");
   const [recording, setRecording] = useState<{ url: string; duration: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +87,9 @@ export function MicrophoneTest({
       typeof MediaRecorder === "undefined" ||
       typeof AudioWorkletNode === "undefined"
     ) {
-      setError("Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.");
+      setError(
+        m(msg("Microphone testing is unavailable in this browser. Use HTTPS or the desktop app.")),
+      );
       setPhase("idle");
       return;
     }
@@ -113,7 +117,7 @@ export function MicrophoneTest({
         releaseCapture();
         setLevel(0);
         if (!blob.size) {
-          setError("No audio was recorded. Try again.");
+          setError(m(msg("No audio was recorded. Try again.")));
           setPhase("idle");
           return;
         }
@@ -125,7 +129,7 @@ export function MicrophoneTest({
         if (capture.current !== current) return;
         releaseCapture();
         setLevel(0);
-        setError("Could not record microphone audio. Try again.");
+        setError(m(msg("Could not record microphone audio. Try again.")));
         setPhase("idle");
       };
       recorder.addEventListener("error", onRecordingError);
@@ -134,7 +138,7 @@ export function MicrophoneTest({
           "ended",
           () => {
             if (capture.current !== current) return;
-            setError("The microphone disconnected.");
+            setError(m(msg("The microphone disconnected.")));
             if (recorder.state !== "inactive") recorder.stop();
           },
           { once: true },
@@ -177,10 +181,10 @@ export function MicrophoneTest({
         name === "NotAllowedError"
           ? MICROPHONE_PERMISSION_ERROR
           : name === "NotFoundError"
-            ? "No microphone found."
+            ? m(msg("No microphone found."))
             : cause instanceof Error
               ? cause.message
-              : "Could not access the microphone.",
+              : m(msg("Could not access the microphone.")),
       );
     }
   };
@@ -195,7 +199,7 @@ export function MicrophoneTest({
       <Button
         size="sm"
         variant="outline"
-        aria-label="Stop recording"
+        aria-label={m(msg("Stop recording"))}
         disabled={phase !== "recording"}
         onClick={() => {
           const recorder = capture.current?.recorder;
@@ -203,12 +207,12 @@ export function MicrophoneTest({
         }}
       >
         <SquareIcon />
-        Stop
+        {m(msg("Stop"))}
       </Button>
     ) : (
       <Button size="sm" variant="outline" onClick={() => void start()}>
         {phase === "ready" ? <RotateCcwIcon /> : <MicIcon />}
-        {phase === "ready" ? "Record again" : "Record"}
+        {phase === "ready" ? m(msg("Record again")) : m(msg("Record"))}
       </Button>
     );
   const panel = error ? (
@@ -227,12 +231,12 @@ export function MicrophoneTest({
       </div>
       <span
         className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground"
-        aria-label="Recording time"
+        aria-label={m(msg("Recording time"))}
       >
         {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
       </span>
       <meter
-        aria-label="Microphone input level"
+        aria-label={m(msg("Microphone input level"))}
         min={0}
         max={1}
         value={level}
@@ -246,8 +250,8 @@ export function MicrophoneTest({
   return (
     <SettingsRow
       {...searchableSetting("microphone-test")}
-      title="Test microphone"
-      description="Record ten seconds and play it back. The audio stays on this device."
+      title={msg("Test microphone")}
+      description={msg("Record ten seconds and play it back. The audio stays on this device.")}
       control={control}
     >
       {panel ? (
@@ -261,7 +265,9 @@ export function MicrophoneTest({
           <Button
             size="icon-sm"
             variant="ghost-muted"
-            aria-label={phase === "ready" ? "Discard recording" : "Cancel microphone test"}
+            aria-label={
+              phase === "ready" ? m(msg("Discard recording")) : m(msg("Cancel microphone test"))
+            }
             onClick={cancel}
           >
             <XIcon />
@@ -273,6 +279,7 @@ export function MicrophoneTest({
 }
 
 function MicrophonePlayback({ src, duration }: { src: string; duration: number }) {
+  const m = useMessages();
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
@@ -310,19 +317,19 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
       <Button
         size="icon-sm-pill"
         variant="outline"
-        aria-label={playing ? "Pause recording" : "Play recording"}
+        aria-label={playing ? m(msg("Pause recording")) : m(msg("Play recording"))}
         onClick={() => void togglePlayback()}
       >
         {playing ? <PauseIcon /> : <PlayIcon />}
       </Button>
       {failed ? (
         <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
-          Could not play this recording. Try recording again.
+          {m(msg("Could not play this recording. Try recording again."))}
         </p>
       ) : (
         <input
           type="range"
-          aria-label="Recording playback position"
+          aria-label={m(msg("Recording playback position"))}
           min={0}
           max={duration}
           step={0.01}

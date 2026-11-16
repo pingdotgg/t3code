@@ -1,4 +1,5 @@
 import type { ClientSettingsPatch, DesktopSnapShotState, SnapShotSound } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import {
   captureSetupBackend,
   captureSetupDesktopName,
@@ -93,8 +94,8 @@ export function snapShotFeedbackUnavailableMessage(
 
 export function snapShotDescription(state: DesktopSnapShotState | null): string {
   return state?.mode === "portal" && captureSetupBackend(state) === "picker"
-    ? "Automatic capture isn't available here. Choose a window instead."
-    : "Capture a window and attach it to your current draft.";
+    ? msg("Automatic capture isn't available here. Choose a window instead.")
+    : msg("Capture a window and attach it to your current draft.");
 }
 
 export function snapShotAccessibilityUnavailableMessage(
@@ -110,7 +111,7 @@ export function snapShotUnavailableMessage(hasBridge: boolean): string | undefin
   if (hasBridge) return undefined;
   return typeof window !== "undefined" && window.desktopBridge
     ? "Update the desktop app to use snapshots."
-    : "Only available in the desktop app.";
+    : msg("Only available in the desktop app.");
 }
 
 export function snapShotSoundPatch(sound: SnapShotSoundSelection): ClientSettingsPatch {

@@ -4,6 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
+import { msg, useMessages } from "gt-react";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
@@ -28,9 +29,11 @@ const PROMPT_PREVIEW_TEXT =
 function noop() {}
 
 export function PromptFontPreview() {
+  const m = useMessages();
   const editorRef = useRef<ComposerPromptEditorHandle>(null);
-  const [prompt, setPrompt] = useState(PROMPT_PREVIEW_TEXT);
-  const [cursor, setCursor] = useState(PROMPT_PREVIEW_TEXT.length);
+  const initialPrompt = m(msg(PROMPT_PREVIEW_TEXT));
+  const [prompt, setPrompt] = useState(initialPrompt);
+  const [cursor, setCursor] = useState(initialPrompt.length);
   const onChange = (nextValue: string, nextCursor: number) => {
     setPrompt(nextValue);
     setCursor(nextCursor);

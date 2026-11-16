@@ -15,6 +15,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Option from "effect/Option";
+import { msg, T, useMessages } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
@@ -86,6 +87,7 @@ export function AddEnvironmentDialog({
   readonly onOpenChange: (open: boolean) => void;
   readonly onErrorChange: (error: string | null) => void;
 }) {
+  const m = useMessages();
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
@@ -386,9 +388,9 @@ export function AddEnvironmentDialog({
           </span>
         ) : null}
         <span className="min-w-0">
-          <span className="block text-sm font-medium text-foreground">{input.title}</span>
+          <span className="block text-sm font-medium text-foreground">{m(input.title)}</span>
           <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-            {input.description}
+            {m(input.description)}
           </span>
         </span>
       </button>
@@ -399,7 +401,9 @@ export function AddEnvironmentDialog({
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_10rem]">
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Host</span>
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            <T>Host</T>
+          </span>
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
@@ -409,7 +413,9 @@ export function AddEnvironmentDialog({
           />
         </label>
         <label className="block">
-          <span className="mb-1.5 block text-xs font-medium text-foreground">Pairing code</span>
+          <span className="mb-1.5 block text-xs font-medium text-foreground">
+            <T>Pairing code</T>
+          </span>
           <Input
             value={savedBackendPairingCode}
             onChange={(event) => setSavedBackendPairingCode(event.target.value)}
@@ -421,7 +427,7 @@ export function AddEnvironmentDialog({
       </div>
       <div>
         <span className="mt-1 block text-2xs text-muted-foreground">
-          Paste a full pairing URL here to fill both fields automatically.
+          <T>Paste a full pairing URL here to fill both fields automatically.</T>
         </span>
       </div>
     </div>
@@ -463,7 +469,7 @@ export function AddEnvironmentDialog({
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
-            This machine is on your T3 Connect account. Use it as a fallback route.
+            <T>This machine is on your T3 Connect account. Use it as a fallback route.</T>
           </p>
           <Button
             size="xs"
@@ -471,7 +477,7 @@ export function AddEnvironmentDialog({
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
-            Add T3 Connect
+            <T>Add T3 Connect</T>
           </Button>
         </div>
       ) : null}
@@ -484,7 +490,13 @@ export function AddEnvironmentDialog({
         onClick={() => void handleAddSavedBackend()}
       >
         <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+        {isAddingSavedBackend ? (
+          <T>Adding…</T>
+        ) : routeTarget ? (
+          <T>Add route</T>
+        ) : (
+          <T>Add environment</T>
+        )}
       </Button>
     </div>
   );
@@ -496,7 +508,7 @@ export function AddEnvironmentDialog({
             htmlFor="saved-backend-ssh-host"
             className="mb-1.5 block text-xs font-medium text-foreground"
           >
-            SSH host or alias
+            <T>SSH host or alias</T>
           </label>
           <Autocomplete
             items={filteredDiscoveredSshHosts}
@@ -522,14 +534,16 @@ export function AddEnvironmentDialog({
             <AutocompleteInput
               id="saved-backend-ssh-host"
               onKeyDown={handleSavedBackendSshHostKeyDown}
-              placeholder="Search hosts or type devbox"
+              placeholder={m(msg("Search hosts or type devbox"))}
               disabled={isAddingSavedBackend}
               spellCheck={false}
             />
             {hasSshHostSuggestionContent ? (
               <AutocompletePopup>
                 {isLoadingDiscoveredSshHosts ? (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">Loading hosts…</div>
+                  <div className="px-3 py-2 text-xs text-muted-foreground">
+                    <T>Loading hosts…</T>
+                  </div>
                 ) : filteredDiscoveredSshHosts.length > 0 ? (
                   <AutocompleteList className="max-h-72">
                     {filteredDiscoveredSshHosts.map((target, index) => {
@@ -563,7 +577,7 @@ export function AddEnvironmentDialog({
                   </AutocompleteList>
                 ) : (
                   <AutocompleteEmpty className="break-all">
-                    No hosts match "{savedBackendSshHost.trim()}".
+                    <T>No hosts match</T> "{savedBackendSshHost.trim()}".
                   </AutocompleteEmpty>
                 )}
               </AutocompletePopup>
@@ -572,7 +586,9 @@ export function AddEnvironmentDialog({
         </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">Username</span>
+            <span className="mb-1.5 block text-xs font-medium text-foreground">
+              <T>Username</T>
+            </span>
             <Input
               value={savedBackendSshUsername}
               onChange={(event) => setSavedBackendSshUsername(event.target.value)}
@@ -583,7 +599,9 @@ export function AddEnvironmentDialog({
             />
           </label>
           <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">Port</span>
+            <span className="mb-1.5 block text-xs font-medium text-foreground">
+              <T>Port</T>
+            </span>
             <Input
               value={savedBackendSshPort}
               onChange={(event) => setSavedBackendSshPort(event.target.value)}
@@ -607,7 +625,13 @@ export function AddEnvironmentDialog({
           onClick={() => void handleAddSavedBackend()}
         >
           <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend ? "Adding…" : routeTarget ? "Add route" : "Add environment"}
+          {isAddingSavedBackend ? (
+            <T>Adding…</T>
+          ) : routeTarget ? (
+            <T>Add route</T>
+          ) : (
+            <T>Add environment</T>
+          )}
         </Button>
       </div>
     </div>
@@ -620,25 +644,36 @@ export function AddEnvironmentDialog({
           render={
             <DialogTrigger
               render={
-                <Button size="xs" variant="ghost-muted" aria-label="Add environment">
+                <Button size="xs" variant="ghost-muted" aria-label={m(msg("Add environment"))}>
                   <PlusIcon className="size-3" />
-                  <span>Add environment</span>
+                  <span>
+                    <T>Add environment</T>
+                  </span>
                 </Button>
               }
             />
           }
         />
-        <TooltipPopup side="top">Add environment</TooltipPopup>
+        <TooltipPopup side="top">
+          <T>Add environment</T>
+        </TooltipPopup>
       </Tooltip>
       <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>
-            {routeTarget ? `Add a route to ${routeTarget.label}` : "Add Environment"}
+            {routeTarget
+              ? `${m(msg("Add a route to"))} ${routeTarget.label}`
+              : m(msg("Add environment"))}
           </DialogTitle>
           <DialogDescription>
-            {routeTarget
-              ? "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine."
-              : "Pair another environment to this client."}
+            {routeTarget ? (
+              <T>
+                Pair this machine again over another address, such as its Tailscale name. It joins
+                the existing routes instead of adding a second machine.
+              </T>
+            ) : (
+              <T>Pair another environment to this client.</T>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -646,15 +681,15 @@ export function AddEnvironmentDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               {renderConnectionModeCard({
                 mode: "remote",
-                title: "Remote link",
-                description: "Enter a backend host and pairing code.",
+                title: msg("Remote link"),
+                description: msg("Enter a backend host and pairing code."),
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge
                 ? renderConnectionModeCard({
                     mode: "ssh",
-                    title: "SSH",
-                    description: "Use local SSH config, agent, and tunnels for the backend.",
+                    title: msg("SSH"),
+                    description: msg("Use local SSH config, agent, and tunnels for the backend."),
                     icon: <TerminalIcon aria-hidden className="size-4" />,
                   })
                 : null}

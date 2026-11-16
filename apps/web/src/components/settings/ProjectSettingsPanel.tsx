@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useComposerMenuState } from "../chat/useComposerMenuState";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -443,7 +444,7 @@ function ProjectDetail({
     </div>
   );
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection title={msg("Checkouts")}>
       <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
         Grouping rule decides how each checkout joins project groups in the sidebar. Changing it can
         move a checkout to a different project.
@@ -523,7 +524,7 @@ function ProjectDetail({
             Can't find a setting? Keep this project picked above and hop to any other settings page.
           </AlertDescription>
         </Alert>
-        <SettingsSection id="project-overview" title="Project" hideTitle>
+        <SettingsSection id="project-overview" title={msg("Project")} hideTitle>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-sm text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
@@ -532,8 +533,10 @@ function ProjectDetail({
             </p>
           ) : null}
           <SettingsRow
-            title="Name"
-            description="The shared name for this project group in the sidebar and thread lists."
+            title={msg("Name")}
+            description={msg(
+              "The shared name for this project group in the sidebar and thread lists.",
+            )}
             resetAction={
               canResetScratchTitle ? (
                 <SettingResetButton
@@ -572,7 +575,7 @@ function ProjectDetail({
             }
           />
           <SettingsRow
-            title="Project icon"
+            title={msg("Project icon")}
             description={
               projectIcon?.kind === "lucide"
                 ? `${projectIcon.name} · ${projectIcon.color}`
@@ -620,8 +623,8 @@ function ProjectDetail({
           {canOrganize ? (
             <>
               <SettingsRow
-                title="Pin"
-                description="Pinned projects come first in project pickers."
+                title={msg("Pin")}
+                description={msg("Pinned projects come first in project pickers.")}
                 control={
                   <Switch
                     checked={group.pinned}
@@ -637,7 +640,7 @@ function ProjectDetail({
                 }
               />
               <SettingsRow
-                title="Archive"
+                title={msg("Archive")}
                 description={
                   group.archived
                     ? "Hidden from project pickers. Threads and files are kept."
@@ -667,7 +670,7 @@ function ProjectDetail({
         <ProjectDefaultsSettings category="project" />
         <ProjectActionsSettings />
         {checkoutChoices}
-        <SettingsSection title="Danger">
+        <SettingsSection title={msg("Danger")}>
           <SettingsRow
             title={
               hasOtherMembers

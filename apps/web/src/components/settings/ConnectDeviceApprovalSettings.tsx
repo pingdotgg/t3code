@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import type { AuthConnectDevice, EnvironmentId } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -26,7 +27,7 @@ function reportFailure(title: string, result: Parameters<typeof isAtomCommandInt
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : msg("An error occurred."),
     }),
   );
 }
@@ -45,6 +46,7 @@ export function ConnectDeviceApprovalSettings({
   /** Revokes now, or first asks to turn approval on when it is off. */
   readonly requestRevoke: (title: string, revoke: () => Promise<void>) => void;
 }) {
+  const m = useMessages();
   const approve = useAtomCommand(authEnvironment.approveConnectDevice, { reportFailure: false });
   const deny = useAtomCommand(authEnvironment.revokePairingLink, { reportFailure: false });
   const revoke = useAtomCommand(authEnvironment.revokeConnectDevice, { reportFailure: false });
@@ -57,7 +59,7 @@ export function ConnectDeviceApprovalSettings({
   };
 
   return (
-    <SettingsSection id="connect-devices" title="T3 Connect devices">
+    <SettingsSection id="connect-devices" title={m(msg("T3 Connect devices"))}>
       {requests.map((request) => {
         const connectRequest = request.connectDeviceRequest;
         if (!connectRequest) return null;
@@ -67,12 +69,12 @@ export function ConnectDeviceApprovalSettings({
             <div className={ITEM_ROW_INNER_CLASSNAME}>
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-sm font-medium text-foreground">
-                  Waiting for approval ·{" "}
+                  {m(msg("Waiting for approval"))} ·{" "}
                   <span className="font-mono tabular-nums">{connectRequest.verificationCode}</span>
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {describeConnectDeviceClient(connectRequest)}. Approve only if the device in front
-                  of you shows this code.
+                  {describeConnectDeviceClient(connectRequest)}.{" "}
+                  {m(msg("Approve only if the device in front of you shows this code."))}
                 </p>
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -83,13 +85,13 @@ export function ConnectDeviceApprovalSettings({
                   onClick={() =>
                     void run(request.id, async () =>
                       reportFailure(
-                        "Could not deny the device",
+                        m(msg("Could not deny the device")),
                         await deny({ environmentId, input: { id: request.id } }),
                       ),
                     )
                   }
                 >
-                  Deny
+                  {m(msg("Deny"))}
                 </Button>
                 <Button
                   size="xs"
@@ -97,13 +99,13 @@ export function ConnectDeviceApprovalSettings({
                   onClick={() =>
                     void run(request.id, async () =>
                       reportFailure(
-                        "Could not approve the device",
+                        m(msg("Could not approve the device")),
                         await approve({ environmentId, input: { pairingLinkId: request.id } }),
                       ),
                     )
                   }
                 >
-                  {busy ? "Saving…" : "Approve"}
+                  {busy ? m(msg("Saving…")) : m(msg("Approve"))}
                 </Button>
               </div>
             </div>
@@ -122,7 +124,8 @@ export function ConnectDeviceApprovalSettings({
                 <p className="text-xs text-muted-foreground">
                   <span className="font-mono tabular-nums">{device.verificationCode}</span>
                   <span aria-hidden> · </span>
-                  Trusted since {formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}
+                  {m(msg("Trusted since"))}{" "}
+                  {formatAccessTimestamp(DateTime.formatIso(device.approvedAt))}
                 </p>
               </div>
               <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -131,10 +134,10 @@ export function ConnectDeviceApprovalSettings({
                   variant="destructive-outline"
                   disabled={!canWrite || busy}
                   onClick={() =>
-                    requestRevoke(`Revoke ${connectDeviceName(device)}?`, () =>
+                    requestRevoke(`${m(msg("Revoke"))} ${connectDeviceName(device)}?`, () =>
                       run(device.proofKeyThumbprint, async () =>
                         reportFailure(
-                          "Could not revoke the device",
+                          m(msg("Could not revoke the device")),
                           await revoke({
                             environmentId,
                             input: { proofKeyThumbprint: device.proofKeyThumbprint },
@@ -144,7 +147,7 @@ export function ConnectDeviceApprovalSettings({
                     )
                   }
                 >
-                  {busy ? "Revoking…" : "Revoke"}
+                  {busy ? m(msg("Revoking…")) : m(msg("Revoke"))}
                 </Button>
               </div>
             </div>
@@ -154,7 +157,7 @@ export function ConnectDeviceApprovalSettings({
       {devices.length === 0 && requests.length === 0 ? (
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="text-xs text-muted-foreground/60">
-            No device has connected through T3 Connect yet.
+            {m(msg("No device has connected through T3 Connect yet."))}
           </p>
         </div>
       ) : null}

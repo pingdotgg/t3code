@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -170,7 +171,7 @@ export function ProviderAuthenticationSection({
 
   return (
     <SettingsRow
-      title="Account"
+      title={msg("Account")}
       description={
         signedIn && !active && provider.auth.email?.trim() ? (
           <span>

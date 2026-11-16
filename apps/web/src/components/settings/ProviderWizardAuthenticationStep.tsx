@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 
@@ -56,7 +57,7 @@ export function ProviderWizardAuthenticationStep({
             />
           ) : (
             <SettingsRow
-              title="Account"
+              title={msg("Account")}
               description={
                 isDiscovering
                   ? "Discovering sign-in methods…"

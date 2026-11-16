@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   isModifierPairShortcut,
@@ -79,6 +80,7 @@ type ShortcutCheck =
     };
 
 export function SnapShotSettings() {
+  const m = useMessages();
   const settings = useClientSettings((current) => ({
     snapShotAnimations: current.snapShotAnimations,
     snapShotEnabled: current.snapShotEnabled,
@@ -350,8 +352,10 @@ export function SnapShotSettings() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="snap-shot" title="SnapShots">
-        <SettingsUnavailableGroup message={unavailableMessage}>
+      <SettingsSection id="snap-shot" title={msg("SnapShots")}>
+        <SettingsUnavailableGroup
+          message={unavailableMessage === undefined ? undefined : m(unavailableMessage)}
+        >
           <SettingsRow
             {...searchableSetting("snap-shot-enabled")}
             description={snapShotDescription(state)}
@@ -394,7 +398,7 @@ export function SnapShotSettings() {
             <>
               <SettingsRow
                 {...searchableSetting("snap-shot-accessibility")}
-                description="Include text and controls when the app makes them available."
+                description={msg("Include text and controls when the app makes them available.")}
                 status={snapShotAccessibilityUnavailableMessage(state)}
                 control={
                   <Switch
@@ -472,7 +476,7 @@ export function SnapShotSettings() {
               />
               <SettingsRow
                 {...searchableSetting("snap-shot-sound")}
-                description="Choose the sound played when capture starts."
+                description={msg("Choose the sound played when capture starts.")}
                 control={
                   <Menu>
                     <MenuTrigger
@@ -532,7 +536,7 @@ export function SnapShotSettings() {
               />
               <SettingsRow
                 {...searchableSetting("snap-shot-flash")}
-                description="Show a gentle cue on the captured window."
+                description={msg("Show a gentle cue on the captured window.")}
                 status={feedbackUnavailable}
                 control={
                   <Switch
@@ -545,7 +549,7 @@ export function SnapShotSettings() {
               />
               <SettingsRow
                 {...searchableSetting("snap-shot-animations")}
-                description="Animate captured windows into your draft."
+                description={msg("Animate captured windows into your draft.")}
                 status={feedbackUnavailable}
                 control={
                   <Switch

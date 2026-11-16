@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
@@ -390,8 +391,8 @@ function InstanceSessionManagement(
   return (
     <div className="grid gap-3">
       <SettingsRow
-        title="Native sessions"
-        description="Resume agent-owned conversations as T3 threads."
+        title={msg("Native sessions")}
+        description={msg("Resume agent-owned conversations as T3 threads.")}
         status={
           canList && props.projects.length === 0
             ? "Add a project before importing sessions."

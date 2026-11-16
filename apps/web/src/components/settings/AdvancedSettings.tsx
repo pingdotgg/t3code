@@ -1,5 +1,6 @@
 import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { useMessages } from "gt-react";
 
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { useSettingsSearchTargetId } from "./settingsLayout";
@@ -15,6 +16,7 @@ export function AdvancedSettings({
   readonly targetIds: ReadonlyArray<string>;
   readonly children: ReactNode;
 }) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const searchTargetId = useSettingsSearchTargetId();
   const [seenSearchTargetId, setSeenSearchTargetId] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export function AdvancedSettings({
           aria-hidden
           className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
-        Advanced
+        {m("Advanced")}
       </CollapsibleTrigger>
       <CollapsiblePanel>
         <div className="border-t border-border/50 *:not-first:border-t *:not-first:border-border/50">

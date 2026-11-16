@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import {
   type EnvironmentId,
   isSecretReference,
@@ -79,6 +80,7 @@ export function TextGeneratorsSettings({
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly readOnly: boolean;
 }) {
+  const m = useMessages();
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -97,15 +99,17 @@ export function TextGeneratorsSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
               <PlusIcon className="size-3" aria-hidden />
-              Add generator
+              {m(msg("Add generator"))}
             </Button>
           ) : null
         }
       >
         {generators.length === 0 ? (
           <SettingsRow
-            title="No text generators yet"
-            description="Add a model API to write thread titles, commit messages, and other short text without starting a coding agent."
+            title={msg("No text generators yet")}
+            description={msg(
+              "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
+            )}
           />
         ) : null}
         {generators.map(([id, config]) => {
@@ -326,7 +330,9 @@ function TextGeneratorWizard({
       <WizardPopup>
         <WizardHeader
           title={existing ? `Edit ${textGeneratorDisplayName(existing)}` : "Add a text generator"}
-          description="Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment."
+          description={msg(
+            "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+          )}
         >
           <WizardSteps
             steps={STEPS}

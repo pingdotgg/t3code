@@ -1,3 +1,4 @@
+import { msg, T, useMessages } from "gt-react";
 import type {
   StorageCleanupReport,
   StorageCleanupSettings,
@@ -15,7 +16,7 @@ import { formatBytes } from "../../lib/formatBytes";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { formatRelativeTime } from "../../timestampFormat";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useDebouncedValue } from "../../state/queries";
 import { AnimatedHeight } from "../AnimatedHeight";
@@ -68,9 +69,9 @@ export function WorktreesDirectoryRow() {
   return (
     <SettingsRow
       {...searchableSetting("storage-worktrees-location")}
-      description={
-        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder."
-      }
+      description={msg(
+        "Folder where new worktrees are created, on any drive, such as D:\\worktrees or ~/worktrees. Existing worktrees stay where they are. Leave empty to use the T3 home folder.",
+      )}
       serverScoped
       settingKeys={["worktreesDirectory"]}
       resetAction={
@@ -122,6 +123,8 @@ function RetentionControl({
   onChange: (value: number | null, onFailed: () => void) => void;
   minimum?: number;
 }) {
+  const m = useMessages();
+  const translatedLabel = m(label);
   const [draft, setDraft] = useState(value);
   const [savedValue, setSavedValue] = useState(value);
   // Saving an age can start a cleanup sweep, so turning a rule on only opens a draft.
@@ -204,9 +207,9 @@ function RetentionControl({
           }}
         >
           <NumberFieldGroup>
-            <NumberFieldDecrement aria-label={`Decrease ${label}`} />
+            <NumberFieldDecrement aria-label={`${m(msg("Decrease"))} ${translatedLabel}`} />
             <NumberFieldInput
-              aria-label={`${label} in days`}
+              aria-label={`${translatedLabel} ${m(msg("in days"))}`}
               autoFocus={value === null}
               size={5}
               className="w-auto grow-0 text-right"
@@ -235,16 +238,18 @@ function RetentionControl({
               }}
             />
             <span aria-hidden="true" className="self-center pr-2 text-xs">
-              days
+              <T>days</T>
             </span>
-            <NumberFieldIncrement aria-label={`Increase ${label}`} />
+            <NumberFieldIncrement aria-label={`${m(msg("Increase"))} ${translatedLabel}`} />
           </NumberFieldGroup>
         </NumberField>
       ) : (
-        <span className="text-xs text-muted-foreground">Off</span>
+        <span className="text-xs text-muted-foreground">
+          <T>Off</T>
+        </span>
       )}
       <Switch
-        aria-label={label}
+        aria-label={translatedLabel}
         checked={on}
         // Keeps focus in the age field, so switching off never commits an edited age first.
         onMouseDown={(event) => event.preventDefault()}
@@ -260,9 +265,9 @@ function RetentionControl({
 }
 
 const KEEP_WHEN_LABELS = {
-  "any-local-files": "Any local files",
-  "uncommitted-changes": "Uncommitted changes",
-  "tracked-changes": "Edited tracked files",
+  "any-local-files": msg("Any local files"),
+  "uncommitted-changes": msg("Uncommitted changes"),
+  "tracked-changes": msg("Edited tracked files"),
 } as const;
 
 function lastRunSummary(
@@ -306,23 +311,31 @@ function CleanupResults({
                   {entry.reason}
                 </span>
                 <span className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-l border-border/60 pl-3">
-                  <span>Machine</span>
+                  <span>
+                    <T>Machine</T>
+                  </span>
                   <span className="text-foreground/80">{environmentLabel}</span>
                   {entry.projectPath && (
                     <>
-                      <span>Project</span>
+                      <span>
+                        <T>Project</T>
+                      </span>
                       <code className="text-foreground/80">{entry.projectPath}</code>
                     </>
                   )}
                   {entry.path && (
                     <>
-                      <span>Folder</span>
+                      <span>
+                        <T>Folder</T>
+                      </span>
                       <code className="text-foreground/80">{entry.path}</code>
                     </>
                   )}
                   {entry.threadTitle && (
                     <>
-                      <span>Thread</span>
+                      <span>
+                        <T>Thread</T>
+                      </span>
                       <span>{entry.threadTitle}</span>
                     </>
                   )}
@@ -349,12 +362,12 @@ function CleanupResults({
       })}
       {report.omittedCount > 0 && (
         <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-          {environmentLabel}: {report.omittedCount.toLocaleString()} more results.
+          {environmentLabel}: {report.omittedCount.toLocaleString()} <T>more results.</T>
         </p>
       )}
       {report.entries.length === 0 && report.omittedCount === 0 && (
         <p className="px-3 py-2.5 text-xs text-muted-foreground sm:px-4">
-          {environmentLabel}: Nothing needed cleanup.
+          {environmentLabel}: <T>Nothing needed cleanup.</T>
         </p>
       )}
     </>
@@ -371,6 +384,7 @@ const storageCleanupPermissionsAtom = environmentAtomList(
 );
 
 function CleanupSection() {
+  const m = useMessages();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
   const { connectedEnvironments } = useSettingsScope();
@@ -415,20 +429,51 @@ function CleanupSection() {
   const summaries = supported.map((environment) => {
     const query = state.find((entry) => entry.environmentId === environment.environmentId);
     const report = query?.report ?? null;
+    const relativeTime = report ? formatRelativeTime(report.finishedAt, nowMs) : null;
+    const timeLabel = relativeTime
+      ? relativeTime.suffix
+        ? m("{value} ago", { value: relativeTime.value })
+        : m("just now")
+      : "";
+    const failedCount = report?.counts.failed ?? 0;
     return {
       environment,
       report,
       label: settingsScopeEnvironmentLabel(environment, connectedEnvironments),
       counts: report
-        ? `${report.counts.removed} removed, ${report.counts.kept} kept${report.counts.failed > 0 ? `, ${report.counts.failed} failed` : ""}`
+        ? failedCount > 0
+          ? m("{removed} removed, {kept} kept, {failed} failed", {
+              removed: report.counts.removed,
+              kept: report.counts.kept,
+              failed: failedCount,
+            })
+          : m("{removed} removed, {kept} kept", {
+              removed: report.counts.removed,
+              kept: report.counts.kept,
+            })
         : "",
       description: report
-        ? `Last run ${formatRelativeTimeLabel(report.finishedAt, nowMs)}. ${formatBytes(report.bytesFreed)} recovered.${report.counts.failed > 0 ? ` ${report.counts.failed} ${report.counts.failed === 1 ? "item" : "items"} couldn't be removed.` : ""}`
+        ? failedCount > 0
+          ? failedCount === 1
+            ? m("Last run {time}. Recovered {bytes}. {failed} item couldn't be removed.", {
+                time: timeLabel,
+                bytes: formatBytes(report.bytesFreed),
+                failed: failedCount,
+              })
+            : m("Last run {time}. Recovered {bytes}. {failed} items couldn't be removed.", {
+                time: timeLabel,
+                bytes: formatBytes(report.bytesFreed),
+                failed: failedCount,
+              })
+          : m("Last run {time}. Recovered {bytes}.", {
+              time: timeLabel,
+              bytes: formatBytes(report.bytesFreed),
+            })
         : query?.failed
-          ? "Could not load the last run."
+          ? m("Could not load the last run.")
           : query?.loading
-            ? "Loading last run…"
-            : "Cleanup hasn't run yet.",
+            ? m("Loading last run…")
+            : m("Cleanup hasn't run yet."),
     };
   });
   const deleteNow = async () => {
@@ -460,14 +505,14 @@ function CleanupSection() {
     ).finally(() => setPending(false));
   };
   return (
-    <SettingsSection id="storage-cleanup" title="Cleanup" variant="plain">
+    <SettingsSection id="storage-cleanup" title={msg("Cleanup")} variant="plain">
       <SettingsGroup>
         <SettingsRow
           {...searchableSetting("storage-delete-now")}
           description={
             <span>
               {!hasRules
-                ? "Turn on a cleanup rule to use this."
+                ? m(msg("Turn on a cleanup rule to use this."))
                 : summaries.map(({ environment, label, description }) => (
                     <span key={environment.environmentId} className="block">
                       {supported.length > 1 ? `${label}: ` : ""}
@@ -483,7 +528,7 @@ function CleanupSection() {
               disabled={pending || !hasRules || !state.some((entry) => entry.allowed)}
               onClick={() => void deleteNow()}
             >
-              {pending ? "Deleting…" : "Delete now"}
+              {pending ? m(msg("Deleting…")) : m(msg("Delete now"))}
             </Button>
           }
         />
@@ -491,7 +536,7 @@ function CleanupSection() {
       {summaries.some(({ report }) => report !== null) && (
         <FoldedSettingsSection
           id="storage-cleanup-last-run"
-          title="Last run"
+          title={m(msg("Last run"))}
           headerPlacement="inside"
           summary={lastRunSummary(
             summaries.filter(({ report }) => report !== null),
@@ -546,6 +591,7 @@ function StorageCleanupScopeNotice() {
 }
 
 export function WorktreeCleanupSection() {
+  const m = useMessages();
   const { scope, environments, connectedEnvironments, targets, target } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
@@ -588,7 +634,7 @@ export function WorktreeCleanupSection() {
     )
   ) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection id="storage-worktrees" title={msg("Cleanup")} variant="plain">
         <SettingsScopeNotice inline target="all">
           Update the selected machines to configure project worktree cleanup.
         </SettingsScopeNotice>
@@ -597,21 +643,21 @@ export function WorktreeCleanupSection() {
   }
   if (!supportsStorageCleanup(connectedEnvironments)) {
     return (
-      <SettingsSection id="storage-worktrees" title="Cleanup" variant="plain">
+      <SettingsSection id="storage-worktrees" title={msg("Cleanup")} variant="plain">
         <StorageCleanupScopeNotice />
       </SettingsSection>
     );
   }
 
   return (
-    <SettingsSection id="storage-worktrees" title="Cleanup">
+    <SettingsSection id="storage-worktrees" title={msg("Cleanup")}>
       <>
         {isProjectScope && (
           <SettingsRow
-            title="Automatic worktree cleanup"
+            title={msg("Automatic worktree cleanup")}
             description={
               mode === "off"
-                ? "Keep this project's worktrees until you delete them manually."
+                ? msg("Keep this project's worktrees until you delete them manually.")
                 : mode === "custom"
                   ? "Use these rules for this project."
                   : "Use each machine's worktree cleanup settings."
@@ -629,21 +675,21 @@ export function WorktreeCleanupSection() {
                     updateSettings({ worktreeCleanup: { mode: "custom", rules: {} } });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Automatic worktree cleanup">
+                <SelectTrigger size="sm" aria-label={m(msg("Automatic worktree cleanup"))}>
                   <SelectValue>
                     {mixedModes
-                      ? "Mixed"
+                      ? m(msg("Mixed"))
                       : mode === "inherit"
-                        ? "Inherit"
+                        ? m(msg("Inherit"))
                         : mode === "off"
-                          ? "Off"
-                          : "Custom"}
+                          ? m(msg("Off"))
+                          : m(msg("Custom"))}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="inherit">Inherit</SelectItem>
-                  <SelectItem value="off">Off</SelectItem>
-                  <SelectItem value="custom">Custom</SelectItem>
+                  <SelectItem value="inherit">{m(msg("Inherit"))}</SelectItem>
+                  <SelectItem value="off">{m(msg("Off"))}</SelectItem>
+                  <SelectItem value="custom">{m(msg("Custom"))}</SelectItem>
                 </SelectPopup>
               </Select>
             }
@@ -652,10 +698,12 @@ export function WorktreeCleanupSection() {
         {(!isProjectScope || (!mixedModes && mode === "custom")) && (
           <>
             <SettingsRow
-              title="Delete worktrees with deleted threads"
+              title={msg("Delete worktrees with deleted threads")}
               status={ruleStatus("worktreeOnDelete")}
               managedPaths={lockablePath("worktreeOnDelete")}
-              description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
+              description={msg(
+                "Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept.",
+              )}
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -666,10 +714,12 @@ export function WorktreeCleanupSection() {
               }
             />
             <SettingsRow
-              title="Delete merged worktrees"
+              title={msg("Delete merged worktrees")}
               status={ruleStatus("worktreeOnMerge")}
               managedPaths={lockablePath("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
+              description={msg(
+                "Remove worktrees whose pull request is merged and whose commits are included in the default branch.",
+              )}
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -680,14 +730,16 @@ export function WorktreeCleanupSection() {
               }
             />
             <SettingsRow
-              title="Delete inactive worktrees"
+              title={msg("Delete inactive worktrees")}
               status={ruleStatus("worktreeAfterDays")}
               managedPaths={lockablePath("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
+              description={msg(
+                "Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept.",
+              )}
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
-                  label="Delete inactive worktrees"
+                  label={msg("Delete inactive worktrees")}
                   value={settings.worktreeAfterDays}
                   onChange={(worktreeAfterDays, onFailed) =>
                     updateWorktree({ worktreeAfterDays }, { onFailed })
@@ -706,7 +758,7 @@ export function WorktreeCleanupSection() {
                     true,
                 ) && (
                   <SettingsRow
-                    title="Delete settled worktrees"
+                    title={msg("Delete settled worktrees")}
                     managedPaths={lockablePath("worktreeSettledAfterDays")}
                     status={[
                       ruleStatus("worktreeSettledAfterDays"),
@@ -716,11 +768,13 @@ export function WorktreeCleanupSection() {
                     ]
                       .filter(Boolean)
                       .join(". ")}
-                    description="Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept."
+                    description={msg(
+                      "Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept.",
+                    )}
                     serverScoped={!isProjectScope}
                     control={
                       <RetentionControl
-                        label="Delete settled worktrees"
+                        label={msg("Delete settled worktrees")}
                         value={settings.worktreeSettledAfterDays}
                         minimum={0}
                         onChange={(worktreeSettledAfterDays, onFailed) =>
@@ -731,10 +785,10 @@ export function WorktreeCleanupSection() {
                   />
                 )}
               <SettingsRow
-                title="Delete unchanged worktrees"
+                title={msg("Delete unchanged worktrees")}
                 status={ruleStatus("worktreeUnchanged")}
                 managedPaths={lockablePath("worktreeUnchanged")}
-                description="Remove worktrees with no commits beyond the default branch."
+                description={msg("Remove worktrees with no commits beyond the default branch.")}
                 serverScoped={!isProjectScope}
                 control={
                   <Switch
@@ -754,10 +808,12 @@ export function WorktreeCleanupSection() {
                   managedPaths={lockablePath("worktreeKeepWhen")}
                   description={
                     settings.worktreeKeepWhen === "any-local-files"
-                      ? "Includes ignored files, except node_modules."
+                      ? msg("Includes ignored files, except node_modules.")
                       : settings.worktreeKeepWhen === "tracked-changes"
-                        ? "Deletes untracked and ignored files, including .env."
-                        : "Keeps edits and untracked files. Deletes ignored files, including .env."
+                        ? msg("Deletes untracked and ignored files, including .env.")
+                        : msg(
+                            "Keeps edits and untracked files. Deletes ignored files, including .env.",
+                          )
                   }
                   serverScoped={!isProjectScope}
                   control={
@@ -772,17 +828,24 @@ export function WorktreeCleanupSection() {
                           updateWorktree({ worktreeKeepWhen: next });
                       }}
                     >
-                      <SelectTrigger size="sm" aria-label="Keep worktrees with local changes">
+                      <SelectTrigger
+                        size="sm"
+                        aria-label={m(msg("Keep worktrees with local changes"))}
+                      >
                         <SelectValue>
                           {ruleStatus("worktreeKeepWhen")
-                            ? "Mixed"
-                            : KEEP_WHEN_LABELS[settings.worktreeKeepWhen]}
+                            ? m(msg("Mixed"))
+                            : m(KEEP_WHEN_LABELS[settings.worktreeKeepWhen])}
                         </SelectValue>
                       </SelectTrigger>
                       <SelectPopup align="end" alignItemWithTrigger={false}>
-                        <SelectItem value="any-local-files">Any local files</SelectItem>
-                        <SelectItem value="uncommitted-changes">Uncommitted changes</SelectItem>
-                        <SelectItem value="tracked-changes">Edited tracked files</SelectItem>
+                        <SelectItem value="any-local-files">{m(msg("Any local files"))}</SelectItem>
+                        <SelectItem value="uncommitted-changes">
+                          {m(msg("Uncommitted changes"))}
+                        </SelectItem>
+                        <SelectItem value="tracked-changes">
+                          {m(msg("Edited tracked files"))}
+                        </SelectItem>
                       </SelectPopup>
                     </Select>
                   }
@@ -798,6 +861,7 @@ export function WorktreeCleanupSection() {
 
 /** Retention for logs and captures, and the manual cleanup run, which covers worktrees too. */
 export function StorageCleanupSections() {
+  const m = useMessages();
   const { scope, connectedEnvironments, targets } = useSettingsScope();
   const scopedSettings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -819,11 +883,11 @@ export function StorageCleanupSections() {
   const settledLogsStatus = useDebouncedValue(`${targetIdsKey}:${logsMixed}`, 300);
   const artifactsStatus =
     targets.length > 1 && settledArtifactsStatus === `${targetIdsKey}:true`
-      ? "Mixed across selected machines"
+      ? m(msg("Mixed across selected machines"))
       : undefined;
   const logsStatus =
     targets.length > 1 && settledLogsStatus === `${targetIdsKey}:true`
-      ? "Mixed across selected machines"
+      ? m(msg("Mixed across selected machines"))
       : undefined;
   if (scope.kind === "project" || scope.kind === "checkout") return null;
   const update = (patch: Partial<StorageCleanupSettings>, options: SaveOptions) =>
@@ -840,7 +904,7 @@ export function StorageCleanupSections() {
     return (
       <>
         {databaseStorageNotice}
-        <SettingsSection id="storage-artifacts" title="Artifacts and logs" variant="plain">
+        <SettingsSection id="storage-artifacts" title={msg("Artifacts and logs")} variant="plain">
           <StorageCleanupScopeNotice />
         </SettingsSection>
       </>
@@ -850,13 +914,15 @@ export function StorageCleanupSections() {
   return (
     <>
       {databaseStorageNotice}
-      <SettingsSection id="storage-artifacts" title="Artifacts and logs">
+      <SettingsSection id="storage-artifacts" title={msg("Artifacts and logs")}>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old browser artifacts"
+            title={msg("Delete old browser artifacts")}
             status={artifactsStatus}
             managedPaths={["storageCleanup.browserArtifactsAfterDays"]}
-            description="Delete saved browser captures after this many days. Older capture links will no longer open."
+            description={msg(
+              "Delete saved browser captures after this many days. Older capture links will no longer open.",
+            )}
             serverScoped
             control={
               <RetentionControl
@@ -871,10 +937,12 @@ export function StorageCleanupSections() {
         </AnimatedHeight>
         <AnimatedHeight>
           <SettingsRow
-            title="Delete old rotated logs"
+            title={msg("Delete old rotated logs")}
             status={logsStatus}
             managedPaths={["storageCleanup.logsAfterDays"]}
-            description="Delete inactive rotated log files after this many days. Current logs are kept."
+            description={msg(
+              "Delete inactive rotated log files after this many days. Current logs are kept.",
+            )}
             serverScoped
             control={
               <RetentionControl

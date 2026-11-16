@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
@@ -370,7 +371,9 @@ function BrowserViewportSetting({ disabled }: { readonly disabled: boolean }) {
     <SettingsRow
       {...searchableSetting("browser-default-viewport")}
       devicePreference
-      description="Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar."
+      description={msg(
+        "Tab size for you and agents. Fill fits the panel; other sizes show the device toolbar.",
+      )}
       resetAction={
         !disabled && viewport._tag !== DEFAULT_BROWSER_VIEWPORT._tag ? (
           <SettingResetButton
@@ -479,7 +482,7 @@ function BrowserZoomSetting({ disabled }: { readonly disabled: boolean }) {
     <SettingsRow
       {...searchableSetting("browser-default-zoom")}
       devicePreference
-      description="Page zoom applied to new browser tabs."
+      description={msg("Page zoom applied to new browser tabs.")}
       resetAction={
         !disabled && zoomFactor !== DEFAULT_PREVIEW_ZOOM_FACTOR ? (
           <SettingResetButton
@@ -523,7 +526,9 @@ function BrowserAppearanceSetting({ disabled }: { readonly disabled: boolean }) 
     <SettingsRow
       {...searchableSetting("browser-default-appearance")}
       devicePreference
-      description="The color scheme pages are told to prefer. System follows your OS setting."
+      description={msg(
+        "The color scheme pages are told to prefer. System follows your OS setting.",
+      )}
       resetAction={
         !disabled && appearance !== DEFAULT_PREVIEW_APPEARANCE ? (
           <SettingResetButton
@@ -571,7 +576,9 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
       <SettingsRow
         {...searchableSetting("browser-recording-key-presses")}
         devicePreference
-        description="Show pressed keys and shortcuts in new recordings. Password fields are excluded."
+        description={msg(
+          "Show pressed keys and shortcuts in new recordings. Password fields are excluded.",
+        )}
         control={
           <Switch
             disabled={disabled}
@@ -586,7 +593,7 @@ function BrowserRecordingInputSettings({ disabled }: { readonly disabled: boolea
       <SettingsRow
         {...searchableSetting("browser-recording-mouse-presses")}
         devicePreference
-        description="Highlight mouse presses and held buttons in new recordings."
+        description={msg("Highlight mouse presses and held buttons in new recordings.")}
         control={
           <Switch
             disabled={disabled}
@@ -610,7 +617,7 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
     <SettingsRow
       {...searchableSetting("browser-recording-frame-rate")}
       devicePreference
-      description="Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother."
+      description={msg("Maximum recording rate. 30 fps saves CPU and storage; 60 fps is smoother.")}
       resetAction={
         !disabled && frameRate !== DEFAULT_BROWSER_RECORDING_FRAME_RATE ? (
           <SettingResetButton
@@ -653,11 +660,12 @@ function BrowserRecordingFrameRateSetting({ disabled }: { readonly disabled: boo
 }
 
 const LINK_TARGET_LABELS: Readonly<Record<BrowserLinkTarget, string>> = {
-  system: "Your default browser",
-  app: "T3 Code",
+  system: msg("Your default browser"),
+  app: msg("T3 Code"),
 };
 
 function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) {
+  const m = useMessages();
   const linkTarget = useClientSettings((settings) => settings.browserLinkTarget);
   const updateSettings = useUpdateScopedSettings();
 
@@ -665,7 +673,9 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
     <SettingsRow
       {...searchableSetting("browser-link-target")}
       devicePreference
-      description="Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way."
+      description={msg(
+        "Where links in the chat and terminal open. Hold ⌘ or Ctrl while clicking a link to open it in your default browser either way.",
+      )}
       resetAction={
         !disabled && linkTarget !== DEFAULT_BROWSER_LINK_TARGET ? (
           <SettingResetButton
@@ -685,12 +695,12 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
           }}
         >
           <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Open links in">
-            <SelectValue>{LINK_TARGET_LABELS[linkTarget]}</SelectValue>
+            <SelectValue>{m(LINK_TARGET_LABELS[linkTarget])}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {(Object.keys(LINK_TARGET_LABELS) as ReadonlyArray<BrowserLinkTarget>).map((target) => (
               <SelectItem hideIndicator key={target} value={target}>
-                {LINK_TARGET_LABELS[target]}
+                {m(LINK_TARGET_LABELS[target])}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -707,10 +717,11 @@ const SEARCH_ENGINE_LABELS: Readonly<Record<BrowserSearchEngine, string>> = {
   brave: "Brave Search",
   kagi: "Kagi",
   ecosia: "Ecosia",
-  custom: "Custom",
+  custom: msg("Custom"),
 };
 
 function BrowserSearchEngineSetting() {
+  const m = useMessages();
   const engine = useClientSettings((settings) => settings.browserSearchEngine);
   const customUrl = useClientSettings((settings) => settings.browserCustomSearchUrl);
   const updateSettings = useUpdateScopedSettings();
@@ -720,7 +731,7 @@ function BrowserSearchEngineSetting() {
       <SettingsRow
         {...searchableSetting("browser-search-engine")}
         devicePreference
-        description="What the address bar searches when you type something that isn't a URL."
+        description={msg("What the address bar searches when you type something that isn't a URL.")}
         resetAction={
           engine !== DEFAULT_BROWSER_SEARCH_ENGINE || customUrl !== "" ? (
             <SettingResetButton
@@ -745,12 +756,12 @@ function BrowserSearchEngineSetting() {
             }}
           >
             <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Search engine">
-              <SelectValue>{SEARCH_ENGINE_LABELS[engine]}</SelectValue>
+              <SelectValue>{m(SEARCH_ENGINE_LABELS[engine])}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {BrowserSearchEngine.literals.map((literal) => (
                 <SelectItem hideIndicator key={literal} value={literal}>
-                  {SEARCH_ENGINE_LABELS[literal]}
+                  {m(SEARCH_ENGINE_LABELS[literal])}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -759,13 +770,17 @@ function BrowserSearchEngineSetting() {
       />
       {engine === "custom" ? (
         <SettingsRow
-          title="Custom search URL"
+          title={msg("Custom search URL")}
           devicePreference
-          description="Use %s where the search terms go."
+          description={msg("Use %s where the search terms go.")}
           status={
             isValidSearchUrlTemplate(customUrl)
               ? undefined
-              : "Enter an http or https URL containing %s. Searches use DuckDuckGo until then."
+              : m(
+                  msg(
+                    "Enter an http or https URL containing %s. Searches use DuckDuckGo until then.",
+                  ),
+                )
           }
           control={
             <DraftInput
@@ -794,7 +809,9 @@ export function PullRequestLinksOpenInAppSetting() {
   return (
     <SettingsRow
       {...searchableSetting("pull-request-links-open-in-app")}
-      description="Clicking a pull request link opens it in T3 Code. Turn off to open pull request links like any other link, on your git host."
+      description={msg(
+        "Clicking a pull request link opens it in T3 Code. Turn off to open pull request links like any other link, on your git host.",
+      )}
       resetAction={
         openInApp ? null : (
           <SettingResetButton
@@ -826,7 +843,7 @@ function DeviceIntegrationSettings() {
 
   return (
     <>
-      <SettingsSection id="devices" title="Devices">
+      <SettingsSection id="devices" title={msg("Devices")}>
         <DeviceIntegrationControls
           key={`${environmentId}:${JSON.stringify(search)}`}
           environmentId={environmentId}
@@ -851,6 +868,7 @@ function DeviceIntegrationControls({
   enabled: boolean;
   agentAccessEnabled: boolean;
 }) {
+  const m = useMessages();
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -963,7 +981,7 @@ function DeviceIntegrationControls({
         settingKeys={["enableDeviceSupport"]}
         description={
           <>
-            Open simulators and emulators in the Device panel. Hub:{" "}
+            {m(msg("Open simulators and emulators in the Device panel. Hub:"))}{" "}
             <DeviceToolVersions
               action={versionActions("hub")}
               kind="hub"
@@ -1002,7 +1020,7 @@ function DeviceIntegrationControls({
         settingKeys={["enableAgentDeviceAccess"]}
         description={
           <>
-            New agent sessions can open and drive these devices. agent-device:{" "}
+            {m(msg("New agent sessions can open and drive these devices. agent-device:"))}{" "}
             <DeviceToolVersions
               action={versionActions("agent")}
               kind="agent"
@@ -1055,8 +1073,10 @@ function AgentBrowserAccessSetting() {
       {...searchableSetting("agent-browser-access")}
       description={
         isProjectScope
-          ? "Allow agents in this project to use the shared browser. Applies when the agent session next starts."
-          : "Allow agents to use the shared browser. Projects can override it."
+          ? msg(
+              "Allow agents in this project to use the shared browser. Applies when the agent session next starts.",
+            )
+          : msg("Allow agents to use the shared browser. Projects can override it.")
       }
       resetAction={
         settings.enableAgentBrowserAccess !== DEFAULT_SERVER_SETTINGS.enableAgentBrowserAccess ? (
@@ -1090,7 +1110,9 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
     <SettingsRow
       {...searchableSetting("browser-auto-show-floating-preview")}
       devicePreference
-      description="Show the floating preview when an agent opens a browser or device unless the agent says otherwise."
+      description={msg(
+        "Show the floating preview when an agent opens a browser or device unless the agent says otherwise.",
+      )}
       resetAction={
         !disabled && autoShow !== DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW ? (
           <SettingResetButton
@@ -1118,6 +1140,7 @@ function BrowserAutoShowFloatingPreviewSetting({ disabled }: { readonly disabled
 }
 
 function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
+  const m = useMessages();
   const userProfiles = useClientSettings((settings) => settings.browserProfiles);
   const defaultProfileId = useClientSettings((settings) => settings.browserDefaultProfileId);
   const settingsHydrated = useClientSettingsHydrated();
@@ -1313,7 +1336,9 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
   return (
     <SettingsRow
       {...searchableSetting("browser-profiles")}
-      description="Profiles separate cookies and logins. Incognito data is cleared when the app closes."
+      description={msg(
+        "Profiles separate cookies and logins. Incognito data is cleared when the app closes.",
+      )}
       control={
         <Menu onOpenChange={(open) => open && loadSources()}>
           <MenuTrigger
@@ -1326,27 +1351,27 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             }
           >
             <PlusIcon />
-            Add profile
+            {m(msg("Add profile"))}
           </MenuTrigger>
           <MenuPopup align="end">
             <MenuItem
               disabled={!settingsHydrated || atProfileLimit}
-              onClick={() => createProfile("New profile")}
+              onClick={() => createProfile(m(msg("New profile")))}
             >
-              Blank profile
+              {m(msg("Blank profile"))}
             </MenuItem>
             {atProfileLimit ? (
-              <MenuItem disabled>You&rsquo;ve reached the profile limit</MenuItem>
+              <MenuItem disabled>{m(msg("You’ve reached the profile limit"))}</MenuItem>
             ) : null}
             <MenuSeparator />
             <MenuGroup>
-              <MenuGroupLabel>Import from</MenuGroupLabel>
+              <MenuGroupLabel>{m(msg("Import from"))}</MenuGroupLabel>
               {cookieImportDenial !== undefined ? (
                 <MenuItem disabled>{cookieImportDenial}</MenuItem>
               ) : sources === null ? (
-                <MenuItem disabled>Looking for browsers…</MenuItem>
+                <MenuItem disabled>{m(msg("Looking for browsers…"))}</MenuItem>
               ) : importableSources.length === 0 ? (
-                <MenuItem disabled>No supported browsers found</MenuItem>
+                <MenuItem disabled>{m(msg("No supported browsers found"))}</MenuItem>
               ) : (
                 <>
                   {importableSources.map((source) => (
@@ -1592,15 +1617,16 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
 }
 
 export function BrowserSettingsPanel() {
+  const m = useMessages();
   const desktopOnly = !isElectron;
-  const desktopOnlyMessage = desktopOnly ? "Only available in the desktop app." : undefined;
+  const desktopOnlyMessage = desktopOnly ? m(msg("Only available in the desktop app.")) : undefined;
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="browser-agent-access" title="Agent access">
+      <SettingsSection id="browser-agent-access" title={msg("Agent access")}>
         <AgentBrowserAccessSetting />
       </SettingsSection>
-      <SettingsSection id="browser" title="Browsing">
+      <SettingsSection id="browser" title={msg("Browsing")}>
         <SettingsUnavailableGroup message={desktopOnlyMessage}>
           <BrowserProfilesSetting disabled={desktopOnly} />
           <BrowserLinkTargetSetting disabled={desktopOnly} />
@@ -1622,7 +1648,7 @@ export function BrowserSettingsPanel() {
           </SettingsUnavailableGroup>
         </AdvancedSettings>
       </SettingsSection>
-      <SettingsSection id="browser-recordings" title="Recordings">
+      <SettingsSection id="browser-recordings" title={msg("Recordings")}>
         <SettingsUnavailableGroup message={desktopOnlyMessage}>
           <BrowserRecordingFrameRateSetting disabled={desktopOnly} />
           <BrowserRecordingInputSettings disabled={desktopOnly} />

@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { ChevronRightIcon, ExternalLinkIcon, SearchIcon } from "lucide-react";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
@@ -149,6 +150,7 @@ function LicenseHeaderAction({
   filteredCount: number;
   totalCount: number;
 }) {
+  const m = useMessages();
   if (!searchOpen) {
     return (
       <div className="flex items-center gap-1.5">
@@ -157,7 +159,7 @@ function LicenseHeaderAction({
           <TooltipTrigger
             render={
               <Button
-                aria-label="Search open-source licenses"
+                aria-label={m(msg("Search open-source licenses"))}
                 onClick={() => onSearchOpenChange(true)}
                 size="icon-micro"
                 type="button"
@@ -167,7 +169,7 @@ function LicenseHeaderAction({
               </Button>
             }
           />
-          <TooltipPopup side="top">Search licenses</TooltipPopup>
+          <TooltipPopup side="top">{m(msg("Search licenses"))}</TooltipPopup>
         </Tooltip>
       </div>
     );
@@ -183,7 +185,7 @@ function LicenseHeaderAction({
           <SearchIcon aria-hidden className="size-3" />
         </InputGroupAddon>
         <InputGroupInput
-          aria-label="Search open-source licenses"
+          aria-label={m(msg("Search open-source licenses"))}
           autoFocus
           onBlur={() => {
             if (query.length === 0) onSearchOpenChange(false);
@@ -195,7 +197,7 @@ function LicenseHeaderAction({
             onQueryChange("");
             onSearchOpenChange(false);
           }}
-          placeholder="Search licenses"
+          placeholder={m(msg("Search licenses"))}
           size="sm"
           type="search"
           value={query}
@@ -206,22 +208,26 @@ function LicenseHeaderAction({
 }
 
 function LicenseManifestError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const m = useMessages();
   return (
     <div className="flex flex-col items-start gap-3 px-3 py-5 sm:px-4">
       <div className="flex flex-col gap-1">
-        <h3 className="text-sm font-medium text-foreground">Open-source notices are unavailable</h3>
+        <h3 className="text-sm font-medium text-foreground">
+          {m(msg("Open-source notices are unavailable"))}
+        </h3>
         <p className="max-w-[70ch] text-pretty text-xs leading-normal text-muted-foreground/80">
           {message}
         </p>
       </div>
       <Button type="button" size="xs" variant="outline" onClick={onRetry}>
-        Try again
+        {m(msg("Try again"))}
       </Button>
     </div>
   );
 }
 
 export function OpenSourceLicensesPanel() {
+  const m = useMessages();
   const result = useAtomValue(licenseManifestAtom);
   const retry = useAtomRefresh(licenseManifestAtom);
   const [query, setQuery] = useState("");
@@ -241,7 +247,7 @@ export function OpenSourceLicensesPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Third-party notices"
+        title={msg("Third-party notices")}
         headerAction={
           manifest ? (
             <LicenseHeaderAction
@@ -271,7 +277,7 @@ export function OpenSourceLicensesPanel() {
               })
             ) : (
               <p className="px-3 py-8 text-center text-sm/6 text-muted-foreground sm:px-4">
-                No licenses match that search.
+                {m(msg("No licenses match that search."))}
               </p>
             )}
           </div>
@@ -279,7 +285,7 @@ export function OpenSourceLicensesPanel() {
           <LicenseManifestError message={errorMessage} onRetry={retry} />
         ) : (
           <p className="px-3 py-5 text-sm/6 text-muted-foreground sm:px-4">
-            Loading open-source notices…
+            {m(msg("Loading open-source notices…"))}
           </p>
         )}
       </SettingsSection>

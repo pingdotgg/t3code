@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -53,8 +54,8 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
     >
       <SettingsRow
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
-        title="Environment"
-        description="Device that runs this provider."
+        title={msg("Environment")}
+        description={msg("Device that runs this provider.")}
         control={
           <div className="flex min-w-0 flex-col gap-2 sm:items-end">
             <span className="text-muted-foreground [overflow-wrap:anywhere]">
@@ -69,11 +70,14 @@ export function ProviderSetupSection(props: ProviderSetupSectionProps) {
         }
       />
       {props.readOnly ? (
-        <SettingsRow title="Setup unavailable" description="Provider setup is read-only." />
+        <SettingsRow
+          title={msg("Setup unavailable")}
+          description={msg("Provider setup is read-only.")}
+        />
       ) : props.provider?.setup === undefined ? (
         <SettingsRow
-          title="Update required"
-          description="Update this environment to manage Antigravity."
+          title={msg("Update required")}
+          description={msg("Update this environment to manage Antigravity.")}
         />
       ) : (
         <ProviderSetupActions
@@ -193,9 +197,9 @@ function ProviderSetupActions({
         {pendingLabel ? `${pendingLabel}.` : null}
       </p>
       <SettingsRow
-        title="Runtime"
+        title={msg("Runtime")}
         className="@max-lg/setup:[&>div:first-child]:flex @max-lg/setup:[&>div:first-child]:items-stretch @max-lg/setup:[&>div:first-child]:gap-3"
-        description="Install and manage Antigravity."
+        description={msg("Install and manage Antigravity.")}
         status={
           <div className="space-y-2">
             {usesCustomBinary ? (

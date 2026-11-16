@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { Spinner } from "~/components/ui/spinner";
 
 import {
@@ -84,6 +85,60 @@ import {
   getProviderSummary,
   getProviderVersionLabel,
 } from "./providerStatus";
+
+const PROVIDER_STATUS_HEADLINE_MESSAGES = {
+  "Checking provider status": msg("Checking provider status"),
+  Disabled: msg("Disabled"),
+  "Not found": msg("Not found"),
+  "Not authenticated": msg("Not authenticated"),
+  Installed: msg("Installed"),
+  "Sign-in not checked": msg("Sign-in not checked"),
+  "Needs attention": msg("Needs attention"),
+  Unavailable: msg("Unavailable"),
+  Authenticated: msg("Authenticated"),
+  Available: msg("Available"),
+  "Custom API endpoint": msg("Custom API endpoint"),
+} as const;
+
+const PROVIDER_STATUS_DETAIL_MESSAGES = {
+  Incompatible: msg("Incompatible"),
+  Unsupported: msg("Unsupported"),
+  "Limited support": msg("Limited support"),
+  "Could not start Codex CLI": msg("Could not start Codex CLI"),
+  "Check the Codex CLI binary path in Settings → Providers → Codex on the server.": msg(
+    "Check the Codex CLI binary path in Settings → Providers → Codex on the server.",
+  ),
+  "Installing ChatGPT or Codex desktop may not add codex to PATH.": msg(
+    "Installing ChatGPT or Codex desktop may not add codex to PATH.",
+  ),
+  "Make sure the configured executable exists and can be run.": msg(
+    "Make sure the configured executable exists and can be run.",
+  ),
+} as const;
+
+function providerStatusDetailLabel(detail: string, m: ReturnType<typeof useMessages>): string {
+  const codexCliFailure =
+    /^Could not start Codex CLI \(`([^`]+)`\)\. Check Settings → Providers → Codex → Binary path on the server\. ?(.*)$/.exec(
+      detail,
+    );
+  if (codexCliFailure) {
+    const [_, binaryPath, reason] = codexCliFailure;
+    const explanation =
+      PROVIDER_STATUS_DETAIL_MESSAGES[reason as keyof typeof PROVIDER_STATUS_DETAIL_MESSAGES];
+    return [
+      `${m(PROVIDER_STATUS_DETAIL_MESSAGES["Could not start Codex CLI"])} (${binaryPath}).`,
+      m(
+        PROVIDER_STATUS_DETAIL_MESSAGES[
+          "Check the Codex CLI binary path in Settings → Providers → Codex on the server."
+        ],
+      ),
+      ...(explanation ? [m(explanation)] : []),
+    ].join(" ");
+  }
+  const message =
+    PROVIDER_STATUS_DETAIL_MESSAGES[detail as keyof typeof PROVIDER_STATUS_DETAIL_MESSAGES];
+  return message ? m(message) : detail;
+}
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -355,6 +410,7 @@ export function ProviderEnvironmentSection(props: {
   readonly secretSources?: ReadonlyArray<SecretSource>;
   readonly environmentId?: EnvironmentId | undefined;
 }) {
+  const m = useMessages();
   const [storedDraft, setDraft] = useState(() =>
     seedRowsDraft(props.environment, toEnvironmentDraftRows),
   );
@@ -447,12 +503,12 @@ export function ProviderEnvironmentSection(props: {
 
   return (
     <SettingsRow
-      title="Variables"
-      description="API keys, base URLs, and other per-instance CLI settings."
+      title={msg("Variables")}
+      description={msg("API keys, base URLs, and other per-instance CLI settings.")}
       control={
         <Button type="button" size="sm" variant="outline" onClick={addVariable}>
           <PlusIcon className="size-3" />
-          Add variable
+          {m(msg("Add variable"))}
         </Button>
       }
     >
@@ -777,6 +833,7 @@ export function ProviderInstanceCard({
   secretSources = NO_SECRET_SOURCES,
   projectOverride,
 }: ProviderInstanceCardProps) {
+  const m = useMessages();
   const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const effectiveProvider = liveProvider && { ...liveProvider, enabled };
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
@@ -785,6 +842,14 @@ export function ProviderInstanceCard({
   const summary = enabled
     ? getProviderSummary(effectiveProvider)
     : { headline: "Disabled", detail: null };
+  const translatedHeadline = summary.headline
+    .split(" · ")
+    .map((part) => {
+      const message =
+        PROVIDER_STATUS_HEADLINE_MESSAGES[part as keyof typeof PROVIDER_STATUS_HEADLINE_MESSAGES];
+      return message ? m(message) : part;
+    })
+    .join(" · ");
   const authEmail = liveProvider?.auth.email?.trim();
   const isAuthenticated = enabled && liveProvider?.auth.status === "authenticated";
   const authLabel =
@@ -984,7 +1049,10 @@ export function ProviderInstanceCard({
       <span className={cn("size-1.5 shrink-0 rounded-full", statusStyle.dot)} aria-hidden />
     ) : null;
   const needsAttention = statusKey === "warning" || statusKey === "error";
-  const statusDiagnostic = hasCompatibilityWarning && needsAttention ? summary.detail : null;
+  const statusDiagnostic =
+    hasCompatibilityWarning && needsAttention && summary.detail !== null
+      ? providerStatusDetailLabel(summary.detail, m)
+      : null;
   const inlineStatusDetail = hasCompatibilityWarning
     ? compatibility?.status === "broken"
       ? "Incompatible"
@@ -992,23 +1060,25 @@ export function ProviderInstanceCard({
         ? "Unsupported"
         : "Limited support"
     : summary.detail;
+  const translatedInlineStatusDetail =
+    inlineStatusDetail === null ? null : providerStatusDetailLabel(inlineStatusDetail, m);
   const editorStatusNode =
     isAuthenticated && authEmail ? (
       <>
         {needsAttention ? statusDotNode : null}
-        <span>Authenticated as</span>
+        <span>{m(msg("Authenticated as"))}</span>
         <ProviderAuthEmail email={authEmail} />
-        {authLabel ? <span>· {authLabel}</span> : null}
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+        {authLabel ? <span>· {m(msg(authLabel))}</span> : null}
+        {translatedInlineStatusDetail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {translatedInlineStatusDetail}</span>
         ) : null}
       </>
     ) : (
       <>
         {statusDotNode}
-        <span>{summary.headline}</span>
-        {inlineStatusDetail ? (
-          <span className="min-w-0 [overflow-wrap:anywhere]">· {inlineStatusDetail}</span>
+        <span>{translatedHeadline}</span>
+        {translatedInlineStatusDetail ? (
+          <span className="min-w-0 [overflow-wrap:anywhere]">· {translatedInlineStatusDetail}</span>
         ) : null}
       </>
     );
@@ -1171,8 +1241,10 @@ export function ProviderInstanceCard({
                     `Updating · ${updateProgress}`
                   ) : (
                     <>
-                      {summary.headline}
-                      {needsAttention && inlineStatusDetail ? ` · ${inlineStatusDetail}` : null}
+                      {translatedHeadline}
+                      {needsAttention && translatedInlineStatusDetail
+                        ? ` · ${translatedInlineStatusDetail}`
+                        : null}
                     </>
                   )}
                 </span>
@@ -1295,7 +1367,7 @@ export function ProviderInstanceCard({
     />
   ) : (
     <SettingsRow
-      title="Driver"
+      title={msg("Driver")}
       description={
         <span>
           This instance uses <code className="text-foreground">{String(instance.driver)}</code>,
@@ -1308,9 +1380,9 @@ export function ProviderInstanceCard({
   return (
     <>
       <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
-        <SettingsRow title="Status" status={statusContent} />
+        <SettingsRow title={msg("Status")} status={statusContent} />
         <SettingsRow
-          title="Display name"
+          title={msg("Display name")}
           control={
             <div
               inert={readOnly}
@@ -1341,7 +1413,7 @@ export function ProviderInstanceCard({
       </SettingsSection>
 
       {setup || environmentFields.length > 0 ? (
-        <SettingsSection title="Setup">
+        <SettingsSection title={msg("Setup")}>
           {setup}
           {environmentFields.length > 0 ? (
             <div
@@ -1390,7 +1462,7 @@ export function ProviderInstanceCard({
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
         <SettingsSection
-          title="Runtime"
+          title={msg("Runtime")}
           inert={readOnly}
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
@@ -1400,7 +1472,7 @@ export function ProviderInstanceCard({
       ) : null}
 
       <SettingsSection
-        title="Environment"
+        title={msg("Environment")}
         inert={readOnly || instanceLocks?.wholeEnvironment}
         aria-disabled={readOnly || instanceLocks?.wholeEnvironment || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
@@ -1434,11 +1506,14 @@ export function ProviderInstanceCard({
       ) : null}
 
       {driverOption !== undefined ? (
-        <SettingsSection title="Models">
+        <SettingsSection title={msg("Models")}>
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
-              Model preferences and custom models are saved on the selected environment and shared
-              across connected devices.
+              {m(
+                msg(
+                  "Model preferences and custom models are saved on the selected environment and shared across connected devices.",
+                ),
+              )}
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}

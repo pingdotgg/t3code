@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { EnvironmentId, SecretProviderConfig, SecretProviderId } from "@t3tools/contracts";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -115,8 +116,10 @@ function EnvironmentSecretProviders({
         ) : null}
         {entries.length === 0 ? (
           <SettingsRow
-            title="No secret providers configured."
-            description="Add a 1Password account, then pick it as the source of a provider variable."
+            title={msg("No secret providers configured.")}
+            description={msg(
+              "Add a 1Password account, then pick it as the source of a provider variable.",
+            )}
           />
         ) : (
           entries.map(([id, config]) => {

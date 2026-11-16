@@ -305,11 +305,12 @@ export function sortDesktopPairingLinks(links: ReadonlyArray<ServerPairingLinkRe
 export function summarizeAuthorizedClients(
   sessions: ReadonlyArray<ServerClientSessionRecord>,
   links: ReadonlyArray<ServerPairingLinkRecord>,
+  translate: (source: string) => string = (source) => source,
 ): string {
   const parts = [
-    `${sessions.length} ${sessions.length === 1 ? "client" : "clients"}`,
+    `${sessions.length} ${translate(sessions.length === 1 ? "client" : "clients")}`,
     links.length > 0
-      ? `${links.length} ${links.length === 1 ? "pairing link" : "pairing links"}`
+      ? `${links.length} ${translate(links.length === 1 ? "pairing link" : "pairing links")}`
       : null,
   ];
   return parts.filter((part): part is string => part !== null).join(" · ");

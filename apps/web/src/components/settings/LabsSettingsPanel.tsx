@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
@@ -17,7 +18,7 @@ import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPoli
 export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
-      <SettingsSection id="beta" title="Beta">
+      <SettingsSection id="beta" title={msg("Beta")}>
         <BoringSidebarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
@@ -36,7 +37,9 @@ function BoringSidebarRow() {
   return (
     <SettingsRow
       {...searchableSetting("boring-sidebar")}
-      description="Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders."
+      description={msg(
+        "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+      )}
       control={
         <Switch
           checked={settings.boringSidebarEnabled}
@@ -61,7 +64,9 @@ function BoringSidebarMultilineRow() {
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
       className="px-0 py-2 sm:px-0"
-      description="Show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description={msg(
+        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+      )}
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}
@@ -77,6 +82,7 @@ function BoringSidebarMultilineRow() {
 
 /** Signed out of T3 Connect, the row offers to sign in instead of its switch. */
 function GuestLinksRowWithSignIn() {
+  const m = useMessages();
   const { isSignedIn } = useAuth();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // `isSignedIn` is undefined until Clerk loads.
@@ -84,10 +90,12 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description={msg(
+        "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+      )}
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
-          Sign in
+          {m(msg("Sign in"))}
         </Button>
       }
     />
@@ -95,6 +103,7 @@ function GuestLinksRowWithSignIn() {
 }
 
 function GuestLinksRow() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const scope = useOptionalSettingsScope();
@@ -115,12 +124,15 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
-          Share a thread with a guest who watches it live in a browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
+          {m(
+            msg(
+              "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in",
+            ),
+          )}{" "}
           <Link to="/settings/access" className="underline underline-offset-2">
-            Sharing & access
+            {m(msg("Sharing & access"))}
           </Link>
-          . Turning it off stops every guest link.
+          {m(msg(". Turning it off stops every guest link."))}
         </>
       }
       control={
@@ -136,6 +148,7 @@ function GuestLinksRow() {
 }
 
 function LinkedEnvironmentsRow() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
@@ -145,12 +158,15 @@ function LinkedEnvironmentsRow() {
       settingKeys={["linkedEnvironmentsEnabled"]}
       description={
         <>
-          Let agents here work on your other machines, and theirs here. Turn it on for each machine,
-          then link them in{" "}
+          {m(
+            msg(
+              "Let agents here work on your other machines, and theirs here. Turn it on for each machine, then link them in",
+            ),
+          )}{" "}
           <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
+            {m(msg("Connections"))}
           </Link>
-          . While off, nothing new starts over a link; running tasks finish.
+          {m(msg(". While off, nothing new starts over a link; running tasks finish."))}
         </>
       }
       control={
@@ -175,7 +191,9 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart."
+      description={msg(
+        "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+      )}
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}
@@ -191,6 +209,7 @@ function PromptSuggestionsRow() {
 }
 
 function SimlockHostsRow() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   return (
@@ -200,20 +219,20 @@ function SimlockHostsRow() {
       settingKeys={["simlockDeviceHostsEnabled"]}
       description={
         <>
-          Let the Device panel lease simulators and emulators from your own{" "}
+          {m(msg("Let the Device panel lease simulators and emulators from your own"))}{" "}
           <a
             href="https://incubator.callstack.com/simlock/"
             target="_blank"
             rel="noreferrer"
             className="underline underline-offset-2"
           >
-            Simlock
+            {m(msg("Simlock"))}
           </a>{" "}
-          pool, added in{" "}
+          {m(msg("pool, added in"))}{" "}
           <Link to="/settings/devices" className="underline underline-offset-2">
-            Devices
+            {m(msg("Devices"))}
           </Link>
-          . An alpha that may change or break. T3 Code never installs Simlock.
+          {m(msg(". An alpha that may change or break. T3 Code never installs Simlock."))}
         </>
       }
       control={
@@ -250,7 +269,9 @@ function FastWorktreeCheckoutRow() {
       serverScoped
       {...searchableSetting("worktree-fast-checkout")}
       settingKeys={["fastWorktreeCheckout"]}
-      description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+      description={msg(
+        "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+      )}
       control={
         <ScopedSwitch
           settingKeys={["fastWorktreeCheckout"]}

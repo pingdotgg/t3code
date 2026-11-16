@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { PermissionChecklist, PermissionContinueButton } from "../permissions/PermissionChecklist";
 import { usePermissionStatus } from "../permissions/usePermissionStatus";
 import type { BrowserImportSource } from "@t3tools/contracts";
@@ -378,7 +379,7 @@ function ConfigureStep({
               <SelectableTile
                 selected={target.kind === "new"}
                 title="New profile"
-                subtitle="Created for these cookies"
+                subtitle={msg("Created for these cookies")}
                 onSelect={() => onTargetChange({ kind: "new" })}
               />
             ) : null}
@@ -387,7 +388,7 @@ function ConfigureStep({
                 key={profile.id}
                 selected={target.kind === "existing" && target.profileId === profile.id}
                 title={profile.name}
-                subtitle="Existing profile"
+                subtitle={msg("Existing profile")}
                 onSelect={() => onTargetChange({ kind: "existing", profileId: profile.id })}
               />
             ))}

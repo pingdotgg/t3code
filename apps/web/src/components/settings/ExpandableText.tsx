@@ -1,7 +1,14 @@
+import { msg, useMessages } from "gt-react";
 import { InlineButton } from "../ui/button";
 import { useId, useState } from "react";
 
 import { cn } from "../../lib/utils";
+
+const EXPANDABLE_TEXT_MESSAGES = {
+  "Show full error": msg("Show full error"),
+  "Show full message": msg("Show full message"),
+  "Show less": msg("Show less"),
+} as const;
 
 export function ExpandableText({
   text,
@@ -16,6 +23,7 @@ export function ExpandableText({
   collapsedClassName?: string;
   expandLabel?: string;
 }) {
+  const m = useMessages();
   const textId = useId();
   const [expanded, setExpanded] = useState(false);
   const canExpand = collapsedText !== text || text.length > 180 || text.includes("\n");
@@ -39,7 +47,12 @@ export function ExpandableText({
           className="mt-1"
           onClick={() => setExpanded((value) => !value)}
         >
-          {expanded ? "Show less" : expandLabel}
+          {expanded
+            ? m(EXPANDABLE_TEXT_MESSAGES["Show less"])
+            : m(
+                EXPANDABLE_TEXT_MESSAGES[expandLabel as keyof typeof EXPANDABLE_TEXT_MESSAGES] ??
+                  msg(expandLabel),
+              )}
         </InlineButton>
       ) : null}
     </div>

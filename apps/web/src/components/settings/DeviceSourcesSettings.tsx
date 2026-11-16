@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { Fragment, useState, type ReactNode } from "react";
 import * as Cause from "effect/Cause";
@@ -143,6 +144,7 @@ export function DeviceSourcesSettings(props: {
   readonly supportsEas: boolean;
   readonly supportsSimlock: boolean;
 }) {
+  const m = useMessages();
   const { scope, environments, connectedEnvironments, environment: primary } = useSettingsScope();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -332,12 +334,17 @@ export function DeviceSourcesSettings(props: {
   const rowActions = (onEdit: () => void, onRemove: () => void, extra?: ReactNode) => (
     <>
       <Button size="sm" variant="outline" disabled={disabled} onClick={onEdit}>
-        Edit
+        {m(msg("Edit"))}
       </Button>
       <Menu>
         <MenuTrigger
           render={
-            <Button size="icon-sm" variant="ghost-muted" disabled={disabled} aria-label="More" />
+            <Button
+              size="icon-sm"
+              variant="ghost-muted"
+              disabled={disabled}
+              aria-label={m(msg("More"))}
+            />
           }
         >
           <MoreVertical />
@@ -345,7 +352,7 @@ export function DeviceSourcesSettings(props: {
         <MenuPopup align="end">
           {extra}
           <MenuItem variant="destructive" onClick={onRemove}>
-            Remove
+            {m(msg("Remove"))}
           </MenuItem>
         </MenuPopup>
       </Menu>
@@ -357,11 +364,11 @@ export function DeviceSourcesSettings(props: {
   rows.push({
     key: "local",
     shared: false,
-    title: "Local simulators",
+    title: m(msg("Local simulators")),
     description:
       members.length > 1
-        ? "Simulators and emulators installed on each environment's own machine."
-        : "Simulators and emulators installed on this environment's machine.",
+        ? m(msg("Simulators and emulators installed on each environment's own machine."))
+        : m(msg("Simulators and emulators installed on this environment's machine.")),
     environments: active.map((member) => {
       const local = member.state?.hosts.find((host) => host.kind === "local");
       const status = local ? hostStatus(member.state, local.id) : hostStatus(member.state, "");
@@ -375,7 +382,7 @@ export function DeviceSourcesSettings(props: {
             ? {
                 ...status,
                 action: {
-                  label: "Refresh",
+                  label: m(msg("Refresh")),
                   run: () => void list({ environmentId: member.environmentId, input: {} }),
                 },
               }
@@ -437,7 +444,7 @@ export function DeviceSourcesSettings(props: {
         () =>
           setEditing({ kind: "ssh", host, original: host, ...(grouped ? {} : { only: holders }) }),
         () => void saveSsh(host, true, host, holders),
-        <MenuItem onClick={() => void testSsh(host)}>Test connection</MenuItem>,
+        <MenuItem onClick={() => void testSsh(host)}>{m(msg("Test connection"))}</MenuItem>,
       ),
     });
   }
@@ -524,7 +531,7 @@ export function DeviceSourcesSettings(props: {
       <MenuTrigger
         render={<Button size="sm" variant="outline" disabled={disabled || editing !== null} />}
       >
-        <PlusIcon className="size-3.5" /> Add source
+        <PlusIcon className="size-3.5" /> {m(msg("Add source"))}
         <ChevronDownIcon className="size-3.5" />
       </MenuTrigger>
       <MenuPopup align="end">
@@ -537,7 +544,7 @@ export function DeviceSourcesSettings(props: {
             })
           }
         >
-          Machine over SSH
+          {m(msg("Machine over SSH"))}
         </MenuItem>
         {props.supportsEas ? (
           <MenuItem
@@ -551,7 +558,7 @@ export function DeviceSourcesSettings(props: {
               })
             }
           >
-            Expo Simulators
+            {m(msg("Expo Simulators"))}
           </MenuItem>
         ) : null}
         {props.supportsSimlock && simlockEnabled ? (
@@ -560,7 +567,7 @@ export function DeviceSourcesSettings(props: {
               setEditing({ kind: "simlock", host: newSimlockDeviceHost(randomUUID()), isNew: true })
             }
           >
-            Simlock pool (alpha)
+            {m(msg("Simlock pool (alpha)"))}
           </MenuItem>
         ) : null}
       </MenuPopup>
@@ -568,7 +575,7 @@ export function DeviceSourcesSettings(props: {
   );
 
   return (
-    <SettingsSection id="device-sources" title="Device sources" headerAction={addMenu}>
+    <SettingsSection id="device-sources" title={msg("Device sources")} headerAction={addMenu}>
       {rows.map((row) => (
         <DeviceSourceRow key={row.key} row={row} />
       ))}

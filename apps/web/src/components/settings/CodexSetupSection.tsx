@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthProvidersManageScope, ProviderDriverKind } from "@t3tools/contracts";
 import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
@@ -202,7 +203,7 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           }
         />
       ) : (
-        <SettingsRow title="ChatGPT account" description="Preparing sign-in." />
+        <SettingsRow title={msg("ChatGPT account")} description={msg("Preparing sign-in.")} />
       )
     ) : (
       <ManagedCodexSetup
@@ -938,7 +939,7 @@ function ManagedCodexSetup({
     <section aria-label="Codex setup" className="divide-y divide-border/50">
       {accountPicker}
       <SettingsRow
-        title="ChatGPT account"
+        title={msg("ChatGPT account")}
         description={accountDescription}
         control={
           <div className="flex max-w-88 flex-wrap items-center justify-end gap-2">
@@ -1087,6 +1088,7 @@ export function CodexManagedRuntimeFields({
   readonly instanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
 }) {
+  const m = useMessages();
   const installation = useEnvironmentQuery(
     serverEnvironment.providerInstallState({
       environmentId,
@@ -1097,23 +1099,25 @@ export function CodexManagedRuntimeFields({
   return (
     <>
       <SettingsRow
-        title="Binary path"
-        description="Selected by T3 Code."
+        title={msg("Binary path")}
+        description={msg("Selected by T3 Code.")}
         control={
           <div className="w-full sm:w-80">
             <Input
-              aria-label="Codex binary path"
+              aria-label={m(msg("Codex binary path"))}
               value={executablePath}
               title={executablePath}
-              placeholder={installation.error ? "Could not read runtime path" : "Not installed"}
+              placeholder={m(
+                msg(installation.error ? "Could not read runtime path" : "Not installed"),
+              )}
               disabled
             />
           </div>
         }
       />
       <SettingsRow
-        title="CODEX_HOME path"
-        description="Shared Codex config, sessions, and state."
+        title={msg("CODEX_HOME path")}
+        description={msg("Shared Codex config, sessions, and state.")}
         control={
           <div className="w-full sm:w-80">
             <Input
@@ -1127,7 +1131,7 @@ export function CodexManagedRuntimeFields({
         }
       />
       <SettingsRow
-        title="Shadow home path"
+        title={msg("Shadow home path")}
         description={
           provider?.runtimePaths?.shadowHomePath
             ? "Account-specific home sharing the Codex state above."

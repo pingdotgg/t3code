@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -82,13 +83,15 @@ export function LinkedEnvironmentsSettings({
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
-        <SettingsRow title="Could not load linked environments" description={links.error} />
+        <SettingsRow title={msg("Could not load linked environments")} description={links.error} />
       ) : !links.data ? (
-        <SettingsRow title="Loading linked environments…" role="status" />
+        <SettingsRow title={msg("Loading linked environments…")} role="status" />
       ) : links.data.links.length === 0 ? (
         <SettingsRow
-          title="No linked environments"
-          description="Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there."
+          title={msg("No linked environments")}
+          description={msg(
+            "Link another machine running T3 Code, such as a VPS, so agents here can launch and drive threads there.",
+          )}
         />
       ) : (
         links.data.links.map((link) => (

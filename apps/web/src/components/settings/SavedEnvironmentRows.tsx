@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { SessionPermissions } from "./SessionPermissions";
 import {
   ChevronRightIcon,
@@ -695,12 +696,14 @@ function ConfiguredCloudLinkRow({
       ) : linkRevoked ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again."
+          description={msg(
+            "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.",
+          )}
         />
       ) : isElectron ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
-          description="Run `t3 connect link` on the host, then restart T3 Code there."
+          description={msg("Run `t3 connect link` on the host, then restart T3 Code there.")}
         />
       ) : null}
       {signedOut && showSwitch ? null : (
@@ -730,7 +733,9 @@ function ConfiguredCloudLinkRow({
       {managedTunnelActive && !signedOut ? (
         <SettingsRow
           title={searchableSetting("hold-webhooks-while-offline").title}
-          description="Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing."
+          description={msg(
+            "Keep webhook requests for up to 24 hours while this environment is offline, then deliver them. Off: T3 Connect only forwards requests and stores nothing.",
+          )}
           managed={connectDenial}
           control={
             <CloudLinkSwitch
@@ -746,7 +751,9 @@ function ConfiguredCloudLinkRow({
       {managedTunnelActive && connectDeviceApproval ? (
         <SettingsRow
           title={searchableSetting("connect-device-approval").title}
-          description="Devices that sign in to your T3 Connect account wait until someone already connected here approves them."
+          description={msg(
+            "Devices that sign in to your T3 Connect account wait until someone already connected here approves them.",
+          )}
           managed={connectDenial}
           control={
             <CloudLinkSwitch
@@ -790,8 +797,10 @@ export function CloudLinkRow({
   if (!canReadRelay) {
     return (
       <SettingsRow
-        title="T3 Connect"
-        description="To edit these settings, pair this connection with both View relay and Manage relay permissions."
+        title={msg("T3 Connect")}
+        description={msg(
+          "To edit these settings, pair this connection with both View relay and Manage relay permissions.",
+        )}
       />
     );
   }
@@ -805,17 +814,22 @@ export function CloudLinkRow({
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
+  const m = useMessages();
   return (
     <Empty className="min-h-52">
       <EmptyMedia variant="icon">
         <ChevronsLeftRightEllipsisIcon />
       </EmptyMedia>
       <EmptyHeader>
-        <EmptyTitle>No saved remote environments</EmptyTitle>
+        <EmptyTitle>{m(msg("No saved remote environments"))}</EmptyTitle>
         <EmptyDescription>
           {cloudEnabled
-            ? "Click “Add environment” to pair another environment, or connect one from T3 Connect."
-            : "Click “Add environment” to pair another environment."}
+            ? m(
+                msg(
+                  "Click “Add environment” to pair another environment, or connect one from T3 Connect.",
+                ),
+              )
+            : m(msg("Click “Add environment” to pair another environment."))}
         </EmptyDescription>
       </EmptyHeader>
     </Empty>

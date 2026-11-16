@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -29,6 +30,27 @@ export type SettingsFormDefinition = Pick<ProviderClientDefinition, "settingsSch
   readonly driverKind?: ProviderClientDefinition["driverKind"];
 };
 import { SettingsRow } from "./settingsLayout";
+
+const PROVIDER_FIELD_MESSAGES: Readonly<Record<string, string>> = {
+  "Launch arguments": msg("Launch arguments"),
+  "Additional CLI arguments passed to codex app-server on session start.": msg(
+    "Additional CLI arguments passed to codex app-server on session start.",
+  ),
+  "Additional CLI arguments passed on session start.": msg(
+    "Additional CLI arguments passed on session start.",
+  ),
+  "Path to the Codex binary used by this instance.": msg(
+    "Path to the Codex binary used by this instance.",
+  ),
+  "Custom Codex home and config directory.": msg("Custom Codex home and config directory."),
+  "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.": msg(
+    "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
+  ),
+};
+
+function translateProviderFieldText(m: ReturnType<typeof useMessages>, value: string): string {
+  return m(PROVIDER_FIELD_MESSAGES[value] ?? msg(value));
+}
 
 export interface ProviderSettingsFieldModel {
   readonly key: string;
@@ -236,8 +258,8 @@ function ProviderCommandArguments({
 
   return (
     <SettingsRow
-      title="Arguments"
-      description="One literal argument per row, in launch order."
+      title={msg("Arguments")}
+      description={msg("One literal argument per row, in launch order.")}
       managed={managedReason}
       control={
         <Button
@@ -518,14 +540,18 @@ function ProviderSettingsFieldRow({
   managedReason,
   environmentId,
 }: ProviderSettingsFieldRowProps) {
+  const m = useMessages();
+  const fieldLabel = translateProviderFieldText(m, field.label);
+  const fieldDescription =
+    field.description === undefined ? undefined : translateProviderFieldText(m, field.description);
   const inputId = `${idPrefix}-${field.key}`;
   const descriptionClassName =
     variant === "dialog"
       ? "text-2xs text-muted-foreground"
       : "mt-1 block text-xs text-muted-foreground";
-  const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
-  const description = field.description ? (
-    <span className={descriptionClassName}>{field.description}</span>
+  const label = <span className="text-xs font-medium text-foreground">{fieldLabel}</span>;
+  const description = fieldDescription ? (
+    <span className={descriptionClassName}>{fieldDescription}</span>
   ) : null;
 
   if (variant === "settings") {
@@ -539,7 +565,7 @@ function ProviderSettingsFieldRow({
           onCheckedChange={(checked) =>
             onChange(nextProviderConfigWithFieldValue(value, field, Boolean(checked)))
           }
-          aria-label={field.label}
+          aria-label={fieldLabel}
           aria-describedby={descriptionId}
         />
       ) : field.control === "select" ? (
@@ -589,7 +615,7 @@ function ProviderSettingsFieldRow({
               size="icon-sm"
               variant="ghost-destructive"
               onClick={() => onChange(nextProviderConfigWithFieldValue(value, field, ""))}
-              aria-label={`Clear ${field.label}`}
+              aria-label={m(msg("Clear setting"))}
             >
               <XIcon className="size-3.5" />
             </Button>
@@ -608,10 +634,10 @@ function ProviderSettingsFieldRow({
     return (
       <SettingsRow
         title={
-          field.control === "switch" ? field.label : <label htmlFor={inputId}>{field.label}</label>
+          field.control === "switch" ? fieldLabel : <label htmlFor={inputId}>{fieldLabel}</label>
         }
         description={
-          field.description ? <span id={descriptionId}>{field.description}</span> : undefined
+          fieldDescription ? <span id={descriptionId}>{fieldDescription}</span> : undefined
         }
         control={control}
         managed={managedReason}

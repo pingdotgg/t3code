@@ -151,8 +151,8 @@ const TIMESTAMP_FORMAT_LABELS = {
 };
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
-  stacked: "Stacked",
-  split: "Split",
+  stacked: msg("Stacked"),
+  split: msg("Split"),
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -399,7 +399,7 @@ function AboutVersionSection() {
       ) : selectedHostedAppChannel ? (
         <SettingsRow
           {...searchableSetting("update-track")}
-          description="Switches the hosted app release channel."
+          description={msg("Switches the hosted app release channel.")}
           control={
             <Select
               value={selectedHostedAppChannel}
@@ -901,12 +901,11 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...setting("working-shelf")}
-          description={
-            <T>
-              Fold working and monitoring threads into a Working section. They return to the top of
-              the inbox when they need you. The boring sidebar in Labs has no Working section.
-            </T>
-          }
+          description={m(
+            msg(
+              "Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you. The boring sidebar in Labs has no Working section.",
+            ),
+          )}
           resetAction={
             settings.sidebarWorkingShelfEnabled !==
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
@@ -1512,15 +1511,18 @@ function DiffColorsSettingsRow() {
 }
 
 export function DiffsSettingsPanel() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="diffs" title="Diffs">
+      <SettingsSection id="diffs" title={msg("Diffs")}>
         <SettingsRow
           {...searchableSetting("diff-layout")}
-          description="Show diffs stacked or side by side. The toggle in the diff toolbar changes this too."
+          description={msg(
+            "Show diffs stacked or side by side. The toggle in the diff toolbar changes this too.",
+          )}
           resetAction={
             settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
               <SettingResetButton
@@ -1538,15 +1540,19 @@ export function DiffsSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Diff layout">
-                <SelectValue>{DIFF_LAYOUT_LABELS[settings.diffLayout]}</SelectValue>
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label={m(msg("Diff layout"))}
+              >
+                <SelectValue>{m(DIFF_LAYOUT_LABELS[settings.diffLayout])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="stacked">
-                  {DIFF_LAYOUT_LABELS.stacked}
+                  {m(DIFF_LAYOUT_LABELS.stacked)}
                 </SelectItem>
                 <SelectItem hideIndicator value="split">
-                  {DIFF_LAYOUT_LABELS.split}
+                  {m(DIFF_LAYOUT_LABELS.split)}
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -1554,7 +1560,7 @@ export function DiffsSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("hide-whitespace-changes")}
-          description="Set whether the diff panel ignores whitespace-only edits by default."
+          description={msg("Set whether the diff panel ignores whitespace-only edits by default.")}
           resetAction={
             settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace ? (
               <SettingResetButton
@@ -1579,7 +1585,9 @@ export function DiffsSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("default-diff-file-state")}
-          description="Start with files expanded or collapsed when opening diffs or a pull request's Code tab."
+          description={msg(
+            "Start with files expanded or collapsed when opening diffs or a pull request's Code tab.",
+          )}
           resetAction={
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton
@@ -1604,16 +1612,18 @@ export function DiffsSettingsPanel() {
               <SelectTrigger
                 size="sm"
                 className="w-full sm:w-40"
-                aria-label="Default diff file state"
+                aria-label={m(msg("Default diff file state"))}
               >
-                <SelectValue>{settings.diffFilesCollapsed ? "Collapsed" : "Expanded"}</SelectValue>
+                <SelectValue>
+                  {settings.diffFilesCollapsed ? m(msg("Collapsed")) : m(msg("Expanded"))}
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="expanded">
-                  Expanded
+                  {m(msg("Expanded"))}
                 </SelectItem>
                 <SelectItem hideIndicator value="collapsed">
-                  Collapsed
+                  {m(msg("Collapsed"))}
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -1622,10 +1632,12 @@ export function DiffsSettingsPanel() {
         <DiffColorsSettingsRow />
       </SettingsSection>
 
-      <SettingsSection id="pull-requests" title="Pull requests">
+      <SettingsSection id="pull-requests" title={msg("Pull requests")}>
         <SettingsRow
           {...searchableSetting("proactive-panels")}
-          description="Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines."
+          description={msg(
+            "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.",
+          )}
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
@@ -1660,6 +1672,7 @@ export function CompactIdleThreadsRow() {
 }
 
 function ScopedCompactIdleThreadsRow() {
+  const m = useMessages();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const { targets } = useSettingsScope();
@@ -1671,7 +1684,9 @@ function ScopedCompactIdleThreadsRow() {
       settingKeys={["idleCompaction", "compactIdleThreads"]}
       mixed={idleCompaction.mixed}
       {...searchableSetting("compact-idle-threads")}
-      description="When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this."
+      description={msg(
+        "When to compact an idle Claude thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Each Claude provider can override this.",
+      )}
       resetAction={
         globalIdleCompaction(settings) !== globalIdleCompaction(DEFAULT_UNIFIED_SETTINGS) ? (
           <SettingResetButton
@@ -1690,12 +1705,20 @@ function ScopedCompactIdleThreadsRow() {
             if (mode) updateSettings({ idleCompaction: mode.value });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label="Compact idle threads">
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-56"
+            aria-label={m(msg("Compact idle threads"))}
+          >
             <SelectValue>
               {(value: string | null) =>
                 value === null
-                  ? "Mixed"
-                  : IDLE_COMPACTION_MODES.find((mode) => mode.value === value)?.label
+                  ? m(msg("Mixed"))
+                  : value === "onReturn"
+                    ? m(msg("When you return"))
+                    : value === "beforeCacheExpires"
+                      ? m(msg("Before the cache expires (beta)"))
+                      : m(msg("Never"))
               }
             </SelectValue>
           </SelectTrigger>
@@ -1708,7 +1731,11 @@ function ScopedCompactIdleThreadsRow() {
                 // A server from before modes has only the on/off switch, so it cannot store "Never".
                 disabled={mode.value === "off" && !idleCompaction.neverAvailable}
               >
-                {mode.label}
+                {mode.value === "onReturn"
+                  ? m(msg("When you return"))
+                  : mode.value === "beforeCacheExpires"
+                    ? m(msg("Before the cache expires (beta)"))
+                    : m(msg("Never"))}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -1780,7 +1807,7 @@ export function ThreadsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="new-projects" title="New projects">
+      <SettingsSection id="new-projects" title={msg("New projects")}>
         <SettingsRow
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}
@@ -1816,7 +1843,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["ghqCloneLayout"]}
           {...searchableSetting("ghq-clone-layout")}
-          description="Clones go to github.com/owner/repo under the folder above, like ghq."
+          description={msg("Clones go to github.com/owner/repo under the folder above, like ghq.")}
           resetAction={
             settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout ? (
               <SettingResetButton
@@ -1841,16 +1868,18 @@ export function ThreadsSettingsPanel() {
       <ProjectDefaultsSettings category="general" />
 
       {!isProjectScope ? (
-        <SettingsSection id="snooze" title="Snooze">
+        <SettingsSection id="snooze" title={msg("Snooze")}>
           <SnoozePresetsRow />
         </SettingsSection>
       ) : null}
 
-      <SettingsSection id="usage-limits" title="Usage limits">
+      <SettingsSection id="usage-limits" title={msg("Usage limits")}>
         <SettingsRow
           serverScoped
           {...searchableSetting("auto-resume-limited-threads")}
-          description="Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread."
+          description={msg(
+            "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",
+          )}
           settingKeys={["autoResumeLimitedThreads"]}
           control={
             <ScopedSwitch
@@ -1866,7 +1895,9 @@ export function ThreadsSettingsPanel() {
         <SettingsRow
           serverScoped
           {...searchableSetting("snooze-limited-threads")}
-          description="Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset."
+          description={msg(
+            "Snooze threads until their usage limits reset. Enable auto-resume to continue the agent after the reset.",
+          )}
           settingKeys={["snoozeLimitedThreads"]}
           control={
             <ScopedSwitch
@@ -1882,12 +1913,14 @@ export function ThreadsSettingsPanel() {
       </SettingsSection>
 
       {hasServerTargets ? (
-        <SettingsSection id="auto-settle" title="Auto-settle">
+        <SettingsSection id="auto-settle" title={msg("Auto-settle")}>
           <SettingsRow
             serverScoped
             settingKeys={["sidebarAutoSettleOnMerge"]}
             {...searchableSetting("auto-settle-merged-threads")}
-            description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
+            description={msg(
+              "Settle a thread when its pull request merges. Closed pull requests still settle automatically.",
+            )}
             resetAction={
               settings.sidebarAutoSettleOnMerge !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
@@ -1917,7 +1950,9 @@ export function ThreadsSettingsPanel() {
             serverScoped
             settingKeys={["sidebarAutoSettleAfterDays"]}
             {...searchableSetting("auto-settle-inactive-threads")}
-            description="Sidebar threads with no activity for this long settle automatically."
+            description={msg(
+              "Sidebar threads with no activity for this long settle automatically.",
+            )}
             resetAction={
               settings.sidebarAutoSettleAfterDays !==
               DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
@@ -1950,7 +1985,7 @@ export function ThreadsSettingsPanel() {
               serverScoped
               settingKeys={["sidebarAutoSettleAfterDays"]}
               title={searchableSetting("days-before-auto-settle").title}
-              description="Any new activity un-settles a thread automatically."
+              description={msg("Any new activity un-settles a thread automatically.")}
               control={
                 <AutoSettleDaysInput
                   value={settings.sidebarAutoSettleAfterDays}
@@ -1965,8 +2000,10 @@ export function ThreadsSettingsPanel() {
             <SettingsRow
               serverScoped
               settingKeys={["sidebarAutoSettleKeepPullRequests"]}
-              title="Keep threads with a PR"
-              description="Inactivity does not settle threads with a pull request. Merge and close still do."
+              title={msg("Keep threads with a PR")}
+              description={msg(
+                "Inactivity does not settle threads with a pull request. Merge and close still do.",
+              )}
               control={
                 <ScopedSwitch
                   settingKeys={["sidebarAutoSettleKeepPullRequests"]}
@@ -1982,12 +2019,14 @@ export function ThreadsSettingsPanel() {
         </SettingsSection>
       ) : null}
 
-      <SettingsSection id="text-generation" title="Text generation">
+      <SettingsSection id="text-generation" title={msg("Text generation")}>
         <SettingsRow
           serverScoped
           settingKeys={["textGenerationModelSelection"]}
           {...searchableSetting("text-generation-model")}
-          description="For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here."
+          description={msg(
+            "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
+          )}
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton
@@ -2158,12 +2197,14 @@ export function MaintenanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="updates" title="Updates">
+      <SettingsSection id="updates" title={msg("Updates")}>
         <SettingsRow
           serverScoped
           settingKeys={["enableProviderUpdateChecks"]}
           {...searchableSetting("provider-update-checks")}
-          description="Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear."
+          description={msg(
+            "Check installed provider CLIs for newer available versions and fetch model catalog updates. When off, new models may not appear.",
+          )}
           resetAction={
             settings.enableProviderUpdateChecks !==
             DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks ? (
@@ -2192,7 +2233,9 @@ export function MaintenanceSettingsPanel() {
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
-          description="Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments."
+          description={msg(
+            "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.",
+          )}
           status={
             !hasServerTargets
               ? "All selected connected environments must support restart continuation."
@@ -2227,13 +2270,15 @@ export function MaintenanceSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="background" title="Background activity">
+      <SettingsSection id="background" title={msg("Background activity")}>
         <BackgroundActivitySettingsRow />
         <SettingsRow
           serverScoped
           settingKeys={["keepAwakeWhileAgentsWork"]}
           {...searchableSetting("keep-awake-while-agents-work")}
-          description="Stop the computer from going to sleep while agents are working, and let it sleep once they finish. Closing a laptop lid still puts it to sleep."
+          description={msg(
+            "Stop the computer from going to sleep while agents are working, and let it sleep once they finish. Closing a laptop lid still puts it to sleep.",
+          )}
           resetAction={
             settings.keepAwakeWhileAgentsWork !==
             DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork ? (
@@ -2262,13 +2307,15 @@ export function MaintenanceSettingsPanel() {
 
       <StorageCleanupSections />
 
-      <SettingsSection id="diagnostics-section" title="Diagnostics">
+      <SettingsSection id="diagnostics-section" title={msg("Diagnostics")}>
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={
-            isEnvironmentScope
-              ? "Inspect processes, resource use, and logs on this environment."
-              : "Inspect processes, resource use, and logs on one environment at a time."
+            isEnvironmentScope ? (
+              <T>Inspect processes, resource use, and logs on this environment.</T>
+            ) : (
+              <T>Inspect processes, resource use, and logs on one environment at a time.</T>
+            )
           }
           control={
             <Button
@@ -2278,7 +2325,7 @@ export function MaintenanceSettingsPanel() {
               size="sm"
               variant="outline"
             >
-              View diagnostics
+              <T>View diagnostics</T>
             </Button>
           }
         />
@@ -2288,16 +2335,17 @@ export function MaintenanceSettingsPanel() {
 }
 
 export function AboutSettingsPanel() {
+  const m = useMessages();
   const primaryPolicy = usePrimaryManagedPolicy();
   // The Welcome page sets up this computer, so it needs one.
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const telemetryOff = managedTelemetryOffMessage(primaryPolicy);
   return (
     <SettingsPageContainer>
-      <SettingsSection id="about" title="App">
+      <SettingsSection id="about" title={msg("App")}>
         {primaryPolicy ? (
           <SettingsRow
-            title="Organization"
+            title={msg("Organization")}
             description={`This environment is managed by ${primaryPolicy.organization}. Some settings and features follow its policy.`}
             control={
               primaryPolicy.supportUrl ? (
@@ -2308,7 +2356,7 @@ export function AboutSettingsPanel() {
                   size="sm"
                   variant="outline"
                 >
-                  Get help
+                  {m(msg("Get help"))}
                 </Button>
               ) : null
             }
@@ -2321,7 +2369,7 @@ export function AboutSettingsPanel() {
             <SettingsRow
               id={searchableSetting("app-version").id}
               title={<AboutVersionTitle />}
-              description="Current version of the application."
+              description={msg("Current version of the application.")}
             />
           </>
         )}
@@ -2329,17 +2377,17 @@ export function AboutSettingsPanel() {
         {primaryEnvironmentId === null ? null : (
           <SettingsRow
             {...searchableSetting("welcome-page")}
-            description="See your agents, import projects, and set up your phone."
+            description={msg("See your agents, import projects, and set up your phone.")}
             control={
               <Button size="sm" variant="outline" render={<Link to="/welcome" />}>
-                Open
+                {m(msg("Open"))}
               </Button>
             }
           />
         )}
       </SettingsSection>
 
-      <SettingsSection id="legal" title="Legal">
+      <SettingsSection id="legal" title={msg("Legal")}>
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description={
@@ -2353,20 +2401,20 @@ export function AboutSettingsPanel() {
               size="sm"
               variant="outline"
             >
-              View policy
+              {m(msg("View policy"))}
             </Button>
           }
         />
         <SettingsRow
           {...searchableSetting("open-source-licenses")}
-          description="Notices for dependencies, assets, and optional tools used by T3 Code."
+          description={msg("Notices for dependencies, assets, and optional tools used by T3 Code.")}
           control={
             <Button
               render={<Link to="/settings/open-source-licenses" />}
               size="sm"
               variant="outline"
             >
-              View licenses
+              {m(msg("View licenses"))}
             </Button>
           }
         />

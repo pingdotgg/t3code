@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
 import { useId, useState } from "react";
 
@@ -31,6 +32,7 @@ export function AddUsageLimitSourceDialog({
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
+  const m = useMessages();
   const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
@@ -137,7 +139,7 @@ export function AddUsageLimitSourceDialog({
             Cancel
           </Button>
           <Button type="submit" form={formId} disabled={!canSave}>
-            Add hub
+            {m(msg("Add hub"))}
           </Button>
         </DialogFooter>
       </DialogPopup>

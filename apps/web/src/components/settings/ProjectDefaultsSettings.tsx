@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
@@ -20,7 +21,6 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
@@ -44,11 +44,17 @@ import {
 } from "./useScopedSettings";
 
 const WORKTREE_SUBMODULES_OPTIONS = ["recursive", "top-level", "none"] as const;
+const PULL_REQUEST_MERGE_METHOD_MESSAGES = {
+  merge: msg("Merge"),
+  squash: msg("Squash and merge"),
+  rebase: msg("Rebase and merge"),
+} as const;
 function isWorktreeSubmodules(value: string | null): value is WorktreeSubmodules {
   return value !== null && (WORKTREE_SUBMODULES_OPTIONS as readonly string[]).includes(value);
 }
 
 export function ProjectDefaultsSettings({ category }: { category: ProjectSettingsCategory }) {
+  const m = useMessages();
   const { scope, target, targets, connectedEnvironments } = useSettingsScope();
   const settings = useScopedSettings();
   const clientSettings = useClientSettings();
@@ -131,13 +137,15 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["defaultModelSelection"]}
       mixed={mixedModel}
       id="default-model"
-      title="Model"
+      title={msg("Model")}
       description={
         isProjectScope
-          ? "Model for new threads in this project."
+          ? msg("Model for new threads in this project.")
           : !unavailable && modelSource !== "project" && automaticModel
-            ? "Default model for new threads, selected automatically. Projects can override it."
-            : "Default model for new threads. Projects can override it."
+            ? msg(
+                "Default model for new threads, selected automatically. Projects can override it.",
+              )
+            : msg("Default model for new threads. Projects can override it.")
       }
       status={
         mixedModel
@@ -203,11 +211,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["defaultThreadEnvMode"]}
       mixed={mixedWorkspace}
       id={searchableSetting("new-threads").id}
-      title="Workspace"
+      title={msg("Workspace")}
       description={
         isProjectScope
-          ? "Where new threads in this project start."
-          : "Where new threads start. Projects and their t3.json can override it."
+          ? msg("Where new threads in this project start.")
+          : msg("Where new threads start. Projects and their t3.json can override it.")
       }
       resetAction={
         !isProjectScope && settings.defaultThreadEnvMode !== null ? (
@@ -251,7 +259,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       settingKeys={["fallbackModelSelection"]}
       mixed={mixedFallback}
       {...searchableSetting("fallback-model")}
-      description="Used for new threads when the default model's provider is out of usage."
+      description={msg("Used for new threads when the default model's provider is out of usage.")}
       resetAction={
         mixedFallback || settings.fallbackModelSelection !== null ? (
           <SettingResetButton
@@ -327,7 +335,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   return (
     <SettingsSection
       id={category === "source-control" ? "source-control-defaults" : "project-defaults"}
-      title={category === "source-control" ? "Repositories" : "New threads"}
+      title={m(category === "source-control" ? msg("Repositories") : msg("New threads"))}
     >
       {category === "project" ? (
         <>
@@ -346,8 +354,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("default-permissions")}
             description={
               isProjectScope
-                ? "Permissions for new threads in this project."
-                : "Default permissions for new threads. Projects can override them."
+                ? msg("Permissions for new threads in this project.")
+                : msg("Default permissions for new threads. Projects can override them.")
             }
             resetAction={
               settings.defaultRuntimeMode !== DEFAULT_SERVER_SETTINGS.defaultRuntimeMode ? (
@@ -420,11 +428,15 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["defaultAutoPull"]}
             mixed={mixedAutoPull}
             id="automatic-pull"
-            title="Automatically pull"
+            title={msg("Automatically pull")}
             description={
               isProjectScope
-                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+                ? msg(
+                    "Keeps this project's default branch current when the checkout has no local changes or commits.",
+                  )
+                : msg(
+                    "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it.",
+                  )
             }
             resetAction={
               settings.defaultAutoPull ? (
@@ -449,7 +461,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["removeAgentCreditsOnMerge"]}
             mixed={mixedAgentCredits}
             {...searchableSetting("remove-agent-credits-on-merge")}
-            description="Remove recognized agent credit lines from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits."
+            description={msg(
+              "Remove recognized agent credit lines from merge and squash messages on hosts that support it, keeping human co-authors. Includes auto-merge. Excludes merge queues, stack merges, and existing commits.",
+            )}
             resetAction={
               settings.removeAgentCreditsOnMerge ? (
                 <SettingResetButton
@@ -477,14 +491,16 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("pull-request-merge-method")}
             description={
               isProjectScope
-                ? "Pull requests in this project start with this method."
-                : "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device."
+                ? msg("Pull requests in this project start with this method.")
+                : msg(
+                    "Pull requests start with this method. Last selected reuses whatever you chose most recently on this device.",
+                  )
             }
             resetAction={
               settings.pullRequestMergeMethod !== null ? (
                 <SettingResetButton
                   label="default merge method"
-                  tooltip="Reset to last selected"
+                  tooltip={m(msg("Reset to last selected"))}
                   onClick={() => updateSettings({ pullRequestMergeMethod: null })}
                 />
               ) : null
@@ -498,22 +514,28 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     updateSettings({ pullRequestMergeMethod: value });
                 }}
               >
-                <SelectTrigger size="sm" aria-label="Default pull request merge method">
+                <SelectTrigger size="sm" aria-label={m(msg("Default pull request merge method"))}>
                   <SelectValue>
                     {(value: string | null) =>
                       value === "merge" || value === "squash" || value === "rebase"
-                        ? PULL_REQUEST_MERGE_METHOD_LABELS[value]
+                        ? m(PULL_REQUEST_MERGE_METHOD_MESSAGES[value])
                         : value === "last"
-                          ? "Last selected"
-                          : "Mixed"
+                          ? m(msg("Last selected"))
+                          : m(msg("Mixed"))
                     }
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="last">Last selected</SelectItem>
-                  <SelectItem value="merge">{PULL_REQUEST_MERGE_METHOD_LABELS.merge}</SelectItem>
-                  <SelectItem value="squash">{PULL_REQUEST_MERGE_METHOD_LABELS.squash}</SelectItem>
-                  <SelectItem value="rebase">{PULL_REQUEST_MERGE_METHOD_LABELS.rebase}</SelectItem>
+                  <SelectItem value="last">{m(msg("Last selected"))}</SelectItem>
+                  <SelectItem value="merge">
+                    {m(PULL_REQUEST_MERGE_METHOD_MESSAGES.merge)}
+                  </SelectItem>
+                  <SelectItem value="squash">
+                    {m(PULL_REQUEST_MERGE_METHOD_MESSAGES.squash)}
+                  </SelectItem>
+                  <SelectItem value="rebase">
+                    {m(PULL_REQUEST_MERGE_METHOD_MESSAGES.rebase)}
+                  </SelectItem>
                 </SelectPopup>
               </Select>
             }

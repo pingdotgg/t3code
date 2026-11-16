@@ -12,6 +12,7 @@ import {
 import * as Equal from "effect/Equal";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import { useMessages } from "gt-react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -224,6 +225,8 @@ export function SettingsSection({
   children: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLElement>(sectionProps.id);
+  const m = useMessages();
+  const translatedTitle = typeof title === "string" ? m(title) : title;
 
   return (
     <section
@@ -233,7 +236,7 @@ export function SettingsSection({
       className={cn(!hideTitle && "space-y-2.5", className)}
     >
       {hideTitle ? (
-        <h2 className="sr-only">{title}</h2>
+        <h2 className="sr-only">{translatedTitle}</h2>
       ) : (
         <div
           data-settings-scroll-target
@@ -242,7 +245,7 @@ export function SettingsSection({
           <div className="flex min-w-0 items-center gap-1">
             <h2 className="flex min-h-7 items-center gap-2 text-base font-semibold text-foreground">
               {icon}
-              {title}
+              {translatedTitle}
             </h2>
             {titleAction}
           </div>
@@ -339,6 +342,9 @@ export function SettingsRow({
   children?: ReactNode;
 }) {
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const m = useMessages();
+  const translatedTitle = typeof title === "string" ? m(title) : title;
+  const translatedDescription = typeof description === "string" ? m(description) : description;
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -513,7 +519,7 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <h3 className="text-sm font-medium text-foreground">{translatedTitle}</h3>
             {renderedInheritance ? (
               <span
                 className={cn(
@@ -533,7 +539,7 @@ export function SettingsRow({
           </div>
           {description ? (
             <p className="max-w-2xl text-pretty text-xs leading-normal text-muted-foreground">
-              {description}
+              {translatedDescription}
             </p>
           ) : null}
           {renderedStatus ? (

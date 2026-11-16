@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { useMessages } from "gt-react";
 import type { CSSProperties } from "react";
 import { useState } from "react";
 import {
@@ -85,6 +87,7 @@ const EFFORT_DISPLAY_LABELS: Record<EffortDisplay, string> = {
 };
 
 export function AppearanceSettingsPanel() {
+  const m = useMessages();
   const {
     appearanceMode,
     refreshTheme,
@@ -107,6 +110,7 @@ export function AppearanceSettingsPanel() {
     environmentIdentificationOptionList.find(
       ([value]) => value === settings.environmentIdentificationMode,
     )?.[1] ?? ENVIRONMENT_IDENTIFICATION_LABELS[settings.environmentIdentificationMode];
+  const translatedEnvironmentIdentificationLabel = m(environmentIdentificationLabel);
   const effectiveEnvironmentIdentificationMode = useEnvironmentIdentificationMode();
   const themeHidesEnvironmentArtwork =
     effectiveEnvironmentIdentificationMode === "pill" &&
@@ -116,11 +120,11 @@ export function AppearanceSettingsPanel() {
     ) !== null;
   const environmentIdentificationDescription = themeHidesEnvironmentArtwork
     ? environmentStageVariant
-      ? "Only built-in themes show artwork, so this theme shows the version pill."
-      : "Only built-in themes show artwork."
+      ? msg("Only built-in themes show artwork, so this theme shows the version pill.")
+      : msg("Only built-in themes show artwork.")
     : environmentStageVariant
-      ? "Choose how Dev and Nightly environments are identified."
-      : "Show Dev or Nightly artwork in the sidebar header.";
+      ? msg("Choose how Dev and Nightly environments are identified.")
+      : msg("Show Dev or Nightly artwork in the sidebar header.");
   const glassOpacityRatio =
     (settings.glassOpacity - MIN_GLASS_OPACITY) / (MAX_GLASS_OPACITY - MIN_GLASS_OPACITY);
   const glassOpacitySliderStyle = {
@@ -144,7 +148,7 @@ export function AppearanceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
+      <SettingsSection id="appearance" title={msg("Colors & themes")} variant="plain" hideTitle>
         <div id={searchableSetting("theme").id}>
           <ThemeLibrary
             appearanceMode={appearanceMode}
@@ -162,10 +166,10 @@ export function AppearanceSettingsPanel() {
         </div>
       </SettingsSection>
 
-      <SettingsSection id="appearance-interface" title="Interface">
+      <SettingsSection id="appearance-interface" title={msg("Interface")}>
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
-          description="Adjust the contrast of colors and borders across the interface."
+          description={msg("Adjust the contrast of colors and borders across the interface.")}
           resetAction={
             settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast ? (
               <SettingResetButton
@@ -213,7 +217,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("setting-glass-opacity")}
-          description="Higher values make menus, dialogs, and the composer more solid."
+          description={msg("Higher values make menus, dialogs, and the composer more solid.")}
           resetAction={
             settings.glassOpacity !== DEFAULT_UNIFIED_SETTINGS.glassOpacity ? (
               <SettingResetButton
@@ -259,7 +263,7 @@ export function AppearanceSettingsPanel() {
 
         <SettingsRow
           {...searchableSetting("chat-width")}
-          description="Set how wide messages and the composer can grow on large screens."
+          description={msg("Set how wide messages and the composer can grow on large screens.")}
           resetAction={
             settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? (
               <SettingResetButton
@@ -278,12 +282,12 @@ export function AppearanceSettingsPanel() {
                 }}
               >
                 <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Chat width">
-                  <SelectValue>{CHAT_WIDTH_LABELS[settings.chatWidth]}</SelectValue>
+                  <SelectValue>{m(CHAT_WIDTH_LABELS[settings.chatWidth])}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="comfortable">Comfortable (default)</SelectItem>
-                  <SelectItem value="wide">Wide</SelectItem>
-                  <SelectItem value="full">Full</SelectItem>
+                  <SelectItem value="comfortable">{m("Comfortable (default)")}</SelectItem>
+                  <SelectItem value="wide">{m("Wide")}</SelectItem>
+                  <SelectItem value="full">{m("Full")}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -292,7 +296,9 @@ export function AppearanceSettingsPanel() {
         <ThreadDetailsItemsRow />
         <SettingsRow
           {...searchableSetting("effort-display")}
-          description="Show reasoning effort in the composer as its name, such as High, or as bars."
+          description={msg(
+            "Show reasoning effort in the composer as its name, such as High, or as bars.",
+          )}
           resetAction={
             settings.effortDisplay !== DEFAULT_UNIFIED_SETTINGS.effortDisplay ? (
               <SettingResetButton
@@ -313,11 +319,11 @@ export function AppearanceSettingsPanel() {
                 }}
               >
                 <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Effort display">
-                  <SelectValue>{EFFORT_DISPLAY_LABELS[settings.effortDisplay]}</SelectValue>
+                  <SelectValue>{m(EFFORT_DISPLAY_LABELS[settings.effortDisplay])}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem value="label">Word (default)</SelectItem>
-                  <SelectItem value="bars">Bars</SelectItem>
+                  <SelectItem value="label">{m("Word (default)")}</SelectItem>
+                  <SelectItem value="bars">{m("Bars")}</SelectItem>
                 </SelectPopup>
               </Select>
             </div>
@@ -325,7 +331,9 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("math-rendering")}
-          description="Typeset LaTeX math, such as $x^2$ or \[x^2\], in messages and Markdown previews. The composer keeps TeX source editable."
+          description={msg(
+            "Typeset LaTeX math, such as $x^2$ or \\[x^2\\], in messages and Markdown previews. The composer keeps TeX source editable.",
+          )}
           resetAction={
             settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled ? (
               <SettingResetButton
@@ -359,7 +367,7 @@ export function AppearanceSettingsPanel() {
         >
           <SettingsRow
             {...searchableSetting("panel-animations")}
-            description="Set how fast panels open and close."
+            description={msg("Set how fast panels open and close.")}
             control={
               <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_13rem] sm:gap-4">
                 <PanelAnimationsPreview durationMs={settings.panelAnimationDurationMs} />
@@ -438,12 +446,12 @@ export function AppearanceSettingsPanel() {
                   className="w-full sm:w-40"
                   aria-label="Environment identification"
                 >
-                  <SelectValue>{environmentIdentificationLabel}</SelectValue>
+                  <SelectValue>{translatedEnvironmentIdentificationLabel}</SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {environmentIdentificationOptionList.map(([value, label]) => (
                     <SelectItem hideIndicator key={value} value={value}>
-                      {label}
+                      {m(label)}
                     </SelectItem>
                   ))}
                 </SelectPopup>
@@ -452,7 +460,9 @@ export function AppearanceSettingsPanel() {
           />
           <SettingsRow
             {...searchableSetting("composer-context")}
-            description="Keep branch and worktree controls below the composer after a thread starts."
+            description={msg(
+              "Keep branch and worktree controls below the composer after a thread starts.",
+            )}
             resetAction={
               settings.persistComposerContextStrip !==
               DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip ? (

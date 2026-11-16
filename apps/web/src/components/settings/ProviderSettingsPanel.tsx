@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
@@ -175,6 +176,7 @@ function configuredBinaryPath(config: unknown): string {
 
 // Subscribe only in the label because every status push restamps all providers' checkedAt.
 function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }) {
+  const m = useMessages();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const lastCheckedAt =
@@ -191,18 +193,21 @@ function ProviderLastChecked({ environmentId }: { environmentId: EnvironmentId }
   }
 
   if (lastCheckedRelative.status === "invalid") {
-    return <span>Checked unavailable</span>;
+    return <span>{m(msg("Checked unavailable"))}</span>;
   }
 
   return (
     <span>
       {lastCheckedRelative.suffix ? (
         <>
-          Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
-          {lastCheckedRelative.suffix}
+          {m(msg("Checked"))}{" "}
+          <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
+          {m(msg(lastCheckedRelative.suffix))}
         </>
       ) : (
-        <>Checked {lastCheckedRelative.value}</>
+        <>
+          {m(msg("Checked"))} {lastCheckedRelative.value}
+        </>
       )}
     </span>
   );
@@ -429,7 +434,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
           deviceTabs={deviceTabs}
           icon={<EnvironmentMachineIcon kind={resolveEnvironmentMachineKind(null)} />}
           title="Device unavailable"
-          description="Reconnect this device to set up its provider, or select another device."
+          description={msg(
+            "Reconnect this device to set up its provider, or select another device.",
+          )}
         />
       ) : null}
       {options.length === 0 && !targetEnvironmentMissing ? (
@@ -547,6 +554,7 @@ export function EnvironmentProviderSettings({
   readonly projectIds?: readonly ProjectId[];
   readonly readOnly?: boolean;
 }) {
+  const m = useMessages();
   const settings = useEnvironmentSettings(environmentId);
   const managedPolicy = useManagedPolicy(environmentId);
   // A policy that allows no provider leaves nothing to add.
@@ -986,13 +994,13 @@ export function EnvironmentProviderSettings({
                     size="icon-xs"
                     variant="ghost-muted"
                     onClick={() => setIsAddInstanceDialogOpen(true)}
-                    aria-label="Add provider"
+                    aria-label={m(msg("Add provider"))}
                   >
                     <PlusIcon />
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Add provider</TooltipPopup>
+              <TooltipPopup side="top">{m(msg("Add provider"))}</TooltipPopup>
             </Tooltip>
           ) : null
         }
@@ -1011,10 +1019,10 @@ export function EnvironmentProviderSettings({
                     onClick={() => void refreshProviders()}
                   >
                     <RefreshIcon refreshing={isRefreshingProviders} />
-                    <span className="sr-only">Refresh provider status</span>
+                    <span className="sr-only">{m(msg("Refresh provider status"))}</span>
                     <span className="hidden min-w-0 truncate sm:inline">
                       {isRefreshingProviders ? (
-                        "Refreshing providers"
+                        m(msg("Refreshing providers"))
                       ) : (
                         <ProviderLastChecked environmentId={environmentId} />
                       )}
@@ -1022,7 +1030,7 @@ export function EnvironmentProviderSettings({
                   </Button>
                 }
               />
-              <TooltipPopup side="top">Refresh provider status</TooltipPopup>
+              <TooltipPopup side="top">{m(msg("Refresh provider status"))}</TooltipPopup>
             </Tooltip>
           </div>
         }
@@ -1033,7 +1041,7 @@ export function EnvironmentProviderSettings({
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
-              title="Limited permissions"
+              title={msg("Limited permissions")}
               description={`This session can view ${environmentLabel}'s providers but can't change their settings.`}
             />
           </SettingsGroup>
@@ -1060,7 +1068,7 @@ export function EnvironmentProviderSettings({
                     onClick={() => setIsAddInstanceDialogOpen(true)}
                   >
                     <PlusIcon className="size-4 shrink-0" />
-                    Add provider
+                    {m(msg("Add provider"))}
                   </button>
                 ) : null}
               </div>
@@ -1078,8 +1086,8 @@ export function EnvironmentProviderSettings({
             ) : (
               <div className="p-6 text-sm text-muted-foreground">
                 {targetInstanceMissing
-                  ? "This provider instance is no longer available on this device."
-                  : "No providers configured."}
+                  ? m(msg("This provider instance is no longer available on this device."))
+                  : m(msg("No providers configured."))}
               </div>
             )}
           </div>
@@ -1105,20 +1113,24 @@ export function EnvironmentProviderSettings({
         />
       ) : null}
 
-      <SettingsSection title="Advanced">
+      <SettingsSection title={msg("Advanced")}>
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={
             <span className="inline-flex items-center gap-1.5">
-              {searchableSetting("provider-health-check-interval").title}
+              {m(searchableSetting("provider-health-check-interval").title)}
               <PolicyTooltip>
-                This interval is configured here, then the shared Background activity policy decides
-                whether provider probes may run when the timer fires. Custom intervals appear as
-                Advanced in Maintenance settings.
+                {m(
+                  msg(
+                    "This interval is configured here, then the shared Background activity policy decides whether provider probes may run when the timer fires. Custom intervals appear as Advanced in Maintenance settings.",
+                  ),
+                )}
               </PolicyTooltip>
             </span>
           }
-          description="Refresh provider status, versions, and models in the background. Set to 0 to disable."
+          description={msg(
+            "Refresh provider status, versions, and models in the background. Set to 0 to disable.",
+          )}
           resetAction={
             providerHealthRefreshIntervalSeconds !== defaultProviderHealthRefreshIntervalSeconds ? (
               <span
@@ -1126,7 +1138,7 @@ export function EnvironmentProviderSettings({
                 className={!canWriteSettings ? "opacity-50" : undefined}
               >
                 <SettingResetButton
-                  label="provider health check interval"
+                  label={m(msg("provider health check interval"))}
                   onClick={() =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
@@ -1150,7 +1162,7 @@ export function EnvironmentProviderSettings({
               )}
             >
               <IntervalSecondsField
-                label="provider health check interval"
+                label={m(msg("provider health check interval"))}
                 value={providerHealthRefreshIntervalSeconds}
                 min={0}
                 step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
@@ -1165,7 +1177,7 @@ export function EnvironmentProviderSettings({
                   )
                 }
               />
-              <span className="text-xs text-muted-foreground">seconds</span>
+              <span className="text-xs text-muted-foreground">{m(msg("seconds"))}</span>
             </div>
           }
         />
@@ -1380,8 +1392,10 @@ function ProviderInstanceRow({
           driver === "cursor" &&
           liveProvider?.setup?.canAuthenticate === false ? (
           <SettingsRow
-            title="Cursor account"
-            description="Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."
+            title={msg("Cursor account")}
+            description={msg(
+              "Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in.",
+            )}
           />
         ) : null
       }

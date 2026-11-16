@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
@@ -91,14 +92,19 @@ export function AddCodexAccountDialog({
       <WizardPopup size="wide">
         <WizardHeader
           title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          description={msg(
+            "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.",
+          )}
         />
         <WizardPanel>
           {instanceId ? (
             provider?.setup ? (
               renderSetup(instanceId, provider)
             ) : (
-              <SettingsRow title="Codex runtime" description="Preparing managed setup." />
+              <SettingsRow
+                title={msg("Codex runtime")}
+                description={msg("Preparing managed setup.")}
+              />
             )
           ) : (
             <form
@@ -110,8 +116,8 @@ export function AddCodexAccountDialog({
               }}
             >
               <SettingsRow
-                title="Account name"
-                description="Shown in the provider list and model picker."
+                title={msg("Account name")}
+                description={msg("Shown in the provider list and model picker.")}
                 control={
                   <Input
                     aria-label="Account name"

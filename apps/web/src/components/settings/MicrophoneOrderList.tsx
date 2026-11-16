@@ -10,6 +10,7 @@ import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifi
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowDownIcon, ArrowUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
+import { msg, useMessages } from "gt-react";
 
 import { cn } from "~/lib/utils";
 import { type BrowserMicrophone, updateMicrophoneOrder } from "../../speech/browserMicrophones";
@@ -27,6 +28,7 @@ export function MicrophoneOrderList(props: {
   readonly order: ReadonlyArray<MicrophoneEntry>;
   readonly devices: ReadonlyArray<BrowserMicrophone>;
 }) {
+  const m = useMessages();
   const { order, devices } = props;
   const keys = order.map(microphoneEntryKey);
   const inUse = microphoneEntryKey(preferredMicrophone(order, devices));
@@ -66,8 +68,8 @@ export function MicrophoneOrderList(props: {
                 id={key}
                 name={
                   entry.kind === "default"
-                    ? "System default"
-                    : entry.label || device?.label || "Saved microphone"
+                    ? m(msg("System default"))
+                    : entry.label || device?.label || m(msg("Saved microphone"))
                 }
                 position={index + 1}
                 count={order.length}
@@ -98,6 +100,7 @@ function MicrophoneRow(props: {
   readonly onMove: (steps: number) => void;
   readonly onForget: (() => void) | undefined;
 }) {
+  const m = useMessages();
   const { name } = props;
   const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: props.id });
@@ -118,10 +121,10 @@ function MicrophoneRow(props: {
       <span className="col-start-2 flex @min-[32rem]/settings-row:col-start-auto">
         {props.inUse ? (
           <span className="rounded-sm bg-success/12 px-1 text-2xs text-success-foreground">
-            In use
+            {m(msg("In use"))}
           </span>
         ) : props.notConnected ? (
-          <span className="text-2xs text-muted-foreground">Not connected</span>
+          <span className="text-2xs text-muted-foreground">{m(msg("Not connected"))}</span>
         ) : null}
       </span>
       <span

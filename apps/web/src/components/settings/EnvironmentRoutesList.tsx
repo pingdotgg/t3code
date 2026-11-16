@@ -27,6 +27,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { GripVerticalIcon, PlusIcon, XIcon } from "lucide-react";
 import { useState } from "react";
+import { msg, useMessages } from "gt-react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
 import { environmentCatalog } from "~/connection/catalog";
@@ -44,6 +45,7 @@ export function EnvironmentRoutesList({
   readonly environment: EnvironmentPresentation;
   readonly onAddRoute: () => void;
 }) {
+  const m = useMessages();
   const saved = connectionRoutes(environment.entry);
   const savedIds = saved.map((route) => connectionRouteId(route.target));
   const [pending, setPending] = useState<ReadonlyArray<string> | null>(null);
@@ -69,7 +71,7 @@ export function EnvironmentRoutesList({
   const confirmRemove = async (route: ConnectionRoute) => {
     const address = connectionRouteAddress(route);
     const confirmed = await requestConfirmDialog(
-      `Remove ${connectionRouteLabel(route)} route?${address === null ? "" : `\n${address}`}`,
+      `${m(msg("Remove route"))} ${connectionRouteLabel(route)}?${address === null ? "" : `\n${address}`}`,
       { variant: "destructive" },
     );
     if (confirmed !== true) return;
@@ -138,6 +140,7 @@ function SortableRouteRow({
   readonly removable: boolean;
   readonly onRemove: () => void;
 }) {
+  const m = useMessages();
   const id = connectionRouteId(route.target);
   const label = connectionRouteLabel(route);
   const address = connectionRouteAddress(route);
@@ -165,14 +168,14 @@ function SortableRouteRow({
           {label}
           {inUse ? (
             <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
-              In use
+              {m(msg("In use"))}
             </span>
           ) : null}
         </p>
         {address !== null ? (
           <p className="truncate text-2xs text-muted-foreground">
             {address}
-            {isLearned(route) ? " · found automatically" : ""}
+            {isLearned(route) ? <> · {m(msg("found automatically"))}</> : ""}
           </p>
         ) : null}
       </div>

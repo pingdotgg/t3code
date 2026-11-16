@@ -21,6 +21,7 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 import { useRef, useState } from "react";
+import { msg, useMessages } from "gt-react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 const ARCHIVE_ACTIONS = [
@@ -30,6 +31,7 @@ const ARCHIVE_ACTIONS = [
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
 
 export function ArchivedThreadsPanel() {
+  const m = useMessages();
   const { scope, groups: projectGroups, environments } = useSettingsScope();
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
   const pendingActionsRef = useRef(new Set<string>());
@@ -202,16 +204,16 @@ export function ArchivedThreadsPanel() {
                   <ArchiveIcon className="size-3.5 text-muted-foreground" />
                 )}
                 {isLoadingArchive
-                  ? "Loading archived threads"
+                  ? m(msg("Loading archived threads"))
                   : archiveError
-                    ? "Could not load archived threads"
-                    : "No archived threads"}
+                    ? m(msg("Could not load archived threads"))
+                    : m(msg("No archived threads"))}
               </span>
             }
             description={
               isLoadingArchive
-                ? "Checking connected environments."
-                : (archiveError ?? "Archived threads will appear here.")
+                ? m(msg("Checking connected environments."))
+                : (archiveError ?? m(msg("Archived threads will appear here.")))
             }
           />
         </SettingsSection>

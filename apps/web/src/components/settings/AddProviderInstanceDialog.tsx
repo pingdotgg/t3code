@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
@@ -676,8 +677,8 @@ export function AddProviderInstanceDialog({
                   }
                 />
                 <SettingsRow
-                  title="Accent color"
-                  description="Optional marker shown in the picker."
+                  title={msg("Accent color")}
+                  description={msg("Optional marker shown in the picker.")}
                   control={
                     <ProviderAccentColorPicker
                       displayName={label || driverOption.label}
