@@ -674,7 +674,11 @@ async function persistScopedSettingsPlan(
       return [
         {
           ...environment,
-          message: m(msg("This environment does not support this setting. Update T3 Code on it.")),
+          message: m(
+            msg(
+              "This environment runs an older T3 Code without this setting. Update T3 Code on it.",
+            ),
+          ),
         },
       ];
     }

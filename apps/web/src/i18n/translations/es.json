@@ -11428,7 +11428,7 @@
   "63426ea5d50585a6": "Conecta un entorno para guardar este ajuste.",
   "5aedadfc9fef7d3b": "Conecta los checkouts seleccionados, o actualiza sus entornos, para restablecer esta anulación.",
   "7d0ff8d36a670261": "Conecta los entornos para restablecer estas anulaciones.",
-  "4832594df0aad785": "Este entorno no admite este ajuste. Actualiza T3 Code en él.",
+  "f86f4c366c2e7bd9": "Este entorno usa una versión antigua de T3 Code sin este ajuste. Actualiza T3 Code en él.",
   "b39ae97dcb01d891": "Detalles de la política en segundo plano",
   "7e3ed96c91b96428": "Restablecer {title} al valor predeterminado",
   "27cc3baf3f6c04b1": "Restablecer la anulación al valor predeterminado",

@@ -11435,7 +11435,7 @@
   "63426ea5d50585a6": "Verbinde eine Umgebung, um diese Einstellung zu speichern.",
   "5aedadfc9fef7d3b": "Verbinde die ausgewählten Checkouts oder aktualisiere ihre Umgebungen, um diese Überschreibung zurückzusetzen.",
   "7d0ff8d36a670261": "Verbinde die Umgebungen, um diese Überschreibungen zurückzusetzen.",
-  "4832594df0aad785": "Diese Umgebung unterstützt diese Einstellung nicht. Aktualisiere T3 Code dort.",
+  "f86f4c366c2e7bd9": "Diese Umgebung nutzt eine ältere Version von T3 Code ohne diese Einstellung. Aktualisiere T3 Code dort.",
   "b39ae97dcb01d891": "Details zur Hintergrundrichtlinie",
   "7e3ed96c91b96428": "{title} auf Standard zurücksetzen",
   "27cc3baf3f6c04b1": "Überschreibung auf Standard zurücksetzen",

@@ -283,7 +283,8 @@ describe("scoped settings writes", () => {
     const unsupported = [
       {
         label: server.label,
-        message: "This environment does not support this setting. Update T3 Code on it.",
+        message:
+          "This environment runs an older T3 Code without this setting. Update T3 Code on it.",
       },
     ];
 

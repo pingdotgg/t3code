@@ -11432,7 +11432,7 @@
   "63426ea5d50585a6": "Conecte um ambiente para salvar esta configuração.",
   "5aedadfc9fef7d3b": "Conecte os checkouts selecionados ou atualize os ambientes deles para redefinir esta substituição.",
   "7d0ff8d36a670261": "Conecte os ambientes para redefinir estas substituições.",
-  "4832594df0aad785": "Este ambiente não suporta esta configuração. Atualize o T3 Code nele.",
+  "f86f4c366c2e7bd9": "Este ambiente usa uma versão antiga do T3 Code sem esta configuração. Atualize o T3 Code nele.",
   "b39ae97dcb01d891": "Detalhes da política de segundo plano",
   "7e3ed96c91b96428": "Redefinir {title} para o padrão",
   "27cc3baf3f6c04b1": "Redefinir a substituição para o padrão",

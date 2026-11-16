@@ -11441,7 +11441,7 @@
   "63426ea5d50585a6": "Anslut en miljö för att spara inställningen.",
   "5aedadfc9fef7d3b": "Anslut de valda utcheckningarna, eller uppdatera deras miljöer, för att återställa åsidosättningen.",
   "7d0ff8d36a670261": "Anslut miljöerna för att återställa åsidosättningarna.",
-  "4832594df0aad785": "Miljön stöder inte den här inställningen. Uppdatera T3 Code där.",
+  "f86f4c366c2e7bd9": "Miljön kör en äldre version av T3 Code utan den här inställningen. Uppdatera T3 Code där.",
   "b39ae97dcb01d891": "Detaljer om bakgrundspolicy",
   "7e3ed96c91b96428": "Återställ {title} till standard",
   "27cc3baf3f6c04b1": "Återställ åsidosättning till standard",
