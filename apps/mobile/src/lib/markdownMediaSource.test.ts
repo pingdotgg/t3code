@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { SOURCE_CONTROL_MEDIA_ASSET, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveMobileMarkdownMediaSource } from "./markdownMediaSource";
 
@@ -35,6 +35,14 @@ describe("mobile Markdown draft media", () => {
       access: "direct",
       uri: "https://example.com/image.png",
     });
+    const hostImage = "https://github.com/owner/private/blob/main/shot.png?raw=true";
+    expect(resolveMobileMarkdownMediaSource(hostImage, input)).toMatchObject({
+      access: "environment",
+      resource: { _tag: SOURCE_CONTROL_MEDIA_ASSET, cwd: "/project" },
+    });
+    expect(resolveMobileMarkdownMediaSource(hostImage, { ...input, captured: true })).toMatchObject(
+      { access: "direct", uri: hostImage },
+    );
     expect(resolveMobileMarkdownMediaSource("javascript:alert(1)", input)).toBeNull();
     expect(resolveMobileMarkdownMediaSource("image.png", { threadId: undefined })).toBeNull();
   });

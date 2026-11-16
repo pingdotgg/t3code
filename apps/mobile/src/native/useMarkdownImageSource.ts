@@ -38,6 +38,7 @@ export function useMarkdownImageSource(props: {
         threadId: threadId ?? undefined,
         workspaceRoot,
         imageEmbed: true,
+        captured,
       });
       if (media?.access === "direct") return { uri: normalizeNativeMarkdownUrl(media.uri) };
       if (

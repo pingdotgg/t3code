@@ -105,6 +105,7 @@ export function FileMarkdownPreview(props: {
     const media = resolveMobileMarkdownMediaSource(image.href, {
       threadId: props.threadId ?? undefined,
       workspaceRoot: markdownDirectory,
+      captured: props.captured,
       imageEmbed: true,
     });
     const preview = resolveMarkdownMediaPreview(image.href, {

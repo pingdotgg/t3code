@@ -1,6 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
-import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import {
+  SOURCE_CONTROL_MEDIA_ASSET,
+  type AssetResource,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -274,7 +278,14 @@ export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" | "tool-output-image" }
+    {
+      readonly _tag:
+        | "attachment"
+        | "media-file"
+        | "draft-workspace-file"
+        | "tool-output-image"
+        | typeof SOURCE_CONTROL_MEDIA_ASSET;
+    }
   >;
   readonly alt: string | null;
   readonly srcFragment?: string;
@@ -293,7 +304,9 @@ export function ThreadMarkdownImage(props: {
       ? `attachment:${props.resource.attachmentId}`
       : props.resource._tag === "tool-output-image"
         ? `tool-output:${props.resource.itemId}:${props.resource.index}`
-        : `workspace:${props.resource.path}`;
+        : props.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
+          ? `source-control:${props.resource.url}`
+          : `workspace:${props.resource.path}`;
   // The view keeps the first decoded size per key, so a file edited in place needs a
   // new key; a re-signed URL for the same revision must not get one.
   const sourceKey =

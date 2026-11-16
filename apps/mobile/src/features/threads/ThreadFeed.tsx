@@ -63,6 +63,7 @@ import {
   type RunId,
   type ScheduledTaskId,
   type ScopedThreadRef,
+  SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
@@ -3339,6 +3340,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         >
           {name}
         </Text>
+      );
+    }
+    const sourceControlResource =
+      media && "resource" in media.source ? media.source.resource : undefined;
+    if (sourceControlResource?._tag === SOURCE_CONTROL_MEDIA_ASSET) {
+      return (
+        <ThreadMarkdownImage
+          environmentId={props.environmentId}
+          resource={sourceControlResource}
+          alt={image.alt}
+          srcFragment={markdownImageSourceFragment(image.href)}
+          actionsSource={media?.source.actionsSource}
+          onPressPreview={onPressPreview}
+        />
       );
     }
     const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
